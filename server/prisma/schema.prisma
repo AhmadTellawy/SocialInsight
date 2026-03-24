@@ -3,86 +3,87 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
-  id                String            @id @default(uuid())
+  id                String    @id @default(uuid())
   name              String
-  handle            String            @unique
-  email             String?           @unique
-  phone             String?           @unique
-  password          String?           // Temporary for migration
-  passwordHash      String?           @map("password_hash") // Nullable for migration
-  passwordUpdatedAt DateTime?         @map("password_updated_at")
+  handle            String    @unique
+  email             String?   @unique
+  phone             String?   @unique
+  password          String? // Temporary for migration
+  passwordHash      String?   @map("password_hash") // Nullable for migration
+  passwordUpdatedAt DateTime? @map("password_updated_at")
   avatar            String?
   bio               String?
   location          String?
   website           String?
   birthday          DateTime?
-  language          String?           @default("en")
-  country           String?         
-  isPrivate         Boolean           @default(false) @map("is_private")
-  groupPrivacy      String            @default("Public") @map("group_privacy")
+  language          String?   @default("en")
+  country           String?
+  isPrivate         Boolean   @default(false) @map("is_private")
+  groupPrivacy      String    @default("Public") @map("group_privacy")
 
   // Verification & Status
-  emailVerifiedAt   DateTime?         @map("email_verified_at")
-  verifiedBadge     Boolean           @default(false) @map("verified_badge")
-  status            String            @default("ACTIVE") // ENUM: ACTIVE, SUSPENDED, DELETED
-  authProvider      String?           @map("auth_provider")
+  emailVerifiedAt DateTime? @map("email_verified_at")
+  verifiedBadge   Boolean   @default(false) @map("verified_badge")
+  status          String    @default("ACTIVE") // ENUM: ACTIVE, SUSPENDED, DELETED
+  authProvider    String?   @map("auth_provider")
 
   // Cached counters
-  followersCount    Int               @default(0) @map("followers_count")
-  followingCount    Int               @default(0) @map("following_count")
+  followersCount Int @default(0) @map("followers_count")
+  followingCount Int @default(0) @map("following_count")
 
-  createdAt         DateTime          @default(now()) @map("created_at")
-  updatedAt         DateTime          @updatedAt @map("updated_at")
-  deletedAt         DateTime?         @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
 
   // Relations
   demographics           UserDemographics?
-  following              Follow[]          @relation("UserFollowed")
-  followedBy             Follow[]          @relation("UserFollows")
-  notificationsReceived  Notification[]    @relation("NotificationRecipient")
-  notificationsTriggered Notification[]    @relation("NotificationActor")
+  following              Follow[]              @relation("UserFollowed")
+  followedBy             Follow[]              @relation("UserFollows")
+  notificationsReceived  Notification[]        @relation("NotificationRecipient")
+  notificationsTriggered Notification[]        @relation("NotificationActor")
   notificationSettings   NotificationSettings?
   savedPosts             SavedPost[]
   hiddenPosts            HiddenPost[]
-  reports                Report[]          @relation("Reporter")
-  
+  reports                Report[]              @relation("Reporter")
+
   // Existing relations to other models
-  posts             Post[]
-  comments          Comment[]
-  responses         Response[]
-  groups            GroupMember[]
-  likes             UserLike[]
-  commentLikes      CommentLike[]
-  
+  posts        Post[]
+  comments     Comment[]
+  responses    Response[]
+  groups       GroupMember[]
+  likes        UserLike[]
+  commentLikes CommentLike[]
+
   @@map("users")
 }
 
 model UserDemographics {
-  userId          String   @id @map("user_id")
-  user            User     @relation(fields: [userId], references: [id])
-  gender          String?
-  maritalStatus   String?  @map("marital_status")
-  ageGroup        String?  @map("age_group")
-  educationLevel  String?  @map("education_level")
-  employmentType  String?  @map("employment_type")
-  industry        String?
-  employmentSector String? @map("employment_sector")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  userId           String   @id @map("user_id")
+  user             User     @relation(fields: [userId], references: [id])
+  gender           String?
+  maritalStatus    String?  @map("marital_status")
+  ageGroup         String?  @map("age_group")
+  educationLevel   String?  @map("education_level")
+  employmentType   String?  @map("employment_type")
+  industry         String?
+  employmentSector String?  @map("employment_sector")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
   @@map("user_demographics")
 }
 
 model Follow {
-  followerId  String    @map("follower_id")
-  followingId String    @map("following_id")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  following   User      @relation("UserFollowed", fields: [followingId], references: [id])
-  follower    User      @relation("UserFollows", fields: [followerId], references: [id])
+  followerId  String   @map("follower_id")
+  followingId String   @map("following_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  following   User     @relation("UserFollowed", fields: [followingId], references: [id])
+  follower    User     @relation("UserFollows", fields: [followerId], references: [id])
 
   @@id([followerId, followingId])
   @@map("follows")
@@ -139,31 +140,31 @@ model Post {
   sections       Section[]
   author         User       @relation(fields: [authorId], references: [id])
   likes          UserLike[]
-  
-  // Sharing/Reposting fields
-  sharedFromId   String?
-  sharedCaption  String?
-  sharedFrom     Post?      @relation("SharedPosts", fields: [sharedFromId], references: [id])
-  shares         Post[]     @relation("SharedPosts")
-  status         String     @default("PUBLISHED") // "DRAFT", "PUBLISHED"
-  currentStep    Int        @default(1)
-  savedBy        SavedPost[]
-  hiddenBy       HiddenPost[]
-  demographics   String?    // JSON string of demographic filters
-  allowAnonymous Boolean    @default(false)
-  forceAnonymous Boolean    @default(false)
-  allowComments  Boolean    @default(true)
-  allowMultipleSelection Boolean @default(false)
-  allowUserOptions Boolean  @default(false)
-  resultsWho     String?
-  resultsDetail  String?
-  resultsTiming  String?
-  targetGroups   String?
 
-  deletedAt      DateTime?
-  isDeleted      Boolean    @default(false)
-  sharesCount    Int        @default(0)
-  visibility     String     @default("PUBLIC")
+  // Sharing/Reposting fields
+  sharedFromId           String?
+  sharedCaption          String?
+  sharedFrom             Post?        @relation("SharedPosts", fields: [sharedFromId], references: [id])
+  shares                 Post[]       @relation("SharedPosts")
+  status                 String       @default("PUBLISHED") // "DRAFT", "PUBLISHED"
+  currentStep            Int          @default(1)
+  savedBy                SavedPost[]
+  hiddenBy               HiddenPost[]
+  demographics           String? // JSON string of demographic filters
+  allowAnonymous         Boolean      @default(false)
+  forceAnonymous         Boolean      @default(false)
+  allowComments          Boolean      @default(true)
+  allowMultipleSelection Boolean      @default(false)
+  allowUserOptions       Boolean      @default(false)
+  resultsWho             String?
+  resultsDetail          String?
+  resultsTiming          String?
+  targetGroups           String?
+
+  deletedAt   DateTime?
+  isDeleted   Boolean   @default(false)
+  sharesCount Int       @default(0)
+  visibility  String    @default("PUBLIC")
 
   @@index([authorId])
   @@index([sharedFromId])
@@ -236,18 +237,18 @@ model Answer {
 }
 
 model Comment {
-  id        String    @id @default(uuid())
+  id        String        @id @default(uuid())
   text      String
   userId    String
   postId    String
   parentId  String?
-  likes     Int       @default(0)
-  createdAt DateTime  @default(now())
-  isDeleted Boolean   @default(false)
-  parent    Comment?  @relation("CommentReplies", fields: [parentId], references: [id])
-  replies   Comment[] @relation("CommentReplies")
-  post      Post      @relation(fields: [postId], references: [id])
-  user      User      @relation(fields: [userId], references: [id])
+  likes     Int           @default(0)
+  createdAt DateTime      @default(now())
+  isDeleted Boolean       @default(false)
+  parent    Comment?      @relation("CommentReplies", fields: [parentId], references: [id])
+  replies   Comment[]     @relation("CommentReplies")
+  post      Post          @relation(fields: [postId], references: [id])
+  user      User          @relation(fields: [userId], references: [id])
   likesList CommentLike[]
 
   @@index([postId])
@@ -259,24 +260,24 @@ model NotificationSettings {
   id        String   @id @default(uuid())
   userId    String   @unique
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  settings  String   // JSON string storing: myPosts, sharedPosts, toggles
+  settings  String // JSON string storing: myPosts, sharedPosts, toggles
   updatedAt DateTime @updatedAt
 }
 
 model Notification {
-  id          String   @id @default(uuid())
-  userId      String
-  user        User     @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
-  actorId     String?
-  actor       User?    @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
-  type        String
-  message     String   @default("")
-  targetType  String?
-  targetId    String?
-  payload     String?  // JSON string
-  isRead      Boolean  @default(false)
-  readAt      DateTime?
-  createdAt   DateTime @default(now())
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  actorId    String?
+  actor      User?     @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  type       String
+  message    String    @default("")
+  targetType String?
+  targetId   String?
+  payload    String? // JSON string
+  isRead     Boolean   @default(false)
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
 
   @@index([userId, createdAt(sort: Desc)])
   @@index([userId, isRead])
@@ -307,25 +308,26 @@ model OTPCode {
 }
 
 model PendingRegistration {
-  id           String   @id @default(uuid())
-  email        String   @unique
+  id           String    @id @default(uuid())
+  email        String    @unique
   fullName     String
   dob          DateTime
   password     String?
-  handle       String?  @unique
-  currentStep  Int      @default(2)
+  handle       String?   @unique
+  currentStep  Int       @default(2)
   otpCode      String?
   otpExpiresAt DateTime?
-  updatedAt    DateTime @updatedAt
-  createdAt    DateTime @default(now())
+  updatedAt    DateTime  @updatedAt
+  createdAt    DateTime  @default(now())
 }
+
 model SavedPost {
-  userId    String    @map("user_id")
-  postId    String    @map("post_id")
-  createdAt DateTime  @default(now()) @map("created_at")
-  
-  user      User      @relation(fields: [userId], references: [id])
-  post      Post      @relation(fields: [postId], references: [id])
+  userId    String   @map("user_id")
+  postId    String   @map("post_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+  post Post @relation(fields: [postId], references: [id])
 
   @@unique([userId, postId])
   @@index([userId, createdAt(sort: Desc)])
@@ -333,43 +335,44 @@ model SavedPost {
 }
 
 model HiddenPost {
-  userId    String    @map("user_id")
-  postId    String    @map("post_id")
-  createdAt DateTime  @default(now()) @map("created_at")
-  
-  user      User      @relation(fields: [userId], references: [id])
-  post      Post      @relation(fields: [postId], references: [id])
+  userId    String   @map("user_id")
+  postId    String   @map("post_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+  post Post @relation(fields: [postId], references: [id])
 
   @@unique([userId, postId])
   @@map("user_hidden_posts")
 }
 
 model Report {
-  id          String    @id @default(uuid())
-  reporterId  String    @map("reporter_id")
-  targetType  String    @map("target_type") // POST, COMMENT, USER
-  targetId    String    @map("target_id")
-  reason      String
-  createdAt   DateTime  @default(now()) @map("created_at")
-  
-  reporter    User      @relation("Reporter", fields: [reporterId], references: [id])
+  id         String   @id @default(uuid())
+  reporterId String   @map("reporter_id")
+  targetType String   @map("target_type") // POST, COMMENT, USER
+  targetId   String   @map("target_id")
+  reason     String
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  reporter User @relation("Reporter", fields: [reporterId], references: [id])
+
   @@map("reports")
 }
 
 model InteractionEvent {
   id               String   @id @default(uuid())
   actor_user_id    String
-  event_type       String   
+  event_type       String
   post_id          String?
   target_user_id   String?
   comment_id       String?
-  method           String?  // COPY_LINK | NATIVE_SHARE | REPOST
+  method           String? // COPY_LINK | NATIVE_SHARE | REPOST
   new_state        Boolean? // Only for SAVE_TOGGLE and FOLLOW_TOGGLE
-  dwell_time_ms    Int?     // Only for POST_VIEW_END
-  source_surface   String   // FEED | PROFILE | SAVED | SEARCH | DEEP_LINK
-  position_in_feed Int?     // Integer if FEED, else NULL
+  dwell_time_ms    Int? // Only for POST_VIEW_END
+  source_surface   String // FEED | PROFILE | SAVED | SEARCH | DEEP_LINK
+  position_in_feed Int? // Integer if FEED, else NULL
   session_id       String
-  device_type      String   // WEB | ANDROID | IOS
+  device_type      String // WEB | ANDROID | IOS
   created_at       DateTime @default(now())
 
   @@index([actor_user_id, created_at(sort: Desc)])
