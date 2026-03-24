@@ -234,8 +234,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const isCurrentlyAnonymous = sourceSurvey.forceAnonymous ? true : (sourceSurvey.allowAnonymous ? isAnonToggled : false);
 
   const [localOptions, setLocalOptions] = useState<Option[]>([]);
-  const [selectedOptions, setSelectedOptions] = useState<string[]>(survey.userSelectedOptions || []);
-  const [hasVoted, setHasVoted] = useState(survey.hasParticipated || false);
+  const [selectedOptions, setSelectedOptions] = useState<string[]>(sourceSurface === 'SHARE_CAPTURE' ? [] : (survey.userSelectedOptions || []));
+  const [hasVoted, setHasVoted] = useState(sourceSurface === 'SHARE_CAPTURE' ? false : (survey.hasParticipated || false));
 
   // Voter-added option state
   const [isAddingCustomOption, setIsAddingCustomOption] = useState(false);
@@ -246,15 +246,16 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const [challengeEliminatedIds, setChallengeEliminatedIds] = useState<Set<string>>(new Set());
   const [isChallengeTransitioning, setIsChallengeTransitioning] = useState<string | null>(null);
 
-  const [currentQIndex, setCurrentQIndex] = useState(survey.userProgress?.currentQuestionIndex || 0);
+  const [currentQIndex, setCurrentQIndex] = useState(sourceSurface === 'SHARE_CAPTURE' ? 0 : (survey.userProgress?.currentQuestionIndex || 0));
   const [reviewQIndex, setReviewQIndex] = useState(0);
-  const [surveyAnswers, setSurveyAnswers] = useState<Record<string, any>>(survey.userProgress?.answers || {});
-  const [followUpAnswers, setFollowUpAnswers] = useState<Record<string, string>>(survey.userProgress?.followUpAnswers || {});
-  const [surveyCompleted, setSurveyCompleted] = useState(survey.hasParticipated || false);
+  const [surveyAnswers, setSurveyAnswers] = useState<Record<string, any>>(sourceSurface === 'SHARE_CAPTURE' ? {} : (survey.userProgress?.answers || {}));
+  const [followUpAnswers, setFollowUpAnswers] = useState<Record<string, string>>(sourceSurface === 'SHARE_CAPTURE' ? {} : (survey.userProgress?.followUpAnswers || {}));
+  const [surveyCompleted, setSurveyCompleted] = useState(sourceSurface === 'SHARE_CAPTURE' ? false : (survey.hasParticipated || false));
   const [slideDirection, setSlideDirection] = useState<'next' | 'prev'>('next');
-  const [historyStack, setHistoryStack] = useState<number[]>(survey.userProgress?.historyStack || []);
+  const [historyStack, setHistoryStack] = useState<number[]>(sourceSurface === 'SHARE_CAPTURE' ? [] : (survey.userProgress?.historyStack || []));
 
   const [quizStarted, setQuizStarted] = useState(() => {
+    if (sourceSurface === 'SHARE_CAPTURE') return false;
     const answers = survey.userProgress?.answers;
     return (answers && Object.keys(answers).length > 0) || false;
   });
@@ -845,7 +846,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     if (!window.confirm("Are you sure you want to delete this post? This action cannot be undone.")) return;
     try {
       setIsMenuOpen(false);
-      await api.deletePost(survey.id);
+      await api.deletePost(survey.id, userProfile?.id || '');
       if (onDelete) {
         onDelete(survey.id);
       } else {
@@ -1748,25 +1749,31 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
          </div>
         </div>
         <div className="border-t border-gray-100 mt-2 px-4 pt-2 pb-1">
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-4">
             <div className="flex items-center">
-              <button onClick={handleLike} className={`flex items-center gap-2 py-2 px-1 rounded-lg transition-all active:scale-95 group ${isLiked ? 'text-blue-600' : 'text-gray-500 hover:bg-gray-50'}`}><ThumbsUp size={18} fill={isLiked ? "currentColor" : "none"} strokeWidth={2} className={`transition-transform duration-300 ${isLiked ? 'scale-110 text-blue-600' : 'group-hover:scale-110'}`} /><span className={`text-xs font-semibold ${isLiked ? 'text-blue-600' : 'text-gray-600'}`}>Like</span></button>
+              <button onClick={handleLike} className={`flex items-center gap-1.5 py-2 px-1 rounded-lg transition-all active:scale-95 group ${isLiked ? 'text-blue-600' : 'text-gray-500 hover:bg-gray-50'}`}>
+                <ThumbsUp size={16} fill={isLiked ? "currentColor" : "none"} strokeWidth={2} className={`transition-transform duration-300 ${isLiked ? 'scale-110 text-blue-600' : 'group-hover:scale-110'}`} />
+                <span className={`text-[11px] font-semibold ${isLiked ? 'text-blue-600' : 'text-gray-600'}`}>Like</span>
+              </button>
               {likeCount > 0 && (
-                <button onClick={() => setIsLikersSheetOpen(true)} className="ml-1 px-2 py-1 flex items-center justify-center rounded-lg hover:bg-gray-50 text-xs font-bold text-gray-500 hover:text-blue-600 transition-colors">
+                <button onClick={() => setIsLikersSheetOpen(true)} className="ml-1 px-2 py-1 flex items-center justify-center rounded-lg hover:bg-gray-50 text-[11px] font-bold text-gray-500 hover:text-blue-600 transition-colors">
                   {formatCount(likeCount)}
                 </button>
               )}
             </div>
             {survey.allowComments !== false && (
-              <button onClick={() => setIsCommentsOpen(true)} className="flex items-center gap-2 py-2 px-1 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all active:scale-95 group">
-                <MessageCircle size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
-                <span className="text-xs font-semibold text-gray-600">{commentsCount > 0 ? formatCount(commentsCount) : 'Comment'}</span>
+              <button onClick={() => setIsCommentsOpen(true)} className="flex items-center gap-1.5 py-2 px-1 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all active:scale-95 group">
+                <MessageCircle size={16} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
+                <span className="text-[11px] font-semibold text-gray-600">{commentsCount > 0 ? formatCount(commentsCount) : 'Comment'}</span>
               </button>
             )}
-            <button onClick={() => setIsShareSheetOpen(true)} className="flex items-center gap-2 py-2 px-1 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all active:scale-95 group"><Share2 size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform" /><span className="text-xs font-semibold text-gray-600">Share</span></button>
-            <button onClick={(e) => { e.stopPropagation(); onAnalysisClick && onAnalysisClick(); }} className="flex items-center gap-2 py-2 px-1 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all active:scale-95 group">
-              <BarChart3 size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
-              <span className="text-xs font-semibold text-gray-600">Analysis</span>
+            <button onClick={() => setIsShareSheetOpen(true)} className="flex items-center gap-1.5 py-2 px-1 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all active:scale-95 group">
+              <Share2 size={16} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
+              <span className="text-[11px] font-semibold text-gray-600">Share</span>
+            </button>
+            <button onClick={(e) => { e.stopPropagation(); onAnalysisClick && onAnalysisClick(); }} className="flex items-center gap-1.5 py-2 px-1 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all active:scale-95 group">
+              <BarChart3 size={16} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
+              <span className="text-[11px] font-semibold text-gray-600">Analysis</span>
             </button>
           </div>
         </div>

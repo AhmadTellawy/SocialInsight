@@ -33,9 +33,11 @@ export const api = {
         return data.map(normalizeSurvey);
     },
 
-    deletePost: async (postId: string) => {
+    deletePost: async (postId: string, userId: string) => {
         const response = await fetch(`${API_BASE_URL}/posts/${postId}`, {
             method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId })
         });
         if (!response.ok) throw new Error('Failed to delete post');
         return response.json();
@@ -52,11 +54,12 @@ export const api = {
         return normalizeSurvey(resData);
     },
 
-    vote: async (postId: string, optionId: string, userId: string, isAnonymous: boolean = false) => {
+    vote: async (postId: string, optionIds: string | string[], userId: string, isAnonymous: boolean = false) => {
+        const payloadOptionIds = Array.isArray(optionIds) ? optionIds : [optionIds];
         const response = await fetch(`${API_BASE_URL}/posts/${postId}/vote`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ optionId, userId, isAnonymous })
+            body: JSON.stringify({ optionIds: payloadOptionIds, userId, isAnonymous })
         });
         if (!response.ok) {
             const errorData = await response.json();

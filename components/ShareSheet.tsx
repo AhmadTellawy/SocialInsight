@@ -229,7 +229,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
             </div>
 
             {/* Content Card */}
-            <div className="capture-target-wrapper pointer-events-none rounded-3xl overflow-hidden border border-gray-100 shadow-sm relative -mx-2 bg-white">
+            <div className="capture-target-wrapper pointer-events-none rounded-3xl border border-gray-100 shadow-sm relative bg-white mx-4 mt-4 mb-4">
               <style>{`
                 .capture-target-wrapper > div { border-bottom: none !important; padding-bottom: 16px !important; }
                 .capture-target-wrapper .border-t.border-gray-100.mt-2 { display: none !important; }
@@ -240,7 +240,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
                  survey={survey} 
                  userProfile={userProfile}
                  isDetailView={true} 
-                 sourceSurface="FEED"
+                 sourceSurface="SHARE_CAPTURE"
               />
             </div>
         </div>

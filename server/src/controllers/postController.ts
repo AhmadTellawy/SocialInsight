@@ -544,7 +544,7 @@ export const getSavedPosts = async (req: Request, res: Response) => {
 
 export const votePost = async (req: Request, res: Response) => {
     const id = req.params.id as string;
-    const { userId, optionId, isAnonymous } = req.body;
+    const { userId, optionId, optionIds, isAnonymous } = req.body;
     try {
         const post = await prisma.post.findUnique({
             where: { id },
@@ -556,18 +556,25 @@ export const votePost = async (req: Request, res: Response) => {
             return;
         }
 
-        const question = await prisma.question.findFirst({
-            where: { postId: id },
-            include: { options: true }
-        });
+        const optionsToProcess: string[] = [];
+        if (Array.isArray(optionIds) && optionIds.length > 0) {
+            optionsToProcess.push(...optionIds);
+        } else if (optionId) {
+            optionsToProcess.push(optionId);
+        }
 
-        if (!question) {
-            res.status(400).json({ error: 'No question found for this post' });
+        if (optionsToProcess.length === 0) {
+            res.status(400).json({ error: 'No options provided' });
             return;
         }
 
-        if (!question.options.some((o: any) => o.id === optionId)) {
-            res.status(400).json({ error: 'Invalid option for this post' });
+        const dbOptions = await prisma.option.findMany({
+            where: { id: { in: optionsToProcess } },
+            include: { question: true }
+        });
+
+        if (dbOptions.length === 0 || dbOptions.some((o: any) => o.question.postId !== id)) {
+            res.status(400).json({ error: 'Invalid options for this post' });
             return;
         }
 
@@ -578,39 +585,46 @@ export const votePost = async (req: Request, res: Response) => {
             finalIsAnonymous = parseBoolean(isAnonymous);
         }
 
-        console.log(`[VOTE POST] Final anonymity -> computed finalIsAnonymous:`, finalIsAnonymous);
-
         await prisma.$transaction(async (tx) => {
-            const response = await tx.response.create({
-                data: { postId: id, userId, isAnonymous: finalIsAnonymous }
+            const existingResponse = await tx.response.findUnique({
+                where: { userId_postId: { userId, postId: id } }
             });
 
-            await tx.answer.create({
-                data: { responseId: response.id, questionId: question.id, optionId }
+            const response = await tx.response.upsert({
+                where: { userId_postId: { userId, postId: id } },
+                update: {},
+                create: { postId: id, userId, isAnonymous: finalIsAnonymous }
             });
 
-            await tx.option.update({
-                where: { id: optionId },
-                data: { votes: { increment: 1 } }
-            });
+            for (const opt of dbOptions) {
+                const existingAnswer = await tx.answer.findUnique({
+                    where: { responseId_questionId: { responseId: response.id, questionId: opt.question.id } }
+                });
+                if (!existingAnswer) {
+                    await tx.answer.create({
+                        data: { responseId: response.id, questionId: opt.question.id, optionId: opt.id }
+                    });
+                    await tx.option.update({
+                        where: { id: opt.id },
+                        data: { votes: { increment: 1 } }
+                    });
+                }
+            }
 
-            await tx.post.update({
-                where: { id },
-                data: { responseCount: { increment: 1 } }
-            });
+            if (!existingResponse) {
+                await tx.post.update({
+                    where: { id },
+                    data: { responseCount: { increment: 1 } }
+                });
+            }
         });
 
-        // Notify author
         if (!finalIsAnonymous && post.authorId) {
-            await notify(userId, post.authorId as string, 'vote', 'voted on your post', 'survey', id, { optionId });
+            await notify(userId, post.authorId as string, 'vote', 'voted on your post', 'survey', id, { optionId: optionsToProcess[0] });
         }
 
         res.json({ success: true });
     } catch (error: any) {
-        if (error.code === 'P2002') {
-            res.status(409).json({ error: 'User has already voted' });
-            return;
-        }
         console.error(error);
         res.status(500).json({ error: 'Failed to vote' });
     }
@@ -993,13 +1007,49 @@ export const deletePost = async (req: Request, res: Response) => {
             res.status(403).json({ error: 'Unauthorized to delete this post' });
             return;
         }
-        await prisma.post.update({
-            where: { id },
-            data: { isDeleted: true, deletedAt: new Date() }
+
+        // Hard Delete cascade via manual transaction
+        await prisma.$transaction(async (tx) => {
+            // Notifications about this post
+            await tx.notification.deleteMany({ where: { targetId: id, targetType: 'survey' } });
+            // Post interactions
+            await tx.savedPost.deleteMany({ where: { postId: id } });
+            await tx.hiddenPost.deleteMany({ where: { postId: id } });
+            await tx.userLike.deleteMany({ where: { postId: id } });
+
+            // Comments and their likes
+            const comments = await tx.comment.findMany({ where: { postId: id } });
+            const commentIds = comments.map(c => c.id);
+            if (commentIds.length > 0) {
+                await tx.commentLike.deleteMany({ where: { commentId: { in: commentIds } } });
+                await tx.comment.deleteMany({ where: { postId: id } });
+            }
+
+            // Responses and Answers
+            const responses = await tx.response.findMany({ where: { postId: id } });
+            const responseIds = responses.map(r => r.id);
+            if (responseIds.length > 0) {
+                await tx.answer.deleteMany({ where: { responseId: { in: responseIds } } });
+                await tx.response.deleteMany({ where: { postId: id } });
+            }
+
+            // Survey structure
+            const questions = await tx.question.findMany({ where: { postId: id } });
+            const questionIds = questions.map(q => q.id);
+            if (questionIds.length > 0) {
+                await tx.option.deleteMany({ where: { questionId: { in: questionIds } } });
+                await tx.question.deleteMany({ where: { postId: id } });
+            }
+            await tx.section.deleteMany({ where: { postId: id } });
+
+            // Finally delete the post
+            await tx.post.delete({ where: { id } });
         });
-        res.json({ success: true, message: 'Post soft deleted' });
+
+        res.json({ success: true, message: 'Post permanently deleted' });
     } catch (error) {
-        res.status(500).json({ error: 'Failed to delete post' });
+        console.error("Hard delete failed:", error);
+        res.status(500).json({ error: 'Failed to delete post permanently' });
     }
 };
 

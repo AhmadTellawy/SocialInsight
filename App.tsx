@@ -203,6 +203,16 @@ const App: React.FC = () => {
 
   React.useEffect(() => {
     (window as any).showUsersTable = () => setShowUsersTable(true);
+
+    const path = window.location.pathname;
+    if (path.startsWith('/post/')) {
+      const postId = path.split('/post/')[1];
+      if (postId) {
+        setSelectedSurveyId(postId);
+        setSelectedSurveySurface('DEEP_LINK');
+        window.history.replaceState({}, document.title, '/');
+      }
+    }
   }, []);
 
   React.useEffect(() => {
@@ -520,7 +530,7 @@ const App: React.FC = () => {
     // Server Call
     try {
       if (userProfile?.id && optionIds.length > 0) {
-        Promise.all(optionIds.map(id => api.vote(surveyId, id, userProfile.id, isAnonymous)))
+        api.vote(surveyId, optionIds, userProfile.id, isAnonymous)
           .catch(error => console.error("Failed to submit votes to server:", error));
       }
     } catch (error) {
