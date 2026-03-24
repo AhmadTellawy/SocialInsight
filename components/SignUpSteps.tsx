@@ -41,11 +41,22 @@ export const WelcomeStep: React.FC<StepProps> = ({ onNext, onBack }) => {
 };
 
 export const BasicInfoStep: React.FC<StepProps> = ({ onNext, onBack, isLoading }) => {
+    const [day, setDay] = useState('');
+    const [month, setMonth] = useState('');
+    const [year, setYear] = useState('');
     const [formData, setFormData] = useState({
         fullName: '',
         email: '',
         dob: ''
     });
+
+    useEffect(() => {
+        if (year && month && day) {
+            setFormData(prev => ({ ...prev, dob: `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}` }));
+        } else {
+            setFormData(prev => ({ ...prev, dob: '' }));
+        }
+    }, [day, month, year]);
 
     const isValid = formData.fullName && formData.email && formData.dob;
 
@@ -91,15 +102,37 @@ export const BasicInfoStep: React.FC<StepProps> = ({ onNext, onBack, isLoading }
 
                 <div className="space-y-1">
                     <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Date of Birth</label>
-                    <div className="relative">
-                        <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-                        <input
-                            type="date"
-                            value={formData.dob}
-                            onChange={e => setFormData({ ...formData, dob: e.target.value })}
-                            max={new Date().toISOString().split('T')[0]}
-                            className="w-full bg-gray-50 border border-transparent focus:border-blue-500 focus:bg-white rounded-xl pl-12 pr-4 py-4 outline-none transition-all font-semibold text-gray-900 placeholder:text-gray-300"
-                        />
+                    <div className="relative flex gap-2">
+                        <select
+                            value={day}
+                            onChange={e => setDay(e.target.value)}
+                            className="w-1/3 bg-gray-50 border border-transparent focus:border-blue-500 focus:bg-white rounded-xl px-4 py-4 outline-none transition-all font-semibold text-gray-900 appearance-none"
+                        >
+                            <option value="" disabled>Day</option>
+                            {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
+                                <option key={d} value={String(d)}>{d}</option>
+                            ))}
+                        </select>
+                        <select
+                            value={month}
+                            onChange={e => setMonth(e.target.value)}
+                            className="flex-1 bg-gray-50 border border-transparent focus:border-blue-500 focus:bg-white rounded-xl px-4 py-4 outline-none transition-all font-semibold text-gray-900 appearance-none"
+                        >
+                            <option value="" disabled>Month</option>
+                            {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((m, i) => (
+                                <option key={m} value={String(i + 1)}>{m}</option>
+                            ))}
+                        </select>
+                        <select
+                            value={year}
+                            onChange={e => setYear(e.target.value)}
+                            className="w-1/3 bg-gray-50 border border-transparent focus:border-blue-500 focus:bg-white rounded-xl px-4 py-4 outline-none transition-all font-semibold text-gray-900 appearance-none"
+                        >
+                            <option value="" disabled>Year</option>
+                            {Array.from({ length: 100 }, (_, i) => new Date().getFullYear() - 13 - i).map(y => (
+                                <option key={y} value={String(y)}>{y}</option>
+                            ))}
+                        </select>
                     </div>
                     <p className="text-[10px] text-gray-400 px-1 leading-tight">Must be at least 13 years old to register.</p>
                 </div>

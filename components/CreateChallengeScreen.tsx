@@ -195,9 +195,36 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => setCroppingImage(reader.result as string);
-      reader.readAsDataURL(file);
+      const img = new Image();
+      const objUrl = URL.createObjectURL(file);
+      img.onload = () => {
+        const MAX_DIMENSION = 1200;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+            const ratio = Math.min(MAX_DIMENSION / width, MAX_DIMENSION / height);
+            width = Math.round(width * ratio);
+            height = Math.round(height * ratio);
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            setCroppingImage(canvas.toDataURL('image/jpeg', 0.8));
+        } else {
+            // fallback
+            const reader = new FileReader();
+            reader.onloadend = () => setCroppingImage(reader.result as string);
+            reader.readAsDataURL(file);
+        }
+        URL.revokeObjectURL(objUrl);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      };
+      img.src = objUrl;
     }
   };
 

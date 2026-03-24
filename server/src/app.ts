@@ -20,7 +20,7 @@ const corsOptions = {
     credentials: true,
 };
 app.use(cors(corsOptions));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
 
 app.use('/api/posts', postRoutes);
 app.use('/api/users', userRoutes);
