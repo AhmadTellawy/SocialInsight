@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Survey, SurveyType, Option, LogicRule, UserProfile } from '../types';
-import { Clock, Users, TrendingUp, MoreHorizontal, Share2, CheckCircle2, Flag, EyeOff, Bookmark, Link as LinkIcon, UserMinus, ThumbsUp, MessageCircle, FileText, PieChart, HelpCircle, Globe, Lock, Plus, AlertCircle, ImageIcon, ChevronLeft, ChevronRight, Check, ArrowRight, XCircle, Trophy, Target, X, ListChecks, Zap, Timer, Play, Repeat, UserPlus, PlusCircle, Shield, Shuffle, Heart, Search, Send, Star, Maximize2, BarChart3 } from 'lucide-react';
+import { Clock, Users, TrendingUp, MoreHorizontal, Share2, CheckCircle2, Flag, EyeOff, Bookmark, Link as LinkIcon, UserMinus, ThumbsUp, MessageCircle, FileText, PieChart, HelpCircle, Globe, Lock, Plus, AlertCircle, ImageIcon, ChevronLeft, ChevronRight, Check, ArrowRight, XCircle, Trophy, Target, X, ListChecks, Zap, Timer, Play, Repeat, UserPlus, PlusCircle, Shield, Shuffle, Heart, Search, Send, Star, Maximize2, BarChart3, Trash2 } from 'lucide-react';
 import { Analytics } from '../utils/analytics';
 import { BottomSheet } from './BottomSheet';
 import { CommentsSheet } from './CommentsSheet';
@@ -27,6 +27,7 @@ interface SurveyCardProps {
   contextGroups?: any[];
   onGroupClick?: (groupId: string) => void;
   onLike?: (surveyId: string, isLiked: boolean) => void;
+  onDelete?: (surveyId: string) => void;
 }
 
 interface FlatQuestion {
@@ -130,7 +131,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   sourceSurface = 'FEED',
   contextGroups = [],
   onGroupClick,
-  onLike
+  onLike,
+  onDelete
 }) => {
   const [timeLeftStr, setTimeLeftStr] = useState('');
   const [isExpired, setIsExpired] = useState(false);
@@ -836,6 +838,21 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     } catch (error) {
       console.error(error);
       setIsSaved(previous);
+    }
+  };
+
+  const handleDeletePost = async () => {
+    if (!window.confirm("Are you sure you want to delete this post? This action cannot be undone.")) return;
+    try {
+      setIsMenuOpen(false);
+      await api.deletePost(survey.id);
+      if (onDelete) {
+        onDelete(survey.id);
+      } else {
+        setIsHidden(true);
+      }
+    } catch (err) {
+      console.error('Failed to delete post:', err);
     }
   };
 
@@ -1802,6 +1819,18 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           </button>
 
           <hr className="my-2 border-gray-100" />
+
+          {isMe && (
+            <button onClick={handleDeletePost} className="w-full flex items-center gap-4 p-3.5 hover:bg-red-50 rounded-xl transition-colors text-left group">
+              <div className="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center group-hover:bg-red-200">
+                <Trash2 size={22} strokeWidth={1.5} />
+              </div>
+              <div>
+                <div className="font-semibold text-red-600 text-sm">Delete Post</div>
+                <div className="text-xs text-red-400">Permanently remove this post</div>
+              </div>
+            </button>
+          )}
 
           {!isMe && (
             <button onClick={handleFollowInteraction} className="w-full flex items-center gap-4 p-3.5 hover:bg-gray-50 rounded-xl transition-colors text-left group">

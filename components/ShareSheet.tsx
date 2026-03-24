@@ -108,7 +108,8 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
           console.warn('Share error:', shareError);
           await navigator.share({
             title: `SocialInsight - ${survey.title}`,
-            text: shareText
+            text: shareText,
+            url: postUrl
           });
           onClose();
         }
@@ -127,6 +128,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
         await navigator.share({
           title: `SocialInsight`,
           text: `Check out this ${survey.type} on SocialInsight! ${postUrl}`,
+          url: postUrl
         });
         onClose();
       }
@@ -227,36 +229,19 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
             </div>
 
             {/* Content Card */}
-            <div className="border border-gray-100 rounded-3xl overflow-hidden shadow-sm bg-white p-5">
-                <div className="flex items-center gap-3 mb-4">
-                    <img src={survey.author.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(survey.author.name)}`} className="w-10 h-10 rounded-full border border-gray-100 object-cover" alt="" />
-                    <div>
-                        <h4 className="font-bold text-gray-900 leading-tight">{survey.author.name}</h4>
-                        <p className="text-xs text-gray-400">@{survey.author.name.toLowerCase().replace(/\s+/g, '')}</p>
-                    </div>
-                </div>
-                
-                <h3 className="font-black text-xl text-gray-900 leading-tight mb-2 whitespace-pre-wrap">{survey.title}</h3>
-                {survey.description && (
-                    <p className="text-gray-600 text-[15px] leading-relaxed mb-4 whitespace-pre-wrap">{survey.description}</p>
-                )}
-                
-                {survey.coverImage && (
-                    <img src={survey.coverImage} className="w-full aspect-video object-cover rounded-2xl mb-4" alt="Cover" />
-                )}
-
-                <div className="flex items-center gap-4 text-gray-500 text-sm mt-4 pt-4 border-t border-gray-50">
-                    <div className="flex items-center gap-1.5 font-semibold">
-                        <Users size={16} className="text-blue-500" />
-                        <span>{survey.participants?.toLocaleString() || 0} Votes</span>
-                    </div>
-                    {survey.type === 'Quiz' && (
-                        <div className="flex items-center gap-1.5 font-semibold">
-                            <Star size={16} className="text-amber-500" />
-                            <span>Quiz</span>
-                        </div>
-                    )}
-                </div>
+            <div className="capture-target-wrapper pointer-events-none rounded-3xl overflow-hidden border border-gray-100 shadow-sm relative -mx-2 bg-white">
+              <style>{`
+                .capture-target-wrapper > div { border-bottom: none !important; padding-bottom: 16px !important; }
+                .capture-target-wrapper .border-t.border-gray-100.mt-2 { display: none !important; }
+                .capture-target-wrapper .lucide-more-horizontal { display: none !important; }
+                .capture-target-wrapper button { pointer-events: none !important; }
+              `}</style>
+              <SurveyCard 
+                 survey={survey} 
+                 userProfile={userProfile}
+                 isDetailView={true} 
+                 sourceSurface="FEED"
+              />
             </div>
         </div>
       </div>

@@ -277,10 +277,23 @@ export const normalizeSurvey = (raw: any): Survey => {
     return undefined;
   };
 
+  // 5) Map Quiz evaluation keys safely since the backend drops correctOptionId
+  const sections = raw.sections?.map((sec: any) => ({
+    ...sec,
+    questions: sec.questions?.map((q: any) => {
+      const correctOpt = q.options?.find((o: any) => o.isCorrect === true);
+      return {
+        ...q,
+        correctOptionId: correctOpt ? correctOpt.id : q.correctOptionId
+      };
+    })
+  }));
+
   const sharedFrom = raw.sharedFrom ? normalizeSurvey(raw.sharedFrom) : undefined;
 
   return {
     ...raw,
+    sections: sections ?? raw.sections,
     coverImage,
     image: coverImage,
     author,
