@@ -1,0 +1,33 @@
+
+import React, { useState, useMemo, useEffect } from 'react';
+import { 
+  Filter, TrendingUp, Users, MessageCircle, Share2, 
+  ChevronRight, Globe, Search, X, Check, RotateCcw,
+  Trophy, Flame, BarChart3, PieChart, HelpCircle, FileText
+} from 'lucide-react';
+import { Survey, SurveyType } from '../types';
+import { BottomSheet } from './BottomSheet';
+
+interface TrendsScreenProps {
+  surveys: Survey[];
+  onSurveyClick: (id: string, surface?: string) => void;
+}
+
+const COUNTRIES = [
+  { code: 'ALL', name: 'Global / All' },
+  { code: 'SA', name: 'Saudi Arabia' },
+  { code: 'QA', name: 'Qatar' },
+  { code: 'JO', name: 'Jordan' },
+  { code: 'AE', name: 'United Arab Emirates' },
+  { code: 'EG', name: 'Egypt' },
+  { code: 'US', name: 'United States' },
+  { code: 'UK', name: 'United Kingdom' },
+];
+
+const CATEGORIES = [
+  "Technology", "Social", "Business", "Sports", "Politics", 
+  "Entertainment", "Health", "Education", "Lifestyle", "Science"
+];
+
+export const TrendsScreen: React.FC<TrendsScreenProps> = ({ surveys, onSurveyClick }) => {
+// ... rest of file (I'll use replace_file_content to fix the top and keep rest)

@@ -1,0 +1,37 @@
+{
+    "name": "socialinsight-server",
+    "version": "1.0.0",
+    "description": "Backend API for Social Insight",
+    "main": "dist/app.js",
+    "scripts": {
+        "dev": "nodemon src/app.ts",
+        "build": "tsc",
+        "start": "node dist/app.js",
+        "test": "echo \"Error: no test specified\" && exit 1"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "dependencies": {
+        "@prisma/client": "^6.3.1",
+        "@types/node-fetch": "^2.6.13",
+        "bcryptjs": "^3.0.3",
+        "cors": "^2.8.5",
+        "dotenv": "^16.4.7",
+        "express": "^4.21.2",
+        "node-cron": "^4.2.1",
+        "node-fetch": "^2.7.0",
+        "zod": "^3.24.1"
+    },
+    "devDependencies": {
+        "@types/bcryptjs": "^2.4.6",
+        "@types/cors": "^2.8.17",
+        "@types/express": "^5.0.0",
+        "@types/node": "^22.13.0",
+        "@types/node-cron": "^3.0.11",
+        "nodemon": "^3.1.9",
+        "prisma": "^6.3.1",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.7.3"
+    }
+}
