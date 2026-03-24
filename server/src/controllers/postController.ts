@@ -221,7 +221,10 @@ export const createPost = async (req: Request, res: Response) => {
         }
 
         let createdOptions: any[] = [];
-        if (['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(data.type) || '') && data.options) {
+        let createdSections: any[] = [];
+        const typeStr = normalizePostType(data.type) || '';
+
+        if (['Poll', 'Challenge', 'Prediction', 'Debate'].includes(typeStr) && data.options) {
             const question = await prisma.question.create({
                 data: { text: data.title || "Poll Question", type: 'SingleChoice', postId: post.id }
             });
@@ -235,6 +238,51 @@ export const createPost = async (req: Request, res: Response) => {
                 }))
             });
             createdOptions = await prisma.option.findMany({ where: { questionId: question.id } });
+        } else if (['Quiz', 'Survey'].includes(typeStr) && data.sections) {
+            for (const [sIdx, sec] of data.sections.entries()) {
+                const section = await prisma.section.create({
+                    data: {
+                        title: sec.title || `Section ${sIdx + 1}`,
+                        order: sec.order !== undefined ? sec.order : sIdx,
+                        postId: post.id
+                    }
+                });
+
+                for (const [qIdx, q] of (sec.questions || []).entries()) {
+                    const question = await prisma.question.create({
+                        data: {
+                            text: q.text,
+                            type: q.type || 'multiple_choice',
+                            image: q.image,
+                            order: q.order !== undefined ? q.order : qIdx,
+                            isRequired: q.isRequired !== undefined ? q.isRequired : true,
+                            postId: post.id,
+                            sectionId: section.id
+                        }
+                    });
+
+                    if (q.options?.length) {
+                        await prisma.option.createMany({
+                            data: q.options.map((opt: any) => ({
+                                text: opt.text,
+                                image: opt.image,
+                                isCorrect: q.correctOptionId === opt.id,
+                                isRating: opt.isRating || false,
+                                ratingValue: opt.ratingValue || 0,
+                                questionId: question.id
+                            }))
+                        });
+                    }
+                }
+            }
+
+            const fullyPopulatedPost = await prisma.post.findUnique({
+                where: { id: post.id },
+                include: { sections: { include: { questions: { include: { options: true } } } } }
+            });
+            if (fullyPopulatedPost?.sections) {
+                createdSections = fullyPopulatedPost.sections;
+            }
         }
 
         const mappedPost = {
@@ -243,6 +291,7 @@ export const createPost = async (req: Request, res: Response) => {
             participants: post.responseCount,
             coverImage: post.image,
             options: createdOptions,
+            sections: createdSections.length > 0 ? createdSections : undefined,
             allowAnonymous: post.allowAnonymous,
             forceAnonymous: (post as any).forceAnonymous,
             demographics: parseJsonArray(post.demographics),
@@ -294,7 +343,10 @@ export const updatePost = async (req: Request, res: Response) => {
         console.log(`[UPDATE POST] Saved to DB:`, JSON.stringify({ id: post.id, allowAnonymous: updateData.allowAnonymous }));
 
         let finalOptions: any[] = [];
-        if (normalizePostType(post.type) === 'Poll' && data.options) {
+        let finalSections: any[] = [];
+        const typeStr = normalizePostType(post.type) || '';
+
+        if (['Poll', 'Challenge', 'Prediction', 'Debate'].includes(typeStr) && data.options) {
             let question = await prisma.question.findFirst({ where: { postId: id } });
             if (!question) {
                 question = await prisma.question.create({
@@ -336,10 +388,75 @@ export const updatePost = async (req: Request, res: Response) => {
                 }
             }
             finalOptions = await prisma.option.findMany({ where: { questionId: question.id } });
-        } else if (normalizePostType(post.type) === 'Poll') {
+        } else if (['Poll', 'Challenge', 'Prediction', 'Debate'].includes(typeStr)) {
             const question = await prisma.question.findFirst({ where: { postId: id } });
             if (question) {
                 finalOptions = await prisma.option.findMany({ where: { questionId: question.id } });
+            }
+        } else if (['Quiz', 'Survey'].includes(typeStr) && data.sections) {
+            const oldSections = await prisma.section.findMany({ where: { postId: id }, include: { questions: true } });
+            const oldSectionIds = oldSections.map(s => s.id);
+            const oldQuestionIds = oldSections.flatMap(s => s.questions.map(q => q.id));
+
+            if (oldQuestionIds.length > 0) {
+                await prisma.option.deleteMany({ where: { questionId: { in: oldQuestionIds } } });
+                await prisma.question.deleteMany({ where: { id: { in: oldQuestionIds } } });
+            }
+            if (oldSectionIds.length > 0) {
+                await prisma.section.deleteMany({ where: { id: { in: oldSectionIds } } });
+            }
+
+            for (const [sIdx, sec] of data.sections.entries()) {
+                const section = await prisma.section.create({
+                    data: {
+                        title: sec.title || `Section ${sIdx + 1}`,
+                        order: sec.order !== undefined ? sec.order : sIdx,
+                        postId: post.id
+                    }
+                });
+
+                for (const [qIdx, q] of (sec.questions || []).entries()) {
+                    const question = await prisma.question.create({
+                        data: {
+                            text: q.text,
+                            type: q.type || 'multiple_choice',
+                            image: q.image,
+                            order: q.order !== undefined ? q.order : qIdx,
+                            isRequired: q.isRequired !== undefined ? q.isRequired : true,
+                            postId: post.id,
+                            sectionId: section.id
+                        }
+                    });
+
+                    if (q.options?.length) {
+                        await prisma.option.createMany({
+                            data: q.options.map((opt: any) => ({
+                                text: opt.text,
+                                image: opt.image,
+                                isCorrect: q.correctOptionId === opt.id,
+                                isRating: opt.isRating || false,
+                                ratingValue: opt.ratingValue || 0,
+                                questionId: question.id
+                            }))
+                        });
+                    }
+                }
+            }
+
+            const fullyPopulatedPost = await prisma.post.findUnique({
+                where: { id: post.id },
+                include: { sections: { include: { questions: { include: { options: true } } } } }
+            });
+            if (fullyPopulatedPost?.sections) {
+                finalSections = fullyPopulatedPost.sections;
+            }
+        } else if (['Quiz', 'Survey'].includes(typeStr)) {
+            const fullyPopulatedPost = await prisma.post.findUnique({
+                where: { id: post.id },
+                include: { sections: { include: { questions: { include: { options: true } } } } }
+            });
+            if (fullyPopulatedPost?.sections) {
+                finalSections = fullyPopulatedPost.sections;
             }
         }
 
@@ -349,6 +466,7 @@ export const updatePost = async (req: Request, res: Response) => {
             participants: post.responseCount,
             coverImage: post.image,
             options: finalOptions,
+            sections: finalSections.length > 0 ? finalSections : undefined,
             allowAnonymous: post.allowAnonymous,
             forceAnonymous: (post as any).forceAnonymous,
             demographics: parseJsonArray(post.demographics)

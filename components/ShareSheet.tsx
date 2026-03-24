@@ -79,7 +79,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
       const canvas = await html2canvas(posterRef.current, {
         useCORS: true,
         allowTaint: true,
-        scale: 2.5,
+        scale: 3,
         backgroundColor: '#ffffff',
         logging: false,
       });
@@ -158,19 +158,6 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
         <ChevronRight size={20} className="text-gray-300" />
       </button>
 
-      <button
-        onClick={() => setStep('contacts')}
-        className="w-full flex items-center gap-4 p-4 hover:bg-gray-50 rounded-2xl border border-gray-100 transition-all active:scale-95 group"
-      >
-        <div className="w-12 h-12 rounded-xl bg-green-50 text-green-600 flex items-center justify-center shrink-0 group-hover:bg-green-600 group-hover:text-white transition-colors">
-          <MessageSquare size={24} />
-        </div>
-        <div className="text-left flex-1">
-          <h4 className="font-bold text-gray-900">Send via Message</h4>
-          <p className="text-xs text-gray-500">DM following and contacts</p>
-        </div>
-        <ChevronRight size={20} className="text-gray-300" />
-      </button>
 
       <button
         onClick={handleSystemShare}
@@ -227,46 +214,56 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
 
   return (
     <div className="flex flex-col h-full bg-white relative overflow-hidden">
-      {/* Hidden container that replicates the EXACT card view for screenshot capture */}
+      {/* Hidden container that replicates a high-quality static card view for screenshot capture */}
       <div className="fixed top-[-9999px] left-0 pointer-events-none" aria-hidden="true">
-        <div ref={posterRef} className="w-[420px] bg-white pb-4">
-          {/* Force the standard SurveyCard to render for a high-quality capture */}
-          <SurveyCard
-            survey={survey.sharedFrom || survey}
-            isDetailView={false}
-          />
-          <div className="px-6 py-4 border-t border-gray-50 bg-gray-50/30 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-green-500 rounded-xl flex items-center justify-center text-white shadow-lg">
-                <PieChart size={20} strokeWidth={2.5} />
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest leading-none">Social</span>
-                <span className="text-[10px] font-black text-green-500 uppercase tracking-widest leading-none">Insight</span>
-              </div>
+        <div ref={posterRef} className="w-[500px] bg-white pb-6 pt-4 px-4 flex flex-col gap-4">
+            {/* Custom Header with App Logo */}
+            <div className="flex items-center justify-between px-2 mb-2">
+               <img src="/logo.png" className="h-[36px] object-contain" alt="SocialInsight" />
+               <div className="text-right">
+                 <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-0.5">Join the conversation</p>
+                 <p className="text-[12px] font-bold text-gray-500">socialinsight.app</p>
+               </div>
             </div>
-            <div className="text-right">
-              <p className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em] mb-1">Join the conversation</p>
-              <p className="text-[11px] font-black text-gray-900">socialinsight.app</p>
+
+            {/* Content Card */}
+            <div className="border border-gray-100 rounded-3xl overflow-hidden shadow-sm bg-white p-5">
+                <div className="flex items-center gap-3 mb-4">
+                    <img src={survey.author.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(survey.author.name)}`} className="w-10 h-10 rounded-full border border-gray-100 object-cover" alt="" />
+                    <div>
+                        <h4 className="font-bold text-gray-900 leading-tight">{survey.author.name}</h4>
+                        <p className="text-xs text-gray-400">@{survey.author.name.toLowerCase().replace(/\s+/g, '')}</p>
+                    </div>
+                </div>
+                
+                <h3 className="font-black text-xl text-gray-900 leading-tight mb-2 whitespace-pre-wrap">{survey.title}</h3>
+                {survey.description && (
+                    <p className="text-gray-600 text-[15px] leading-relaxed mb-4 whitespace-pre-wrap">{survey.description}</p>
+                )}
+                
+                {survey.coverImage && (
+                    <img src={survey.coverImage} className="w-full aspect-video object-cover rounded-2xl mb-4" alt="Cover" />
+                )}
+
+                <div className="flex items-center gap-4 text-gray-500 text-sm mt-4 pt-4 border-t border-gray-50">
+                    <div className="flex items-center gap-1.5 font-semibold">
+                        <Users size={16} className="text-blue-500" />
+                        <span>{survey.participants?.toLocaleString() || 0} Votes</span>
+                    </div>
+                    {survey.type === 'Quiz' && (
+                        <div className="flex items-center gap-1.5 font-semibold">
+                            <Star size={16} className="text-amber-500" />
+                            <span>Quiz</span>
+                        </div>
+                    )}
+                </div>
             </div>
-          </div>
         </div>
       </div>
 
       <div className="flex-1 overflow-hidden">
         {step === 'menu' && renderMenu()}
         {step === 'repost-editor' && renderRepostEditor()}
-        {step === 'contacts' && (
-          <div className="flex flex-col h-full p-4 animate-in slide-in-from-right-4 duration-300">
-            <button onClick={() => setStep('menu')} className="mb-6 text-blue-600 text-sm font-bold flex items-center gap-1 active:scale-95 transition-transform"><ArrowLeft size={18} /> Back to menu</button>
-            <div className="flex-1 flex flex-col items-center justify-center text-gray-400 text-center px-8">
-              <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-6">
-                <Users size={40} className="opacity-10" />
-              </div>
-              <p className="text-sm font-bold uppercase tracking-widest opacity-40">Direct Messaging coming soon</p>
-            </div>
-          </div>
-        )}
         {step === 'feed' && (
           <div className="h-full flex flex-col items-center justify-center p-8 text-center animate-in zoom-in duration-300">
             <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-6">
