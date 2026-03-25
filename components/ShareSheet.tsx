@@ -217,7 +217,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
   return (
     <div className="flex flex-col h-full bg-white relative overflow-hidden">
       {/* Hidden container that replicates a high-quality static card view for screenshot capture */}
-      <div className="fixed top-[-9999px] left-0 pointer-events-none" aria-hidden="true">
+      <div className="fixed top-0 left-[-9999px] pointer-events-none" aria-hidden="true">
         <div ref={posterRef} className="w-[500px] bg-white pb-6 pt-4 px-4 flex flex-col gap-4">
             {/* Custom Header with App Logo */}
             <div className="flex items-center justify-between px-2 mb-2">
@@ -235,6 +235,18 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
                 .capture-target-wrapper .border-t.border-gray-100.mt-2 { display: none !important; }
                 .capture-target-wrapper .lucide-more-horizontal { display: none !important; }
                 .capture-target-wrapper button { pointer-events: none !important; }
+                .capture-target-wrapper .truncate { 
+                  overflow: visible !important; 
+                  text-overflow: clip !important; 
+                  white-space: normal !important; 
+                  line-height: normal !important;
+                  padding-top: 1px !important;
+                  padding-bottom: 1px !important;
+                }
+                .capture-target-wrapper img.rounded-full {
+                  border-radius: 50% !important;
+                  overflow: visible !important;
+                }
               `}</style>
               <SurveyCard 
                  survey={survey} 
