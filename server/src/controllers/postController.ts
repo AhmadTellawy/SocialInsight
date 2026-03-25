@@ -994,6 +994,81 @@ export const sharePost = async (req: Request, res: Response) => {
     }
 };
 
+export const updateComment = async (req: Request, res: Response) => {
+    const id = req.params.id as string; // Comment ID
+    const { text, userId } = req.body;
+    try {
+        const comment = await prisma.comment.findUnique({ where: { id } });
+        if (!comment) {
+            return res.status(404).json({ error: 'Comment not found' });
+        }
+        if (comment.userId !== userId) {
+            return res.status(403).json({ error: 'Unauthorized to edit this comment' });
+        }
+
+        const updated = await prisma.comment.update({
+            where: { id },
+            data: { text },
+            include: {
+                user: { select: SAFE_USER_SELECT },
+                likesList: { select: { userId: true } },
+                replies: {
+                    include: { user: { select: SAFE_USER_SELECT }, likesList: { select: { userId: true } } }
+                }
+            }
+        });
+
+        res.json(mapComment(updated, userId));
+    } catch (error) {
+        console.error("Update Comment Error:", error);
+        res.status(500).json({ error: 'Failed to update comment' });
+    }
+};
+
+export const deleteComment = async (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    const { userId } = req.body;
+    try {
+        const comment = await prisma.comment.findUnique({ where: { id } });
+        if (!comment) {
+            return res.status(404).json({ error: 'Comment not found' });
+        }
+        if (comment.userId !== userId) {
+            return res.status(403).json({ error: 'Unauthorized to delete this comment' });
+        }
+
+        // Must decrement commentsCount on the Post explicitly if needed, but the aggregate does it real-time.
+        // Wait, aggregateMetrics fetches commentsCount natively if comments array is counted?
+        // Actually the schema has `commentsCount` on the Post, but let's see how it was incremented.
+        // createComment did: await tx.post.update({ where: { id: postId }, data: { commentsCount: { increment: 1 } } });
+        await prisma.$transaction(async (tx) => {
+            // Cascade delete likes and replies manually since no explicit schema cascade
+            const replies = await tx.comment.findMany({ where: { parentId: id } });
+            const replyIds = replies.map(r => r.id);
+            if (replyIds.length > 0) {
+                await tx.commentLike.deleteMany({ where: { commentId: { in: replyIds } } });
+                await tx.comment.deleteMany({ where: { parentId: id } });
+            }
+            await tx.commentLike.deleteMany({ where: { commentId: id } });
+
+            await tx.comment.delete({ where: { id } });
+
+            // Decrement post commentsCount
+            // We only decrement for root comments or we decrement for all? createComment increments for both.
+            // Let's decrement by (1 + replies.length)
+            await tx.post.update({
+                where: { id: comment.postId },
+                data: { commentsCount: { decrement: 1 + replyIds.length } }
+            });
+        });
+
+        res.json({ success: true, message: 'Comment deleted successfully' });
+    } catch (error) {
+        console.error("Delete Comment Error:", error);
+        res.status(500).json({ error: 'Failed to delete comment' });
+    }
+};
+
 export const deletePost = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const { userId } = req.body;

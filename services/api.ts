@@ -139,6 +139,26 @@ export const api = {
         return response.json();
     },
 
+    updateComment: async (commentId: string, text: string, userId: string) => {
+        const response = await fetch(`${API_BASE_URL}/posts/comments/${commentId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, userId })
+        });
+        if (!response.ok) throw new Error('Failed to update comment');
+        return response.json();
+    },
+
+    deleteComment: async (commentId: string, userId: string) => {
+        const response = await fetch(`${API_BASE_URL}/posts/comments/${commentId}`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId })
+        });
+        if (!response.ok) throw new Error('Failed to delete comment');
+        return response.json();
+    },
+
     updateUser: async (userId: string, data: any) => {
         const response = await fetch(`${API_BASE_URL}/users/${userId}`, {
             method: 'PUT',

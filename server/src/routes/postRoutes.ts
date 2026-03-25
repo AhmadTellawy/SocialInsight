@@ -20,7 +20,9 @@ import {
     getCommentLikers,
     sharePost,
     deletePost,
-    getPostAnalytics
+    getPostAnalytics,
+    updateComment,
+    deleteComment
 } from '../controllers/postController';
 
 const router = Router();
@@ -29,6 +31,8 @@ router.get('/drafts', getDrafts);
 router.get('/saved', getSavedPosts);
 router.post('/comments/:id/like', likeComment);
 router.get('/comments/:id/likes', getCommentLikers);
+router.put('/comments/:id', updateComment);
+router.delete('/comments/:id', deleteComment);
 router.get('/', getPosts);
 router.get('/:id', getPostById);
 router.post('/', createPost);

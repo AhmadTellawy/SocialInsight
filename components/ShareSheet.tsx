@@ -86,7 +86,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
 
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png', 1.0));
 
-      const shareText = `Check out this ${survey.type} on SocialInsight! ${postUrl}`;
+      const shareText = `Check out this ${survey.type} on SocialInsight!`;
 
       if (blob && navigator.share) {
         const file = new File([blob], `SocialInsight_${survey.type}.png`, { type: 'image/png' });
@@ -127,7 +127,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
       if (navigator.share) {
         await navigator.share({
           title: `SocialInsight`,
-          text: `Check out this ${survey.type} on SocialInsight! ${postUrl}`,
+          text: `Check out this ${survey.type} on SocialInsight!`,
           url: postUrl
         });
         onClose();
