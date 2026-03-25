@@ -674,60 +674,75 @@ const App: React.FC = () => {
     return whenPasses;
   }, [selectedSurvey, userProfile]);
 
-  const touchStartX = useRef<number | null>(null);
-  const touchStartY = useRef<number | null>(null);
+  React.useEffect(() => {
+    let startX: number | null = null;
+    let startY: number | null = null;
 
-  const handleGlobalTouchStart = (e: React.TouchEvent) => {
-    if (e.touches.length === 1) {
-      touchStartX.current = e.touches[0].clientX;
-      touchStartY.current = e.touches[0].clientY;
-    }
-  };
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+      }
+    };
 
-  const handleGlobalTouchEnd = (e: React.TouchEvent) => {
-    if (touchStartX.current === null || touchStartY.current === null) return;
-    
-    // Only accept edge swipes (within 40px of left or right edge)
-    const startX = touchStartX.current;
-    if (startX > 40 && startX < window.innerWidth - 40) {
-      touchStartX.current = null;
-      touchStartY.current = null;
-      return;
-    }
+    const handleTouchMove = (e: TouchEvent) => {
+      if (startX === null || startY === null) return;
+      
+      // If swipe started from the very edge (iOS Safari / PWA back gesture zone)
+      if (startX < 40 || startX > window.innerWidth - 40) {
+        const diffX = e.touches[0].clientX - startX;
+        const diffY = e.touches[0].clientY - startY;
+        
+        // If it's a primarily horizontal swipe, aggressively prevent browser traversal
+        if (Math.abs(diffX) > Math.abs(diffY)) {
+          if (e.cancelable) {
+            e.preventDefault();
+          }
+        }
+      }
+    };
 
-    const touchEndX = e.changedTouches[0].clientX;
-    const touchEndY = e.changedTouches[0].clientY;
-    
-    const diffX = touchEndX - startX;
-    const diffY = touchEndY - touchStartY.current;
-    
-    // Check if it's a significant horizontal swipe (distance > 50px)
-    if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
-       if (selectedSurveyId || selectedProfile || selectedGroupId) {
-         // Subpage -> Swipe back
-         if (selectedSurveyId) setSelectedSurveyId(null);
-         else if (selectedProfile) setSelectedProfile(null);
-         else if (selectedGroupId) setSelectedGroupId(null);
-       } else if (activeTab === 'home') {
-         // Home page -> trigger refresh
-         if (pullToRefreshRef.current) pullToRefreshRef.current.triggerRefresh();
-       }
-    }
-    
-    touchStartX.current = null;
-    touchStartY.current = null;
-  };
+    const handleTouchEnd = (e: TouchEvent) => {
+      if (startX === null || startY === null) return;
+      
+      if (startX < 40 || startX > window.innerWidth - 40) {
+        const endX = e.changedTouches[0].clientX;
+        const endY = e.changedTouches[0].clientY;
+        const diffX = endX - startX;
+        const diffY = endY - startY;
+        
+        if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
+           if (selectedSurveyId || selectedProfile || selectedGroupId) {
+             setSelectedSurveyId(null);
+             setSelectedProfile(null);
+             setSelectedGroupId(null);
+           } else if (activeTab === 'home') {
+             if (pullToRefreshRef.current) pullToRefreshRef.current.triggerRefresh();
+           }
+        }
+      }
+      startX = null;
+      startY = null;
+    };
+
+    document.addEventListener('touchstart', handleTouchStart, { passive: true });
+    // IMPORTANT: passive: false is REQUIRED to stop iOS/Android from closing the PWA tab!
+    document.addEventListener('touchmove', handleTouchMove, { passive: false });
+    document.addEventListener('touchend', handleTouchEnd);
+
+    return () => {
+      document.removeEventListener('touchstart', handleTouchStart);
+      document.removeEventListener('touchmove', handleTouchMove);
+      document.removeEventListener('touchend', handleTouchEnd);
+    };
+  }, [selectedSurveyId, selectedProfile, selectedGroupId, activeTab]);
 
   if (!isAuthenticated || !userProfile) {
     return <AuthScreen onAuthSuccess={handleAuthSuccess} />;
   }
 
   return (
-    <div 
-      className="min-h-screen bg-gray-100/50 flex justify-center items-center"
-      onTouchStart={handleGlobalTouchStart}
-      onTouchEnd={handleGlobalTouchEnd}
-    >
+    <div className="min-h-screen bg-gray-100/50 flex justify-center items-center">
       <div className="w-full max-w-md bg-white h-[100dvh] max-h-screen relative shadow-2xl overflow-hidden flex flex-col">
 
         {showUsersTable ? (

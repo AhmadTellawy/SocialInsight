@@ -218,7 +218,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
     <div className="flex flex-col h-full bg-white relative overflow-hidden">
       {/* Hidden container that replicates a high-quality static card view for screenshot capture */}
       <div className="fixed top-0 left-[-9999px] pointer-events-none" aria-hidden="true">
-        <div ref={posterRef} className="w-[500px] bg-white pb-6 pt-4 px-4 flex flex-col gap-4">
+        <div ref={posterRef} className="w-[500px] bg-white pb-12 pt-8 px-6 flex flex-col gap-4">
             {/* Custom Header with App Logo */}
             <div className="flex items-center justify-between px-2 mb-2">
                <img src="/logo.png" className="h-[36px] object-contain" alt="SocialInsight" />
@@ -239,9 +239,9 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
                   overflow: visible !important; 
                   text-overflow: clip !important; 
                   white-space: normal !important; 
-                  line-height: normal !important;
-                  padding-top: 1px !important;
-                  padding-bottom: 1px !important;
+                  line-height: 1.5 !important;
+                  padding-top: 4px !important;
+                  padding-bottom: 4px !important;
                 }
                 .capture-target-wrapper img.rounded-full {
                   border-radius: 50% !important;
