@@ -706,7 +706,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     setSurveyCompleted(true);
 
     if (onVote) {
-      onVote(survey.id, [], isCurrentlyAnonymous, undefined);
+      const allSelectedOptionIds = Object.values(finalAnswers).flat().filter(Boolean) as string[];
+      onVote(survey.id, allSelectedOptionIds, undefined, isCurrentlyAnonymous);
     }
 
     if (onSurveyProgress) {

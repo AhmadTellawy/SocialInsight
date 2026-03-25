@@ -73,7 +73,7 @@ export const getPosts = async (req: Request, res: Response) => {
                 },
                 questions: { include: { options: true } },
                 sections: { include: { questions: { include: { options: true } } } },
-                responses: userId ? { where: { userId }, take: 1 } : false,
+                responses: userId ? { where: { userId }, take: 1, include: { answers: true } } : false,
                 likes: userId ? { where: { userId }, take: 1 } : false,
                 savedBy: userId ? { where: { userId }, take: 1 } : false,
                 sharedFrom: {
@@ -87,23 +87,34 @@ export const getPosts = async (req: Request, res: Response) => {
             orderBy: { createdAt: 'desc' }
         });
 
-        const mappedPosts = posts.map((s: any) => ({
-            ...s,
-            likes: s.likesCount,
-            participants: s.responseCount,
-            coverImage: s.image,
-            hasParticipated: userId ? (s.responses && s.responses.length > 0) : false,
-            isLiked: userId ? (s.likes && s.likes.length > 0) : false,
-            isSaved: userId ? (s.savedBy && s.savedBy.length > 0) : false,
-            options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(s.type) || '') && s.questions.length > 0 ? s.questions[0].options : [],
-            author: {
-                ...s.author,
-                isFollowing: userId ? (s.author.following && s.author.following.length > 0) : false
-            },
-            allowAnonymous: s.allowAnonymous,
-            forceAnonymous: (s as any).forceAnonymous,
-            demographics: parseJsonArray(s.demographics),
-        }));
+        const mappedPosts = posts.map((s: any) => {
+            const userResponse = s.responses?.[0];
+            const userAnswers = userResponse?.answers || [];
+            return {
+                ...s,
+                likes: s.likesCount,
+                participants: s.responseCount,
+                coverImage: s.image,
+                hasParticipated: userId ? !!userResponse : false,
+                userSelectedOptions: userAnswers.map((a: any) => a.optionId),
+                userProgress: {
+                    currentQuestionIndex: 0,
+                    answers: userAnswers.reduce((acc: any, ans: any) => ({ ...acc, [ans.questionId]: ans.optionId }), {}),
+                    followUpAnswers: {},
+                    historyStack: []
+                },
+                isLiked: userId ? (s.likes && s.likes.length > 0) : false,
+                isSaved: userId ? (s.savedBy && s.savedBy.length > 0) : false,
+                options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(s.type) || '') && s.questions.length > 0 ? s.questions[0].options : [],
+                author: {
+                    ...s.author,
+                    isFollowing: userId ? (s.author.following && s.author.following.length > 0) : false
+                },
+                allowAnonymous: s.allowAnonymous,
+                forceAnonymous: !!(s as any).forceAnonymous,
+                demographics: parseJsonArray(s.demographics),
+            };
+        });
         res.json(mappedPosts);
     } catch (error) {
         console.error(error);
@@ -129,6 +140,9 @@ export const getPostById = async (req: Request, res: Response) => {
                 },
                 questions: { include: { options: true } },
                 sections: { include: { questions: { include: { options: true } } } },
+                responses: userId ? { where: { userId }, take: 1, include: { answers: true } } : false,
+                likes: userId ? { where: { userId }, take: 1 } : false,
+                savedBy: userId ? { where: { userId }, take: 1 } : false,
                 comments: {
                     include: {
                         user: { select: SAFE_USER_SELECT },
@@ -151,18 +165,30 @@ export const getPostById = async (req: Request, res: Response) => {
         }
 
         const p = post as any;
+        const userResponse = p.responses?.[0];
+        const userAnswers = userResponse?.answers || [];
         const mappedPost = {
             ...p,
             likes: p.likesCount,
             participants: p.responseCount,
             coverImage: p.image,
+            hasParticipated: userId ? !!userResponse : false,
+            userSelectedOptions: userAnswers.map((a: any) => a.optionId),
+            userProgress: {
+                currentQuestionIndex: 0,
+                answers: userAnswers.reduce((acc: any, ans: any) => ({ ...acc, [ans.questionId]: ans.optionId }), {}),
+                followUpAnswers: {},
+                historyStack: []
+            },
+            isLiked: userId ? (p.likes && p.likes.length > 0) : false,
+            isSaved: userId ? (p.savedBy && p.savedBy.length > 0) : false,
             options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(p.type) || '') && p.questions.length > 0 ? p.questions[0].options : [],
             author: {
                 ...p.author,
                 isFollowing: userId ? (p.author.following && p.author.following.length > 0) : false
             },
             allowAnonymous: p.allowAnonymous,
-            forceAnonymous: (p as any).forceAnonymous,
+            forceAnonymous: !!(p as any).forceAnonymous,
             demographics: parseJsonArray(p.demographics)
         };
         res.json(mappedPost);
@@ -515,7 +541,10 @@ export const getSavedPosts = async (req: Request, res: Response) => {
                 post: {
                     include: {
                         author: { select: SAFE_USER_SELECT },
-                        questions: { include: { options: true } }
+                        questions: { include: { options: true } },
+                        sections: { include: { questions: { include: { options: true } } } },
+                        responses: userId ? { where: { userId }, take: 1, include: { answers: true } } : false,
+                        likes: userId ? { where: { userId }, take: 1 } : false
                     }
                 }
             },
@@ -523,17 +552,28 @@ export const getSavedPosts = async (req: Request, res: Response) => {
         });
         const posts = saved.map((s: any) => {
             const p: any = s.post;
+            const userResponse = p.responses?.[0];
+            const userAnswers = userResponse?.answers || [];
             return {
                 ...p,
                 likes: p.likesCount,
                 participants: p.responseCount,
                 coverImage: p.image,
+                hasParticipated: userId ? !!userResponse : false,
+                userSelectedOptions: userAnswers.map((a: any) => a.optionId),
+                userProgress: {
+                    currentQuestionIndex: 0,
+                    answers: userAnswers.reduce((acc: any, ans: any) => ({ ...acc, [ans.questionId]: ans.optionId }), {}),
+                    followUpAnswers: {},
+                    historyStack: []
+                },
+                isLiked: userId ? (p.likes && p.likes.length > 0) : false,
                 isSaved: true,
+                options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(p.type) || '') && p.questions.length > 0 ? p.questions[0].options : [],
                 allowAnonymous: p.allowAnonymous,
-                forceAnonymous: p.forceAnonymous,
+                forceAnonymous: !!p.forceAnonymous,
                 demographics: parseJsonArray(p.demographics),
-                targetGroups: parseJsonArray(p.targetGroups),
-                options: normalizePostType(p.type) === 'Poll' && p.questions.length > 0 ? p.questions[0].options : []
+                targetGroups: parseJsonArray(p.targetGroups)
             };
         });
         res.json(posts);

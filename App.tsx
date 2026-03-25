@@ -134,6 +134,7 @@ const App: React.FC = () => {
       if (surveys.length === 0) setIsFeedLoading(true);
       // 1. Fetch surveys with participation status
       const surveysData = await api.getSurveys(currentUserId);
+      localStorage.setItem('si_feed_cache', JSON.stringify(surveysData));
       setSurveys(surveysData.map(s => normalizeSurvey(s, currentUser)));
 
       if (currentUserId) {
@@ -156,6 +157,17 @@ const App: React.FC = () => {
       const user = JSON.parse(savedUser);
       setUserProfile(user);
       setIsAuthenticated(true);
+
+      const cachedFeed = localStorage.getItem('si_feed_cache');
+      if (cachedFeed) {
+        try {
+          const parsedCache = JSON.parse(cachedFeed);
+          setSurveys(parsedCache.map((s: any) => normalizeSurvey(s, user)));
+          setIsFeedLoading(false);
+        } catch (e) {
+          console.error("Failed to parse feed cache", e);
+        }
+      }
 
       // Fetch fresh user profile to get latest stats
       api.getUser(user.id).then(freshUser => {
