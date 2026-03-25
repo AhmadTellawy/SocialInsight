@@ -17,7 +17,33 @@ interface HomeScreenProps {
   contextGroups?: any[];
   onGroupClick?: (groupId: string) => void;
   onLike?: (surveyId: string, isLiked: boolean) => void;
+  isLoading?: boolean;
 }
+
+export const SurveyCardSkeleton = () => (
+  <div className="bg-white rounded-3xl p-4 mb-4 shadow-sm border border-gray-100 mx-4">
+    <div className="animate-pulse">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-10 h-10 bg-gray-200 rounded-full shrink-0" />
+        <div className="flex-1">
+          <div className="w-24 h-3 bg-gray-200 rounded-full mb-2" />
+          <div className="w-16 h-2 bg-gray-100 rounded-full" />
+        </div>
+      </div>
+      <div className="w-3/4 h-3 bg-gray-200 rounded-full mb-3" />
+      <div className="w-1/2 h-3 bg-gray-100 rounded-full mb-6" />
+      <div className="space-y-3">
+        {[1, 2, 3].map(i => (
+          <div key={i} className="w-full h-12 bg-gray-50 rounded-2xl border border-gray-100" />
+        ))}
+      </div>
+    </div>
+  </div>
+);
+
+export const TrendingSkeleton = () => (
+  <div className="min-w-[130px] w-[130px] aspect-[4/5] rounded-[2rem] bg-gray-100 animate-pulse border border-gray-50 shrink-0" />
+);
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
   surveys,
@@ -31,7 +57,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   onCloseShareSheet,
   contextGroups = [],
   onGroupClick,
-  onLike
+  onLike,
+  isLoading
 }) => {
   const { trendingSurveys, regularSurveys } = useMemo(() => {
     const trending: Survey[] = [];
@@ -46,6 +73,26 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     }
     return { trendingSurveys: trending, regularSurveys: regular };
   }, [surveys]);
+
+  if (isLoading && surveys.length === 0) {
+    return (
+      <div className="pb-20 animate-in fade-in duration-500 bg-white">
+        <div className="py-6 pt-4">
+            <div className="px-5 flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-32 h-4 bg-gray-200 rounded-full animate-pulse" />
+              </div>
+            </div>
+            <div className="flex gap-4 overflow-x-auto px-4 pb-2 no-scrollbar">
+               {[1,2,3,4].map(i => <TrendingSkeleton key={i} />)}
+            </div>
+        </div>
+        <div className="space-y-1 mt-2">
+           {[1,2,3].map(i => <SurveyCardSkeleton key={i} />)}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="pb-20 animate-in fade-in duration-500">

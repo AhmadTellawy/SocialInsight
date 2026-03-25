@@ -83,6 +83,7 @@ const App: React.FC = () => {
 
 
   const [surveys, setSurveys] = useState<Survey[]>([]);
+  const [isFeedLoading, setIsFeedLoading] = useState(true);
 
   const normalizeSurvey = (raw: Partial<Survey>, currentUser?: UserProfile | null): Survey => ({
     ...raw,
@@ -130,6 +131,7 @@ const App: React.FC = () => {
 
   const fetchData = async (currentUserId?: string, currentUser?: UserProfile | null) => {
     try {
+      if (surveys.length === 0) setIsFeedLoading(true);
       // 1. Fetch surveys with participation status
       const surveysData = await api.getSurveys(currentUserId);
       setSurveys(surveysData.map(s => normalizeSurvey(s, currentUser)));
@@ -141,6 +143,8 @@ const App: React.FC = () => {
     } catch (error) {
       console.error("Failed to load initial data", error);
       setSurveys([]);
+    } finally {
+      setIsFeedLoading(false);
     }
   };
 
@@ -590,6 +594,7 @@ const App: React.FC = () => {
           <HomeScreen
             surveys={surveys}
             userProfile={userProfile}
+            isLoading={isFeedLoading}
             onSurveyClick={handleSurveyClick}
             onVote={handleVote}
             onSurveyProgress={handleSurveyProgress}
