@@ -674,12 +674,60 @@ const App: React.FC = () => {
     return whenPasses;
   }, [selectedSurvey, userProfile]);
 
+  const touchStartX = useRef<number | null>(null);
+  const touchStartY = useRef<number | null>(null);
+
+  const handleGlobalTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 1) {
+      touchStartX.current = e.touches[0].clientX;
+      touchStartY.current = e.touches[0].clientY;
+    }
+  };
+
+  const handleGlobalTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartX.current === null || touchStartY.current === null) return;
+    
+    // Only accept edge swipes (within 40px of left or right edge)
+    const startX = touchStartX.current;
+    if (startX > 40 && startX < window.innerWidth - 40) {
+      touchStartX.current = null;
+      touchStartY.current = null;
+      return;
+    }
+
+    const touchEndX = e.changedTouches[0].clientX;
+    const touchEndY = e.changedTouches[0].clientY;
+    
+    const diffX = touchEndX - startX;
+    const diffY = touchEndY - touchStartY.current;
+    
+    // Check if it's a significant horizontal swipe (distance > 50px)
+    if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
+       if (selectedSurveyId || selectedProfile || selectedGroupId) {
+         // Subpage -> Swipe back
+         if (selectedSurveyId) setSelectedSurveyId(null);
+         else if (selectedProfile) setSelectedProfile(null);
+         else if (selectedGroupId) setSelectedGroupId(null);
+       } else if (activeTab === 'home') {
+         // Home page -> trigger refresh
+         if (pullToRefreshRef.current) pullToRefreshRef.current.triggerRefresh();
+       }
+    }
+    
+    touchStartX.current = null;
+    touchStartY.current = null;
+  };
+
   if (!isAuthenticated || !userProfile) {
     return <AuthScreen onAuthSuccess={handleAuthSuccess} />;
   }
 
   return (
-    <div className="min-h-screen bg-gray-100/50 flex justify-center items-center">
+    <div 
+      className="min-h-screen bg-gray-100/50 flex justify-center items-center"
+      onTouchStart={handleGlobalTouchStart}
+      onTouchEnd={handleGlobalTouchEnd}
+    >
       <div className="w-full max-w-md bg-white h-[100dvh] max-h-screen relative shadow-2xl overflow-hidden flex flex-col">
 
         {showUsersTable ? (

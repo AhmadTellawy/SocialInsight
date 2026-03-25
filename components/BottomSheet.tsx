@@ -17,6 +17,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
   const [translateY, setTranslateY] = useState(0);
   
   const sheetRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const startY = useRef<number>(0);
 
   useEffect(() => {
@@ -46,7 +47,9 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
     const target = e.target as HTMLElement;
     const isHandle = target.closest('.drag-handle');
     
-    if (isHandle || (sheetRef.current && sheetRef.current.scrollTop <= 0)) {
+    const isAtTop = scrollContainerRef.current ? scrollContainerRef.current.scrollTop <= 0 : true;
+
+    if (isHandle || isAtTop) {
       setIsDragging(true);
       startY.current = e.touches[0].clientY;
     }
@@ -86,6 +89,9 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
       <div 
         ref={sheetRef}
         className="relative w-full max-w-md bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col transform transition-transform"
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
         style={{ 
           transform: isOpen ? `translateY(${translateY}px)` : 'translateY(100%)',
           transition: isDragging ? 'none' : 'transform 0.35s cubic-bezier(0.15, 0.85, 0.35, 1)',
@@ -97,18 +103,16 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
         aria-modal="true"
       >
         {/* Drag Handle Header */}
-        <div 
-          className="w-full flex flex-col items-center justify-center pt-3 pb-2 shrink-0 z-10 bg-white rounded-t-3xl border-b border-gray-50 drag-handle touch-none" 
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
-        >
+        <div className="w-full flex flex-col items-center justify-center pt-3 pb-2 shrink-0 z-10 bg-white rounded-t-3xl border-b border-gray-50 drag-handle touch-none">
            <div className="w-10 h-1 bg-gray-300 rounded-full mb-2" />
            {title && <h3 className="text-sm font-bold text-gray-800 pb-1">{title}</h3>}
         </div>
         
         {/* Content Container */}
-        <div className={`flex-1 ${customLayout ? 'overflow-hidden flex flex-col' : 'px-4 pb-8 sm:p-6 overflow-y-auto overscroll-contain no-scrollbar'}`}>
+        <div 
+          ref={scrollContainerRef}
+          className={`flex-1 ${customLayout ? 'overflow-hidden flex flex-col' : 'px-4 pb-8 sm:p-6 overflow-y-auto overscroll-contain no-scrollbar'}`}
+        >
           {children}
         </div>
       </div>
