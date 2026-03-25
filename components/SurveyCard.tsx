@@ -339,13 +339,12 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     setIsCommentsOpen(false);
     setIsShareSheetOpen(false);
     setIsParticipantsOpen(false);
-    setIsLikersSheetOpen(false);
     setIsAnonInfoOpen(false);
     setExpandedImageUrl(null);
-    setFollowUpAnswers(survey.userProgress?.followUpAnswers || {});
-    setSurveyAnswers(survey.userProgress?.answers || {});
-    setHistoryStack(survey.userProgress?.historyStack || []);
-    setCurrentQIndex(survey.userProgress?.currentQuestionIndex || 0);
+    setFollowUpAnswers(sourceSurface === 'SHARE_CAPTURE' ? {} : (survey.userProgress?.followUpAnswers || {}));
+    setSurveyAnswers(sourceSurface === 'SHARE_CAPTURE' ? {} : (survey.userProgress?.answers || {}));
+    setHistoryStack(sourceSurface === 'SHARE_CAPTURE' ? [] : (survey.userProgress?.historyStack || []));
+    setCurrentQIndex(sourceSurface === 'SHARE_CAPTURE' ? 0 : (survey.userProgress?.currentQuestionIndex || 0));
     setReviewQIndex(0);
     setChallengeActivePair([]);
     setChallengeEliminatedIds(new Set());
@@ -364,23 +363,32 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     }
 
     setLocalOptions(opts);
-    setHasVoted(survey.hasParticipated || false);
-    setSelectedOptions(survey.userSelectedOptions || []);
 
-    if (survey.hasParticipated) {
-      setSurveyCompleted(true);
-      if (survey.type === SurveyType.QUIZ) {
-        calculateAndSetScore(survey.userProgress?.answers || {});
-      }
-    } else {
+    if (sourceSurface === 'SHARE_CAPTURE') {
+      setHasVoted(false);
+      setSelectedOptions([]);
       setSurveyCompleted(false);
-      const hasAnswers = survey.userProgress?.answers && Object.keys(survey.userProgress.answers).length > 0;
-      if (!hasAnswers && !quizStarted) {
-        setQuizStarted(false);
-      }
+      setQuizStarted(false);
       setQuizStats(null);
+    } else {
+      setHasVoted(survey.hasParticipated || false);
+      setSelectedOptions(survey.userSelectedOptions || []);
+
+      if (survey.hasParticipated) {
+        setSurveyCompleted(true);
+        if (survey.type === SurveyType.QUIZ) {
+          calculateAndSetScore(survey.userProgress?.answers || {});
+        }
+      } else {
+        setSurveyCompleted(false);
+        const hasAnswers = survey.userProgress?.answers && Object.keys(survey.userProgress.answers).length > 0;
+        if (!hasAnswers && !quizStarted) {
+          setQuizStarted(false);
+        }
+        setQuizStats(null);
+      }
     }
-  }, [survey.id, survey.hasParticipated]);
+  }, [survey.id, survey.hasParticipated, sourceSurface]);
 
   useEffect(() => {
     setIsSaved(survey.isSaved || false);
