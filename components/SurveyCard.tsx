@@ -360,6 +360,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
     if (survey.type === SurveyType.CHALLENGE && s.randomPairing && !survey.hasParticipated) {
       opts.sort(() => Math.random() - 0.5);
+    } else if (s.pollChoiceType === 'rating') {
+      opts.sort((a, b) => (b.ratingValue || 0) - (a.ratingValue || 0));
     }
 
     setLocalOptions(opts);
@@ -746,6 +748,15 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const resultsPrivate = sourceSurvey.resultsVisibility === 'Private';
   const shouldShowResults = (hasVoted || isExpired) && !resultsPrivate;
   const totalVotes = (localOptions || []).reduce((acc, curr) => acc + curr.votes, 0);
+
+  const averageRating = useMemo(() => {
+    if (!isRating || totalVotes === 0) return 0;
+    const totalScore = (localOptions || []).reduce((acc, curr) => {
+      const val = curr.ratingValue || 0;
+      return acc + (val * curr.votes);
+    }, 0);
+    return (totalScore / totalVotes).toFixed(1);
+  }, [localOptions, isRating, totalVotes]);
 
   const handlePollOptionClick = (optionId: string) => {
     if (hasVoted || isExpired) return;
@@ -1725,6 +1736,12 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 <Users size={12} />
                 <span>{sourceSurvey.participants.toLocaleString()} {survey.type === SurveyType.POLL ? 'votes' : 'responses'}</span>
               </button>
+              {isRating && Number(averageRating) > 0 && (
+                <div className="flex items-center gap-1 text-yellow-600 bg-yellow-50 px-2 py-0.5 rounded-md border border-yellow-200/60 shadow-sm pt-[3px]">
+                  <Star size={11} fill="currentColor" />
+                  <span className="font-bold text-[10px] uppercase tracking-widest">{averageRating} Average</span>
+                </div>
+              )}
               {timeLeftStr && (
                 <div className="flex items-center gap-1">
                   {isExpired ? <XCircle size={12} className="text-red-500" /> : <Clock size={12} />}
