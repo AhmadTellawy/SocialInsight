@@ -213,16 +213,19 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const [isDemoSuccess, setIsDemoSuccess] = useState(false);
   const [imageError, setImageError] = useState(false);
 
+  const sourceSurvey = survey.sharedFrom || survey;
+
   const [isAnonToggled, setIsAnonToggled] = useState(false);
   const [showShareToast, setShowShareToast] = useState(false);
-  const [isLiked, setIsLiked] = useState(survey.isLiked || false);
-  const [likeCount, setLikeCount] = useState(survey.likes || 0);
-  const [commentsCount, setCommentsCount] = useState(survey.commentsCount || 0);
+  const [isLiked, setIsLiked] = useState(sourceSurvey.isLiked || survey.isLiked || false);
+  const [likeCount, setLikeCount] = useState(sourceSurvey.likes || survey.likes || 0);
+  const [commentsCount, setCommentsCount] = useState(sourceSurvey.commentsCount || survey.commentsCount || 0);
 
   useEffect(() => {
-    setIsLiked(survey.isLiked || false);
-    setLikeCount(survey.likes || 0);
-  }, [survey.isLiked, survey.likes]);
+    setIsLiked(sourceSurvey.isLiked || survey.isLiked || false);
+    setLikeCount(sourceSurvey.likes || survey.likes || 0);
+    setCommentsCount(sourceSurvey.commentsCount || survey.commentsCount || 0);
+  }, [sourceSurvey.isLiked, sourceSurvey.likes, sourceSurvey.commentsCount, survey.isLiked, survey.likes, survey.commentsCount]);
 
   // Tracking Refs
   const viewRef = useRef<HTMLDivElement>(null);
@@ -230,7 +233,6 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const totalDwellTime = useRef<number>(0);
   const viewLogged = useRef<boolean>(false);
 
-  const sourceSurvey = survey.sharedFrom || survey;
   const isCurrentlyAnonymous = sourceSurvey.forceAnonymous ? true : (sourceSurvey.allowAnonymous ? isAnonToggled : false);
 
   const [localOptions, setLocalOptions] = useState<Option[]>([]);
@@ -393,10 +395,10 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   }, [survey.id, survey.hasParticipated, sourceSurface]);
 
   useEffect(() => {
-    setIsSaved(survey.isSaved || false);
-    setIsLiked(survey.isLiked || false);
-    setLikeCount(survey.likes || 0);
-  }, [survey.id, survey.isSaved, survey.isLiked, survey.likes]);
+    setIsSaved(sourceSurvey.isSaved || survey.isSaved || false);
+    setIsLiked(sourceSurvey.isLiked || survey.isLiked || false);
+    setLikeCount(sourceSurvey.likes || survey.likes || 0);
+  }, [sourceSurvey.id, sourceSurvey.isSaved, sourceSurvey.isLiked, sourceSurvey.likes, survey.id, survey.isSaved, survey.isLiked, survey.likes]);
 
   // E1: POST_VIEW Tracking
   useEffect(() => {
@@ -513,7 +515,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       } else {
         setHasVoted(true);
         setSelectedOptions([winnerId]);
-        if (onVote) onVote(survey.id, [winnerId], isCurrentlyAnonymous);
+        if (onVote) onVote(sourceSurvey.id, [winnerId], isCurrentlyAnonymous);
         setIsChallengeTransitioning(null);
         startDemographicFlow();
       }
@@ -593,7 +595,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     setSurveyAnswers(newAnswers);
 
     if (onSurveyProgress) {
-      onSurveyProgress(survey.id, {
+      onSurveyProgress(sourceSurvey.id, {
         index: currentQIndex,
         answers: newAnswers,
         followUpAnswers,
@@ -607,7 +609,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     const newFollowUpAnswers = { ...followUpAnswers, [optionId]: text };
     setFollowUpAnswers(newFollowUpAnswers);
     if (onSurveyProgress) {
-      onSurveyProgress(survey.id, {
+      onSurveyProgress(sourceSurvey.id, {
         index: currentQIndex,
         answers: surveyAnswers,
         followUpAnswers: newFollowUpAnswers,
@@ -666,7 +668,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       setHistoryStack(newStack);
       setCurrentQIndex(nextStepIndex);
       if (onSurveyProgress) {
-        onSurveyProgress(survey.id, {
+        onSurveyProgress(sourceSurvey.id, {
           index: nextStepIndex,
           answers: currentAnswers,
           followUpAnswers,
@@ -687,7 +689,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       setHistoryStack(newStack);
       setCurrentQIndex(prevIndex);
       if (onSurveyProgress) {
-        onSurveyProgress(survey.id, {
+        onSurveyProgress(sourceSurvey.id, {
           index: prevIndex,
           answers: surveyAnswers,
           followUpAnswers,
@@ -709,11 +711,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
     if (onVote) {
       const allSelectedOptionIds = Object.values(finalAnswers).flat().filter(Boolean) as string[];
-      onVote(survey.id, allSelectedOptionIds, undefined, isCurrentlyAnonymous);
+      onVote(sourceSurvey.id, allSelectedOptionIds, undefined, isCurrentlyAnonymous);
     }
 
     if (onSurveyProgress) {
-      onSurveyProgress(survey.id, {
+      onSurveyProgress(sourceSurvey.id, {
         index: currentQIndex,
         answers: finalAnswers,
         followUpAnswers,
@@ -773,7 +775,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       const targetOpt = localOptions.find(o => o.id === optionId);
       // If clarification is needed, we WAIT for the Participate button
       if (!targetOpt?.withFollowUp && !showParticipateButton && onVote) {
-        onVote(survey.id, [optionId], isCurrentlyAnonymous);
+        onVote(sourceSurvey.id, [optionId], isCurrentlyAnonymous);
         setHasVoted(true);
         startDemographicFlow();
       }
@@ -816,25 +818,25 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     setLikeCount(prev => nextLiked ? prev + 1 : prev - 1);
 
     if (onLike) {
-      onLike(survey.id, nextLiked);
+      onLike(sourceSurvey.id, nextLiked);
     }
 
     Analytics.track({
       event_type: nextLiked ? 'LIKE' : 'UNLIKE',
-      post_id: survey.id,
+      post_id: sourceSurvey.id,
       actor_user_id: userProfile.id,
       source_surface: sourceSurface,
       position_in_feed: positionInFeed
     });
 
     try {
-      await api.likeSurvey(survey.id, userProfile.id);
+      await api.likeSurvey(sourceSurvey.id, userProfile.id);
     } catch (error) {
       console.error("Failed to like survey", error);
       setIsLiked(previousLiked);
       setLikeCount(prev => previousLiked ? prev + 1 : prev - 1);
       if (onLike) {
-        onLike(survey.id, previousLiked);
+        onLike(sourceSurvey.id, previousLiked);
       }
     }
   };
@@ -846,11 +848,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     const nextStatus = !previous;
     setIsSaved(nextStatus);
     try {
-      const res = await api.savePost(survey.id, userProfile.id);
+      const res = await api.savePost(sourceSurvey.id, userProfile.id);
       setIsSaved(res.saved);
       Analytics.track({
         event_type: 'SAVE_TOGGLE',
-        post_id: survey.id,
+        post_id: sourceSurvey.id,
         new_state: res.saved,
         actor_user_id: userProfile.id,
         source_surface: sourceSurface,
@@ -1208,7 +1210,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                     <textarea value={answer || ''} onChange={(e) => {
                       const newAnswers = { ...surveyAnswers, [currentQuestion.id]: e.target.value };
                       setSurveyAnswers(newAnswers);
-                      if (onSurveyProgress) onSurveyProgress(survey.id, { index: currentQIndex, answers: newAnswers, followUpAnswers, historyStack, isAnonymous: isCurrentlyAnonymous });
+                      if (onSurveyProgress) onSurveyProgress(sourceSurvey.id, { index: currentQIndex, answers: newAnswers, followUpAnswers, historyStack, isAnonymous: isCurrentlyAnonymous });
                     }} placeholder="Type your answer here..." className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm min-h-[120px] resize-none" autoFocus />
                   </div>
                 )}
@@ -1443,7 +1445,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
               if (!hasVoted && onVote) {
                 // Identify the newly created custom option to pass to the parent
                 const customOpt = localOptions.find(o => o.id.startsWith('custom-') && selectedOptions.includes(o.id));
-                onVote(survey.id, selectedOptions, isCurrentlyAnonymous, customOpt);
+                onVote(sourceSurvey.id, selectedOptions, isCurrentlyAnonymous, customOpt);
                 setHasVoted(true);
                 startDemographicFlow();
               }
@@ -1932,7 +1934,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       </BottomSheet>
       <BottomSheet isOpen={isCommentsOpen} onClose={() => setIsCommentsOpen(false)} customLayout={true} title={`Comments (${commentsCount})`}>
         <CommentsSheet
-          surveyId={survey.id}
+          surveyId={sourceSurvey.id}
           userProfile={userProfile}
           onAuthorClick={onAuthorClick}
           sourceSurface={sourceSurface}
@@ -1948,7 +1950,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           sourceSurface={sourceSurface}
         />
       </BottomSheet>
-      <BottomSheet isOpen={isParticipantsOpen} onClose={() => setIsParticipantsOpen(false)} customLayout={true} title="Participants" height="90dvh"><ParticipantsSheet survey={survey} onAuthorClick={onAuthorClick} /></BottomSheet>
+      <BottomSheet isOpen={isParticipantsOpen} onClose={() => setIsParticipantsOpen(false)} customLayout={true} title="Participants" height="90dvh"><ParticipantsSheet survey={sourceSurvey} onAuthorClick={onAuthorClick} /></BottomSheet>
       <BottomSheet isOpen={isAnonInfoOpen} onClose={() => setIsAnonInfoOpen(false)} title="Anonymous Responses">
         <div className="p-4 space-y-6 text-center">
           <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto shadow-sm">
