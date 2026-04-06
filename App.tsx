@@ -134,7 +134,11 @@ const App: React.FC = () => {
       if (surveys.length === 0) setIsFeedLoading(true);
       // 1. Fetch surveys with participation status
       const surveysData = await api.getSurveys(currentUserId);
-      localStorage.setItem('si_feed_cache', JSON.stringify(surveysData));
+      try {
+        localStorage.setItem('si_feed_cache', JSON.stringify(surveysData));
+      } catch (storageError) {
+        console.warn('Failed to cache feed to localStorage due to quota limits');
+      }
       setSurveys(surveysData.map(s => normalizeSurvey(s, currentUser)));
 
       if (currentUserId) {
