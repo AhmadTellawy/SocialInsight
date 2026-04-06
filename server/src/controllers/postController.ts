@@ -42,6 +42,7 @@ export const normalizePostType = (type?: string): string | undefined => {
 
 export const getPosts = async (req: Request, res: Response) => {
     const userId = req.query.userId as any;
+    const guestId = req.query.guestId as any;
     try {
         const posts = await prisma.post.findMany({
             where: {
@@ -51,6 +52,7 @@ export const getPosts = async (req: Request, res: Response) => {
                 } : {}),
                 OR: [
                     { targetAudience: { not: 'Followers' } },
+                    { targetAudience: null },
                     { authorId: userId },
                     {
                         author: {
@@ -73,7 +75,11 @@ export const getPosts = async (req: Request, res: Response) => {
                 },
                 questions: { include: { options: true } },
                 sections: { include: { questions: { include: { options: true } } } },
-                responses: userId ? { where: { userId }, take: 1, include: { answers: true } } : false,
+                responses: (userId || guestId) ? { 
+                    where: userId ? { userId } : { guestId }, 
+                    take: 1, 
+                    include: { answers: true } 
+                } : false,
                 likes: userId ? { where: { userId }, take: 1 } : false,
                 savedBy: userId ? { where: { userId }, take: 1 } : false,
                 sharedFrom: {
@@ -140,6 +146,7 @@ export const getPosts = async (req: Request, res: Response) => {
 export const getPostById = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const userId = req.query.userId as any;
+    const guestId = req.query.guestId as any;
     try {
         const post = await prisma.post.findFirst({
             where: { id, isDeleted: false },
@@ -155,7 +162,11 @@ export const getPostById = async (req: Request, res: Response) => {
                 },
                 questions: { include: { options: true } },
                 sections: { include: { questions: { include: { options: true } } } },
-                responses: userId ? { where: { userId }, take: 1, include: { answers: true } } : false,
+                responses: (userId || guestId) ? { 
+                    where: userId ? { userId } : { guestId }, 
+                    take: 1, 
+                    include: { answers: true } 
+                } : false,
                 likes: userId ? { where: { userId }, take: 1 } : false,
                 savedBy: userId ? { where: { userId }, take: 1 } : false,
                 comments: {
@@ -202,7 +213,7 @@ export const getPostById = async (req: Request, res: Response) => {
             likes: p.likesCount,
             participants: p.responseCount,
             coverImage: p.image,
-            hasParticipated: userId ? !!userResponse : false,
+            hasParticipated: (userId || guestId) ? !!userResponse : false,
             userSelectedOptions: userAnswers.map((a: any) => a.optionId),
             userProgress: {
                 currentQuestionIndex: 0,
@@ -614,7 +625,13 @@ export const getSavedPosts = async (req: Request, res: Response) => {
 
 export const votePost = async (req: Request, res: Response) => {
     const id = req.params.id as string;
-    const { userId, optionId, optionIds, isAnonymous } = req.body;
+    const { userId, guestId, optionId, optionIds, isAnonymous } = req.body;
+    const guestIp = req.ip || req.socket?.remoteAddress;
+
+    if (!userId && !guestId) {
+        res.status(400).json({ error: 'Authentication or Guest ID is required' });
+        return;
+    }
     try {
         const post = await prisma.post.findUnique({
             where: { id },
@@ -656,15 +673,28 @@ export const votePost = async (req: Request, res: Response) => {
         }
 
         await prisma.$transaction(async (tx) => {
-            const existingResponse = await tx.response.findUnique({
-                where: { userId_postId: { userId, postId: id } }
+            const whereClause: any = { postId: id };
+            if (userId) whereClause.userId = userId;
+            else if (guestId) whereClause.guestId = guestId;
+
+            const existingResponse = await tx.response.findFirst({
+                where: whereClause
             });
 
-            const response = await tx.response.upsert({
-                where: { userId_postId: { userId, postId: id } },
-                update: {},
-                create: { postId: id, userId, isAnonymous: finalIsAnonymous }
-            });
+            let response;
+            if (existingResponse) {
+                response = existingResponse;
+            } else {
+                response = await tx.response.create({
+                    data: { 
+                        postId: id, 
+                        userId: userId || null, 
+                        guestId: guestId || null, 
+                        ipAddress: guestIp || null, 
+                        isAnonymous: finalIsAnonymous 
+                    }
+                });
+            }
 
             for (const opt of dbOptions) {
                 const existingAnswer = await tx.answer.findUnique({

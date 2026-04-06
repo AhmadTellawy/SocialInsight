@@ -212,15 +212,18 @@ model Option {
 
 model Response {
   id          String   @id @default(uuid())
-  userId      String
+  userId      String?
+  guestId     String?
+  ipAddress   String?
   postId      String
   isAnonymous Boolean  @default(false)
   timestamp   DateTime @default(now())
   answers     Answer[]
   post        Post     @relation(fields: [postId], references: [id])
-  user        User     @relation(fields: [userId], references: [id])
-
-  @@unique([userId, postId])
+  user        User?    @relation(fields: [userId], references: [id])
+  
+  @@index([guestId])
+  @@index([postId])
 }
 
 model Answer {

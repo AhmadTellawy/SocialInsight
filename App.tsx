@@ -549,8 +549,8 @@ const App: React.FC = () => {
 
     // Server Call
     try {
-      if (userProfile?.id && optionIds.length > 0) {
-        api.vote(surveyId, optionIds, userProfile.id, isAnonymous)
+      if (optionIds.length > 0) {
+        api.vote(surveyId, optionIds, userProfile?.id, isAnonymous)
           .catch(error => console.error("Failed to submit votes to server:", error));
       }
     } catch (error) {

@@ -2,9 +2,21 @@ import { normalizeSurvey } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
+export const getGuestId = () => {
+    let guestId = localStorage.getItem('si_guest_id');
+    if (!guestId) {
+        guestId = typeof crypto !== 'undefined' && crypto.randomUUID 
+            ? crypto.randomUUID() 
+            : Math.random().toString(36).substring(2, 15);
+        localStorage.setItem('si_guest_id', guestId);
+    }
+    return guestId;
+};
+
 export const api = {
     getSurveys: async (userId?: string) => {
-        const url = userId ? `${API_BASE_URL}/posts?userId=${userId}` : `${API_BASE_URL}/posts`;
+        const guestId = !userId ? getGuestId() : undefined;
+        const url = userId ? `${API_BASE_URL}/posts?userId=${userId}` : `${API_BASE_URL}/posts?guestId=${guestId}`;
         const response = await fetch(url);
         if (!response.ok) throw new Error('Failed to fetch posts');
         const data = await response.json();
@@ -12,7 +24,8 @@ export const api = {
     },
 
     getSurveyById: async (id: string, userId?: string) => {
-        const url = userId ? `${API_BASE_URL}/posts/${id}?userId=${userId}` : `${API_BASE_URL}/posts/${id}`;
+        const guestId = !userId ? getGuestId() : undefined;
+        const url = userId ? `${API_BASE_URL}/posts/${id}?userId=${userId}` : `${API_BASE_URL}/posts/${id}?guestId=${guestId}`;
         const response = await fetch(url);
         if (!response.ok) throw new Error('Failed to fetch post');
         const data = await response.json();
@@ -54,12 +67,13 @@ export const api = {
         return normalizeSurvey(resData);
     },
 
-    vote: async (postId: string, optionIds: string | string[], userId: string, isAnonymous: boolean = false) => {
+    vote: async (postId: string, optionIds: string | string[], userId?: string, isAnonymous: boolean = false) => {
         const payloadOptionIds = Array.isArray(optionIds) ? optionIds : [optionIds];
+        const guestId = !userId ? getGuestId() : undefined;
         const response = await fetch(`${API_BASE_URL}/posts/${postId}/vote`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ optionIds: payloadOptionIds, userId, isAnonymous })
+            body: JSON.stringify({ optionIds: payloadOptionIds, userId, guestId, isAnonymous })
         });
         if (!response.ok) {
             const errorData = await response.json();
