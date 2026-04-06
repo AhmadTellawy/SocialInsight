@@ -97,6 +97,10 @@ export const getPosts = async (req: Request, res: Response) => {
                     ...s.sharedFrom,
                     options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(s.sharedFrom.type) || '') && s.sharedFrom.questions?.length > 0 ? s.sharedFrom.questions[0].options : [],
                     demographics: parseJsonArray(s.sharedFrom.demographics),
+                    author: s.sharedFrom.author ? {
+                        ...s.sharedFrom.author,
+                        isFollowing: userId ? (s.sharedFrom.author.following && s.sharedFrom.author.following.length > 0) : false
+                    } : undefined
                 };
             }
 
@@ -185,6 +189,10 @@ export const getPostById = async (req: Request, res: Response) => {
                 ...p.sharedFrom,
                 options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(p.sharedFrom.type) || '') && p.sharedFrom.questions?.length > 0 ? p.sharedFrom.questions[0].options : [],
                 demographics: parseJsonArray(p.sharedFrom.demographics),
+                author: p.sharedFrom.author ? {
+                    ...p.sharedFrom.author,
+                    isFollowing: userId ? (p.sharedFrom.author.following && p.sharedFrom.author.following.length > 0) : false
+                } : undefined
             };
         }
 
@@ -1041,6 +1049,10 @@ export const sharePost = async (req: Request, res: Response) => {
                 ...p.sharedFrom,
                 options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(p.sharedFrom.type) || '') && p.sharedFrom.questions?.length > 0 ? p.sharedFrom.questions[0].options : [],
                 demographics: parseJsonArray(p.sharedFrom.demographics),
+                author: p.sharedFrom.author ? {
+                    ...p.sharedFrom.author,
+                    isFollowing: userId ? (p.sharedFrom.author.following && p.sharedFrom.author.following.length > 0) : false
+                } : undefined
             };
         }
 

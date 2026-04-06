@@ -974,7 +974,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
   const authorName = sourceSurvey.author?.name || 'Anonymous';
   const authorAvatar = sourceSurvey.author?.avatar || 'https://picsum.photos/40/40';
-  const isMe = !!userProfile?.id && sourceSurvey.author?.id === userProfile.id;
+  const isMyPost = !!userProfile?.id && survey.author?.id === userProfile.id;
+  const isMySource = !!userProfile?.id && sourceSurvey.author?.id === userProfile.id;
 
 
 
@@ -1861,7 +1862,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
           <hr className="my-2 border-gray-100" />
 
-          {isMe && (
+          {isMyPost && (
             <button onClick={handleDeletePost} className="w-full flex items-center gap-4 p-3.5 hover:bg-red-50 rounded-xl transition-colors text-left group">
               <div className="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center group-hover:bg-red-200">
                 <Trash2 size={22} strokeWidth={1.5} />
@@ -1873,7 +1874,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             </button>
           )}
 
-          {!isMe && (
+          {!isMySource && (
             <button onClick={handleFollowInteraction} className="w-full flex items-center gap-4 p-3.5 hover:bg-gray-50 rounded-xl transition-colors text-left group">
               <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isInteracted ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'} group-hover:bg-gray-200`}>
                 {isInteracted ? <UserMinus size={22} strokeWidth={1.5} /> : <UserPlus size={22} strokeWidth={1.5} />}
