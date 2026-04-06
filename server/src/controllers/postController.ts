@@ -90,8 +90,19 @@ export const getPosts = async (req: Request, res: Response) => {
         const mappedPosts = posts.map((s: any) => {
             const userResponse = s.responses?.[0];
             const userAnswers = userResponse?.answers || [];
+            
+            let mappedSharedFrom: any = undefined;
+            if (s.sharedFrom) {
+                mappedSharedFrom = {
+                    ...s.sharedFrom,
+                    options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(s.sharedFrom.type) || '') && s.sharedFrom.questions?.length > 0 ? s.sharedFrom.questions[0].options : [],
+                    demographics: parseJsonArray(s.sharedFrom.demographics),
+                };
+            }
+
             return {
                 ...s,
+                sharedFrom: mappedSharedFrom || s.sharedFrom,
                 likes: s.likesCount,
                 participants: s.responseCount,
                 coverImage: s.image,
@@ -167,8 +178,19 @@ export const getPostById = async (req: Request, res: Response) => {
         const p = post as any;
         const userResponse = p.responses?.[0];
         const userAnswers = userResponse?.answers || [];
+        
+        let mappedSharedFrom: any = undefined;
+        if (p.sharedFrom) {
+            mappedSharedFrom = {
+                ...p.sharedFrom,
+                options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(p.sharedFrom.type) || '') && p.sharedFrom.questions?.length > 0 ? p.sharedFrom.questions[0].options : [],
+                demographics: parseJsonArray(p.sharedFrom.demographics),
+            };
+        }
+
         const mappedPost = {
             ...p,
+            sharedFrom: mappedSharedFrom || p.sharedFrom,
             likes: p.likesCount,
             participants: p.responseCount,
             coverImage: p.image,
@@ -1012,8 +1034,19 @@ export const sharePost = async (req: Request, res: Response) => {
         }
 
         const p = createdPost as any;
+        
+        let mappedSharedFrom: any = undefined;
+        if (p.sharedFrom) {
+            mappedSharedFrom = {
+                ...p.sharedFrom,
+                options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(p.sharedFrom.type) || '') && p.sharedFrom.questions?.length > 0 ? p.sharedFrom.questions[0].options : [],
+                demographics: parseJsonArray(p.sharedFrom.demographics),
+            };
+        }
+
         const mappedPost = {
             ...p,
+            sharedFrom: mappedSharedFrom || p.sharedFrom,
             likes: p.likesCount || 0,
             participants: p.responseCount || 0,
             coverImage: p.image,
