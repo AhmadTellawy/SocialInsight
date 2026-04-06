@@ -10,7 +10,8 @@ export interface GeneratedSurveyData {
 
 export const generateSurveyFromTopic = async (topic: string): Promise<GeneratedSurveyData | null> => {
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' && process.env ? process.env.API_KEY : undefined);
+    const ai = new GoogleGenAI({ apiKey: apiKey });
     
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",

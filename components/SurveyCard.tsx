@@ -1684,7 +1684,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                           </div>
                         </>
                       )}
-                      {(!isMe && !survey.sharedFrom) && renderInteractionButton()}
+                      {((userProfile?.id !== survey.author?.id) && !survey.sharedFrom) && renderInteractionButton()}
                     </div>
                     <div className="flex items-center flex-wrap gap-y-1 gap-x-1 text-xs text-gray-500 mt-0.5 font-medium">
                       <span>{getTimeAgo(sourceSurvey.createdAt)}</span>
