@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Survey, SurveyType, Option, LogicRule, UserProfile } from '../types';
-import { Clock, Users, TrendingUp, MoreHorizontal, Share2, CheckCircle2, Flag, EyeOff, Bookmark, Link as LinkIcon, UserMinus, ThumbsUp, MessageCircle, FileText, PieChart, HelpCircle, Globe, Lock, Plus, AlertCircle, ImageIcon, ChevronLeft, ChevronRight, Check, ArrowRight, XCircle, Trophy, Target, X, ListChecks, Zap, Timer, Play, Repeat, UserPlus, PlusCircle, Shield, Shuffle, Heart, Search, Send, Star, Maximize2, BarChart3, Trash2 } from 'lucide-react';
+import { Clock, Users, TrendingUp, MoreHorizontal, Share2, CheckCircle2, Flag, EyeOff, Bookmark, Link as LinkIcon, UserMinus, ThumbsUp, MessageCircle, FileText, PieChart, HelpCircle, Globe, Lock, Plus, AlertCircle, ImageIcon, ChevronLeft, ChevronRight, Check, ArrowRight, XCircle, Trophy, Target, X, ListChecks, Zap, Timer, Play, Repeat, UserPlus, PlusCircle, Shield, Shuffle, Heart, Search, Send, Star, Maximize2, BarChart3, Trash2, Edit3 } from 'lucide-react';
 import { Analytics } from '../utils/analytics';
 import { BottomSheet } from './BottomSheet';
 import { CommentsSheet } from './CommentsSheet';
@@ -205,6 +205,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const [expandedImageUrl, setExpandedImageUrl] = useState<string | null>(null);
   const [portraitImages, setPortraitImages] = useState<Set<string>>(new Set());
   const [isLikersSheetOpen, setIsLikersSheetOpen] = useState(false);
+  const [isRepostMenuOpen, setIsRepostMenuOpen] = useState(false);
+  const [shareSheetInitialStep, setShareSheetInitialStep] = useState<'menu' | 'repost-editor'>('menu');
 
   // Unified Demographic Flow State
   const [isDemographicSheetOpen, setIsDemographicSheetOpen] = useState(false);
@@ -1795,6 +1797,10 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 <span className="text-[11px] font-semibold text-gray-600">{commentsCount > 0 ? formatCount(commentsCount) : 'Comment'}</span>
               </button>
             )}
+            <button onClick={() => setIsRepostMenuOpen(true)} className="flex items-center gap-1.5 py-2 px-1 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-green-600 transition-all active:scale-95 group">
+              <Repeat size={16} strokeWidth={2} className="group-hover:scale-110 transition-transform group-hover:text-green-600" />
+              <span className="text-[11px] font-semibold text-gray-600 group-hover:text-green-600">Repost</span>
+            </button>
             <button onClick={() => setIsShareSheetOpen(true)} className="flex items-center gap-1.5 py-2 px-1 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all active:scale-95 group">
               <Share2 size={16} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
               <span className="text-[11px] font-semibold text-gray-600">Share</span>
@@ -1941,14 +1947,45 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           onCommentAdded={() => setCommentsCount(prev => prev + 1)}
         />
       </BottomSheet>
-      <BottomSheet isOpen={isShareSheetOpen} onClose={() => setIsShareSheetOpen(false)}>
+      <BottomSheet isOpen={isShareSheetOpen} onClose={() => { setIsShareSheetOpen(false); setShareSheetInitialStep('menu'); }}>
         <ShareSheet
           survey={survey}
-          onClose={() => setIsShareSheetOpen(false)}
+          onClose={() => { setIsShareSheetOpen(false); setShareSheetInitialStep('menu'); }}
           onShareToFeed={onShareToFeed}
           userProfile={userProfile}
           sourceSurface={sourceSurface}
+          initialStep={shareSheetInitialStep}
         />
+      </BottomSheet>
+      <BottomSheet isOpen={isRepostMenuOpen} onClose={() => setIsRepostMenuOpen(false)} customLayout={false}>
+        <div className="p-2 space-y-1">
+          <button onClick={() => {
+             setIsRepostMenuOpen(false);
+             if (onShareToFeed) onShareToFeed(survey, '');
+          }} className="w-full flex items-center gap-4 p-4 hover:bg-gray-50 rounded-xl transition-colors text-left group">
+            <div className="w-10 h-10 rounded-full bg-green-50 text-green-600 flex items-center justify-center group-hover:bg-green-100 transition-colors">
+               <Repeat size={22} strokeWidth={1.5} />
+            </div>
+            <div>
+              <div className="font-bold text-gray-900 text-[15px]">Repost</div>
+              <div className="text-xs text-gray-500 font-normal mt-0.5">Instantly share to your feed</div>
+            </div>
+          </button>
+
+          <button onClick={() => {
+             setIsRepostMenuOpen(false);
+             setShareSheetInitialStep('repost-editor');
+             setIsShareSheetOpen(true);
+          }} className="w-full flex items-center gap-4 p-4 hover:bg-gray-50 rounded-xl transition-colors text-left group">
+            <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center group-hover:bg-blue-100 transition-colors">
+               <Edit3 size={22} strokeWidth={1.5} />
+            </div>
+            <div>
+              <div className="font-bold text-gray-900 text-[15px]">Quote</div>
+              <div className="text-xs text-gray-500 font-normal mt-0.5">Add a comment before sharing</div>
+            </div>
+          </button>
+        </div>
       </BottomSheet>
       <BottomSheet isOpen={isParticipantsOpen} onClose={() => setIsParticipantsOpen(false)} customLayout={true} title="Participants" height="90dvh"><ParticipantsSheet survey={sourceSurvey} onAuthorClick={onAuthorClick} /></BottomSheet>
       <BottomSheet isOpen={isAnonInfoOpen} onClose={() => setIsAnonInfoOpen(false)} title="Anonymous Responses">

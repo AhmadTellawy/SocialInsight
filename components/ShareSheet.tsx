@@ -18,6 +18,7 @@ interface ShareSheetProps {
   userProfile?: UserProfile;
   onAuthorClick?: (author: { name: string; avatar: string }) => void;
   sourceSurface?: string;
+  initialStep?: 'menu' | 'contacts' | 'feed' | 'repost-editor';
 }
 
 const MOCK_PEOPLE = [
@@ -29,8 +30,8 @@ const MOCK_PEOPLE = [
   { id: '6', name: 'Emma', avatar: 'https://picsum.photos/50/50?random=106' },
 ];
 
-export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShareToFeed, userProfile, sourceSurface = 'FEED' }) => {
-  const [step, setStep] = useState<'menu' | 'contacts' | 'feed' | 'repost-editor'>('menu');
+export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShareToFeed, userProfile, sourceSurface = 'FEED', initialStep = 'menu' }) => {
+  const [step, setStep] = useState<'menu' | 'contacts' | 'feed' | 'repost-editor'>(initialStep);
   const [sentTo, setSentTo] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
