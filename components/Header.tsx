@@ -6,9 +6,11 @@ interface HeaderProps {
   onProfileClick?: () => void;
   onMessagesClick?: () => void;
   userProfile?: UserProfile;
+  onLoginClick?: () => void;
+  onSignUpClick?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onProfileClick, userProfile }) => {
+export const Header: React.FC<HeaderProps> = ({ onProfileClick, userProfile, onLoginClick, onSignUpClick }) => {
   // Brand colors derived from the logo
   const BRAND_BLUE = '#0070BA';
   const BRAND_GREEN = '#00A67E';
@@ -37,22 +39,33 @@ export const Header: React.FC<HeaderProps> = ({ onProfileClick, userProfile }) =
       </div>
 
       <div className="flex items-center gap-1 text-gray-500">
-        <button
-          onClick={onProfileClick}
-          className="relative ml-1 active:scale-95 transition-transform"
-        >
-          {userProfile?.avatar ? (
-            <img
-              src={userProfile.avatar}
-              alt="Profile"
-              className="w-8 h-8 rounded-full object-cover border border-gray-100 shadow-sm"
-            />
-          ) : (
-            <div className="p-2 hover:bg-gray-50 rounded-full text-gray-500">
-              <User size={20} />
-            </div>
-          )}
-        </button>
+        {userProfile ? (
+          <button
+            onClick={onProfileClick}
+            className="relative ml-1 active:scale-95 transition-transform"
+          >
+            {userProfile.avatar ? (
+              <img
+                src={userProfile.avatar}
+                alt="Profile"
+                className="w-8 h-8 rounded-full object-cover border border-gray-100 shadow-sm"
+              />
+            ) : (
+              <div className="p-2 hover:bg-gray-50 rounded-full text-gray-500">
+                <User size={20} />
+              </div>
+            )}
+          </button>
+        ) : (
+          <div className="flex items-center gap-4 mr-2">
+            <button onClick={onLoginClick} className="text-[15px] font-bold text-[#0070BA] hover:text-blue-700 transition-colors">
+              Login
+            </button>
+            <button onClick={onSignUpClick} className="bg-[#0070BA] hover:bg-[#005ea3] text-white text-[15px] font-bold py-1.5 px-5 rounded-full transition-all active:scale-95 shadow-sm">
+              Sign Up
+            </button>
+          </div>
+        )}
       </div>
     </header>
   );

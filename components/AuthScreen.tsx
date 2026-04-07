@@ -7,11 +7,12 @@ import { SignUpFlow } from './SignUpFlow';
 
 interface AuthScreenProps {
     onAuthSuccess: (user: any) => void;
+    initialViewMode?: 'flow' | 'login';
 }
 
-export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
+export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess, initialViewMode = 'flow' }) => {
     // viewMode: 'flow' (SignUpFlow covering Welcome+Register) or 'login' (Legacy Login)
-    const [viewMode, setViewMode] = useState<'flow' | 'login'>('flow');
+    const [viewMode, setViewMode] = useState<'flow' | 'login'>(initialViewMode);
 
     // Legacy Login State
     const [authMethod, setAuthMethod] = useState<'email' | 'phone' | 'social' | null>(null);

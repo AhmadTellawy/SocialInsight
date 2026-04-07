@@ -26,7 +26,7 @@ import { Survey, Option, Notification, SurveyType, Group, UserProfile } from './
 import {
   BarChart3, PieChart, Activity, ArrowLeft, Users, MessageCircle,
   Share2, MoreVertical, Globe, ShieldCheck, ChevronRight, BarChart,
-  TrendingUp, FileText, Settings, HelpCircle, PlusCircle, PenLine, Zap
+  TrendingUp, FileText, Settings, HelpCircle, PlusCircle, PenLine, Zap, X
 } from 'lucide-react';
 
 const INITIAL_USER: UserProfile = {
@@ -53,11 +53,14 @@ const App: React.FC = () => {
   // User Profile State
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authModalType, setAuthModalType] = useState<'flow' | 'login'>('flow');
 
   const handleAuthSuccess = (user: any) => {
     localStorage.setItem('si_user', JSON.stringify(user));
     setUserProfile(user);
     setIsAuthenticated(true);
+    setAuthModalOpen(false);
     if (lastFetchedUserIdRef.current !== user.id) {
       lastFetchedUserIdRef.current = user.id;
       fetchData(user.id, user);
@@ -470,6 +473,12 @@ const App: React.FC = () => {
   };
 
   const handleTabChange = async (tab: 'home' | 'search' | 'add' | 'trends' | 'profile' | 'notifications' | 'messages') => {
+    if ((tab === 'profile' || tab === 'notifications' || tab === 'add' || tab === 'messages') && (!isAuthenticated || !userProfile)) {
+       setAuthModalType('flow');
+       setAuthModalOpen(true);
+       return;
+    }
+
     if (tab === 'home' && activeTab === 'home') {
       if (pullToRefreshRef.current) {
         if (!pullToRefreshRef.current.isAtTop()) {
@@ -758,13 +767,18 @@ const App: React.FC = () => {
     };
   }, [selectedSurveyId, selectedProfile, selectedGroupId, activeTab]);
 
-  if (!isAuthenticated || !userProfile) {
-    return <AuthScreen onAuthSuccess={handleAuthSuccess} />;
-  }
-
   return (
-    <div className="min-h-screen bg-gray-100/50 flex justify-center items-center">
-      <div className="w-full max-w-md bg-white h-[100dvh] max-h-screen relative shadow-2xl overflow-hidden flex flex-col">
+    <>
+      {authModalOpen && (
+        <div className="fixed inset-0 z-[100] bg-white animate-in zoom-in-95 duration-200">
+          <button onClick={() => setAuthModalOpen(false)} className="absolute top-4 right-4 z-[110] p-2 bg-gray-100 rounded-full hover:bg-gray-200">
+            <X size={20} />
+          </button>
+          <AuthScreen onAuthSuccess={handleAuthSuccess} initialViewMode={authModalType} />
+        </div>
+      )}
+      <div className="min-h-screen bg-gray-100/50 flex justify-center items-center">
+        <div className="w-full max-w-md bg-white h-[100dvh] max-h-screen relative shadow-2xl overflow-hidden flex flex-col">
 
         {showUsersTable ? (
           <UsersTableScreen onBack={() => setShowUsersTable(false)} onUserClick={(u) => { setShowUsersTable(false); setSelectedProfile({ id: u.id, name: u.name, avatar: u.avatar }); }} />
@@ -844,7 +858,13 @@ const App: React.FC = () => {
         ) : (
           <>
             {activeTab !== 'search' && activeTab !== 'profile' && activeTab !== 'notifications' && activeTab !== 'messages' && (
-              <Header onProfileClick={() => setActiveTab('profile')} onMessagesClick={() => setActiveTab('messages')} userProfile={userProfile} />
+              <Header 
+                onProfileClick={() => setActiveTab('profile')} 
+                onMessagesClick={() => setActiveTab('messages')} 
+                userProfile={userProfile || undefined} 
+                onLoginClick={() => { setAuthModalType('login'); setAuthModalOpen(true); }}
+                onSignUpClick={() => { setAuthModalType('flow'); setAuthModalOpen(true); }}
+              />
             )}
 
             {activeTab === 'home' ? (
@@ -888,6 +908,7 @@ const App: React.FC = () => {
         <CreateAccountModal isOpen={accountModalType !== null} onClose={() => setAccountModalType(null)} initialType={accountModalType} onGroupCreated={(g) => setUserGroups([...userGroups, g])} userProfile={userProfile} />
       </div>
     </div>
+    </>
   );
 };
 
