@@ -186,6 +186,9 @@ const App: React.FC = () => {
         setIsAuthenticated(false);
         setUserProfile(null);
       });
+    } else {
+      // Guest mode fetch
+      fetchData();
     }
   }, []);
 
