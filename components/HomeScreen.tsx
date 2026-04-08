@@ -223,10 +223,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               sourceSurface="FEED"
               onLike={onLike}
             />
-            {index === 2 && suggestedUsers.length > 0 && (
+            {index === Math.min(2, regularSurveys.length - 1) && suggestedUsers.length > 0 && (
                 <SuggestedUsersList users={suggestedUsers} onFollow={handleFollowSuggestion} onUserClick={onAuthorClick} />
             )}
-            {index === 9 && suggestedUsers.length > 5 && (
+            {index === Math.min(9, regularSurveys.length - 1) && suggestedUsers.length > 5 && index > Math.min(2, regularSurveys.length - 1) && (
                 <SuggestedUsersList users={suggestedUsers.slice(5)} onFollow={handleFollowSuggestion} onUserClick={onAuthorClick} />
             )}
           </React.Fragment>

@@ -944,8 +944,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const getPercentage = (votes: number) => totalVotes === 0 ? 0 : Math.round((votes / totalVotes) * 100);
   const formatCount = (num: number) => num >= 1000 ? (num / 1000).toFixed(1) + 'K' : num;
   const getTimeAgo = (dateStr: string) => {
+    if (!dateStr) return 'Just now';
     const now = new Date();
     const past = new Date(dateStr);
+    if (isNaN(past.getTime())) return 'Just now';
+    
     const diffInSeconds = Math.floor((now.getTime() - past.getTime()) / 1000);
     if (diffInSeconds < 60) return 'Just now';
     const diffInMinutes = Math.floor(diffInSeconds / 60);
@@ -954,7 +957,12 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     if (diffInHours < 24) return `${diffInHours}h ago`;
     const diffInDays = Math.floor(diffInHours / 24);
     if (diffInDays < 7) return `${diffInDays}d ago`;
-    return past.toLocaleDateString();
+    const diffInWeeks = Math.floor(diffInDays / 7);
+    if (diffInWeeks < 4) return `${diffInWeeks}w ago`;
+    const diffInMonths = Math.floor(diffInDays / 30);
+    if (diffInMonths < 12) return `${diffInMonths}mo ago`;
+    const diffInYears = Math.floor(diffInDays / 365);
+    return `${diffInYears}y ago`;
   };
 
   const getTypeConfig = (type: SurveyType) => {
@@ -1704,7 +1712,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
               <div className="flex-1 min-w-0">
                 <h2
                   onClick={onContentClick}
-                  className={`font-bold text-[18px] text-gray-900 leading-tight whitespace-pre-wrap ${onContentClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''} ${!isDetailView ? 'line-clamp-2' : ''}`}
+                  className={`font-semibold text-base text-gray-900 leading-tight whitespace-pre-wrap ${onContentClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''} ${!isDetailView ? 'line-clamp-2' : ''}`}
                 >
                   <RichTextRenderer text={sourceSurvey.title} inline />
                 </h2>
@@ -1722,7 +1730,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             <div className="relative mb-3">
               <p
                 onClick={onContentClick}
-                className={`text-gray-600 text-[14px] leading-relaxed whitespace-pre-wrap ${onContentClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''} ${!isDetailView ? 'line-clamp-3' : ''}`}
+                className={`text-gray-600 text-[13px] leading-relaxed whitespace-pre-wrap ${onContentClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''} ${!isDetailView ? 'line-clamp-3' : ''}`}
               >
                 <RichTextRenderer text={sourceSurvey.description} />
               </p>
