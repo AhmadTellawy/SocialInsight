@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import prisma from '../prisma';
 import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { JWT_SECRET } from '../middleware/authMiddleware';
 
 function calculateAgeGroup(dob: Date | null | undefined): string | undefined {
     if (!dob) return undefined;
@@ -143,6 +145,8 @@ export const login = async (req: Request, res: Response) => {
             where: { userId: user.id }
         });
 
+        const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '90d' });
+
         res.json({
             ...userWithoutPassword,
             demographics: demographics || {},
@@ -150,7 +154,8 @@ export const login = async (req: Request, res: Response) => {
                 followers: user.followersCount,
                 following: user.followingCount,
                 responses: 0
-            }
+            },
+            token
         });
     } catch (error) {
         console.error("Login Error:", error);
@@ -215,7 +220,8 @@ export const completeRegistration = async (req: Request, res: Response) => {
         });
 
         await prisma.pendingRegistration.delete({ where });
-        res.json({ user, token: 'demo_token_' + user.id });
+        const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '90d' });
+        res.json({ user, token });
     } catch (error: any) {
         console.error('completeRegistration error:', error);
         if (error.code === 'P2002') {

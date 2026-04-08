@@ -44,6 +44,7 @@ export const normalizePostType = (type?: string): string | undefined => {
 export const getPosts = async (req: Request, res: Response) => {
     const userId = req.query.userId as any;
     const guestId = req.query.guestId as any;
+    const authorId = req.query.authorId as string | undefined;
     const cursor = req.query.cursor as string | undefined;
     const limit = parseInt(req.query.limit as string) || 10;
     
@@ -53,7 +54,8 @@ export const getPosts = async (req: Request, res: Response) => {
             ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
             where: {
                 isDeleted: false,
-                ...(userId ? {
+                ...(authorId ? { authorId } : {}),
+                ...(userId && !authorId ? {
                     NOT: { hiddenBy: { some: { userId } } }
                 } : {}),
                 OR: [

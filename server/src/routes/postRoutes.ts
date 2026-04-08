@@ -25,30 +25,35 @@ import {
     deleteComment
 } from '../controllers/postController';
 
+import { requireAuth, optionalAuth } from '../middleware/authMiddleware';
+
 const router = Router();
 
-router.get('/drafts', getDrafts);
-router.get('/saved', getSavedPosts);
-router.post('/comments/:id/like', likeComment);
-router.get('/comments/:id/likes', getCommentLikers);
-router.put('/comments/:id', updateComment);
-router.delete('/comments/:id', deleteComment);
-router.get('/', getPosts);
-router.get('/:id', getPostById);
-router.post('/', createPost);
-router.put('/:id', updatePost);
-router.post('/:id/vote', votePost);
-router.get('/:id/participants', getParticipants);
-router.get('/:id/results', getPostResults);
-router.get('/:id/comments', getComments);
-router.post('/:id/comments', createComment);
-router.post('/:id/like', likePost);
-router.get('/:id/likes', getPostLikers);
-router.post('/:id/save', savePost);
-router.post('/:id/hide', hidePost);
-router.post('/:id/report', reportPost);
-router.post('/:id/share', sharePost);
-router.delete('/:id', deletePost);
-router.get('/:id/analytics', getPostAnalytics);
+// Optional Auth (Guests can view, Users get personalized views)
+router.get('/', optionalAuth, getPosts);
+router.get('/:id', optionalAuth, getPostById);
+router.get('/:id/participants', optionalAuth, getParticipants);
+router.get('/:id/results', optionalAuth, getPostResults);
+router.get('/:id/comments', optionalAuth, getComments);
+router.get('/:id/likes', optionalAuth, getPostLikers);
+router.get('/comments/:id/likes', optionalAuth, getCommentLikers);
+
+// Require Auth (Only logged in users can mutate data/view private lists)
+router.get('/drafts', requireAuth, getDrafts);
+router.get('/saved', requireAuth, getSavedPosts);
+router.post('/comments/:id/like', requireAuth, likeComment);
+router.put('/comments/:id', requireAuth, updateComment);
+router.delete('/comments/:id', requireAuth, deleteComment);
+router.post('/', requireAuth, createPost);
+router.put('/:id', requireAuth, updatePost);
+router.post('/:id/vote', optionalAuth, votePost); // Guest voting might be allowed based on poll settings, we keep optionalAuth
+router.post('/:id/comments', requireAuth, createComment);
+router.post('/:id/like', requireAuth, likePost);
+router.post('/:id/save', requireAuth, savePost);
+router.post('/:id/hide', requireAuth, hidePost);
+router.post('/:id/report', requireAuth, reportPost);
+router.post('/:id/share', requireAuth, sharePost);
+router.delete('/:id', requireAuth, deletePost);
+router.get('/:id/analytics', requireAuth, getPostAnalytics);
 
 export default router;

@@ -75,6 +75,7 @@ const App: React.FC = () => {
     setActiveTab('home');
     lastFetchedUserIdRef.current = null;
     localStorage.removeItem('si_user');
+    localStorage.removeItem('si_token');
   };
 
   // Creation Flow State
@@ -142,7 +143,7 @@ const App: React.FC = () => {
       const surveysData = res.data;
       
       try {
-        localStorage.setItem('si_feed_cache', JSON.stringify(surveysData));
+        localStorage.setItem('si_feed_cache', JSON.stringify(surveysData.slice(0, 10)));
       } catch (storageError) {
         console.warn('Failed to cache feed to localStorage due to quota limits');
       }
@@ -213,6 +214,16 @@ const App: React.FC = () => {
       // Guest mode fetch
       fetchData();
     }
+
+    const handleAuthExpired = () => {
+      setIsAuthenticated(false);
+      setUserProfile(null);
+      setSurveys([]); // Clear private feed
+      fetchData(); // Refetch as guest
+    };
+
+    window.addEventListener('auth_expired', handleAuthExpired);
+    return () => window.removeEventListener('auth_expired', handleAuthExpired);
   }, []);
 
   React.useEffect(() => {
@@ -249,6 +260,20 @@ const App: React.FC = () => {
   const [isGroupSettingsOpen, setIsGroupSettingsOpen] = useState(false);
   const [isProfileSettingsOpen, setIsProfileSettingsOpen] = useState(false);
   const [showUsersTable, setShowUsersTable] = useState(false);
+
+  React.useEffect(() => {
+    if (selectedProfile?.id) {
+      const currentUserId = userProfile?.id || undefined;
+      api.getSurveys(currentUserId, undefined, 10, selectedProfile.id).then(res => {
+        const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
+        setSurveys(prev => {
+          const map = new Map(prev.map(s => [s.id, s]));
+          newSurveys.forEach(s => map.set(s.id, s));
+          return Array.from(map.values());
+        });
+      }).catch(console.error);
+    }
+  }, [selectedProfile?.id]);
 
   React.useEffect(() => {
     (window as any).showUsersTable = () => setShowUsersTable(true);
@@ -532,6 +557,7 @@ const App: React.FC = () => {
     isAnonymous?: boolean,
     newOption?: Option
   ) => {
+    const previousSurveys = [...surveys];
     setSurveys(prev =>
       prev.map(s => {
         if (s.id !== surveyId) return s;
@@ -582,14 +608,13 @@ const App: React.FC = () => {
       })
     );
 
-    // Server Call
-    try {
-      if (optionIds.length > 0) {
-        api.vote(surveyId, optionIds, userProfile?.id, isAnonymous)
-          .catch(error => console.error("Failed to submit votes to server:", error));
-      }
-    } catch (error) {
-      console.error("Failed to submit vote:", error);
+    // Server Call with Rollback
+    if (optionIds.length > 0) {
+      api.vote(surveyId, optionIds, userProfile?.id, isAnonymous)
+        .catch(error => {
+            console.error("Failed to submit votes to server, rolling back:", error);
+            setSurveys(previousSurveys);
+        });
     }
   };
 
@@ -621,6 +646,7 @@ const App: React.FC = () => {
   };
 
   const handleLikePost = (surveyId: string, isLiked: boolean) => {
+    const previousSurveys = [...surveys];
     setSurveys(prev => prev.map(s => {
       if (s.id !== surveyId) return s;
       return {
@@ -629,6 +655,15 @@ const App: React.FC = () => {
         likes: isLiked ? (s.likes || 0) + 1 : Math.max(0, (s.likes || 1) - 1)
       };
     }));
+
+    // Server Call with Rollback
+    if (userProfile?.id) {
+      api.likeSurvey(surveyId, userProfile.id)
+        .catch(error => {
+          console.error("Failed to like post, rolling back:", error);
+          setSurveys(previousSurveys);
+        });
+    }
   };
 
   const getActiveCreationFlow = (type: string): 'survey' | 'poll' | 'quiz' | 'challenge' | null => {

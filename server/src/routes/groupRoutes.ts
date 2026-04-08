@@ -12,17 +12,19 @@ import {
     getGroupPosts
 } from '../controllers/groupController';
 
+import { requireAuth, optionalAuth } from '../middleware/authMiddleware';
+
 const router = Router();
 
-router.post('/', createGroup);
-router.get('/', getGroups);
-router.get('/:id', getGroupById);
-router.get('/:id/membership', getMembership);
-router.post('/:id/join', joinGroup);
-router.post('/:id/leave', leaveGroup);
-router.post('/:id/request-join', requestJoin);
-router.get('/:id/stats', getGroupStats);
-router.get('/:id/members', getGroupMembers);
-router.get('/:id/posts', getGroupPosts);
+router.post('/', requireAuth, createGroup);
+router.get('/', optionalAuth, getGroups);
+router.get('/:id', optionalAuth, getGroupById);
+router.get('/:id/membership', optionalAuth, getMembership);
+router.post('/:id/join', requireAuth, joinGroup);
+router.post('/:id/leave', requireAuth, leaveGroup);
+router.post('/:id/request-join', requireAuth, requestJoin);
+router.get('/:id/stats', optionalAuth, getGroupStats);
+router.get('/:id/members', optionalAuth, getGroupMembers);
+router.get('/:id/posts', optionalAuth, getGroupPosts);
 
 export default router;
