@@ -14,13 +14,19 @@ export const getGuestId = () => {
 };
 
 export const api = {
-    getSurveys: async (userId?: string) => {
+    getSurveys: async (userId?: string, cursor?: string, limit: number = 10) => {
         const guestId = !userId ? getGuestId() : undefined;
-        const url = userId ? `${API_BASE_URL}/posts?userId=${userId}` : `${API_BASE_URL}/posts?guestId=${guestId}`;
+        let url = userId ? `${API_BASE_URL}/posts?userId=${userId}&limit=${limit}` : `${API_BASE_URL}/posts?guestId=${guestId}&limit=${limit}`;
+        if (cursor) {
+            url += `&cursor=${cursor}`;
+        }
         const response = await fetch(url);
         if (!response.ok) throw new Error('Failed to fetch posts');
-        const data = await response.json();
-        return data.map(normalizeSurvey);
+        const json = await response.json();
+        return {
+            data: json.data.map(normalizeSurvey),
+            nextCursor: json.nextCursor
+        };
     },
 
     getSurveyById: async (id: string, userId?: string) => {
@@ -97,6 +103,12 @@ export const api = {
     getUsers: async () => {
         const response = await fetch(`${API_BASE_URL}/users`);
         if (!response.ok) throw new Error('Failed to fetch users');
+        return response.json();
+    },
+
+    getSuggestedUsers: async (userId: string) => {
+        const response = await fetch(`${API_BASE_URL}/users/${userId}/suggested`);
+        if (!response.ok) throw new Error('Failed to fetch suggested users');
         return response.json();
     },
 

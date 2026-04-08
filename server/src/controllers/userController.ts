@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { Request, Response } from 'express';
 import prisma from '../prisma';
+import { processBase64Image } from '../utils/imageProcessor';
 
 const SAFE_USER_SELECT = {
     id: true,
@@ -98,6 +99,10 @@ export const updateUser = async (req: Request, res: Response) => {
     const data = req.body;
 
     try {
+        if (data.avatar) {
+            data.avatar = await processBase64Image(data.avatar);
+        }
+
         const allowedFields = ['name', 'handle', 'avatar', 'bio', 'location', 'website', 'language', 'isPrivate', 'country', 'groupPrivacy'];
         const updateData: any = {};
         allowedFields.forEach(field => {
@@ -442,3 +447,81 @@ export const getUserGroups = async (req: Request, res: Response) => {
         res.status(500).json({ error: 'Failed to fetch user groups' });
     }
 };
+
+export const getSuggestedUsers = async (req: Request, res: Response) => {
+    const { id } = req.params;
+    try {
+        // 1. Get users I already follow to exclude them
+        const following = await prisma.follow.findMany({
+            where: { followerId: id as string },
+            select: { followingId: true }
+        });
+        const excludedIds = following.map(f => f.followingId);
+        excludedIds.push(id as string); // Also exclude myself
+
+        // 2. Find interaction-based suggestions
+        const likes = await prisma.userLike.findMany({
+            where: { userId: id as string },
+            include: { post: { select: { authorId: true } } }
+        });
+        const comments = await prisma.comment.findMany({
+            where: { authorId: id as string },
+            include: { post: { select: { authorId: true } } }
+        });
+        const responses = await prisma.response.findMany({
+            where: { userId: id as string },
+            include: { post: { select: { authorId: true } } }
+        });
+
+        // Collect unique authors we've interacted with (but don't follow)
+        const interactedAuthorIds = new Set<string>();
+        [...likes, ...comments, ...responses].forEach((interaction: any) => {
+            const authorId = interaction.post?.authorId;
+            if (authorId && !excludedIds.includes(authorId)) {
+                interactedAuthorIds.add(authorId);
+            }
+        });
+
+        const interactionSuggestions = await prisma.user.findMany({
+            where: {
+                id: { in: Array.from(interactedAuthorIds) },
+                status: 'ACTIVE'
+            },
+            take: 5,
+            select: SAFE_USER_SELECT
+        });
+
+        // Add a "reason" field
+        const suggestedList = interactionSuggestions.map(u => ({
+            ...u,
+            suggestionReason: 'تفاعلت معه مؤخراً' // Interacted recently
+        }));
+
+        // 3. If we don't have enough (less than 10), pad with popular users
+        if (suggestedList.length < 10) {
+            const currentIds = [...excludedIds, ...suggestedList.map(u => u.id)];
+            
+            const popularSuggestions = await prisma.user.findMany({
+                where: {
+                    id: { notIn: currentIds },
+                    status: 'ACTIVE'
+                },
+                orderBy: { followersCount: 'desc' },
+                take: 10 - suggestedList.length,
+                select: SAFE_USER_SELECT
+            });
+
+            suggestedList.push(...popularSuggestions.map(u => ({
+                ...u,
+                suggestionReason: 'مقترح لك' // Suggested for you
+            })));
+        }
+
+        // Shuffle the list slightly (optional) or just return
+        res.json(suggestedList);
+    } catch (error) {
+        console.error("Get Suggested Users Error:", error);
+        res.status(500).json({ error: 'Failed to fetch suggested users' });
+    }
+};
+

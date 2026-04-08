@@ -10,11 +10,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react-dom": "^19.2.3",
     "@google/genai": "^1.33.0",
+    "html2canvas": "^1.4.1",
     "lucide-react": "^0.561.0",
     "react": "^19.2.3",
-    "html2canvas": "^1.4.1"
+    "react-dom": "^19.2.3",
+    "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

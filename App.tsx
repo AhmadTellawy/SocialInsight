@@ -28,6 +28,7 @@ import {
   Share2, MoreVertical, Globe, ShieldCheck, ChevronRight, BarChart,
   TrendingUp, FileText, Settings, HelpCircle, PlusCircle, PenLine, Zap, X
 } from 'lucide-react';
+import { SocketProvider } from './components/SocketContext';
 
 const INITIAL_USER: UserProfile = {
   name: 'User Profile',
@@ -85,9 +86,6 @@ const App: React.FC = () => {
 
 
 
-  const [surveys, setSurveys] = useState<Survey[]>([]);
-  const [isFeedLoading, setIsFeedLoading] = useState(true);
-
   const normalizeSurvey = (raw: Partial<Survey>, currentUser?: UserProfile | null): Survey => ({
     ...raw,
     id: raw.id || `temp-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -130,19 +128,27 @@ const App: React.FC = () => {
     }
   });
 
+  const [surveys, setSurveys] = useState<Survey[]>([]);
+  const [isFeedLoading, setIsFeedLoading] = useState(true);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+
   const [userGroups, setUserGroups] = useState<Group[]>([]);
 
   const fetchData = async (currentUserId?: string, currentUser?: UserProfile | null) => {
     try {
       if (surveys.length === 0) setIsFeedLoading(true);
-      // 1. Fetch surveys with participation status
-      const surveysData = await api.getSurveys(currentUserId);
+      const res = await api.getSurveys(currentUserId);
+      const surveysData = res.data;
+      
       try {
         localStorage.setItem('si_feed_cache', JSON.stringify(surveysData));
       } catch (storageError) {
         console.warn('Failed to cache feed to localStorage due to quota limits');
       }
-      setSurveys(surveysData.map(s => normalizeSurvey(s, currentUser)));
+      
+      setSurveys(surveysData.map((s: any) => normalizeSurvey(s, currentUser)));
+      setNextCursor(res.nextCursor);
 
       if (currentUserId) {
         const groupsData = await api.getUserGroups(currentUserId);
@@ -153,6 +159,23 @@ const App: React.FC = () => {
       setSurveys([]);
     } finally {
       setIsFeedLoading(false);
+    }
+  };
+
+  const fetchMore = async () => {
+    if (isLoadingMore || !nextCursor) return;
+    setIsLoadingMore(true);
+    try {
+      const currentUserId = userProfile?.id || undefined;
+      const res = await api.getSurveys(currentUserId, nextCursor);
+      const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
+      
+      setSurveys(prev => [...prev, ...newSurveys]);
+      setNextCursor(res.nextCursor);
+    } catch (error) {
+      console.error("Failed to load more data", error);
+    } finally {
+      setIsLoadingMore(false);
     }
   };
 
@@ -633,6 +656,9 @@ const App: React.FC = () => {
             contextGroups={userGroups}
             onGroupClick={setSelectedGroupId}
             onLike={handleLikePost}
+            onLoadMore={fetchMore}
+            hasNextPage={!!nextCursor}
+            isLoadingMore={isLoadingMore}
           />
         );
       case 'search':
@@ -771,7 +797,7 @@ const App: React.FC = () => {
   }, [selectedSurveyId, selectedProfile, selectedGroupId, activeTab]);
 
   return (
-    <>
+    <SocketProvider user={userProfile}>
       {authModalOpen && (
         <div className="fixed inset-0 z-[100] bg-white animate-in zoom-in-95 duration-200">
           <button onClick={() => setAuthModalOpen(false)} className="absolute top-4 right-4 z-[110] p-2 bg-gray-100 rounded-full hover:bg-gray-200">
@@ -911,7 +937,7 @@ const App: React.FC = () => {
         <CreateAccountModal isOpen={accountModalType !== null} onClose={() => setAccountModalType(null)} initialType={accountModalType} onGroupCreated={(g) => setUserGroups([...userGroups, g])} userProfile={userProfile} />
       </div>
     </div>
-    </>
+    </SocketProvider>
   );
 };
 

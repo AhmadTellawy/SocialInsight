@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../prisma';
 import { notify, extractAndNotifyMentions } from '../services/notificationService';
+import { processBase64Image } from '../utils/imageProcessor';
 
 export const SAFE_USER_SELECT = {
     id: true,
@@ -43,8 +44,13 @@ export const normalizePostType = (type?: string): string | undefined => {
 export const getPosts = async (req: Request, res: Response) => {
     const userId = req.query.userId as any;
     const guestId = req.query.guestId as any;
+    const cursor = req.query.cursor as string | undefined;
+    const limit = parseInt(req.query.limit as string) || 10;
+    
     try {
         const posts = await prisma.post.findMany({
+            take: limit + 1,
+            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
             where: {
                 isDeleted: false,
                 ...(userId ? {
@@ -136,7 +142,14 @@ export const getPosts = async (req: Request, res: Response) => {
                 demographics: parseJsonArray(s.demographics),
             };
         });
-        res.json(mappedPosts);
+
+        let nextCursor: string | null = null;
+        if (mappedPosts.length > limit) {
+            const nextItem = mappedPosts.pop(); // Remove the extra item
+            nextCursor = nextItem!.id;
+        }
+
+        res.json({ data: mappedPosts, nextCursor });
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Failed to fetch posts' });
@@ -249,6 +262,33 @@ export const createPost = async (req: Request, res: Response) => {
             const defaultUser = await prisma.user.findFirst();
             authorId = defaultUser?.id;
         }
+
+        // --- PRE-PROCESS IMAGES ---
+        if (data.coverImage) data.coverImage = await processBase64Image(data.coverImage);
+        if (data.image) data.image = await processBase64Image(data.image);
+
+        if (data.options && Array.isArray(data.options)) {
+            for (let opt of data.options) {
+                if (opt.image) opt.image = await processBase64Image(opt.image);
+            }
+        }
+
+        if (data.sections && Array.isArray(data.sections)) {
+            for (let sec of data.sections) {
+                if (sec.questions && Array.isArray(sec.questions)) {
+                    for (let q of sec.questions) {
+                        if (q.image) q.image = await processBase64Image(q.image);
+                        if (q.options && Array.isArray(q.options)) {
+                            for (let opt of q.options) {
+                                if (opt.image) opt.image = await processBase64Image(opt.image);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // --------------------------
+
         const postData: any = {
             title: data.title || "Untitled",
             description: data.description || "",
@@ -378,6 +418,32 @@ export const updatePost = async (req: Request, res: Response) => {
     console.log(`[UPDATE POST] ID: ${id} | Received payload:`, JSON.stringify({ ...data, coverImage: undefined, image: undefined }, null, 2));
     console.log(`[UPDATE POST] allowAnonymous received:`, data.allowAnonymous);
     try {
+        // --- PRE-PROCESS IMAGES ---
+        if (data.coverImage) data.coverImage = await processBase64Image(data.coverImage);
+        if (data.image) data.image = await processBase64Image(data.image);
+
+        if (data.options && Array.isArray(data.options)) {
+            for (let opt of data.options) {
+                if (opt.image) opt.image = await processBase64Image(opt.image);
+            }
+        }
+
+        if (data.sections && Array.isArray(data.sections)) {
+            for (let sec of data.sections) {
+                if (sec.questions && Array.isArray(sec.questions)) {
+                    for (let q of sec.questions) {
+                        if (q.image) q.image = await processBase64Image(q.image);
+                        if (q.options && Array.isArray(q.options)) {
+                            for (let opt of q.options) {
+                                if (opt.image) opt.image = await processBase64Image(opt.image);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // --------------------------
+
         const updateData: any = {
             ...(data.title !== undefined && { title: data.title }),
             ...(data.description !== undefined && { description: data.description }),

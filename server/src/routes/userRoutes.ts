@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getUser, updateUser, getUsers, getUserAnalytics, getUserFollowers, getUserFollowing, getNotifications, markNotificationsRead, markSingleNotificationRead, getUserGroups, searchUsers } from '../controllers/userController';
+import { getUser, updateUser, getUsers, getUserAnalytics, getUserFollowers, getUserFollowing, getNotifications, markNotificationsRead, markSingleNotificationRead, getUserGroups, searchUsers, getSuggestedUsers } from '../controllers/userController';
 import { followUser, getFollowStatus } from '../controllers/followController';
 
 const router = Router();
@@ -12,6 +12,7 @@ router.post('/:userId/follow', followUser);
 router.get('/:userId/follow-status', getFollowStatus);
 router.get('/:id/analytics', getUserAnalytics);
 router.get('/:id/groups', getUserGroups);
+router.get('/:id/suggested', getSuggestedUsers);
 
 router.get('/:id/followers', getUserFollowers);
 router.get('/:id/following', getUserFollowing);

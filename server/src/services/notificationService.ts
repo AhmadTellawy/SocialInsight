@@ -1,4 +1,5 @@
 import prisma from '../prisma';
+import { getIO } from './socketService';
 
 export const notify = async (
     actorId: string | undefined | null,
@@ -76,7 +77,7 @@ export const notify = async (
 
         if (!shouldNotify) return;
 
-        await prisma.notification.create({
+        const newNotif = await prisma.notification.create({
             data: {
                 userId,
                 actorId: actorId || null,
@@ -85,9 +86,40 @@ export const notify = async (
                 targetType,
                 targetId,
                 payload: payload ? JSON.stringify(payload) : null
-            } as any
+            } as any,
+            include: {
+                actor: {
+                    select: { id: true, name: true, avatar: true }
+                }
+            }
         });
+        
         console.log(`[NOTIFICATION] Created '${type}' for user ${userId} from actor ${actorId}`);
+
+        // Emit real-time socket event
+        try {
+            const io = getIO();
+            if (io) {
+                io.to(userId).emit('newNotification', {
+                    id: newNotif.id,
+                    type: newNotif.type,
+                    message: newNotif.message,
+                    targetId: newNotif.targetId,
+                    targetType: newNotif.targetType,
+                    isRead: newNotif.isRead,
+                    timestamp: newNotif.createdAt.toISOString(),
+                    createdAt: newNotif.createdAt.getTime(),
+                    actor: newNotif.actor ? {
+                        id: newNotif.actor.id,
+                        name: newNotif.actor.name,
+                        avatar: newNotif.actor.avatar
+                    } : undefined
+                });
+            }
+        } catch (socketErr) {
+            console.error('[SOCKET ERROR]: Failed to emit notification:', socketErr);
+        }
+
     } catch (error) {
         console.error(`[NOTIFICATION SERVER ERROR]: Failed to create notification:`, error);
     }

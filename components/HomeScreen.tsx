@@ -1,8 +1,10 @@
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { Activity } from 'lucide-react';
 import { Survey, UserProfile } from '../types';
 import { SurveyCard } from './SurveyCard';
+import { SuggestedUsersList } from './SuggestedUsersList';
+import { api } from '../services/api';
 
 interface HomeScreenProps {
   surveys: Survey[];
@@ -18,6 +20,9 @@ interface HomeScreenProps {
   onGroupClick?: (groupId: string) => void;
   onLike?: (surveyId: string, isLiked: boolean) => void;
   isLoading?: boolean;
+  onLoadMore?: () => void;
+  hasNextPage?: boolean;
+  isLoadingMore?: boolean;
 }
 
 export const SurveyCardSkeleton = () => (
@@ -58,8 +63,25 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   contextGroups = [],
   onGroupClick,
   onLike,
-  isLoading
+  isLoading,
+  onLoadMore,
+  hasNextPage,
+  isLoadingMore
 }) => {
+  const observerRef = React.useRef<IntersectionObserver | null>(null);
+  const bottomRef = React.useCallback((node: HTMLDivElement) => {
+    if (isLoadingMore) return;
+    if (observerRef.current) observerRef.current.disconnect();
+    
+    observerRef.current = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting && hasNextPage && onLoadMore) {
+        onLoadMore();
+      }
+    }, { rootMargin: '200px' });
+    
+    if (node) observerRef.current.observe(node);
+  }, [isLoadingMore, hasNextPage, onLoadMore]);
+
   const { trendingSurveys, regularSurveys } = useMemo(() => {
     const trending: Survey[] = [];
     const regular: Survey[] = [];
@@ -73,6 +95,29 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     }
     return { trendingSurveys: trending, regularSurveys: regular };
   }, [surveys]);
+
+  const [suggestedUsers, setSuggestedUsers] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (userProfile && userProfile.id && !userProfile.isGuest && suggestedUsers.length === 0) {
+      api.getSuggestedUsers(userProfile.id)
+        .then(setSuggestedUsers)
+        .catch(console.error);
+    }
+  }, [userProfile?.id]);
+
+  const handleFollowSuggestion = async (targetId: string) => {
+    if (!userProfile) return;
+    try {
+      await api.followUser(targetId, userProfile.id);
+      setSuggestedUsers(prev => prev.filter(u => u.id !== targetId));
+      window.dispatchEvent(new CustomEvent('onFollowStateChange', {
+        detail: { targetUserId: targetId, isFollowing: true }
+      }));
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   if (isLoading && surveys.length === 0) {
     return (
@@ -160,31 +205,47 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* 2. Main Feed */}
       <div className="space-y-1">
         {regularSurveys.map((survey, index) => (
-          <SurveyCard
-            key={survey.id}
-            survey={survey}
-            userProfile={userProfile}
-            onContentClick={() => onSurveyClick(survey.id, 'FEED')}
-            onAnalysisClick={() => onSurveyClick(survey.id, 'FEED', 'analysis')}
-            onVote={onVote}
-            onSurveyProgress={onSurveyProgress}
-            onAuthorClick={onAuthorClick}
-            onShareToFeed={onShareToFeed}
-            onUpdateDemographics={onUpdateDemographics}
-            onCloseShareSheet={onCloseShareSheet}
-            positionInFeed={index}
-            contextGroups={contextGroups}
-            onGroupClick={onGroupClick}
-            sourceSurface="FEED"
-            onLike={onLike}
-          />
+          <React.Fragment key={survey.id}>
+            <SurveyCard
+              survey={survey}
+              userProfile={userProfile}
+              onContentClick={() => onSurveyClick(survey.id, 'FEED')}
+              onAnalysisClick={() => onSurveyClick(survey.id, 'FEED', 'analysis')}
+              onVote={onVote}
+              onSurveyProgress={onSurveyProgress}
+              onAuthorClick={onAuthorClick}
+              onShareToFeed={onShareToFeed}
+              onUpdateDemographics={onUpdateDemographics}
+              onCloseShareSheet={onCloseShareSheet}
+              positionInFeed={index}
+              contextGroups={contextGroups}
+              onGroupClick={onGroupClick}
+              sourceSurface="FEED"
+              onLike={onLike}
+            />
+            {index === 2 && suggestedUsers.length > 0 && (
+                <SuggestedUsersList users={suggestedUsers} onFollow={handleFollowSuggestion} onUserClick={onAuthorClick} />
+            )}
+            {index === 9 && suggestedUsers.length > 5 && (
+                <SuggestedUsersList users={suggestedUsers.slice(5)} onFollow={handleFollowSuggestion} onUserClick={onAuthorClick} />
+            )}
+          </React.Fragment>
         ))}
       </div>
 
-      {/* 3. Footer Decoration */}
-      <div className="py-12 flex flex-col items-center justify-center opacity-20">
-        <Activity size={32} className="text-gray-400 mb-2" />
-        <p className="text-xs font-bold uppercase tracking-widest text-gray-400">You've reached the end</p>
+      {/* 3. Footer Decoration & Loading trigger */}
+      <div ref={bottomRef} className="py-12 flex flex-col items-center justify-center">
+        {isLoadingMore ? (
+            <div className="flex flex-col items-center animate-pulse opacity-50">
+                <Activity size={32} className="text-gray-400 mb-2 animate-spin-slow" />
+                <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Loading More...</p>
+            </div>
+        ) : !hasNextPage ? (
+            <div className="flex flex-col items-center opacity-20">
+                <Activity size={32} className="text-gray-400 mb-2" />
+                <p className="text-xs font-bold uppercase tracking-widest text-gray-400">You've reached the end</p>
+            </div>
+        ) : null}
       </div>
     </div>
   );
