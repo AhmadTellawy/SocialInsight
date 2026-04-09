@@ -202,7 +202,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </div>
       </div>
 
-      {/* 2. Main Feed */}
+      {/* 2. Suggested Users (Top) */}
+      {suggestedUsers.length > 0 && (
+          <div className="mb-2">
+            <SuggestedUsersList users={suggestedUsers} onFollow={handleFollowSuggestion} onUserClick={onAuthorClick} />
+          </div>
+      )}
+
+      {/* 3. Main Feed */}
       <div className="space-y-1">
         {regularSurveys.map((survey, index) => (
           <React.Fragment key={survey.id}>
@@ -223,12 +230,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               sourceSurface="FEED"
               onLike={onLike}
             />
-            {index === Math.min(2, regularSurveys.length - 1) && suggestedUsers.length > 0 && (
-                <SuggestedUsersList users={suggestedUsers} onFollow={handleFollowSuggestion} onUserClick={onAuthorClick} />
-            )}
-            {index === Math.min(9, regularSurveys.length - 1) && suggestedUsers.length > 5 && index > Math.min(2, regularSurveys.length - 1) && (
-                <SuggestedUsersList users={suggestedUsers.slice(5)} onFollow={handleFollowSuggestion} onUserClick={onAuthorClick} />
-            )}
           </React.Fragment>
         ))}
       </div>
