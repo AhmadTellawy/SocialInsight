@@ -16,43 +16,49 @@ export const SuggestedUsersList: React.FC<SuggestedUsersListProps> = ({ users, o
     if (!users || users.length === 0) return null;
 
     return (
-        <div className="bg-white border-y border-gray-100 py-4 my-2">
-            <div className="px-4 mb-3 flex items-center justify-between">
-                <h3 className="font-semibold text-gray-800 text-sm">أشخاص قد تعرفهم</h3>
+        <div className="bg-white border-b border-gray-100 py-4 my-2">
+            <div className="px-4 mb-4 flex items-center justify-between">
+                <h3 className="font-bold text-gray-900 text-[15px] tracking-tight">Suggested for you</h3>
             </div>
             
-            <div className="flex overflow-x-auto hide-scrollbar px-4 pb-2 gap-3" style={{ scrollSnapType: 'x mandatory' }}>
+            <div className="flex overflow-x-auto hide-scrollbar px-4 pb-4 gap-3" style={{ scrollSnapType: 'x mandatory' }}>
                 {users.map(user => (
                     <div 
                         key={user.id} 
-                        className="flex-none w-36 border border-gray-100 rounded-xl p-4 flex flex-col items-center justify-center text-center shadow-sm"
+                        className="flex-none w-[140px] border border-gray-200 rounded-2xl p-4 flex flex-col items-center justify-center text-center shadow-sm relative group bg-white hover:bg-gray-50 transition-colors"
                         style={{ scrollSnapAlign: 'start' }}
                     >
+                        <button 
+                         className="absolute top-2 right-2 text-gray-300 hover:text-gray-500 transition-colors bg-white rounded-full p-0.5"
+                         onClick={(e) => { e.stopPropagation(); /* optional dismiss handler */ }}
+                        >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                        </button>
+
                         <div 
-                           className="w-16 h-16 rounded-full bg-indigo-100 border-2 border-indigo-50 mb-2 overflow-hidden cursor-pointer"
+                           className="w-[72px] h-[72px] rounded-full mb-3 overflow-hidden cursor-pointer shadow-sm pointer-events-auto ring-2 ring-transparent group-hover:ring-gray-200 transition-all duration-300"
                            onClick={() => onUserClick && onUserClick(user)}
                         >
                             <img 
-                                src={user.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.name || 'U')}&background=6366f1&color=fff`} 
+                                src={user.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.name || 'U')}&background=0A0A0A&color=fff`} 
                                 alt={user.name} 
                                 className="w-full h-full object-cover"
                             />
                         </div>
                         <h4 
-                          className="font-semibold text-sm text-gray-800 line-clamp-1 w-full cursor-pointer"
+                          className="font-bold text-[14px] text-gray-900 line-clamp-1 w-full cursor-pointer hover:underline decoration-gray-400 decoration-1 underline-offset-2"
                           onClick={() => onUserClick && onUserClick(user)}
                         >
                             {user.name}
                         </h4>
-                        <p className="text-xs text-gray-500 mb-3 line-clamp-1 w-full">
+                        <p className="text-[12px] text-gray-500 mb-4 line-clamp-1 w-full font-medium">
                             {user.suggestionReason || `@${user.handle}`}
                         </p>
                         <button 
                             onClick={() => onFollow(user.id)}
-                            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold py-1.5 rounded-full transition-colors flex items-center justify-center gap-1"
+                            className="w-full bg-gray-900 hover:bg-black text-white text-[13px] font-bold py-1.5 rounded-full transition-transform active:scale-95 shadow-sm"
                         >
-                            <UserPlus size={14} />
-                            متابعة
+                            Follow
                         </button>
                     </div>
                 ))}

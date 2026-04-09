@@ -494,7 +494,7 @@ export const getSuggestedUsers = async (req: Request, res: Response) => {
         // Add a "reason" field
         const suggestedList = interactionSuggestions.map(u => ({
             ...u,
-            suggestionReason: 'تفاعلت معه مؤخراً' // Interacted recently
+            suggestionReason: 'Recently interacted'
         }));
 
         // 3. If we don't have enough (less than 10), pad with popular users
@@ -513,7 +513,7 @@ export const getSuggestedUsers = async (req: Request, res: Response) => {
 
             suggestedList.push(...popularSuggestions.map(u => ({
                 ...u,
-                suggestionReason: 'مقترح لك' // Suggested for you
+                suggestionReason: 'Suggested for you'
             })));
         }
 
