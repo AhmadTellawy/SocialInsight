@@ -465,7 +465,7 @@ export const getSuggestedUsers = async (req: Request, res: Response) => {
             include: { post: { select: { authorId: true } } }
         });
         const comments = await prisma.comment.findMany({
-            where: { authorId: id as string },
+            where: { userId: id as string },
             include: { post: { select: { authorId: true } } }
         });
         const responses = await prisma.response.findMany({
