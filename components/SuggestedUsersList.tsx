@@ -13,7 +13,16 @@ interface SuggestedUsersListProps {
 }
 
 export const SuggestedUsersList: React.FC<SuggestedUsersListProps> = ({ users, onFollow, onUserClick }) => {
+    const [followedIds, setFollowedIds] = React.useState<Set<string>>(new Set());
+
     if (!users || users.length === 0) return null;
+
+    const handleFollowClick = (userId: string) => {
+        // Optimistically update UI
+        setFollowedIds(prev => new Set(prev).add(userId));
+        // Trigger parent callback (which delays removal for 1s)
+        onFollow(userId);
+    };
 
     return (
         <div className="bg-white border-b border-gray-100 py-4 my-2">
@@ -22,11 +31,13 @@ export const SuggestedUsersList: React.FC<SuggestedUsersListProps> = ({ users, o
             </div>
             
             <div className="flex overflow-x-auto hide-scrollbar px-4 pb-4 gap-3" style={{ scrollSnapType: 'x mandatory' }}>
-                {users.map(user => (
+                {users.map(user => {
+                    const isFollowed = followedIds.has(user.id);
+                    return (
                     <div 
                         key={user.id} 
-                        className="flex-none w-[140px] border border-gray-200 rounded-2xl p-4 flex flex-col items-center justify-center text-center shadow-sm relative group bg-white hover:bg-gray-50 transition-colors"
-                        style={{ scrollSnapAlign: 'start' }}
+                        className={`flex-none w-[140px] border rounded-2xl p-4 flex flex-col items-center justify-center text-center shadow-sm relative group bg-white transition-all duration-500 ease-out ${isFollowed ? 'border-gray-100 opacity-0 scale-95 pointer-events-none' : 'border-gray-200 hover:bg-gray-50'}`}
+                        style={{ scrollSnapAlign: 'start', transitionDelay: isFollowed ? '300ms' : '0ms' }}
                     >
                         <button 
                          className="absolute top-2 right-2 text-gray-300 hover:text-gray-500 transition-colors bg-white rounded-full p-0.5"
@@ -55,13 +66,14 @@ export const SuggestedUsersList: React.FC<SuggestedUsersListProps> = ({ users, o
                             {user.suggestionReason || `@${user.handle}`}
                         </p>
                         <button 
-                            onClick={() => onFollow(user.id)}
-                            className="w-full bg-gray-900 hover:bg-black text-white text-[13px] font-bold py-1.5 rounded-full transition-transform active:scale-95 shadow-sm"
+                            onClick={() => handleFollowClick(user.id)}
+                            disabled={isFollowed}
+                            className={`w-full text-[13px] font-bold py-1.5 rounded-full transition-all duration-300 shadow-sm ${isFollowed ? 'bg-gray-100 text-gray-900 border border-gray-200 shadow-inner' : 'bg-gray-900 hover:bg-black text-white hover:scale-105 active:scale-95'}`}
                         >
-                            Follow
+                            {isFollowed ? 'Following' : 'Follow'}
                         </button>
                     </div>
-                ))}
+                )})}
             </div>
 
             <style>{`

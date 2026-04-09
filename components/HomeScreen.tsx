@@ -109,11 +109,18 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   const handleFollowSuggestion = async (targetId: string) => {
     if (!userProfile) return;
     try {
-      await api.followUser(targetId, userProfile.id);
-      setSuggestedUsers(prev => prev.filter(u => u.id !== targetId));
+      // Optimistically dispatch follow event for the rest of the app
       window.dispatchEvent(new CustomEvent('onFollowStateChange', {
         detail: { targetUserId: targetId, isFollowing: true }
       }));
+      
+      // Delay removal so the "Following" animation can complete smoothly
+      setTimeout(() => {
+          setSuggestedUsers(prev => prev.filter(u => u.id !== targetId));
+      }, 800);
+
+      // Perform request in background without blocking UI
+      api.followUser(targetId, userProfile.id).catch(console.error);
     } catch (err) {
       console.error(err);
     }
