@@ -75,7 +75,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   const handleDiscard = async () => {
     if (draft && draft.id && draft.isDraft) {
       try {
-        await api.deletePost(draft.id);
+        await api.deletePost(draft.id, userProfile.id || "");
       } catch (e) {
         console.error("Failed to delete draft", e);
       }

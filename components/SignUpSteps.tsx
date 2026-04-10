@@ -175,7 +175,6 @@ export const PasswordStep: React.FC<StepProps> = ({ onNext, onBack, isLoading })
     const isValid = rules.every(r => r.valid);
 
     return (
-    return (
         <div className="flex flex-col h-full bg-white animate-in slide-in-from-right duration-300">
             <div className="px-6 pt-6 pb-4 border-b border-gray-50">
                 <button onClick={onBack} className="w-10 h-10 flex items-center justify-center rounded-full bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors mb-4">
@@ -268,7 +267,6 @@ export const HandleStep: React.FC<StepProps> = ({ onNext, onBack, isLoading: isE
     const isValid = handle.length >= 3 && isAvailable === true;
 
     return (
-    return (
         <div className="flex flex-col h-full bg-white animate-in slide-in-from-right duration-300">
             <div className="px-6 pt-6 pb-4 border-b border-gray-50">
                 <button onClick={onBack} className="w-10 h-10 flex items-center justify-center rounded-full bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors mb-4">
@@ -358,7 +356,6 @@ export const OTPStep: React.FC<StepProps> = ({ onNext, data, isLoading }) => {
     const isValid = otp.every(d => d !== '');
 
     return (
-    return (
         <div className="flex flex-col h-full bg-white animate-in slide-in-from-right duration-300">
             <div className="px-6 pt-12 pb-4 text-center">
                 <div className="w-16 h-16 bg-blue-50 text-blue-500 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -406,7 +403,6 @@ export const OTPStep: React.FC<StepProps> = ({ onNext, data, isLoading }) => {
 };
 
 export const NotificationStep: React.FC<StepProps> = ({ onNext, isLoading }) => {
-    return (
     return (
         <div className="flex flex-col h-full bg-[#FAFAFA] animate-in zoom-in-95 duration-500 items-center justify-center text-center p-6 relative overflow-hidden">
             {/* Background blobs for premium feel */}
