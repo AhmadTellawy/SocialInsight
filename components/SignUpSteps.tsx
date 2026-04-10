@@ -10,28 +10,38 @@ interface StepProps {
 
 export const WelcomeStep: React.FC<StepProps> = ({ onNext, onBack }) => {
     return (
-        <div className="flex flex-col h-full animate-in fade-in duration-500">
-            <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
-                <div className="w-24 h-24 mb-8 relative">
-                    <div className="absolute inset-0 bg-blue-100 rounded-full animate-ping opacity-20"></div>
-                    <img src="logo.png" alt="Logo" className="w-full h-full object-contain relative z-10 drop-shadow-lg" />
+        <div className="flex flex-col h-full bg-[#FAFAFA] font-sans">
+            <div className="flex-1 flex flex-col items-center justify-center text-center px-8 relative overflow-hidden">
+                {/* Decorative blob */}
+                <div className="absolute top-10 -right-20 w-64 h-64 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
+                <div className="absolute bottom-10 -left-20 w-64 h-64 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
+
+                <div className="w-28 h-28 mb-8 relative z-10 flex items-center justify-center bg-white rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-gray-100">
+                    <img src="logo.png" alt="Logo" className="w-16 h-16 object-contain drop-shadow-sm" />
                 </div>
-                <h1 className="text-3xl font-black text-gray-900 mb-3 tracking-tight">Join the Conversation</h1>
-                <p className="text-gray-500 font-medium leading-relaxed max-w-xs">
-                    Create an account to connecting with communities, share your voice, and discover trends.
+                <h1 className="text-3xl sm:text-4xl font-black text-gray-900 mb-4 tracking-tight relative z-10">
+                    Discover More.
+                </h1>
+                <p className="text-gray-500 font-medium leading-relaxed max-w-[280px] text-sm relative z-10">
+                    Join Social Insight to participate in trending polls, debates, and connect with people who share your interests.
                 </p>
             </div>
 
-            <div className="px-6 pb-8 space-y-4">
+            <div className="px-6 pb-12 space-y-4 bg-white pt-8 rounded-t-[2.5rem] shadow-[0_-10px_40px_rgb(0,0,0,0.03)] border-t border-gray-100 relative z-20">
                 <button
                     onClick={() => onNext({ action: 'create' })}
-                    className="w-full py-4 rounded-xl bg-blue-600 text-white font-bold text-sm uppercase tracking-wider shadow-xl shadow-blue-200 active:scale-[0.98] transition-all hover:bg-blue-700"
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-black uppercase tracking-[0.15em] text-xs shadow-[0_8px_20px_rgb(37,99,235,0.25)] hover:shadow-[0_8px_25px_rgb(37,99,235,0.35)] active:scale-[0.98] transition-all flex items-center justify-center relative overflow-hidden group"
                 >
-                    Create Account
+                    <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-out" />
+                    <span className="relative z-10">Create Account</span>
                 </button>
+                <div className="relative py-2">
+                    <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-100"></div></div>
+                    <div className="relative flex justify-center text-[10px] uppercase tracking-widest font-bold text-gray-400 bg-white px-4">Already have an account?</div>
+                </div>
                 <button
                     onClick={onBack}
-                    className="w-full py-4 rounded-xl bg-white text-gray-900 font-bold text-sm uppercase tracking-wider border border-gray-200 active:scale-[0.98] transition-all hover:bg-gray-50"
+                    className="w-full bg-white text-gray-900 py-4 rounded-2xl font-black uppercase tracking-[0.15em] text-xs border-2 border-gray-100 hover:border-gray-200 hover:bg-gray-50 active:scale-[0.98] transition-all"
                 >
                     Log In
                 </button>
@@ -61,52 +71,52 @@ export const BasicInfoStep: React.FC<StepProps> = ({ onNext, onBack, isLoading }
     const isValid = formData.fullName && formData.email && formData.dob;
 
     return (
-        <div className="flex flex-col h-full animate-in slide-in-from-right duration-300">
-            <div className="px-6 pt-6 pb-2">
-                <button onClick={onBack} className="p-2 -ml-2 text-gray-400 hover:text-gray-900 transition-colors">
-                    <ArrowLeft size={24} />
+        <div className="flex flex-col h-full bg-white animate-in slide-in-from-right duration-300">
+            <div className="px-6 pt-6 pb-4 border-b border-gray-50">
+                <button onClick={onBack} className="w-10 h-10 flex items-center justify-center rounded-full bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors mb-4">
+                    <ArrowLeft size={20} strokeWidth={2.5} />
                 </button>
-                <h2 className="text-2xl font-black text-gray-900 mt-4 mb-2">Create your account</h2>
-                <p className="text-gray-400 text-sm">We just need a few details to get you started.</p>
+                <h2 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight">Create your account</h2>
+                <p className="text-gray-500 text-sm font-medium mt-1">Please provide your details below.</p>
             </div>
 
-            <div className="flex-1 px-6 pt-6 space-y-5">
-                <div className="space-y-1">
-                    <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Full Name</label>
-                    <div className="relative">
-                        <User className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+            <div className="flex-1 px-6 pt-6 space-y-6 overflow-y-auto">
+                <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider ml-1">Full Name</label>
+                    <div className="relative group">
+                        <User className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors" size={20} />
                         <input
                             autoFocus
                             type="text"
                             value={formData.fullName}
                             onChange={e => setFormData({ ...formData, fullName: e.target.value })}
-                            className="w-full bg-gray-50 border border-transparent focus:border-blue-500 focus:bg-white rounded-xl pl-12 pr-4 py-4 outline-none transition-all font-semibold text-gray-900 placeholder:text-gray-300"
-                            placeholder="John Doe"
+                            className="w-full bg-gray-50 border border-gray-200 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 rounded-2xl pl-12 pr-4 py-4 outline-none transition-all font-medium text-gray-900 placeholder:text-gray-400"
+                            placeholder="e.g. John Doe"
                         />
                     </div>
                 </div>
 
-                <div className="space-y-1">
-                    <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Email Address</label>
-                    <div className="relative">
-                        <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider ml-1">Email Address</label>
+                    <div className="relative group">
+                        <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors" size={20} />
                         <input
                             type="email"
                             value={formData.email}
                             onChange={e => setFormData({ ...formData, email: e.target.value })}
-                            className="w-full bg-gray-50 border border-transparent focus:border-blue-500 focus:bg-white rounded-xl pl-12 pr-4 py-4 outline-none transition-all font-semibold text-gray-900 placeholder:text-gray-300"
-                            placeholder="john@example.com"
+                            className="w-full bg-gray-50 border border-gray-200 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 rounded-2xl pl-12 pr-4 py-4 outline-none transition-all font-medium text-gray-900 placeholder:text-gray-400"
+                            placeholder="you@example.com"
                         />
                     </div>
                 </div>
 
-                <div className="space-y-1">
-                    <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Date of Birth</label>
+                <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider ml-1">Date of Birth</label>
                     <div className="relative flex gap-2">
                         <select
                             value={day}
                             onChange={e => setDay(e.target.value)}
-                            className="w-1/3 bg-gray-50 border border-transparent focus:border-blue-500 focus:bg-white rounded-xl px-4 py-4 outline-none transition-all font-semibold text-gray-900 appearance-none"
+                            className="w-1/3 bg-gray-50 border border-gray-200 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 rounded-2xl px-4 py-4 outline-none transition-all font-medium text-gray-900 appearance-none"
                         >
                             <option value="" disabled>Day</option>
                             {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
@@ -116,7 +126,7 @@ export const BasicInfoStep: React.FC<StepProps> = ({ onNext, onBack, isLoading }
                         <select
                             value={month}
                             onChange={e => setMonth(e.target.value)}
-                            className="flex-1 bg-gray-50 border border-transparent focus:border-blue-500 focus:bg-white rounded-xl px-4 py-4 outline-none transition-all font-semibold text-gray-900 appearance-none"
+                            className="flex-1 bg-gray-50 border border-gray-200 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 rounded-2xl px-4 py-4 outline-none transition-all font-medium text-gray-900 appearance-none"
                         >
                             <option value="" disabled>Month</option>
                             {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((m, i) => (
@@ -126,7 +136,7 @@ export const BasicInfoStep: React.FC<StepProps> = ({ onNext, onBack, isLoading }
                         <select
                             value={year}
                             onChange={e => setYear(e.target.value)}
-                            className="w-1/3 bg-gray-50 border border-transparent focus:border-blue-500 focus:bg-white rounded-xl px-4 py-4 outline-none transition-all font-semibold text-gray-900 appearance-none"
+                            className="w-1/3 bg-gray-50 border border-gray-200 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 rounded-2xl px-4 py-4 outline-none transition-all font-medium text-gray-900 appearance-none"
                         >
                             <option value="" disabled>Year</option>
                             {Array.from({ length: 100 }, (_, i) => new Date().getFullYear() - 13 - i).map(y => (
@@ -134,17 +144,16 @@ export const BasicInfoStep: React.FC<StepProps> = ({ onNext, onBack, isLoading }
                             ))}
                         </select>
                     </div>
-                    <p className="text-[10px] text-gray-400 px-1 leading-tight">Must be at least 13 years old to register.</p>
                 </div>
             </div>
 
-            <div className="p-6">
+            <div className="p-6 bg-white border-t border-gray-50">
                 <button
                     disabled={!isValid || isLoading}
                     onClick={() => onNext(formData)}
-                    className="w-full py-4 rounded-xl bg-blue-600 text-white font-bold text-sm uppercase tracking-wider shadow-lg shadow-blue-200 active:scale-[0.98] transition-all hover:bg-blue-700 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2"
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-black uppercase tracking-[0.15em] text-xs shadow-[0_8px_20px_rgb(37,99,235,0.25)] hover:shadow-[0_8px_25px_rgb(37,99,235,0.35)] active:scale-[0.98] transition-all disabled:opacity-70 disabled:shadow-none flex items-center justify-center gap-2 group"
                 >
-                    {isLoading ? <Loader2 className="animate-spin" /> : <>Next <ArrowRight size={18} /></>}
+                    {isLoading ? <Loader2 className="animate-spin" /> : <>Continue <ArrowRight size={18} strokeWidth={2.5} className="group-hover:translate-x-1 transition-transform" /></>}
                 </button>
             </div>
         </div>
@@ -166,56 +175,57 @@ export const PasswordStep: React.FC<StepProps> = ({ onNext, onBack, isLoading })
     const isValid = rules.every(r => r.valid);
 
     return (
-        <div className="flex flex-col h-full animate-in slide-in-from-right duration-300">
-            <div className="px-6 pt-6 pb-2">
-                <button onClick={onBack} className="p-2 -ml-2 text-gray-400 hover:text-gray-900 transition-colors">
-                    <ArrowLeft size={24} />
+    return (
+        <div className="flex flex-col h-full bg-white animate-in slide-in-from-right duration-300">
+            <div className="px-6 pt-6 pb-4 border-b border-gray-50">
+                <button onClick={onBack} className="w-10 h-10 flex items-center justify-center rounded-full bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors mb-4">
+                    <ArrowLeft size={20} strokeWidth={2.5} />
                 </button>
-                <h2 className="text-2xl font-black text-gray-900 mt-4 mb-2">You'll need a password</h2>
-                <p className="text-gray-400 text-sm">Make it strong and secure.</p>
+                <h2 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight">Create a password</h2>
+                <p className="text-gray-500 text-sm font-medium mt-1">Make it strong and secure.</p>
             </div>
 
-            <div className="flex-1 px-6 pt-6 space-y-6">
-                <div className="relative">
-                    <div className="relative">
-                        <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-                        <input
-                            autoFocus
-                            type={showPassword ? "text" : "password"}
-                            value={password}
-                            onChange={e => setPassword(e.target.value)}
-                            className="w-full bg-gray-50 border border-transparent focus:border-blue-500 focus:bg-white rounded-xl pl-12 pr-12 py-4 outline-none transition-all font-semibold text-gray-900"
-                            placeholder="Password"
-                        />
-                        <button
-                            onClick={() => setShowPassword(!showPassword)}
-                            className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                        >
-                            {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
-                        </button>
+            <div className="flex-1 px-6 pt-6 space-y-6 overflow-y-auto">
+                <div className="relative group">
+                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors" size={20} />
+                    <input
+                        autoFocus
+                        type={showPassword ? "text" : "password"}
+                        value={password}
+                        onChange={e => setPassword(e.target.value)}
+                        className="w-full bg-gray-50 border border-gray-200 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 rounded-2xl pl-12 pr-12 py-4 outline-none transition-all font-medium text-gray-900"
+                        placeholder="Your password"
+                    />
+                    <button
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                    >
+                        {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                    </button>
+                </div>
+
+                <div className="bg-gray-50 rounded-2xl p-5 space-y-4 border border-gray-100">
+                    <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Password Requirements</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {rules.map(rule => (
+                            <div key={rule.id} className="flex items-center gap-3">
+                                <div className={`w-5 h-5 rounded-full flex items-center justify-center transition-all duration-300 ${rule.valid ? 'bg-green-500 shadow-[0_0_10px_rgb(34,197,94,0.3)]' : 'bg-gray-200'}`}>
+                                    {rule.valid ? <Check size={12} strokeWidth={4} className="text-white" /> : <div className="w-1.5 h-1.5 rounded-full bg-gray-400" />}
+                                </div>
+                                <span className={`text-sm font-medium transition-colors ${rule.valid ? 'text-gray-900' : 'text-gray-500'}`}>{rule.label}</span>
+                            </div>
+                        ))}
                     </div>
                 </div>
-
-                <div className="bg-gray-50 rounded-xl p-4 space-y-3">
-                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Password Requirements</p>
-                    {rules.map(rule => (
-                        <div key={rule.id} className="flex items-center gap-3">
-                            <div className={`w-5 h-5 rounded-full flex items-center justify-center transition-colors ${rule.valid ? 'bg-green-100 text-green-600' : 'bg-gray-200 text-gray-400'}`}>
-                                {rule.valid ? <Check size={12} strokeWidth={3} /> : <div className="w-1.5 h-1.5 rounded-full bg-gray-400" />}
-                            </div>
-                            <span className={`text-sm font-medium transition-colors ${rule.valid ? 'text-gray-900' : 'text-gray-500'}`}>{rule.label}</span>
-                        </div>
-                    ))}
-                </div>
             </div>
 
-            <div className="p-6">
+            <div className="p-6 bg-white border-t border-gray-50">
                 <button
                     disabled={!isValid || isLoading}
                     onClick={() => onNext({ password })}
-                    className="w-full py-4 rounded-xl bg-blue-600 text-white font-bold text-sm uppercase tracking-wider shadow-lg shadow-blue-200 active:scale-[0.98] transition-all hover:bg-blue-700 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2"
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-black uppercase tracking-[0.15em] text-xs shadow-[0_8px_20px_rgb(37,99,235,0.25)] hover:shadow-[0_8px_25px_rgb(37,99,235,0.35)] active:scale-[0.98] transition-all disabled:opacity-70 disabled:shadow-none flex items-center justify-center gap-2 group"
                 >
-                    {isLoading ? <Loader2 className="animate-spin" /> : <>Next <ArrowRight size={18} /></>}
+                    {isLoading ? <Loader2 className="animate-spin" /> : <>Continue <ArrowRight size={18} strokeWidth={2.5} className="group-hover:translate-x-1 transition-transform" /></>}
                 </button>
             </div>
         </div>
@@ -258,52 +268,54 @@ export const HandleStep: React.FC<StepProps> = ({ onNext, onBack, isLoading: isE
     const isValid = handle.length >= 3 && isAvailable === true;
 
     return (
-        <div className="flex flex-col h-full animate-in slide-in-from-right duration-300">
-            <div className="px-6 pt-6 pb-2">
-                <button onClick={onBack} className="p-2 -ml-2 text-gray-400 hover:text-gray-900 transition-colors">
-                    <ArrowLeft size={24} />
+    return (
+        <div className="flex flex-col h-full bg-white animate-in slide-in-from-right duration-300">
+            <div className="px-6 pt-6 pb-4 border-b border-gray-50">
+                <button onClick={onBack} className="w-10 h-10 flex items-center justify-center rounded-full bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors mb-4">
+                    <ArrowLeft size={20} strokeWidth={2.5} />
                 </button>
-                <h2 className="text-2xl font-black text-gray-900 mt-4 mb-2">Choose a Handle</h2>
-                <p className="text-gray-400 text-sm">This is how people will find you. You can change it later.</p>
+                <h2 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight">Choose a handle</h2>
+                <p className="text-gray-500 text-sm font-medium mt-1">This is how people will find you.</p>
             </div>
 
             <div className="flex-1 px-6 pt-6 space-y-6">
-                <div className="relative">
-                    <div className="relative">
-                        <AtSign className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-                        <input
-                            autoFocus
-                            type="text"
-                            value={handle}
-                            onChange={e => {
-                                const val = e.target.value.toLowerCase().replace(/[^a-z0-9_.]/g, '');
-                                setHandle(val);
-                            }}
-                            className={`w-full bg-gray-50 border focus:bg-white rounded-xl pl-12 pr-12 py-4 outline-none transition-all font-semibold text-gray-900 ${isAvailable === true ? 'border-green-500 focus:border-green-500' : isAvailable === false ? 'border-red-500 focus:border-red-500' : 'border-transparent focus:border-blue-500'}`}
-                            placeholder="username"
-                        />
-                        <div className="absolute right-4 top-1/2 -translate-y-1/2">
-                            {isChecking ? <Loader2 className="animate-spin text-gray-400" size={20} /> :
-                                isAvailable === true ? <Check className="text-green-500" size={20} /> :
-                                    isAvailable === false ? <X className="text-red-500" size={20} /> : null}
-                        </div>
+                <div className="relative group">
+                    <AtSign className={`absolute left-4 top-1/2 -translate-y-1/2 transition-colors ${isAvailable === true ? 'text-green-500' : 'text-gray-400 group-focus-within:text-blue-500'}`} size={20} />
+                    <input
+                        autoFocus
+                        type="text"
+                        value={handle}
+                        onChange={e => {
+                            const val = e.target.value.toLowerCase().replace(/[^a-z0-9_.]/g, '');
+                            setHandle(val);
+                        }}
+                        className={`w-full bg-gray-50 border focus:bg-white focus:ring-4 rounded-2xl pl-12 pr-12 py-4 outline-none transition-all font-medium text-gray-900 placeholder:text-gray-400 ${isAvailable === true ? 'border-green-500 focus:border-green-500 focus:ring-green-500/10' : isAvailable === false ? 'border-red-500 focus:border-red-500 focus:ring-red-500/10' : 'border-gray-200 focus:border-blue-500 focus:ring-blue-500/10'}`}
+                        placeholder="e.g. johndoe"
+                    />
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                        {isChecking ? <Loader2 className="animate-spin text-blue-500" size={20} /> :
+                            isAvailable === true ? <Check className="text-green-500" size={20} strokeWidth={3} /> :
+                                isAvailable === false ? <X className="text-red-500" size={20} strokeWidth={3} /> : null}
                     </div>
-                    {isAvailable === false && !isChecking && (
-                        <p className="text-xs text-red-500 mt-2 font-medium px-1">That handle is taken, try another one.</p>
-                    )}
-                    {isAvailable === true && !isChecking && (
-                        <p className="text-xs text-green-600 mt-2 font-medium px-1">@{handle} is available!</p>
-                    )}
                 </div>
+                {isAvailable === false && !isChecking && (
+                    <p className="text-sm text-red-500 font-medium px-1 flex items-center gap-1"><X size={14} /> That handle is taken, try another one.</p>
+                )}
+                {isAvailable === true && !isChecking && (
+                    <p className="text-sm text-green-600 font-medium px-1 flex items-center gap-1"><Check size={14} /> @{handle} is available!</p>
+                )}
+                {isAvailable === null && !isChecking && handle.length > 0 && handle.length < 3 && (
+                    <p className="text-sm text-gray-500 font-medium px-1">Must be at least 3 characters.</p>
+                )}
             </div>
 
-            <div className="p-6">
+            <div className="p-6 bg-white border-t border-gray-50">
                 <button
                     disabled={!isValid || isExternalLoading}
                     onClick={() => onNext({ handle })}
-                    className="w-full py-4 rounded-xl bg-blue-600 text-white font-bold text-sm uppercase tracking-wider shadow-lg shadow-blue-200 active:scale-[0.98] transition-all hover:bg-blue-700 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2"
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-black uppercase tracking-[0.15em] text-xs shadow-[0_8px_20px_rgb(37,99,235,0.25)] hover:shadow-[0_8px_25px_rgb(37,99,235,0.35)] active:scale-[0.98] transition-all disabled:opacity-70 disabled:shadow-none flex items-center justify-center gap-2 group"
                 >
-                    {isExternalLoading ? <Loader2 className="animate-spin" /> : <>Sign Up <ArrowRight size={18} /></>}
+                    {isExternalLoading ? <Loader2 className="animate-spin" /> : <>Complete Sign Up <Check size={18} strokeWidth={3} /></>}
                 </button>
             </div>
         </div>
@@ -346,10 +358,14 @@ export const OTPStep: React.FC<StepProps> = ({ onNext, data, isLoading }) => {
     const isValid = otp.every(d => d !== '');
 
     return (
-        <div className="flex flex-col h-full animate-in slide-in-from-right duration-300">
-            <div className="px-6 pt-6 pb-2 text-center">
-                <h2 className="text-2xl font-black text-gray-900 mt-4 mb-2">We sent you a code</h2>
-                <p className="text-gray-400 text-sm">Enter the code sent to <span className="text-gray-900 font-bold">{data.email}</span></p>
+    return (
+        <div className="flex flex-col h-full bg-white animate-in slide-in-from-right duration-300">
+            <div className="px-6 pt-12 pb-4 text-center">
+                <div className="w-16 h-16 bg-blue-50 text-blue-500 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <Mail size={32} strokeWidth={1.5} />
+                </div>
+                <h2 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight mb-2">Check your mail</h2>
+                <p className="text-gray-500 text-sm font-medium">We sent a verification code to <br/><span className="text-gray-900 font-bold">{data.email}</span></p>
             </div>
 
             <div className="flex-1 px-6 pt-8 flex flex-col items-center">
@@ -363,26 +379,26 @@ export const OTPStep: React.FC<StepProps> = ({ onNext, data, isLoading }) => {
                             value={digit}
                             onChange={e => handleChange(i, e.target.value)}
                             onKeyDown={e => handleKeyDown(i, e)}
-                            className="w-12 h-14 bg-gray-50 border border-gray-200 focus:border-blue-500 focus:bg-white rounded-xl text-center text-xl font-black text-gray-900 outline-none transition-all"
+                            className="w-11 sm:w-12 h-14 bg-gray-50 border border-gray-200 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 rounded-xl text-center text-xl font-black text-gray-900 outline-none transition-all"
                         />
                     ))}
                 </div>
 
-                <div className="mt-8">
-                    <button disabled={timer > 0} onClick={() => setTimer(60)} className="flex items-center gap-2 text-sm font-bold text-gray-500 hover:text-gray-900 disabled:opacity-50">
+                <div className="mt-10">
+                    <button disabled={timer > 0} onClick={() => setTimer(60)} className="flex items-center gap-2 text-sm font-bold text-blue-600 hover:text-blue-700 disabled:text-gray-400 transition-colors">
                         <RefreshCw size={14} className={timer > 0 ? "animate-spin" : ""} />
                         {timer > 0 ? `Resend code in ${timer}s` : "Resend Code"}
                     </button>
                 </div>
             </div>
 
-            <div className="p-6">
+            <div className="p-6 bg-white border-t border-gray-50">
                 <button
                     disabled={!isValid || isLoading}
                     onClick={() => onNext({ code: otp.join('') })}
-                    className="w-full py-4 rounded-xl bg-blue-600 text-white font-bold text-sm uppercase tracking-wider shadow-lg shadow-blue-200 active:scale-[0.98] transition-all hover:bg-blue-700 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2"
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-black uppercase tracking-[0.15em] text-xs shadow-[0_8px_20px_rgb(37,99,235,0.25)] hover:shadow-[0_8px_25px_rgb(37,99,235,0.35)] active:scale-[0.98] transition-all disabled:opacity-70 disabled:shadow-none flex items-center justify-center gap-2 group"
                 >
-                    {isLoading ? <Loader2 className="animate-spin" /> : <>Verify <ArrowRight size={18} /></>}
+                    {isLoading ? <Loader2 className="animate-spin" /> : <>Verify <ArrowRight size={18} strokeWidth={2.5} className="group-hover:translate-x-1 transition-transform" /></>}
                 </button>
             </div>
         </div>
@@ -391,29 +407,35 @@ export const OTPStep: React.FC<StepProps> = ({ onNext, data, isLoading }) => {
 
 export const NotificationStep: React.FC<StepProps> = ({ onNext, isLoading }) => {
     return (
-        <div className="flex flex-col h-full animate-in zoom-in duration-300 items-center justify-center text-center p-6 bg-gradient-to-br from-blue-50 to-white">
-            <div className="w-32 h-32 bg-white rounded-3xl shadow-xl flex items-center justify-center mb-8 relative">
-                <Bell size={48} className="text-blue-500 fill-blue-100" />
-                <div className="absolute top-0 right-0 w-8 h-8 bg-red-500 rounded-full border-4 border-white"></div>
+    return (
+        <div className="flex flex-col h-full bg-[#FAFAFA] animate-in zoom-in-95 duration-500 items-center justify-center text-center p-6 relative overflow-hidden">
+            {/* Background blobs for premium feel */}
+            <div className="absolute top-1/4 -right-20 w-64 h-64 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute bottom-1/4 -left-20 w-64 h-64 bg-green-500/10 rounded-full blur-3xl pointer-events-none" />
+
+            <div className="w-28 h-28 bg-white rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-gray-100 flex items-center justify-center mb-10 relative z-10">
+                <div className="absolute inset-0 bg-blue-100 rounded-full animate-ping opacity-30"></div>
+                <Bell size={40} className="text-blue-600 relative z-10 drop-shadow-sm" />
+                <div className="absolute top-2 right-2 w-6 h-6 bg-red-500 rounded-full border-4 border-white z-20"></div>
             </div>
 
-            <h2 className="text-2xl font-black text-gray-900 mb-4">Stay in the loop?</h2>
-            <p className="text-gray-500 font-medium leading-relaxed max-w-xs mb-10">
-                Turn on notifications to get updates on your surveys, replies from friends, and trending topics.
+            <h2 className="text-3xl font-black text-gray-900 tracking-tight mb-4 relative z-10">Stay connected</h2>
+            <p className="text-gray-500 font-medium leading-relaxed max-w-[280px] text-sm relative z-10 mb-12">
+                Enable notifications to instantly know when friends reply or when topics you care about are trending.
             </p>
 
-            <div className="space-y-4 w-full max-w-sm">
+            <div className="space-y-4 w-full max-w-sm relative z-20">
                 <button
                     onClick={() => onNext({ notifications: true })}
-                    className="w-full py-4 rounded-xl bg-blue-600 text-white font-bold text-sm uppercase tracking-wider shadow-xl shadow-blue-200 active:scale-[0.98] transition-all hover:bg-blue-700 flex items-center justify-center gap-2"
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-black uppercase tracking-[0.15em] text-xs shadow-[0_8px_20px_rgb(37,99,235,0.25)] hover:shadow-[0_8px_25px_rgb(37,99,235,0.35)] active:scale-[0.98] transition-all flex items-center justify-center gap-2 group"
                 >
-                    <Bell size={18} /> Turn on Notifications
+                    <Bell size={16} className="group-hover:rotate-12 transition-transform" /> <span className="pt-0.5">Turn on Notifications</span>
                 </button>
                 <button
                     onClick={() => onNext({ notifications: false })}
-                    className="w-full py-4 rounded-xl bg-transparent text-gray-400 font-bold text-sm uppercase tracking-wider hover:text-gray-600 transition-all"
+                    className="w-full bg-transparent border-2 border-gray-200 text-gray-500 hover:border-gray-300 hover:bg-gray-50 hover:text-gray-700 py-4 rounded-2xl font-black uppercase tracking-[0.15em] text-xs active:scale-[0.98] transition-all"
                 >
-                    Maybe Later
+                    Not right now
                 </button>
             </div>
         </div>

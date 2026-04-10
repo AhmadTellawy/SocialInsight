@@ -41,12 +41,15 @@ const SAFE_USER_SELECT = {
 export const register = async (req: Request, res: Response) => {
     const { name, handle, email, phone, password, birthday, country, avatar, authProvider } = req.body;
 
+    const lowerEmail = email?.toLowerCase();
+    const lowerHandle = handle?.toLowerCase();
+
     try {
         const existing = await prisma.user.findFirst({
             where: {
                 OR: [
-                    { handle },
-                    email ? { email } : undefined,
+                    { handle: { equals: lowerHandle } },
+                    lowerEmail ? { email: { equals: lowerEmail } } : undefined,
                     phone ? { phone } : undefined
                 ].filter(Boolean) as any
             }
@@ -61,8 +64,8 @@ export const register = async (req: Request, res: Response) => {
         const newUser = await prisma.user.create({
             data: {
                 name,
-                handle,
-                email,
+                handle: lowerHandle,
+                email: lowerEmail,
                 phone,
                 password,
                 birthday: parsedBirthday,
@@ -100,12 +103,13 @@ export const login = async (req: Request, res: Response) => {
     const { identifier, password, authProvider } = req.body;
 
     try {
+        const lowerIdentifier = identifier?.toLowerCase();
+        
         const user = await prisma.user.findFirst({
             where: {
                 OR: [
-                    { email: identifier },
-                    // { phone: identifier }, // Removed from SAFE_USER_SELECT/Schema?
-                    { handle: identifier }
+                    { email: { equals: lowerIdentifier } },
+                    { handle: { equals: lowerIdentifier } }
                 ],
                 authProvider: authProvider || 'Email'
             } as any
@@ -165,16 +169,17 @@ export const login = async (req: Request, res: Response) => {
 
 export const initiateRegistration = async (req: Request, res: Response) => {
     const { fullName, email, dob } = req.body;
+    const lowerEmail = email?.toLowerCase();
     try {
-        const existing = await prisma.user.findFirst({ where: { email } });
+        const existing = await prisma.user.findFirst({ where: { email: { equals: lowerEmail } } });
         if (existing) {
             res.status(400).json({ error: 'Email already registered' });
             return;
         }
         const pending = await prisma.pendingRegistration.upsert({
-            where: { email },
+            where: { email: lowerEmail },
             update: { fullName, dob: new Date(dob), currentStep: 2 },
-            create: { email, fullName, dob: new Date(dob), currentStep: 2 }
+            create: { email: lowerEmail, fullName, dob: new Date(dob), currentStep: 2 }
         });
         res.json({ success: true, pendingId: pending.id });
     } catch (error) {
@@ -184,8 +189,9 @@ export const initiateRegistration = async (req: Request, res: Response) => {
 
 export const completeRegistration = async (req: Request, res: Response) => {
     const { email, pendingId, otp } = req.body;
+    const lowerEmail = email?.toLowerCase();
     try {
-        const where = pendingId ? { id: pendingId } : { email };
+        const where = pendingId ? { id: pendingId } : { email: lowerEmail };
         const pending = await prisma.pendingRegistration.findUnique({ where });
         if (!pending) return res.status(404).json({ error: 'Session not found' });
 
@@ -240,8 +246,9 @@ export const completeRegistration = async (req: Request, res: Response) => {
 
 export const setRegistrationPassword = async (req: Request, res: Response) => {
     const { email, pendingId, password } = req.body;
+    const lowerEmail = email?.toLowerCase();
     try {
-        const where = pendingId ? { id: pendingId } : { email };
+        const where = pendingId ? { id: pendingId } : { email: lowerEmail };
         await prisma.pendingRegistration.update({
             where,
             data: {
@@ -258,8 +265,9 @@ export const setRegistrationPassword = async (req: Request, res: Response) => {
 
 export const checkHandleAvailability = async (req: Request, res: Response) => {
     const { handle } = req.query;
+    const lowerHandle = (handle as string)?.toLowerCase();
     try {
-        const existing = await prisma.user.findFirst({ where: { handle: handle as string } });
+        const existing = await prisma.user.findFirst({ where: { handle: { equals: lowerHandle } } });
         res.json({ available: !existing });
     } catch (error) {
         res.status(500).json({ error: 'Check failed' });
@@ -268,12 +276,14 @@ export const checkHandleAvailability = async (req: Request, res: Response) => {
 
 export const reserveHandle = async (req: Request, res: Response) => {
     const { email, pendingId, handle } = req.body;
+    const lowerEmail = email?.toLowerCase();
+    const lowerHandle = handle?.toLowerCase();
     try {
-        const where = pendingId ? { id: pendingId } : { email };
+        const where = pendingId ? { id: pendingId } : { email: lowerEmail };
         await prisma.pendingRegistration.update({
             where,
             data: {
-                handle,
+                handle: lowerHandle,
                 currentStep: 4
             }
         });

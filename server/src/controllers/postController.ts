@@ -59,16 +59,12 @@ export const getPosts = async (req: Request, res: Response) => {
                     NOT: { hiddenBy: { some: { userId } } }
                 } : {}),
                 OR: [
-                    { targetAudience: { not: 'Followers' } },
+                    { targetAudience: 'Public' },
                     { targetAudience: null },
-                    { authorId: userId },
-                    {
-                        author: {
-                            following: {
-                                some: { followerId: userId }
-                            }
-                        }
-                    }
+                    ...(userId ? [
+                        { authorId: userId },
+                        { author: { following: { some: { followerId: userId } } } }
+                    ] : [])
                 ]
             },
             include: {
@@ -95,6 +91,11 @@ export const getPosts = async (req: Request, res: Response) => {
                         author: { select: SAFE_USER_SELECT },
                         questions: { include: { options: true } },
                         sections: { include: { questions: { include: { options: true } } } },
+                        responses: (userId || guestId) ? { 
+                            where: userId ? { userId } : { guestId }, 
+                            take: 1, 
+                            include: { answers: true } 
+                        } : false,
                     }
                 }
             },
@@ -102,8 +103,8 @@ export const getPosts = async (req: Request, res: Response) => {
         });
 
         const mappedPosts = posts.map((s: any) => {
-            const userResponse = s.responses?.[0];
-            const userAnswers = userResponse?.answers || [];
+            const actualResponse = s.sharedFrom ? s.sharedFrom.responses?.[0] : s.responses?.[0];
+            const userAnswers = actualResponse?.answers || [];
             
             let mappedSharedFrom: any = undefined;
             if (s.sharedFrom) {
@@ -124,7 +125,7 @@ export const getPosts = async (req: Request, res: Response) => {
                 likes: s.likesCount,
                 participants: s.responseCount,
                 coverImage: s.image,
-                hasParticipated: userId ? !!userResponse : false,
+                hasParticipated: (userId || guestId) ? !!actualResponse : false,
                 userSelectedOptions: userAnswers.map((a: any) => a.optionId),
                 userProgress: {
                     currentQuestionIndex: 0,
@@ -195,6 +196,11 @@ export const getPostById = async (req: Request, res: Response) => {
                         author: { select: SAFE_USER_SELECT },
                         questions: { include: { options: true } },
                         sections: { include: { questions: { include: { options: true } } } },
+                        responses: (userId || guestId) ? { 
+                            where: userId ? { userId } : { guestId }, 
+                            take: 1, 
+                            include: { answers: true } 
+                        } : false,
                     }
                 }
             }
@@ -206,8 +212,8 @@ export const getPostById = async (req: Request, res: Response) => {
         }
 
         const p = post as any;
-        const userResponse = p.responses?.[0];
-        const userAnswers = userResponse?.answers || [];
+        const actualResponse = p.sharedFrom ? p.sharedFrom.responses?.[0] : p.responses?.[0];
+        const userAnswers = actualResponse?.answers || [];
         
         let mappedSharedFrom: any = undefined;
         if (p.sharedFrom) {
@@ -228,7 +234,7 @@ export const getPostById = async (req: Request, res: Response) => {
             likes: p.likesCount,
             participants: p.responseCount,
             coverImage: p.image,
-            hasParticipated: (userId || guestId) ? !!userResponse : false,
+            hasParticipated: (userId || guestId) ? !!actualResponse : false,
             userSelectedOptions: userAnswers.map((a: any) => a.optionId),
             userProgress: {
                 currentQuestionIndex: 0,
@@ -823,6 +829,16 @@ export const getParticipants = async (req: Request, res: Response) => {
                      avatar: null,
                      handle: null,
                      isAnonymous: true,
+                     timestamp: r.timestamp
+                 };
+            }
+            if (!r.user) {
+                 return {
+                     id: 'guest-' + r.id,
+                     name: 'Guest User',
+                     avatar: null,
+                     handle: null,
+                     isAnonymous: false,
                      timestamp: r.timestamp
                  };
             }
