@@ -48,8 +48,8 @@ export const register = async (req: Request, res: Response) => {
         const existing = await prisma.user.findFirst({
             where: {
                 OR: [
-                    { handle: { equals: lowerHandle } },
-                    lowerEmail ? { email: { equals: lowerEmail } } : undefined,
+                    { handle: { equals: handle, mode: 'insensitive' } },
+                    email ? { email: { equals: email, mode: 'insensitive' } } : undefined,
                     phone ? { phone } : undefined
                 ].filter(Boolean) as any
             }
@@ -108,8 +108,8 @@ export const login = async (req: Request, res: Response) => {
         const user = await prisma.user.findFirst({
             where: {
                 OR: [
-                    { email: { equals: lowerIdentifier } },
-                    { handle: { equals: lowerIdentifier } }
+                    { email: { equals: identifier, mode: 'insensitive' } },
+                    { handle: { equals: identifier, mode: 'insensitive' } }
                 ],
                 authProvider: authProvider || 'Email'
             } as any

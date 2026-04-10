@@ -13,6 +13,27 @@ export const getGuestId = () => {
     return guestId;
 };
 
+const resolveAssets = (obj: any): any => {
+    if (!obj) return obj;
+    if (typeof obj === 'string') {
+        if (obj.startsWith('/uploads/')) {
+            // Local dev falls back to :3001, otherwise extract from the API URL
+            const baseUrl = API_BASE_URL === '/api' ? 'http://localhost:3001' : API_BASE_URL.replace(/\/api\/?$/, '');
+            return `${baseUrl}${obj}`;
+        }
+        return obj;
+    }
+    if (Array.isArray(obj)) return obj.map(resolveAssets);
+    if (typeof obj === 'object') {
+        const newObj: any = {};
+        for (const key in obj) {
+            newObj[key] = resolveAssets(obj[key]);
+        }
+        return newObj;
+    }
+    return obj;
+};
+
 const authFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const token = localStorage.getItem('si_token');
     const headers = new Headers(init?.headers);
@@ -39,6 +60,13 @@ const authFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<
         localStorage.removeItem('si_user');
         window.dispatchEvent(new Event('auth_expired'));
     }
+    
+    // Intercept .json() to resolve asset paths automatically
+    const originalJson = response.json.bind(response);
+    response.json = async () => {
+        const data = await originalJson();
+        return resolveAssets(data);
+    };
     
     return response;
 };

@@ -60,6 +60,7 @@ export const getPosts = async (req: Request, res: Response) => {
                 } : {}),
                 OR: [
                     { targetAudience: 'Public' },
+                    { targetAudience: 'PUBLIC' },
                     { targetAudience: null },
                     ...(userId ? [
                         { authorId: userId },

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { User, PieChart } from 'lucide-react';
 import { UserProfile } from '../types';
+import { UserAvatar } from './UserAvatar';
 
 interface HeaderProps {
   onProfileClick?: () => void;
@@ -11,11 +12,8 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ onProfileClick, userProfile, onLoginClick, onSignUpClick }) => {
-  // Brand colors derived from the logo
   const BRAND_BLUE = '#0070BA';
   const BRAND_GREEN = '#00A67E';
-
-  const [imageError, setImageError] = useState(false);
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 bg-white/95 backdrop-blur-md border-b border-gray-100 h-16 px-4 flex items-center justify-between max-w-md mx-auto shadow-sm transition-all">
@@ -44,17 +42,7 @@ export const Header: React.FC<HeaderProps> = ({ onProfileClick, userProfile, onL
             onClick={onProfileClick}
             className="relative ml-1 active:scale-95 transition-transform"
           >
-            {userProfile.avatar ? (
-              <img
-                src={userProfile.avatar}
-                alt="Profile"
-                className="w-8 h-8 rounded-full object-cover border border-gray-100 shadow-sm"
-              />
-            ) : (
-              <div className="p-2 hover:bg-gray-50 rounded-full text-gray-500">
-                <User size={20} />
-              </div>
-            )}
+            <UserAvatar src={userProfile.avatar} size={32} className="border border-gray-100 shadow-sm" />
           </button>
         ) : (
           <div className="flex items-center gap-4 mr-2">
