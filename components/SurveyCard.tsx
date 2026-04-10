@@ -8,6 +8,7 @@ import { ShareSheet } from './ShareSheet';
 import { ParticipantsSheet } from './ParticipantsSheet';
 import { LikersSheet } from './LikersSheet';
 import { RichTextRenderer } from './RichTextRenderer';
+import { UserAvatar } from './UserAvatar';
 import { api } from '../services/api';
 import { useFollowState } from '../hooks/useFollowState';
 
@@ -1645,19 +1646,12 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 }}>
                   <div className="relative shrink-0">
                     <div className="relative w-10 h-10 md:w-12 md:h-12 rounded-full overflow-hidden border border-gray-100 shrink-0 cursor-pointer bg-white">
-                      {!imageError && authorAvatar ? (
-                        <img
-                          src={authorAvatar}
-                          crossOrigin="anonymous"
-                          alt={authorName}
-                          className="w-full h-full object-cover"
-                          onError={() => setImageError(true)}
-                        />
-                      ) : (
-                        <div className="w-full h-full bg-indigo-600 text-white flex items-center justify-center font-bold text-lg md:text-xl uppercase tracking-wider">
-                          {authorName.substring(0, 2)}
-                        </div>
-                      )}
+                      <UserAvatar
+                        src={authorAvatar}
+                        name={authorName}
+                        size={48}
+                        className="w-full h-full object-cover"
+                      />
                     </div>
                     {sourceSurvey.targetGroups && sourceSurvey.targetGroups.length > 0 && (
                       <div className="absolute -bottom-1 -right-1 w-5 h-5 md:w-6 md:h-6 bg-blue-100 rounded-lg flex items-center justify-center border-2 border-white overflow-hidden shadow-sm">

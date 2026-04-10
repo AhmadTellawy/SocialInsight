@@ -663,7 +663,14 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         <div className="px-6 flex flex-col items-center pt-2">
           <div className="relative mb-6">
             <div className="w-28 h-28 rounded-[2.5rem] p-1 bg-white shadow-xl border border-gray-100 ring-4 ring-gray-50/50">
-              <img src={profileUser.avatar} alt="Profile" className="w-full h-full rounded-[2.25rem] object-cover" />
+              <img 
+                src={profileUser.avatar} 
+                alt="Profile" 
+                className="w-full h-full rounded-[2.25rem] object-cover" 
+                onError={(e) => {
+                  e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(profileUser.name || 'User')}&background=f3f4f6&color=9ca3af&size=200`;
+                }}
+              />
             </div>
             {isMe && (
               <button

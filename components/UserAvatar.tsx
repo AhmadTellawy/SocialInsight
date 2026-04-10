@@ -6,13 +6,15 @@ interface UserAvatarProps {
     alt?: string;
     size?: number;
     className?: string;
+    name?: string; // New prop for beautiful initials fallback
 }
 
 export const UserAvatar: React.FC<UserAvatarProps> = ({
     src,
     alt = 'User',
     size = 40,
-    className = ''
+    className = '',
+    name
 }) => {
     const [imgError, setImgError] = useState(false);
 
@@ -28,13 +30,15 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
         );
     }
 
-    // Default avatar icon
+    // Professional initials fallback via ui-avatars
+    const fallbackSrc = `https://ui-avatars.com/api/?name=${encodeURIComponent(name || alt || 'User')}&background=f3f4f6&color=9ca3af&size=200`;
+
     return (
-        <div
-            className={`rounded-full bg-gray-100 flex items-center justify-center ${className}`}
+        <img
+            src={fallbackSrc}
+            alt={alt}
+            className={`rounded-full object-cover ${className}`}
             style={{ width: size, height: size }}
-        >
-            <User size={size * 0.6} className="text-gray-400" strokeWidth={2} />
-        </div>
+        />
     );
 };

@@ -42,7 +42,7 @@ export const Header: React.FC<HeaderProps> = ({ onProfileClick, userProfile, onL
             onClick={onProfileClick}
             className="relative ml-1 active:scale-95 transition-transform"
           >
-            <UserAvatar src={userProfile.avatar} size={32} className="border border-gray-100 shadow-sm" />
+            <UserAvatar src={userProfile.avatar} name={userProfile.name} size={32} className="border border-gray-100 shadow-sm" />
           </button>
         ) : (
           <div className="flex items-center gap-4 mr-2">

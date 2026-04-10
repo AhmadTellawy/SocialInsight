@@ -1,13 +1,5 @@
-import fs from 'fs';
-import path from 'path';
 import sharp from 'sharp';
 import { v4 as uuidv4 } from 'uuid';
-
-// Ensure the directory exists
-const uploadDir = path.join(__dirname, '../../public/uploads');
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-}
 
 /**
  * Processes a base64 image string, compresses it, saves it to disk, and returns the URL.
@@ -31,17 +23,15 @@ export const processBase64Image = async (base64String: string | null | undefined
         }
 
         const imageBuffer = Buffer.from(matches[2], 'base64');
-        const filename = `${uuidv4()}.webp`;
-        const filepath = path.join(uploadDir, filename);
 
-        // Compress and parse to webp using sharp
-        await sharp(imageBuffer)
+        // Compress and parse to webp using sharp and return as Data URL buffer
+        const webpBuffer = await sharp(imageBuffer)
             .resize({ width: 1200, withoutEnlargement: true }) // Max width 1200px
             .webp({ quality: 80 }) 
-            .toFile(filepath);
+            .toBuffer();
 
-        // Return relative path for statically serving
-        return `/uploads/${filename}`;
+        // Return Data URL string to support Vercel serverless (No local FS requirements)
+        return `data:image/webp;base64,${webpBuffer.toString('base64')}`;
         
     } catch (error) {
         console.error('Error processing base64 image:', error);

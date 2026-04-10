@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Search, X, Clock, TrendingUp, ChevronRight, User, Users, FileText, PieChart, Hash, ArrowLeft } from 'lucide-react';
 import { Survey, SurveyType } from '../types';
+import { UserAvatar } from './UserAvatar';
 
 interface SearchScreenProps {
   surveys: Survey[];
@@ -257,17 +258,11 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                       {(activeFilter === 'All' ? results.people.slice(0, 3) : results.people).map((person, i) => (
                         <div key={i} className="flex items-center justify-between p-3.5 hover:bg-gray-50 border-b border-gray-50 last:border-0 transition-colors">
                           <div className="flex items-center gap-3">
-                            <img 
+                            <UserAvatar 
                                 src={person.avatar} 
                                 alt={person.name} 
-                                className="w-10 h-10 rounded-full object-cover bg-gray-100" 
-                                data-fallback-applied="false"
-                                onError={(e) => {
-                                  if (e.currentTarget.getAttribute('data-fallback-applied') !== 'true') {
-                                    e.currentTarget.setAttribute('data-fallback-applied', 'true');
-                                    e.currentTarget.src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${person.name || 'user'}`;
-                                  }
-                                }}
+                                size={40} 
+                                className="border border-gray-100" 
                             />
                             <div>
                               <div className="text-sm font-bold text-gray-900"><HighlightedText text={person.name} highlight={debouncedQuery} /></div>
