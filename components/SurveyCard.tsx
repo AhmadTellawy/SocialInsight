@@ -1782,36 +1782,31 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           </div>
          </div>
         </div>
-        <div className="border-t border-gray-100 mt-2 px-4 pt-2 pb-1">
-          <div className="flex items-center gap-4">
+        <div className="border-t border-gray-100 mt-2 px-2 pt-2 pb-2">
+          <div className="flex items-center justify-between">
             <div className="flex items-center">
-              <button onClick={handleLike} className={`flex items-center gap-1.5 py-2 px-1 rounded-lg transition-all active:scale-95 group ${isLiked ? 'text-blue-600' : 'text-gray-500 hover:bg-gray-50'}`}>
-                <ThumbsUp size={16} fill={isLiked ? "currentColor" : "none"} strokeWidth={2} className={`transition-transform duration-300 ${isLiked ? 'scale-110 text-blue-600' : 'group-hover:scale-110'}`} />
-                <span className={`text-[11px] font-semibold ${isLiked ? 'text-blue-600' : 'text-gray-600'}`}>Like</span>
+              <button onClick={handleLike} className={`flex flex-col items-center justify-center gap-1 py-1.5 min-w-[50px] rounded-lg transition-all active:scale-95 group ${isLiked ? 'text-blue-600' : 'text-gray-500 hover:bg-gray-50'}`}>
+                <ThumbsUp size={18} fill={isLiked ? "currentColor" : "none"} strokeWidth={2} className={`transition-transform duration-300 ${isLiked ? 'scale-110 text-blue-600' : 'group-hover:scale-110'}`} />
+                <span className={`text-[10px] font-semibold ${isLiked ? 'text-blue-600' : 'text-gray-500'}`}>{likeCount > 0 ? formatCount(likeCount) : 'Like'}</span>
               </button>
-              {likeCount > 0 && (
-                <button onClick={(e) => { e.stopPropagation(); setIsLikersSheetOpen(true); }} className="ml-1 px-2 py-1 flex items-center justify-center rounded-lg hover:bg-gray-50 text-[11px] font-bold text-gray-500 hover:text-blue-600 transition-colors">
-                  {formatCount(likeCount)}
-                </button>
-              )}
             </div>
             {survey.allowComments !== false && (
-              <button onClick={(e) => { e.stopPropagation(); setIsCommentsOpen(true); }} className="flex items-center gap-1.5 py-2 px-1 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all active:scale-95 group">
-                <MessageCircle size={16} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
-                <span className="text-[11px] font-semibold text-gray-600">{commentsCount > 0 ? formatCount(commentsCount) : 'Comment'}</span>
+              <button onClick={(e) => { e.stopPropagation(); setIsCommentsOpen(true); }} className="flex flex-col items-center justify-center gap-1 py-1.5 min-w-[50px] rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all active:scale-95 group">
+                <MessageCircle size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
+                <span className="text-[10px] font-semibold">{commentsCount > 0 ? formatCount(commentsCount) : 'Comment'}</span>
               </button>
             )}
-            <button onClick={(e) => { e.stopPropagation(); setIsRepostMenuOpen(true); }} className="flex items-center gap-1.5 py-2 px-1 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-green-600 transition-all active:scale-95 group">
-              <Repeat size={16} strokeWidth={2} className="group-hover:scale-110 transition-transform group-hover:text-green-600" />
-              <span className="text-[11px] font-semibold text-gray-600 group-hover:text-green-600">Repost</span>
+            <button onClick={(e) => { e.stopPropagation(); setIsRepostMenuOpen(true); }} className="flex flex-col items-center justify-center gap-1 py-1.5 min-w-[50px] rounded-lg text-gray-500 hover:bg-gray-50 hover:text-green-600 transition-all active:scale-95 group">
+              <Repeat size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform group-hover:text-green-600" />
+              <span className="text-[10px] font-semibold group-hover:text-green-600">Repost</span>
             </button>
-            <button onClick={(e) => { e.stopPropagation(); setIsShareSheetOpen(true); }} className="flex items-center gap-1.5 py-2 px-1 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all active:scale-95 group">
-              <Share2 size={16} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
-              <span className="text-[11px] font-semibold text-gray-600">Share</span>
+            <button onClick={(e) => { e.stopPropagation(); setIsShareSheetOpen(true); }} className="flex flex-col items-center justify-center gap-1 py-1.5 min-w-[50px] rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all active:scale-95 group">
+              <Share2 size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
+              <span className="text-[10px] font-semibold">Share</span>
             </button>
-            <button onClick={(e) => { e.stopPropagation(); onAnalysisClick && onAnalysisClick(); }} className="flex items-center gap-1.5 py-2 px-1 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all active:scale-95 group">
-              <BarChart3 size={16} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
-              <span className="text-[11px] font-semibold text-gray-600">Analysis</span>
+            <button onClick={(e) => { e.stopPropagation(); onAnalysisClick && onAnalysisClick(); }} className="flex flex-col items-center justify-center gap-1 py-1.5 min-w-[50px] rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all active:scale-95 group">
+              <BarChart3 size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
+              <span className="text-[10px] font-semibold">Analysis</span>
             </button>
           </div>
         </div>

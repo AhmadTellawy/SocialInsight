@@ -21,7 +21,7 @@ export const Header: React.FC<HeaderProps> = ({ onProfileClick, userProfile, onL
         {/* Custom Logo with Fallback */}
         <div className="relative w-12 h-12 shrink-0 transform active:scale-90 transition-transform cursor-pointer">
           <img
-            src="logo.png"
+            src="/logo.png"
             alt="SocialInsight Logo"
             className="w-full h-full object-contain"
           />
