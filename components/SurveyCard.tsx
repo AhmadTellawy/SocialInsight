@@ -306,7 +306,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   };
 
   const renderInteractionButton = () => {
-    const isMe = userProfile?.id === survey.author?.id;
+    if (!userProfile?.id) return null;
+    const isMe = userProfile.id === survey.author?.id;
     if (isMe) return null;
     const label = authorType === 'Group' ? 'Join' : 'Follow';
     const activeLabel = authorType === 'Group' ? 'Joined' : 'Following';
@@ -960,7 +961,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     const diffInDays = Math.floor(diffInHours / 24);
     if (diffInDays < 7) return `${diffInDays}d ago`;
     const diffInWeeks = Math.floor(diffInDays / 7);
-    if (diffInWeeks < 4) return `${diffInWeeks}w ago`;
+    if (diffInDays < 30) return `${diffInWeeks}w ago`;
     const diffInMonths = Math.floor(diffInDays / 30);
     if (diffInMonths < 12) return `${diffInMonths}mo ago`;
     const diffInYears = Math.floor(diffInDays / 365);

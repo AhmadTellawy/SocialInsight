@@ -76,6 +76,8 @@ const App: React.FC = () => {
     lastFetchedUserIdRef.current = null;
     localStorage.removeItem('si_user');
     localStorage.removeItem('si_token');
+    localStorage.removeItem('si_feed_cache');
+    fetchData(); // Immediately fetch anonymous feed
   };
 
   // Creation Flow State
