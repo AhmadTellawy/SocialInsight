@@ -1782,42 +1782,73 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           </div>
          </div>
         </div>
-        <div className="border-t border-gray-100 mt-2 px-2 pt-2 pb-2">
+        <div className="border-t border-gray-100 mt-2 px-1 pt-1 pb-1">
           <div className="flex items-center justify-between">
-            <div className="flex items-center">
-              <button onClick={handleLike} className={`flex flex-col items-center justify-center py-1 px-2 rounded-lg transition-all active:scale-95 group ${isLiked ? 'text-blue-600' : 'text-gray-500 hover:bg-gray-50'}`}>
-                <ThumbsUp size={18} fill={isLiked ? "currentColor" : "none"} strokeWidth={2} className={`transition-transform duration-300 mb-0.5 ${isLiked ? 'scale-110 text-blue-600' : 'group-hover:scale-110'}`} />
-                <span className={`text-[10px] leading-tight font-semibold ${isLiked ? 'text-blue-600' : 'text-gray-500'}`}>Like</span>
-              </button>
-              {likeCount > 0 && (
-                <button onClick={(e) => { e.stopPropagation(); setIsLikersSheetOpen(true); }} className="ml-0.5 px-1 py-1 flex items-center justify-center rounded-lg hover:bg-gray-50 text-[11px] font-bold text-gray-500 hover:text-blue-600 transition-colors">
-                  {formatCount(likeCount)}
+            {/* Like Button */}
+            <div className="flex flex-col items-center justify-center min-w-[48px]">
+              <div className="flex items-center gap-0.5">
+                <button onClick={handleLike} className={`p-1.5 rounded-full transition-transform active:scale-95 group ${isLiked ? 'text-blue-600 bg-blue-50' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'}`}>
+                  <ThumbsUp size={18} fill={isLiked ? "currentColor" : "none"} strokeWidth={2} className={`transition-transform duration-300 ${isLiked ? 'scale-110' : 'group-hover:scale-110'}`} />
                 </button>
-              )}
-            </div>
-            {survey.allowComments !== false && (
-              <div className="flex items-center">
-                <button onClick={(e) => { e.stopPropagation(); setIsCommentsOpen(true); }} className="flex flex-col items-center justify-center py-1 px-2 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all active:scale-95 group">
-                  <MessageCircle size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform mb-0.5" />
-                  <span className="text-[10px] leading-tight font-semibold">Comment</span>
-                </button>
-                {commentsCount > 0 && (
-                  <span className="ml-0.5 px-1 text-[11px] font-bold text-gray-500">{formatCount(commentsCount)}</span>
+                {likeCount > 0 && (
+                  <button onClick={(e) => { e.stopPropagation(); setIsLikersSheetOpen(true); }} className={`text-[12px] pr-1 font-bold ${isLiked ? 'text-blue-600' : 'text-gray-500'} hover:underline`}>
+                    {formatCount(likeCount)}
+                  </button>
                 )}
               </div>
+              <span className={`text-[9px] uppercase tracking-widest font-bold mt-0.5 ${isLiked ? 'text-blue-600' : 'text-gray-400'}`}>Like</span>
+            </div>
+
+            {/* Comment Button */}
+            {survey.allowComments !== false && (
+              <div className="flex flex-col items-center justify-center min-w-[48px]">
+                <div className="flex items-center gap-0.5">
+                  <button onClick={(e) => { e.stopPropagation(); setIsCommentsOpen(true); }} className="p-1.5 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-all active:scale-95 group">
+                    <MessageCircle size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
+                  </button>
+                  {commentsCount > 0 && (
+                    <button onClick={(e) => { e.stopPropagation(); setIsCommentsOpen(true); }} className="text-[12px] pr-1 font-bold text-gray-500 hover:underline">
+                      {formatCount(commentsCount)}
+                    </button>
+                  )}
+                </div>
+                <span className="text-[9px] uppercase tracking-widest font-bold mt-0.5 text-gray-400">Comment</span>
+              </div>
             )}
-            <button onClick={(e) => { e.stopPropagation(); setIsRepostMenuOpen(true); }} className="flex flex-col items-center justify-center py-1 px-2 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-green-600 transition-all active:scale-95 group">
-              <Repeat size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform group-hover:text-green-600 mb-0.5" />
-              <span className="text-[10px] leading-tight font-semibold group-hover:text-green-600">Repost</span>
-            </button>
-            <button onClick={(e) => { e.stopPropagation(); setIsShareSheetOpen(true); }} className="flex flex-col items-center justify-center py-1 px-2 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all active:scale-95 group">
-              <Share2 size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform mb-0.5" />
-              <span className="text-[10px] leading-tight font-semibold">Share</span>
-            </button>
-            <button onClick={(e) => { e.stopPropagation(); onAnalysisClick && onAnalysisClick(); }} className="flex flex-col items-center justify-center py-1 px-2 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all active:scale-95 group">
-              <BarChart3 size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform mb-0.5" />
-              <span className="text-[10px] leading-tight font-semibold">Analysis</span>
-            </button>
+
+            {/* Repost Button */}
+            <div className="flex flex-col items-center justify-center min-w-[48px]">
+              <div className="flex items-center gap-0.5">
+                <button onClick={(e) => { e.stopPropagation(); setIsRepostMenuOpen(true); }} className="p-1.5 rounded-full text-gray-500 hover:bg-green-50 hover:text-green-600 transition-all active:scale-95 group">
+                  <Repeat size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
+                </button>
+                {survey.repostCount > 0 && (
+                   <span className="text-[12px] pr-1 font-bold text-gray-500">{formatCount(survey.repostCount)}</span>
+                )}
+              </div>
+              <span className="text-[9px] uppercase tracking-widest font-bold mt-0.5 text-gray-400 group-hover:text-green-600">Repost</span>
+            </div>
+
+            {/* Share Button */}
+            <div className="flex flex-col items-center justify-center min-w-[48px]">
+              <div className="flex items-center gap-0.5">
+                <button onClick={(e) => { e.stopPropagation(); setIsShareSheetOpen(true); }} className="p-1.5 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-all active:scale-95 group">
+                  <Share2 size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
+                </button>
+              </div>
+              <span className="text-[9px] uppercase tracking-widest font-bold mt-0.5 text-gray-400">Share</span>
+            </div>
+
+            {/* Analysis Button */}
+            <div className="flex flex-col items-center justify-center min-w-[48px]">
+              <div className="flex items-center gap-0.5">
+                <button onClick={(e) => { e.stopPropagation(); onAnalysisClick && onAnalysisClick(); }} className="p-1.5 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-all active:scale-95 group">
+                  <BarChart3 size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
+                </button>
+              </div>
+              <span className="text-[9px] uppercase tracking-widest font-bold mt-0.5 text-gray-400">Analysis</span>
+            </div>
+
           </div>
         </div>
         {showShareToast && <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-4 py-2 rounded-full text-xs font-medium shadow-lg animate-in fade-in zoom-in duration-200 z-10">Link copied!</div>}
@@ -2037,6 +2068,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         targetId={sourceSurvey.id}
         type="post"
         onAuthorClick={onAuthorClick}
+        currentUser={userProfile}
+        isLikedLocally={isLiked}
       />
     </>
   );

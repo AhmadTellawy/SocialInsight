@@ -146,6 +146,7 @@ import { api } from '../services/api';
 
 export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProfile, onAuthorClick, sourceSurface = 'FEED', onCommentAdded }) => {
   const [comments, setComments] = useState<Comment[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [newComment, setNewComment] = useState('');
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const [isLikersSheetOpen, setIsLikersSheetOpen] = useState(false);
@@ -157,12 +158,15 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
 
   React.useEffect(() => {
     const loadComments = async () => {
+      setIsLoading(true);
       try {
         const data = await api.getComments(surveyId, userProfile?.id);
         setComments(data);
       } catch (e) {
         console.error("Failed to load comments", e);
         alert("Failed to load comments. Please try again.");
+      } finally {
+        setIsLoading(false);
       }
     };
     loadComments();
@@ -259,8 +263,23 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
   return (
     <div className="flex flex-col h-full bg-white">
       {/* Scrollable Comments List */}
-      <div className="flex-1 overflow-y-auto px-4 pt-2 pb-20 overscroll-contain no-scrollbar">
-        {comments.length === 0 ? (
+      <div className="flex-1 overflow-y-auto px-4 pt-4 pb-20 overscroll-contain no-scrollbar">
+        {isLoading ? (
+          <div className="space-y-6">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="flex gap-3 animate-pulse">
+                <div className="w-8 h-8 rounded-full bg-gray-200 shrink-0" />
+                <div className="flex-1 space-y-2">
+                  <div className="bg-gray-100 rounded-2xl w-full h-16" />
+                  <div className="flex gap-4 ml-2">
+                     <div className="w-8 h-3 bg-gray-200 rounded" />
+                     <div className="w-12 h-3 bg-gray-200 rounded" />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : comments.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 text-gray-400">
             <p>No comments yet. Be the first!</p>
           </div>
@@ -334,6 +353,11 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
         targetId={likersTargetId}
         type="comment"
         onAuthorClick={onAuthorClick}
+        currentUser={userProfile}
+        isLikedLocally={
+          comments.find(c => c.id === likersTargetId)?.isLiked || 
+          comments.flatMap(c => c.replies || []).find(r => r.id === likersTargetId)?.isLiked
+        }
       />
 
       {/* Action Sheet for Edit/Delete */}

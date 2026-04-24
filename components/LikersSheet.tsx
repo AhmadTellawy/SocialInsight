@@ -10,20 +10,31 @@ interface LikersSheetProps {
     targetId: string;
     type: 'post' | 'comment';
     onAuthorClick?: (author: { id: string; name: string; avatar: string }) => void;
+    currentUser?: UserProfile | null;
+    isLikedLocally?: boolean;
 }
 
-export const LikersSheet: React.FC<LikersSheetProps> = ({ isOpen, onClose, targetId, type, onAuthorClick }) => {
+export const LikersSheet: React.FC<LikersSheetProps> = ({ isOpen, onClose, targetId, type, onAuthorClick, currentUser, isLikedLocally }) => {
     const [likers, setLikers] = useState<UserProfile[]>([]);
     const [isLoading, setIsLoading] = useState(false);
 
     useEffect(() => {
         if (isOpen && targetId) {
-            console.log(`LikersSheet fetching: ${targetId} for ${type}`);
+            setIsLoading(true);
             const fetcher = type === 'post' ? api.getPostLikers : api.getCommentLikers;
             fetcher(targetId)
                 .then(data => {
-                    console.log("Likers fetched:", data);
-                    setLikers(data);
+                    let finalData = [...data];
+                    // Optimistic merge
+                    if (currentUser && isLikedLocally !== undefined) {
+                        const existsIndex = finalData.findIndex(u => u.id === currentUser.id);
+                        if (isLikedLocally && existsIndex === -1) {
+                            finalData.unshift(currentUser);
+                        } else if (!isLikedLocally && existsIndex !== -1) {
+                            finalData.splice(existsIndex, 1);
+                        }
+                    }
+                    setLikers(finalData);
                 })
                 .catch(err => console.error("Error fetching likers:", err))
                 .finally(() => setIsLoading(false));
