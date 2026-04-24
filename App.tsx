@@ -599,53 +599,68 @@ const App: React.FC = () => {
     const previousSurveys = [...surveys];
     setSurveys(prev =>
       prev.map(s => {
-        if (s.id !== surveyId) return s;
+        const isDirect = s.id === surveyId;
+        const isShared = s.sharedFrom?.id === surveyId;
+        
+        if (!isDirect && !isShared) return s;
 
-        // 1) Completion path (Survey/Quiz) => no option votes, only mark participated + store anon
-        if (optionIds.length === 0) {
+        const applyVote = (target: Survey): Survey => {
+          // 1) Completion path (Survey/Quiz) => no option votes, only mark participated + store anon
+          if (optionIds.length === 0) {
+            return {
+              ...target,
+              hasParticipated: true,
+              participants: target.hasParticipated ? target.participants : target.participants + 1,
+              userProgress: {
+                currentQuestionIndex: target.userProgress?.currentQuestionIndex || 0,
+                answers: target.userProgress?.answers || {},
+                followUpAnswers: target.userProgress?.followUpAnswers || {},
+                historyStack: target.userProgress?.historyStack || [],
+                isAnonymous: !!isAnonymous
+              }
+            };
+          }
+
+          // 2) Poll/Challenge vote path
+          let updatedOptions = [...(target.options || [])];
+
+          if (newOption && !updatedOptions.some(o => o.id === newOption.id)) {
+            updatedOptions.push({ ...newOption, votes: 0 });
+          }
+
+          const newOptions = updatedOptions.map(opt =>
+            optionIds.includes(opt.id)
+              ? { ...opt, votes: opt.votes + 1 }
+              : opt
+          );
+
           return {
-            ...s,
+            ...target,
+            options: newOptions,
             hasParticipated: true,
-            participants: s.hasParticipated ? s.participants : s.participants + 1,
+            userSelectedOptions: optionIds,
+            participants: target.hasParticipated ? target.participants : target.participants + 1,
             userProgress: {
-              currentQuestionIndex: s.userProgress?.currentQuestionIndex || 0,
-              answers: s.userProgress?.answers || {},
-              followUpAnswers: s.userProgress?.followUpAnswers || {},
-              historyStack: s.userProgress?.historyStack || [],
+              currentQuestionIndex: target.userProgress?.currentQuestionIndex || 0,
+              answers: target.userProgress?.answers || {},
+              followUpAnswers: target.userProgress?.followUpAnswers || {},
+              historyStack: target.userProgress?.historyStack || [],
               isAnonymous: !!isAnonymous
             }
           };
-        }
-
-        // 2) Poll/Challenge vote path
-        let updatedOptions = [...(s.options || [])];
-
-        if (newOption && !updatedOptions.some(o => o.id === newOption.id)) {
-          updatedOptions.push({ ...newOption, votes: 0 });
-        }
-
-        const newOptions = updatedOptions.map(opt =>
-          optionIds.includes(opt.id)
-            ? { ...opt, votes: opt.votes + 1 }
-            : opt
-        );
-
-        return {
-          ...s,
-          options: newOptions,
-          hasParticipated: true,
-          userSelectedOptions: optionIds,
-          participants: s.hasParticipated ? s.participants : s.participants + 1,
-          userProgress: {
-            currentQuestionIndex: s.userProgress?.currentQuestionIndex || 0,
-            answers: s.userProgress?.answers || {},
-            followUpAnswers: s.userProgress?.followUpAnswers || {},
-            historyStack: s.userProgress?.historyStack || [],
-            isAnonymous: !!isAnonymous
-          }
         };
+
+        if (isDirect) {
+          return applyVote(s);
+        } else {
+          return {
+            ...s,
+            sharedFrom: applyVote(s.sharedFrom!)
+          };
+        }
       })
     );
+
 
     // Server Call with Rollback
     if (optionIds.length > 0) {
@@ -668,18 +683,30 @@ const App: React.FC = () => {
   const handleSurveyProgress = (surveyId: string, progress: SurveyProgressPayload) => {
     setSurveys(prev =>
       prev.map(s => {
-        if (s.id !== surveyId) return s;
+        const isDirect = s.id === surveyId;
+        const isShared = s.sharedFrom?.id === surveyId;
+        if (!isDirect && !isShared) return s;
 
-        return {
-          ...s,
+        const applyProgress = (target: any) => ({
+          ...target,
+          hasParticipated: true,
           userProgress: {
             currentQuestionIndex: progress.index,
             answers: progress.answers,
             followUpAnswers: progress.followUpAnswers || {},
             historyStack: progress.historyStack || [],
-            isAnonymous: progress.isAnonymous ?? s.userProgress?.isAnonymous ?? false
+            isAnonymous: progress.isAnonymous ?? target.userProgress?.isAnonymous ?? false
           }
-        };
+        });
+
+        if (isDirect) {
+          return applyProgress(s);
+        } else {
+          return {
+            ...s,
+            sharedFrom: applyProgress(s.sharedFrom)
+          };
+        }
       })
     );
   };
@@ -687,12 +714,24 @@ const App: React.FC = () => {
   const handleLikePost = (surveyId: string, isLiked: boolean) => {
     const previousSurveys = [...surveys];
     setSurveys(prev => prev.map(s => {
-      if (s.id !== surveyId) return s;
-      return {
-        ...s,
+      const isDirect = s.id === surveyId;
+      const isShared = s.sharedFrom?.id === surveyId;
+      if (!isDirect && !isShared) return s;
+
+      const applyLike = (target: any) => ({
+        ...target,
         isLiked,
-        likes: isLiked ? (s.likes || 0) + 1 : Math.max(0, (s.likes || 1) - 1)
-      };
+        likes: isLiked ? (target.likes || 0) + 1 : Math.max(0, (target.likes || 1) - 1)
+      });
+
+      if (isDirect) {
+        return applyLike(s);
+      } else {
+        return {
+          ...s,
+          sharedFrom: applyLike(s.sharedFrom)
+        };
+      }
     }));
 
     // Server Call with Rollback

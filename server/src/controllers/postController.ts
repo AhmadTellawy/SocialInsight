@@ -98,6 +98,9 @@ export const getPosts = async (req: Request, res: Response) => {
                             take: 1, 
                             include: { answers: true } 
                         } : false,
+                        likes: userId ? { where: { userId }, take: 1 } : false,
+                        shares: userId ? { where: { authorId: userId }, take: 1 } : false,
+                        savedBy: userId ? { where: { userId }, take: 1 } : false,
                     }
                 }
             },
@@ -117,7 +120,15 @@ export const getPosts = async (req: Request, res: Response) => {
                     author: s.sharedFrom.author ? {
                         ...s.sharedFrom.author,
                         isFollowing: userId ? (s.sharedFrom.author.following && s.sharedFrom.author.following.length > 0) : false
-                    } : undefined
+                    } : undefined,
+                    likes: s.sharedFrom.likesCount,
+                    repostCount: s.sharedFrom.sharesCount || 0,
+                    participants: s.sharedFrom.responseCount,
+                    hasParticipated: (userId || guestId) ? !!(s.sharedFrom.responses && s.sharedFrom.responses.length > 0) : false,
+                    userSelectedOptions: (s.sharedFrom.responses && s.sharedFrom.responses.length > 0) ? (s.sharedFrom.responses[0].answers || []).map((a: any) => a.optionId) : [],
+                    isLiked: userId ? (s.sharedFrom.likes && s.sharedFrom.likes.length > 0) : false,
+                    hasReposted: userId ? (s.sharedFrom.shares && s.sharedFrom.shares.length > 0) : false,
+                    isSaved: userId ? (s.sharedFrom.savedBy && s.sharedFrom.savedBy.length > 0) : false
                 };
             }
 
@@ -206,6 +217,9 @@ export const getPostById = async (req: Request, res: Response) => {
                             take: 1, 
                             include: { answers: true } 
                         } : false,
+                        likes: userId ? { where: { userId }, take: 1 } : false,
+                        shares: userId ? { where: { authorId: userId }, take: 1 } : false,
+                        savedBy: userId ? { where: { userId }, take: 1 } : false,
                     }
                 }
             }
@@ -229,7 +243,15 @@ export const getPostById = async (req: Request, res: Response) => {
                 author: p.sharedFrom.author ? {
                     ...p.sharedFrom.author,
                     isFollowing: userId ? (p.sharedFrom.author.following && p.sharedFrom.author.following.length > 0) : false
-                } : undefined
+                } : undefined,
+                likes: p.sharedFrom.likesCount,
+                repostCount: p.sharedFrom.sharesCount || 0,
+                participants: p.sharedFrom.responseCount,
+                hasParticipated: (userId || guestId) ? !!(p.sharedFrom.responses && p.sharedFrom.responses.length > 0) : false,
+                userSelectedOptions: (p.sharedFrom.responses && p.sharedFrom.responses.length > 0) ? (p.sharedFrom.responses[0].answers || []).map((a: any) => a.optionId) : [],
+                isLiked: userId ? (p.sharedFrom.likes && p.sharedFrom.likes.length > 0) : false,
+                hasReposted: userId ? (p.sharedFrom.shares && p.sharedFrom.shares.length > 0) : false,
+                isSaved: userId ? (p.sharedFrom.savedBy && p.sharedFrom.savedBy.length > 0) : false
             };
         }
 
@@ -1202,7 +1224,15 @@ export const sharePost = async (req: Request, res: Response) => {
                 author: p.sharedFrom.author ? {
                     ...p.sharedFrom.author,
                     isFollowing: userId ? (p.sharedFrom.author.following && p.sharedFrom.author.following.length > 0) : false
-                } : undefined
+                } : undefined,
+                likes: p.sharedFrom.likesCount,
+                repostCount: p.sharedFrom.sharesCount || 0,
+                participants: p.sharedFrom.responseCount,
+                hasParticipated: (userId || guestId) ? !!(p.sharedFrom.responses && p.sharedFrom.responses.length > 0) : false,
+                userSelectedOptions: (p.sharedFrom.responses && p.sharedFrom.responses.length > 0) ? (p.sharedFrom.responses[0].answers || []).map((a: any) => a.optionId) : [],
+                isLiked: userId ? (p.sharedFrom.likes && p.sharedFrom.likes.length > 0) : false,
+                hasReposted: userId ? (p.sharedFrom.shares && p.sharedFrom.shares.length > 0) : false,
+                isSaved: userId ? (p.sharedFrom.savedBy && p.sharedFrom.savedBy.length > 0) : false
             };
         }
 
