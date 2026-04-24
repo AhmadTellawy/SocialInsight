@@ -811,7 +811,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
 
 
-  const handleLike = async () => {
+  const handleLike = async (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
     if (!userProfile?.id) return;
 
     const previousLiked = isLiked;
@@ -819,10 +820,6 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
     setIsLiked(nextLiked);
     setLikeCount(prev => nextLiked ? prev + 1 : prev - 1);
-
-    if (onLike) {
-      onLike(sourceSurvey.id, nextLiked);
-    }
 
     Analytics.track({
       event_type: nextLiked ? 'LIKE' : 'UNLIKE',
@@ -832,19 +829,23 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       position_in_feed: positionInFeed
     });
 
-    try {
-      await api.likeSurvey(sourceSurvey.id, userProfile.id);
-    } catch (error) {
-      console.error("Failed to like survey", error);
-      setIsLiked(previousLiked);
-      setLikeCount(prev => previousLiked ? prev + 1 : prev - 1);
-      if (onLike) {
-        onLike(sourceSurvey.id, previousLiked);
+    if (onLike) {
+      // Delegate API call to parent
+      onLike(sourceSurvey.id, nextLiked);
+    } else {
+      // Fallback for isolated cards without parents
+      try {
+        await api.likeSurvey(sourceSurvey.id, userProfile.id);
+      } catch (error) {
+        console.error("Failed to like survey", error);
+        setIsLiked(previousLiked);
+        setLikeCount(prev => previousLiked ? prev + 1 : prev - 1);
       }
     }
   };
 
-  const handleSave = async () => {
+  const handleSave = async (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
     if (!userProfile?.id) return;
     setIsMenuOpen(false);
     const previous = isSaved;
@@ -1789,22 +1790,22 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 <span className={`text-[11px] font-semibold ${isLiked ? 'text-blue-600' : 'text-gray-600'}`}>Like</span>
               </button>
               {likeCount > 0 && (
-                <button onClick={() => setIsLikersSheetOpen(true)} className="ml-1 px-2 py-1 flex items-center justify-center rounded-lg hover:bg-gray-50 text-[11px] font-bold text-gray-500 hover:text-blue-600 transition-colors">
+                <button onClick={(e) => { e.stopPropagation(); setIsLikersSheetOpen(true); }} className="ml-1 px-2 py-1 flex items-center justify-center rounded-lg hover:bg-gray-50 text-[11px] font-bold text-gray-500 hover:text-blue-600 transition-colors">
                   {formatCount(likeCount)}
                 </button>
               )}
             </div>
             {survey.allowComments !== false && (
-              <button onClick={() => setIsCommentsOpen(true)} className="flex items-center gap-1.5 py-2 px-1 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all active:scale-95 group">
+              <button onClick={(e) => { e.stopPropagation(); setIsCommentsOpen(true); }} className="flex items-center gap-1.5 py-2 px-1 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all active:scale-95 group">
                 <MessageCircle size={16} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
                 <span className="text-[11px] font-semibold text-gray-600">{commentsCount > 0 ? formatCount(commentsCount) : 'Comment'}</span>
               </button>
             )}
-            <button onClick={() => setIsRepostMenuOpen(true)} className="flex items-center gap-1.5 py-2 px-1 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-green-600 transition-all active:scale-95 group">
+            <button onClick={(e) => { e.stopPropagation(); setIsRepostMenuOpen(true); }} className="flex items-center gap-1.5 py-2 px-1 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-green-600 transition-all active:scale-95 group">
               <Repeat size={16} strokeWidth={2} className="group-hover:scale-110 transition-transform group-hover:text-green-600" />
               <span className="text-[11px] font-semibold text-gray-600 group-hover:text-green-600">Repost</span>
             </button>
-            <button onClick={() => setIsShareSheetOpen(true)} className="flex items-center gap-1.5 py-2 px-1 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all active:scale-95 group">
+            <button onClick={(e) => { e.stopPropagation(); setIsShareSheetOpen(true); }} className="flex items-center gap-1.5 py-2 px-1 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all active:scale-95 group">
               <Share2 size={16} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
               <span className="text-[11px] font-semibold text-gray-600">Share</span>
             </button>

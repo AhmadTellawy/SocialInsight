@@ -129,8 +129,26 @@ const App: React.FC = () => {
     }
   });
 
-  const [surveys, setSurveys] = useState<Survey[]>([]);
-  const [isFeedLoading, setIsFeedLoading] = useState(true);
+  const [surveys, setSurveys] = useState<Survey[]>(() => {
+    try {
+      const cached = localStorage.getItem('si_feed_cache');
+      if (cached) {
+        const savedUser = localStorage.getItem('si_user');
+        const user = savedUser ? JSON.parse(savedUser) : null;
+        return JSON.parse(cached).map((s: any) => normalizeSurvey(s, user));
+      }
+    } catch (e) {
+      console.error("Failed to parse initial feed cache", e);
+    }
+    return [];
+  });
+  const [isFeedLoading, setIsFeedLoading] = useState<boolean>(() => {
+    try {
+      return !localStorage.getItem('si_feed_cache');
+    } catch(e) {
+      return true;
+    }
+  });
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
@@ -188,17 +206,6 @@ const App: React.FC = () => {
       const user = JSON.parse(savedUser);
       setUserProfile(user);
       setIsAuthenticated(true);
-
-      const cachedFeed = localStorage.getItem('si_feed_cache');
-      if (cachedFeed) {
-        try {
-          const parsedCache = JSON.parse(cachedFeed);
-          setSurveys(parsedCache.map((s: any) => normalizeSurvey(s, user)));
-          setIsFeedLoading(false);
-        } catch (e) {
-          console.error("Failed to parse feed cache", e);
-        }
-      }
 
       // Fetch fresh user profile to get latest stats
       api.getUser(user.id).then(freshUser => {
