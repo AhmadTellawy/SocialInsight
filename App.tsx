@@ -216,6 +216,8 @@ const App: React.FC = () => {
         localStorage.removeItem('si_user');
         setIsAuthenticated(false);
         setUserProfile(null);
+        setSurveys([]); // Clear private feed
+        fetchData(); // Load public feed
       });
     } else {
       // Guest mode fetch
