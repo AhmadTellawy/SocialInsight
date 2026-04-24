@@ -154,7 +154,7 @@ const App: React.FC = () => {
 
   const [userGroups, setUserGroups] = useState<Group[]>([]);
 
-  const fetchData = async (currentUserId?: string, currentUser?: UserProfile | null) => {
+  const fetchData = async (currentUserId?: string, currentUser?: UserProfile | null, retries = 5) => {
     try {
       if (surveys.length === 0) setIsFeedLoading(true);
       const res = await api.getSurveys(currentUserId);
@@ -173,11 +173,16 @@ const App: React.FC = () => {
         const groupsData = await api.getUserGroups(currentUserId);
         setUserGroups(groupsData);
       }
+      setIsFeedLoading(false);
     } catch (error) {
       console.error("Failed to load initial data", error);
-      setSurveys([]);
-    } finally {
-      setIsFeedLoading(false);
+      if (retries > 0) {
+        // Cold start auto-retry
+        setTimeout(() => fetchData(currentUserId, currentUser, retries - 1), 3000);
+      } else {
+        setSurveys([]);
+        setIsFeedLoading(false);
+      }
     }
   };
 
