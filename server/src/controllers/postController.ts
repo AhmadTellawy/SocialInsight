@@ -1228,7 +1228,7 @@ export const sharePost = async (req: Request, res: Response) => {
                 likes: p.sharedFrom.likesCount,
                 repostCount: p.sharedFrom.sharesCount || 0,
                 participants: p.sharedFrom.responseCount,
-                hasParticipated: (userId || guestId) ? !!(p.sharedFrom.responses && p.sharedFrom.responses.length > 0) : false,
+                hasParticipated: userId ? !!(p.sharedFrom.responses && p.sharedFrom.responses.length > 0) : false,
                 userSelectedOptions: (p.sharedFrom.responses && p.sharedFrom.responses.length > 0) ? (p.sharedFrom.responses[0].answers || []).map((a: any) => a.optionId) : [],
                 isLiked: userId ? (p.sharedFrom.likes && p.sharedFrom.likes.length > 0) : false,
                 hasReposted: userId ? (p.sharedFrom.shares && p.sharedFrom.shares.length > 0) : false,
