@@ -1820,14 +1820,14 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             {/* Repost Button */}
             <div className="flex flex-col items-center justify-center min-w-[48px]">
               <div className="flex items-center gap-0.5">
-                <button onClick={(e) => { e.stopPropagation(); setIsRepostMenuOpen(true); }} className="p-1.5 rounded-full text-gray-500 hover:bg-green-50 hover:text-green-600 transition-all active:scale-95 group">
-                  <Repeat size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
+                <button onClick={(e) => { e.stopPropagation(); setIsRepostMenuOpen(true); }} className={`p-1.5 rounded-full transition-all active:scale-95 group ${survey.hasReposted ? 'text-green-600 bg-green-50' : 'text-gray-500 hover:bg-green-50 hover:text-green-600'}`}>
+                  <Repeat size={18} strokeWidth={2} className={`transition-transform ${survey.hasReposted ? 'scale-110' : 'group-hover:scale-110'}`} />
                 </button>
-                {survey.repostCount > 0 && (
-                   <span className="text-[12px] pr-1 font-bold text-gray-500">{formatCount(survey.repostCount)}</span>
+                {(survey.repostCount || 0) > 0 && (
+                   <span className={`text-[12px] pr-1 font-bold ${survey.hasReposted ? 'text-green-600' : 'text-gray-500'}`}>{formatCount(survey.repostCount || 0)}</span>
                 )}
               </div>
-              <span className="text-[9px] uppercase tracking-widest font-bold mt-0.5 text-gray-400 group-hover:text-green-600">Repost</span>
+              <span className={`text-[9px] uppercase tracking-widest font-bold mt-0.5 ${survey.hasReposted ? 'text-green-600' : 'text-gray-400 group-hover:text-green-600'}`}>Repost</span>
             </div>
 
             {/* Share Button */}
@@ -2004,28 +2004,30 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
              setIsRepostMenuOpen(false);
              if (onShareToFeed) onShareToFeed(survey, '');
           }} className="w-full flex items-center gap-4 p-4 hover:bg-gray-50 rounded-xl transition-colors text-left group">
-            <div className="w-10 h-10 rounded-full bg-green-50 text-green-600 flex items-center justify-center group-hover:bg-green-100 transition-colors">
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${survey.hasReposted ? 'bg-red-50 text-red-600 group-hover:bg-red-100' : 'bg-green-50 text-green-600 group-hover:bg-green-100'}`}>
                <Repeat size={22} strokeWidth={1.5} />
             </div>
             <div>
-              <div className="font-bold text-gray-900 text-[15px]">Repost</div>
-              <div className="text-xs text-gray-500 font-normal mt-0.5">Instantly share to your feed</div>
+              <div className={`font-bold text-[15px] ${survey.hasReposted ? 'text-red-600' : 'text-gray-900'}`}>{survey.hasReposted ? 'Undo Repost' : 'Repost'}</div>
+              <div className="text-xs text-gray-500 font-normal mt-0.5">{survey.hasReposted ? 'Remove this from your feed' : 'Instantly share to your feed'}</div>
             </div>
           </button>
 
-          <button onClick={() => {
-             setIsRepostMenuOpen(false);
-             setShareSheetInitialStep('repost-editor');
-             setIsShareSheetOpen(true);
-          }} className="w-full flex items-center gap-4 p-4 hover:bg-gray-50 rounded-xl transition-colors text-left group">
-            <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center group-hover:bg-blue-100 transition-colors">
-               <Edit3 size={22} strokeWidth={1.5} />
-            </div>
-            <div>
-              <div className="font-bold text-gray-900 text-[15px]">Quote</div>
-              <div className="text-xs text-gray-500 font-normal mt-0.5">Add a comment before sharing</div>
-            </div>
-          </button>
+          {!survey.hasReposted && (
+            <button onClick={() => {
+               setIsRepostMenuOpen(false);
+               setShareSheetInitialStep('repost-editor');
+               setIsShareSheetOpen(true);
+            }} className="w-full flex items-center gap-4 p-4 hover:bg-gray-50 rounded-xl transition-colors text-left group">
+              <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center group-hover:bg-blue-100 transition-colors">
+                 <Edit3 size={22} strokeWidth={1.5} />
+              </div>
+              <div>
+                <div className="font-bold text-gray-900 text-[15px]">Quote</div>
+                <div className="text-xs text-gray-500 font-normal mt-0.5">Add a comment before sharing</div>
+              </div>
+            </button>
+          )}
         </div>
       </BottomSheet>
       <BottomSheet isOpen={isParticipantsOpen} onClose={() => setIsParticipantsOpen(false)} customLayout={true} title="Participants" height="90dvh"><ParticipantsSheet survey={sourceSurvey} onAuthorClick={onAuthorClick} /></BottomSheet>

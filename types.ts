@@ -176,6 +176,8 @@ export interface Survey {
   // Interaction stats
   likes: number;
   commentsCount: number;
+  repostCount?: number;
+  hasReposted?: boolean;
   isLiked?: boolean;
   isSaved?: boolean;
   coverImage?: string; // Normalized UI field
@@ -303,6 +305,8 @@ export const normalizeSurvey = (raw: any): Survey => {
     participants: raw.participants ?? raw.responseCount ?? 0,
     likes: raw.likes ?? raw.likesCount ?? 0,
     commentsCount: raw.commentsCount ?? 0,
+    repostCount: raw.repostCount ?? raw.sharesCount ?? 0,
+    hasReposted: raw.hasReposted ?? false,
     targetGroups: parseArray(raw.targetGroups),
     demographics: parseArray(raw.demographics),
     allowAnonymous: raw.allowAnonymous === true || raw.allowAnonymous === 'true' || raw.allowAnonymous === '1',

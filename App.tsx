@@ -465,11 +465,34 @@ const App: React.FC = () => {
       // 1. Save to DB
       const resultSurvey = await api.sharePost(originalSurvey.id, userProfile.id, caption);
       
+      if (resultSurvey.action === 'unshared') {
+          // Remove the repost from the feed if it's there
+          setSurveys(prev => prev.filter(s => !(s.sharedFrom?.id === originalSurvey.id && s.author?.id === userProfile.id && !s.sharedCaption)));
+          // Decrement original count in state
+          setSurveys(prev => prev.map(s => {
+              if (s.id === originalSurvey.id) {
+                  return { ...s, repostCount: Math.max(0, (s.repostCount || 0) - 1), hasReposted: false };
+              }
+              return s;
+          }));
+          return;
+      }
+
       // 2. Normalize with current user perspective
       const normalizedResult = normalizeSurvey(resultSurvey, userProfile);
 
       // 3. Update UI Feed
-      setSurveys(prev => [normalizedResult, ...prev]);
+      setSurveys(prev => {
+          // If it was a clean repost, also update the original post's stats locally
+          const updatedFeed = prev.map(s => {
+              if (s.id === originalSurvey.id) {
+                  return { ...s, repostCount: (s.repostCount || 0) + 1, hasReposted: true };
+              }
+              return s;
+          });
+          return [normalizedResult, ...updatedFeed];
+      });
+
       setActiveTab('home');
       setSelectedSurveyId(null);
       setSelectedProfile(null);

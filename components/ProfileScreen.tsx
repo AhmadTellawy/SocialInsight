@@ -32,7 +32,7 @@ interface ProfileScreenProps {
 
 
 
-type ProfileTab = 'content' | 'participated' | 'groups' | 'drafts' | 'saved';
+type ProfileTab = 'content' | 'reposts' | 'groups' | 'drafts' | 'saved';
 
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   surveys,
@@ -474,7 +474,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const tabs = useMemo(() => {
     const baseTabs = [
       { id: 'content', label: 'Posts' },
-      { id: 'participated', label: 'Activity' }
+      { id: 'reposts', label: 'Reposts' }
     ];
 
     // If not me, we must respect the target user's group privacy settings.
@@ -503,9 +503,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   }, [isMe, profileUser?.groupPrivacy, targetUser?.groupPrivacy, isFollowing]);
 
   const renderTabContent = () => {
-    switch (activeTab) {
+    switch (activeTab as any) {
       case 'content':
-        const publishedPosts = mySurveys.filter(s => !s.isDraft);
+        const publishedPosts = mySurveys.filter(s => !s.isDraft && !s.sharedFrom);
         return publishedPosts.length > 0 ? (
           <div className="space-y-1 animate-in fade-in duration-300">
             {publishedPosts.map(survey => (
@@ -597,11 +597,33 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           </div>
         );
 
-      case 'participated':
-        return (
+      case 'reposts':
+        const reposts = mySurveys.filter(s => !s.isDraft && s.sharedFrom);
+        return reposts.length > 0 ? (
+          <div className="space-y-1 animate-in fade-in duration-300">
+            {reposts.map(survey => (
+              <SurveyCard
+                key={survey.id}
+                survey={survey}
+                userProfile={userProfile}
+                onContentClick={() => onSurveyClick(survey.id, 'PROFILE')}
+                onAnalysisClick={() => onSurveyClick(survey.id, 'PROFILE', 'analysis')}
+                onVote={onVote}
+                onSurveyProgress={onSurveyProgress}
+                onAuthorClick={onAuthorClick}
+                onShareToFeed={onShareToFeed}
+                onUpdateDemographics={onUpdateDemographics}
+                contextGroups={contextGroups}
+                onGroupClick={onGroupClick}
+                sourceSurface="PROFILE"
+                onLike={onLike}
+              />
+            ))}
+          </div>
+        ) : (
           <div className="flex flex-col items-center justify-center py-20 px-8 text-center text-gray-400">
-            <Activity size={48} className="opacity-10 mb-4" />
-            <p className="text-sm font-bold uppercase tracking-widest">Your activity will appear here</p>
+            <Repeat size={48} className="opacity-10 mb-4" />
+            <p className="text-sm font-bold uppercase tracking-widest">No reposts yet</p>
           </div>
         );
 

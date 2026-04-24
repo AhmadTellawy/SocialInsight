@@ -205,6 +205,7 @@ export const api = {
         });
         if (!response.ok) throw new Error('Failed to share post');
         const resData = await response.json();
+        if (resData.action === 'unshared') return resData;
         return normalizeSurvey(resData);
     },
 

@@ -86,6 +86,7 @@ export const getPosts = async (req: Request, res: Response) => {
                     include: { answers: true } 
                 } : false,
                 likes: userId ? { where: { userId }, take: 1 } : false,
+                shares: userId ? { where: { authorId: userId }, take: 1 } : false,
                 savedBy: userId ? { where: { userId }, take: 1 } : false,
                 sharedFrom: {
                     include: {
@@ -124,6 +125,7 @@ export const getPosts = async (req: Request, res: Response) => {
                 ...s,
                 sharedFrom: mappedSharedFrom || s.sharedFrom,
                 likes: s.likesCount,
+                repostCount: s.sharesCount || 0,
                 participants: s.responseCount,
                 coverImage: s.image,
                 hasParticipated: (userId || guestId) ? !!actualResponse : false,
@@ -135,6 +137,7 @@ export const getPosts = async (req: Request, res: Response) => {
                     historyStack: []
                 },
                 isLiked: userId ? (s.likes && s.likes.length > 0) : false,
+                hasReposted: userId ? (s.shares && s.shares.length > 0) : false,
                 isSaved: userId ? (s.savedBy && s.savedBy.length > 0) : false,
                 options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(s.type) || '') && s.questions.length > 0 ? s.questions[0].options : [],
                 author: {
@@ -185,6 +188,7 @@ export const getPostById = async (req: Request, res: Response) => {
                     include: { answers: true } 
                 } : false,
                 likes: userId ? { where: { userId }, take: 1 } : false,
+                shares: userId ? { where: { authorId: userId }, take: 1 } : false,
                 savedBy: userId ? { where: { userId }, take: 1 } : false,
                 comments: {
                     include: {
@@ -233,6 +237,7 @@ export const getPostById = async (req: Request, res: Response) => {
             ...p,
             sharedFrom: mappedSharedFrom || p.sharedFrom,
             likes: p.likesCount,
+                repostCount: p.sharesCount || 0,
             participants: p.responseCount,
             coverImage: p.image,
             hasParticipated: (userId || guestId) ? !!actualResponse : false,
@@ -244,6 +249,7 @@ export const getPostById = async (req: Request, res: Response) => {
                 historyStack: []
             },
             isLiked: userId ? (p.likes && p.likes.length > 0) : false,
+                hasReposted: userId ? (p.shares && p.shares.length > 0) : false,
             isSaved: userId ? (p.savedBy && p.savedBy.length > 0) : false,
             options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(p.type) || '') && p.questions.length > 0 ? p.questions[0].options : [],
             author: {
@@ -404,6 +410,7 @@ export const createPost = async (req: Request, res: Response) => {
         const mappedPost = {
             ...post,
             likes: post.likesCount,
+                repostCount: post.sharesCount || 0,
             participants: post.responseCount,
             coverImage: post.image,
             options: createdOptions,
@@ -605,6 +612,7 @@ export const updatePost = async (req: Request, res: Response) => {
         const mappedPost = {
             ...post,
             likes: post.likesCount,
+                repostCount: post.sharesCount || 0,
             participants: post.responseCount,
             coverImage: post.image,
             options: finalOptions,
@@ -634,6 +642,7 @@ export const getDrafts = async (req: Request, res: Response) => {
         const mappedDrafts = drafts.map((d: any) => ({
             ...d,
             likes: d.likesCount,
+                repostCount: d.sharesCount || 0,
             participants: d.responseCount,
             coverImage: d.image,
             options: normalizePostType(d.type) === 'Poll' && d.questions.length > 0 ? d.questions[0].options : [],
@@ -673,6 +682,7 @@ export const getSavedPosts = async (req: Request, res: Response) => {
             return {
                 ...p,
                 likes: p.likesCount,
+                repostCount: p.sharesCount || 0,
                 participants: p.responseCount,
                 coverImage: p.image,
                 hasParticipated: userId ? !!userResponse : false,
@@ -684,6 +694,7 @@ export const getSavedPosts = async (req: Request, res: Response) => {
                     historyStack: []
                 },
                 isLiked: userId ? (p.likes && p.likes.length > 0) : false,
+                hasReposted: userId ? (p.shares && p.shares.length > 0) : false,
                 isSaved: true,
                 options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(p.type) || '') && p.questions.length > 0 ? p.questions[0].options : [],
                 allowAnonymous: p.allowAnonymous,
@@ -1102,6 +1113,30 @@ export const sharePost = async (req: Request, res: Response) => {
 
         const actualSharedFromId = originalPost.sharedFromId ? originalPost.sharedFromId : originalPost.id;
 
+        // If it's a direct repost (no caption), check if it already exists to toggle it off
+        if (!caption || caption.trim() === '') {
+            const existingRepost = await prisma.post.findFirst({
+                where: {
+                    authorId: userId,
+                    sharedFromId: actualSharedFromId,
+                    sharedCaption: null
+                }
+            });
+
+            if (existingRepost) {
+                // Un-repost!
+                await prisma.$transaction([
+                    prisma.post.delete({ where: { id: existingRepost.id } }),
+                    prisma.post.update({
+                        where: { id: actualSharedFromId },
+                        data: { sharesCount: { decrement: 1 } }
+                    })
+                ]);
+                res.json({ success: true, action: 'unshared' });
+                return;
+            }
+        }
+
         const [newPost] = await prisma.$transaction([
             prisma.post.create({
             data: {
@@ -1175,6 +1210,7 @@ export const sharePost = async (req: Request, res: Response) => {
             ...p,
             sharedFrom: mappedSharedFrom || p.sharedFrom,
             likes: p.likesCount || 0,
+            repostCount: p.sharesCount || 0,
             participants: p.responseCount || 0,
             coverImage: p.image,
             options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(p.type) || '') && p.questions && p.questions.length > 0 ? p.questions[0].options : [],

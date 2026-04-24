@@ -126,6 +126,7 @@ model Post {
   image          String?
   likesCount     Int        @default(0)
   commentsCount  Int        @default(0)
+  sharesCount    Int        @default(0)
   responseCount  Int        @default(0)
   category       String?
   targetAudience String?
