@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Survey, SurveyType, Option, LogicRule, UserProfile } from '../types';
 import { Clock, Users, TrendingUp, MoreHorizontal, Share2, CheckCircle2, Flag, EyeOff, Bookmark, Link as LinkIcon, UserMinus, ThumbsUp, MessageCircle, FileText, PieChart, HelpCircle, Globe, Lock, Plus, AlertCircle, ImageIcon, ChevronLeft, ChevronRight, Check, ArrowRight, XCircle, Trophy, Target, X, ListChecks, Zap, Timer, Play, Repeat, UserPlus, PlusCircle, Shield, Shuffle, Heart, Search, Send, Star, Maximize2, BarChart3, Trash2, Edit3 } from 'lucide-react';
 import { Analytics } from '../utils/analytics';
@@ -137,6 +138,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 }) => {
   const [timeLeftStr, setTimeLeftStr] = useState('');
   const [isExpired, setIsExpired] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -814,7 +816,10 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
   const handleLike = async (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    if (!userProfile?.id) return;
+    if (!userProfile?.id) {
+      navigate('/signup');
+      return;
+    }
 
     const previousLiked = isLiked;
     const nextLiked = !previousLiked;
@@ -1804,11 +1809,25 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             {survey.allowComments !== false && (
               <div className="flex flex-col items-center justify-center min-w-[48px]">
                 <div className="flex items-center gap-0.5">
-                  <button onClick={(e) => { e.stopPropagation(); setIsCommentsOpen(true); }} className="p-1.5 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-all active:scale-95 group">
+                  <button onClick={(e) => { 
+                    e.stopPropagation(); 
+                    if (!userProfile?.id) {
+                      navigate('/signup');
+                      return;
+                    }
+                    setIsCommentsOpen(true); 
+                  }} className="p-1.5 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-all active:scale-95 group">
                     <MessageCircle size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
                   </button>
                   {commentsCount > 0 && (
-                    <button onClick={(e) => { e.stopPropagation(); setIsCommentsOpen(true); }} className="text-[12px] pr-1 font-bold text-gray-500 hover:underline">
+                    <button onClick={(e) => { 
+                      e.stopPropagation(); 
+                      if (!userProfile?.id) {
+                        navigate('/signup');
+                        return;
+                      }
+                      setIsCommentsOpen(true); 
+                    }} className="text-[12px] pr-1 font-bold text-gray-500 hover:underline">
                       {formatCount(commentsCount)}
                     </button>
                   )}
@@ -1820,7 +1839,14 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             {/* Repost Button */}
             <div className="flex flex-col items-center justify-center min-w-[48px]">
               <div className="flex items-center gap-0.5">
-                <button onClick={(e) => { e.stopPropagation(); setIsRepostMenuOpen(true); }} className={`p-1.5 rounded-full transition-all active:scale-95 group ${survey.hasReposted ? 'text-green-600 bg-green-50' : 'text-gray-500 hover:bg-green-50 hover:text-green-600'}`}>
+                <button onClick={(e) => { 
+                  e.stopPropagation(); 
+                  if (!userProfile?.id) {
+                    navigate('/signup');
+                    return;
+                  }
+                  setIsRepostMenuOpen(true); 
+                }} className={`p-1.5 rounded-full transition-all active:scale-95 group ${survey.hasReposted ? 'text-green-600 bg-green-50' : 'text-gray-500 hover:bg-green-50 hover:text-green-600'}`}>
                   <Repeat size={18} strokeWidth={2} className={`transition-transform ${survey.hasReposted ? 'scale-110' : 'group-hover:scale-110'}`} />
                 </button>
                 {(survey.repostCount || 0) > 0 && (

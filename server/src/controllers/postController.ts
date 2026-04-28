@@ -852,14 +852,17 @@ export const getParticipants = async (req: Request, res: Response) => {
         const responses = await prisma.response.findMany({
             where: { postId: id },
             include: { user: { select: SAFE_USER_SELECT } },
-            orderBy: { timestamp: 'desc' }
+            orderBy: { timestamp: 'asc' }
         });
         
+        let anonIdx = 1;
+        let guestIdx = 1;
+
         const mapped = responses.map((r: any) => {
             if (r.isAnonymous) {
                  return {
                      id: 'anon-' + r.id,
-                     name: 'Anonymous Voter',
+                     name: `Anonymous ${anonIdx++}`,
                      avatar: null,
                      handle: null,
                      isAnonymous: true,
@@ -869,10 +872,10 @@ export const getParticipants = async (req: Request, res: Response) => {
             if (!r.user) {
                  return {
                      id: 'guest-' + r.id,
-                     name: 'Guest User',
+                     name: `Guest ${guestIdx++}`,
                      avatar: null,
                      handle: null,
-                     isAnonymous: false,
+                     isAnonymous: true, // Render as anonymous (hides profile link)
                      timestamp: r.timestamp
                  };
             }
@@ -881,7 +884,7 @@ export const getParticipants = async (req: Request, res: Response) => {
                  isAnonymous: false,
                  timestamp: r.timestamp
             };
-        });
+        }).reverse();
         res.json(mapped);
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch participants' });

@@ -632,6 +632,10 @@ const App: React.FC = () => {
   };
 
   const handleAddMenuOption = (option: 'survey' | 'poll' | 'quiz' | 'challenge' | 'group' | 'business') => {
+    if (!isAuthenticated || !userProfile) {
+       navigate('/signup');
+       return;
+    }
     setIsAddMenuOpen(false);
     setActiveCreationGroupId(null);
     setEditingDraft(null);
@@ -639,7 +643,7 @@ const App: React.FC = () => {
   };
 
   const handleTabChange = async (tab: 'home' | 'search' | 'add' | 'trends' | 'profile' | 'notifications' | 'messages') => {
-    if ((tab === 'profile' || tab === 'notifications' || tab === 'add' || tab === 'messages') && (!isAuthenticated || !userProfile)) {
+    if ((tab === 'profile' || tab === 'notifications' || tab === 'add' || tab === 'messages' || tab === 'trends') && (!isAuthenticated || !userProfile)) {
        navigate('/signup');
        return;
     }
