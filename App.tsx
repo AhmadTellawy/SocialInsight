@@ -1,5 +1,6 @@
 
 import React, { useState, useRef, useMemo } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { api } from './services/api';
 import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
@@ -48,6 +49,9 @@ const INITIAL_USER: UserProfile = {
 };
 
 const App: React.FC = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+
   const [activeTab, setActiveTab] = useState<'home' | 'search' | 'add' | 'trends' | 'profile' | 'notifications' | 'messages'>('home');
   const [prevTab, setPrevTab] = useState<'home' | 'search' | 'add' | 'trends' | 'profile' | 'notifications'>('home');
 
@@ -293,17 +297,37 @@ const App: React.FC = () => {
 
   React.useEffect(() => {
     (window as any).showUsersTable = () => setShowUsersTable(true);
-
-    const path = window.location.pathname;
-    if (path.startsWith('/post/')) {
-      const postId = path.split('/post/')[1];
-      if (postId) {
-        setSelectedSurveyId(postId);
-        setSelectedSurveySurface('DEEP_LINK');
-        window.history.replaceState({}, document.title, '/');
-      }
-    }
   }, []);
+
+  React.useEffect(() => {
+    const path = location.pathname;
+    
+    // Clear overriding states if not on their paths
+    if (!path.startsWith('/post/')) setSelectedSurveyId(null);
+    if (!path.startsWith('/profile/') && path !== '/profile') setSelectedProfile(null);
+    if (!path.startsWith('/group/')) setSelectedGroupId(null);
+
+    if (path === '/' || path === '') setActiveTab('home');
+    else if (path === '/search') setActiveTab('search');
+    else if (path === '/trends') setActiveTab('trends');
+    else if (path === '/notifications') setActiveTab('notifications');
+    else if (path === '/messages') setActiveTab('messages');
+    else if (path === '/profile') setActiveTab('profile');
+    else if (path.startsWith('/profile/')) {
+       const id = path.split('/profile/')[1];
+       if (id && id !== selectedProfile?.id) {
+          setSelectedProfile({ id, name: 'Loading...', avatar: '' });
+       }
+    }
+    else if (path.startsWith('/group/')) {
+       const id = path.split('/group/')[1];
+       if (id && id !== selectedGroupId) setSelectedGroupId(id);
+    }
+    else if (path.startsWith('/post/')) {
+       const id = path.split('/post/')[1];
+       if (id && id !== selectedSurveyId) setSelectedSurveyId(id);
+    }
+  }, [location.pathname]);
 
   React.useEffect(() => {
     if (selectedGroupId && !userGroups.find(g => g.id === selectedGroupId)) {
@@ -579,15 +603,26 @@ const App: React.FC = () => {
       }
     } else {
       if (activeTab !== 'messages') setPrevTab(activeTab as any);
-      setActiveTab(tab);
+      if (tab === 'home') navigate('/');
+      else navigate(`/${tab}`);
     }
   };
 
   const handleSurveyClick = (id: string, surface: any = 'FEED', tab: 'post' | 'analysis' = 'post') => {
-    setSelectedSurveyId(id);
     setSelectedSurveySurface(surface);
     setDetailTab(tab);
     setIsNavVisible(false);
+    navigate(`/post/${id}`);
+  };
+
+  const navigateToProfile = (user: {id: string; name?: string; avatar?: string} | null) => {
+    if (user) navigate(`/profile/${user.id}`);
+    else navigate(-1);
+  };
+
+  const navigateToGroup = (id: string | null) => {
+    if (id) navigate(`/group/${id}`);
+    else navigate(-1);
   };
 
   const handleVote = (
@@ -762,12 +797,12 @@ const App: React.FC = () => {
             onSurveyClick={handleSurveyClick}
             onVote={handleVote}
             onSurveyProgress={handleSurveyProgress}
-            onAuthorClick={setSelectedProfile}
+            onAuthorClick={navigateToProfile}
             onShareToFeed={handleShareToFeed}
             onUpdateDemographics={handleUpdateDemographics}
             onCloseShareSheet={() => {/* no op for simple close */ }}
             contextGroups={userGroups}
-            onGroupClick={setSelectedGroupId}
+            onGroupClick={navigateToGroup}
             onLike={handleLikePost}
             onLoadMore={fetchMore}
             hasNextPage={!!nextCursor}
@@ -775,12 +810,12 @@ const App: React.FC = () => {
           />
         );
       case 'search':
-        return <SearchScreen surveys={publishedSurveys} onSurveyClick={handleSurveyClick} onAuthorClick={setSelectedProfile} />;
+        return <SearchScreen surveys={publishedSurveys} onSurveyClick={handleSurveyClick} onAuthorClick={navigateToProfile} />;
       case 'trends':
         return <TrendsScreen surveys={publishedSurveys} onSurveyClick={handleSurveyClick} />;
       case 'profile':
         if (isProfileSettingsOpen) return <ProfileSettingsScreen userProfile={userProfile!} onUpdateProfile={(prof) => { setUserProfile(prof); localStorage.setItem('si_user', JSON.stringify(prof)); }} onBack={() => setIsProfileSettingsOpen(false)} onLogout={handleLogout} />;
-        return <ProfileScreen surveys={surveys} userGroups={userGroups} userProfile={userProfile!} user={selectedProfile || undefined} onSurveyClick={handleSurveyClick} onGroupClick={setSelectedGroupId} onVote={handleVote} onAuthorClick={setSelectedProfile} onSurveyProgress={handleSurveyProgress} onShareToFeed={handleShareToFeed} onSettingsClick={() => setIsProfileSettingsOpen(true)} onEditDraft={(d) => { setActiveCreationFlow(getActiveCreationFlow(d.type)); setEditingDraft(d); }} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} onLike={handleLikePost} />;
+        return <ProfileScreen surveys={surveys} userGroups={userGroups} userProfile={userProfile!} user={selectedProfile || undefined} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onAuthorClick={navigateToProfile} onSurveyProgress={handleSurveyProgress} onShareToFeed={handleShareToFeed} onSettingsClick={() => setIsProfileSettingsOpen(true)} onEditDraft={(d) => { setActiveCreationFlow(getActiveCreationFlow(d.type)); setEditingDraft(d); }} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} onLike={handleLikePost} />;
       case 'notifications':
         return <NotificationsScreen notifications={notifications} onNotificationsChange={(newNotifs) => {
           if (userProfile?.id) {
@@ -798,9 +833,9 @@ const App: React.FC = () => {
             }
           }
           setNotifications(newNotifs);
-        }} onBack={() => setActiveTab('home')} onItemClick={(tid, ttype, actor) => ttype === 'profile' ? setSelectedProfile({ id: actor?.id || '', name: actor?.name || '', avatar: actor?.avatar || '' }) : setSelectedSurveyId(tid)} />;
+        }} onBack={() => handleTabChange('home')} onItemClick={(tid, ttype, actor) => ttype === 'profile' ? navigateToProfile({ id: actor?.id || '', name: actor?.name || '', avatar: actor?.avatar || '' }) : handleSurveyClick(tid)} />;
       case 'messages':
-        return <MessagesScreen onBack={() => setActiveTab(prevTab)} />;
+        return <MessagesScreen onBack={() => handleTabChange(prevTab)} />;
       default:
         return <div className="flex flex-col items-center justify-center h-[60vh] text-gray-400"><BarChart3 size={48} className="mb-4 opacity-20" /><p>Section coming soon.</p></div>;
     }
@@ -931,14 +966,14 @@ const App: React.FC = () => {
               currentUserId={userProfile.id}
               onBack={() => setIsGroupSettingsOpen(false)}
               onUpdateGroup={(id, updates) => setUserGroups(prev => prev.map(g => g.id === id ? { ...g, ...updates } : g))}
-              onDeleteGroup={(id) => { setUserGroups(prev => prev.filter(g => g.id !== id)); setSelectedGroupId(null); setIsGroupSettingsOpen(false); }}
+              onDeleteGroup={(id) => { setUserGroups(prev => prev.filter(g => g.id !== id)); navigateToGroup(null); setIsGroupSettingsOpen(false); }}
             />
           ) : (
             <GroupScreen
               group={activeGroup}
               surveys={surveys}
               userProfile={userProfile}
-              onBack={() => setSelectedGroupId(null)}
+              onBack={() => navigateToGroup(null)}
               onSurveyClick={handleSurveyClick}
               onVote={handleVote}
               onSurveyProgress={handleSurveyProgress}
@@ -949,12 +984,12 @@ const App: React.FC = () => {
             />
           )
         ) : selectedProfile ? (
-          <ProfileScreen surveys={surveys} userGroups={[]} userProfile={userProfile} onSurveyClick={handleSurveyClick} onGroupClick={setSelectedGroupId} onVote={handleVote} onSurveyProgress={handleSurveyProgress} user={selectedProfile} onBack={() => setSelectedProfile(null)} onAuthorClick={setSelectedProfile} onShareToFeed={handleShareToFeed} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} />
+          <ProfileScreen surveys={surveys} userGroups={[]} userProfile={userProfile} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onSurveyProgress={handleSurveyProgress} user={selectedProfile} onBack={() => navigateToProfile(null)} onAuthorClick={navigateToProfile} onShareToFeed={handleShareToFeed} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} />
         ) : selectedSurveyId && selectedSurvey ? (
           <>
             <div className="bg-white z-10 sticky top-0 border-b border-gray-100">
               <div className="flex items-center px-4 py-3">
-                <button onClick={() => setSelectedSurveyId(null)} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-600 transition-colors"><ArrowLeft size={24} /></button>
+                <button onClick={() => navigate(-1)} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-600 transition-colors"><ArrowLeft size={24} /></button>
                 <span className="font-bold text-lg ml-2">Detail View</span>
               </div>
               {/* Detail Tabs */}
@@ -985,10 +1020,10 @@ const App: React.FC = () => {
                   isDetailView={true}
                   onVote={handleVote}
                   onSurveyProgress={handleSurveyProgress}
-                  onAuthorClick={setSelectedProfile}
+                  onAuthorClick={navigateToProfile}
                   onShareToFeed={handleShareToFeed}
                   onUpdateDemographics={handleUpdateDemographics}
-                  onGroupClick={setSelectedGroupId}
+                  onGroupClick={navigateToGroup}
                   sourceSurface="FEED" /* Or PROFILE if we track where they came from */
                   onLike={handleLikePost}
                 />
