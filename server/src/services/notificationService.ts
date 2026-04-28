@@ -1,5 +1,6 @@
 import prisma from '../prisma';
 import { getIO } from './socketService';
+import { sendPushNotification } from './pushService';
 
 export const notify = async (
     actorId: string | undefined | null,
@@ -118,6 +119,18 @@ export const notify = async (
             }
         } catch (socketErr) {
             console.error('[SOCKET ERROR]: Failed to emit notification:', socketErr);
+        }
+
+        // Send Push Notification
+        try {
+            await sendPushNotification(userId, {
+                title: newNotif.actor ? newNotif.actor.name : 'SocialInsight',
+                body: newNotif.message,
+                type: newNotif.type,
+                url: newNotif.targetId ? `/${newNotif.targetType}/${newNotif.targetId}` : '/'
+            });
+        } catch (pushErr) {
+            console.error('[PUSH ERROR]: Failed to send push notification:', pushErr);
         }
 
     } catch (error) {

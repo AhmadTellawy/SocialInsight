@@ -59,6 +59,7 @@ model User {
   groups       GroupMember[]
   likes        UserLike[]
   commentLikes CommentLike[]
+  pushSubscriptions PushSubscription[]
 
   @@map("users")
 }
@@ -76,6 +77,18 @@ model UserDemographics {
   updatedAt        DateTime @updatedAt @map("updated_at")
 
   @@map("user_demographics")
+}
+
+model PushSubscription {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("push_subscriptions")
 }
 
 model Follow {

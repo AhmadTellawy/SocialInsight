@@ -70,6 +70,10 @@ const App: React.FC = () => {
     setUserProfile(user);
     setIsAuthenticated(true);
     setAuthModalOpen(false);
+    
+    // Initialize Push Notifications if permission granted
+    api.setupPushNotifications().catch(console.error);
+
     if (lastFetchedUserIdRef.current !== user.id) {
       lastFetchedUserIdRef.current = user.id;
       fetchData(user.id, user);

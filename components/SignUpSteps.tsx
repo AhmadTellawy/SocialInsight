@@ -417,6 +417,15 @@ export const OTPStep: React.FC<StepProps> = ({ onNext, data, isLoading }) => {
 };
 
 export const NotificationStep: React.FC<StepProps> = ({ onNext, isLoading }) => {
+    const handleEnableNotifications = async () => {
+        if ('Notification' in window) {
+            const permission = await Notification.requestPermission();
+            onNext({ notifications: permission === 'granted' });
+        } else {
+            onNext({ notifications: true }); // Fallback
+        }
+    };
+
     return (
         <div className="flex flex-col h-full bg-[#FAFAFA] animate-in zoom-in-95 duration-500 items-center justify-center text-center p-6 relative overflow-hidden">
             {/* Background blobs for premium feel */}
@@ -436,7 +445,7 @@ export const NotificationStep: React.FC<StepProps> = ({ onNext, isLoading }) => 
 
             <div className="space-y-4 w-full max-w-sm relative z-20">
                 <button
-                    onClick={() => onNext({ notifications: true })}
+                    onClick={handleEnableNotifications}
                     className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-black uppercase tracking-[0.15em] text-xs shadow-[0_8px_20px_rgb(37,99,235,0.25)] hover:shadow-[0_8px_25px_rgb(37,99,235,0.35)] active:scale-[0.98] transition-all flex items-center justify-center gap-2 group"
                 >
                     <Bell size={16} className="group-hover:rotate-12 transition-transform" /> <span className="pt-0.5">Turn on Notifications</span>

@@ -573,5 +573,71 @@ export const api = {
         const response = await authFetch(`${API_BASE_URL}/users/${userId}/groups`);
         if (!response.ok) throw new Error('Failed to fetch user groups');
         return response.json();
+    },
+
+    getVapidPublicKey: async () => {
+        const response = await fetch(`${API_BASE_URL}/push/vapid-public-key`);
+        if (!response.ok) throw new Error('Failed to get VAPID public key');
+        return response.json();
+    },
+
+    subscribeToPush: async (subscription: any) => {
+        const response = await authFetch(`${API_BASE_URL}/push/subscribe`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ subscription })
+        });
+        if (!response.ok) throw new Error('Failed to subscribe to push notifications');
+        return response.json();
+    },
+
+    unsubscribeFromPush: async (endpoint?: string) => {
+        const response = await authFetch(`${API_BASE_URL}/push/unsubscribe`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ endpoint })
+        });
+        if (!response.ok) throw new Error('Failed to unsubscribe from push notifications');
+        return response.json();
+    },
+
+    setupPushNotifications: async (token?: string) => {
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) return false;
+        try {
+            const permission = await Notification.requestPermission();
+            if (permission !== 'granted') return false;
+
+            const registration = await navigator.serviceWorker.ready;
+            const res = await fetch(`${API_BASE_URL}/push/vapid-public-key`);
+            if (!res.ok) throw new Error('Failed to fetch vapid key');
+            const { publicKey } = await res.json();
+
+            const padding = '='.repeat((4 - publicKey.length % 4) % 4);
+            const base64 = (publicKey + padding).replace(/\-/g, '+').replace(/_/g, '/');
+            const rawData = window.atob(base64);
+            const outputArray = new Uint8Array(rawData.length);
+            for (let i = 0; i < rawData.length; ++i) {
+                outputArray[i] = rawData.charCodeAt(i);
+            }
+
+            const subscription = await registration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: outputArray
+            });
+
+            const headers = new Headers({ 'Content-Type': 'application/json' });
+            const authToken = token || localStorage.getItem('si_token');
+            if (authToken) headers.set('Authorization', `Bearer ${authToken}`);
+
+            await fetch(`${API_BASE_URL}/push/subscribe`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ subscription })
+            });
+            return true;
+        } catch (e) {
+            console.error('Failed to setup push notifications', e);
+            return false;
+        }
     }
 };

@@ -20,6 +20,9 @@ export default defineConfig(({ mode }) => {
       react(),
       VitePWA({
         registerType: 'autoUpdate',
+        workbox: {
+          importScripts: ['/sw-push.js']
+        },
         includeAssets: ['favicon.ico', 'apple-touch-icon-180x180.png'],
         manifest: {
           name: 'SocialInsight',

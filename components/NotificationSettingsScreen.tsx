@@ -25,6 +25,7 @@ export interface NotificationSettings {
     commentInteractions: boolean;
     newFollowers: boolean;
     emailNotifications: boolean;
+    pushNotifications: boolean;
   };
 }
 
@@ -45,6 +46,7 @@ const DEFAULT_SETTINGS: NotificationSettings = {
     commentInteractions: true,
     newFollowers: true,
     emailNotifications: false,
+    pushNotifications: false,
   },
 };
 
@@ -331,10 +333,26 @@ export const NotificationSettingsScreen: React.FC<NotificationSettingsScreenProp
   }, [updateSettings]);
 
   const toggleSetting = useCallback((key: keyof NotificationSettings['toggles']) => {
-    updateSettings(prev => ({
-      ...prev,
-      toggles: { ...prev.toggles, [key]: !prev.toggles[key] }
-    }));
+    updateSettings(prev => {
+      const newVal = !prev.toggles[key];
+
+      if (key === 'pushNotifications') {
+        if (newVal) {
+          import('../services/api').then(({ api }) => {
+            api.setupPushNotifications().catch(console.error);
+          });
+        } else {
+          import('../services/api').then(({ api }) => {
+            api.unsubscribeFromPush().catch(console.error);
+          });
+        }
+      }
+
+      return {
+        ...prev,
+        toggles: { ...prev.toggles, [key]: newVal }
+      };
+    });
   }, [updateSettings]);
 
   return (
@@ -427,13 +445,19 @@ export const NotificationSettingsScreen: React.FC<NotificationSettingsScreenProp
           />
         </div>
 
-        <SectionHeader title="Email Notifications" icon={Mail} />
+        <SectionHeader title="Email & App Notifications" icon={Mail} />
         <div className="bg-white border-y border-gray-100">
           <ToggleRow
             label="Receive email notifications"
             description={`Get important updates and activity alerts sent directly to your inbox.\nEmail notifications are sent only for important or high-priority activity.`}
             active={settings.toggles.emailNotifications}
             onClick={() => toggleSetting('emailNotifications')}
+          />
+          <ToggleRow
+            label="Push Notifications"
+            description={`Receive real-time push notifications on this device.\nGet instantly notified when friends interact with your content.`}
+            active={settings.toggles.pushNotifications}
+            onClick={() => toggleSetting('pushNotifications')}
           />
         </div>
 
