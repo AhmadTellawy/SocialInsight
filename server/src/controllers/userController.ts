@@ -563,3 +563,57 @@ export const getSuggestedUsers = async (req: Request, res: Response) => {
     }
 };
 
+export const deleteAccount = async (req: Request, res: Response) => {
+    const { id } = req.params;
+    try {
+        await prisma.$transaction(async (tx) => {
+            // Nullify user PII and soft delete
+            await tx.user.update({
+                where: { id },
+                data: {
+                    status: 'DELETED',
+                    deletedAt: new Date(),
+                    name: 'Deleted User',
+                    handle: `deleted_${id.substring(0, 8)}`,
+                    email: null,
+                    phone: null,
+                    passwordHash: null,
+                    avatar: null,
+                    bio: null,
+                    location: null,
+                    website: null,
+                    birthday: null,
+                    language: null,
+                    country: null,
+                    authProvider: null
+                }
+            });
+
+            // Delete demographics
+            await tx.userDemographics.deleteMany({ where: { userId: id } });
+
+            // Delete relationships
+            await tx.follow.deleteMany({ where: { OR: [{ followerId: id }, { followingId: id }] } });
+            
+            // Delete likes & saves to clear private data
+            await tx.userLike.deleteMany({ where: { userId: id } });
+            await tx.commentLike.deleteMany({ where: { userId: id } });
+            await tx.savedPost.deleteMany({ where: { userId: id } });
+            await tx.hiddenPost.deleteMany({ where: { userId: id } });
+            
+            // Delete notifications and settings
+            await tx.notification.deleteMany({ where: { OR: [{ userId: id }, { actorId: id }] } });
+            await tx.notificationSettings.deleteMany({ where: { userId: id } });
+            
+            // Remove from groups
+            await tx.groupMember.deleteMany({ where: { userId: id } });
+            
+            // Leave posts, comments, responses intact to preserve survey integrity
+        });
+
+        res.json({ success: true, message: 'Account deleted and anonymized successfully' });
+    } catch (error) {
+        console.error("Delete Account Error:", error);
+        res.status(500).json({ error: 'Failed to delete account' });
+    }
+};

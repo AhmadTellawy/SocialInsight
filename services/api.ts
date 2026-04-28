@@ -276,6 +276,14 @@ export const api = {
         return response.json();
     },
 
+    deleteAccount: async (userId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/users/${userId}`, {
+            method: 'DELETE'
+        });
+        if (!response.ok) throw new Error('Failed to delete account');
+        return response.json();
+    },
+
     likeSurvey: async (postId: string, userId: string) => {
         const response = await authFetch(`${API_BASE_URL}/posts/${postId}/like`, {
             method: 'POST',

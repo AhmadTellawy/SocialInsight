@@ -52,6 +52,8 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [nationalitySearch, setNationalitySearch] = useState('');
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Image Flow State
   const [croppingImage, setCroppingImage] = useState<string | null>(null);
@@ -179,6 +181,23 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
     } finally {
       setIsSaving(false);
       setCurrentSubPage('main');
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (deleteConfirmText !== 'DELETE') return;
+    setIsDeleting(true);
+    try {
+      await api.deleteAccount(userProfile.id!);
+      localStorage.removeItem('si_user');
+      onLogout(); // This will clear session in parent App.tsx
+      window.location.href = '/';
+    } catch (error) {
+      console.error("Failed to delete account:", error);
+      alert("Failed to delete account. Please try again.");
+    } finally {
+      setIsDeleting(false);
+      setShowDeleteModal(false);
     }
   };
 
@@ -699,6 +718,49 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
               </button>
               <button
                 onClick={() => setShowLogoutConfirm(false)}
+                className="w-full py-4 bg-gray-100 text-gray-600 rounded-2xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-md flex items-center justify-center p-6 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2.5rem] p-8 w-full max-sm shadow-2xl animate-in zoom-in-95 duration-200 text-center">
+            <div className="w-16 h-16 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
+              <AlertTriangle size={32} />
+            </div>
+            <h3 className="text-xl font-black text-gray-900 mb-2">Delete Account?</h3>
+            <p className="text-sm text-gray-500 mb-4 leading-relaxed">
+              This action is <span className="font-bold text-red-500">irreversible</span>. All your personal data, likes, and follows will be permanently removed. Your posts will remain but will be anonymized.
+            </p>
+            <div className="mb-6">
+              <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-2">Type "DELETE" to confirm</p>
+              <input
+                type="text"
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                placeholder="DELETE"
+                className="w-full text-center bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 transition-all uppercase"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={handleDeleteAccount}
+                disabled={deleteConfirmText !== 'DELETE' || isDeleting}
+                className="w-full py-4 bg-red-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all disabled:opacity-50"
+              >
+                {isDeleting ? 'Deleting...' : 'Permanently Delete'}
+              </button>
+              <button
+                onClick={() => {
+                  setShowDeleteModal(false);
+                  setDeleteConfirmText('');
+                }}
+                disabled={isDeleting}
                 className="w-full py-4 bg-gray-100 text-gray-600 rounded-2xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all"
               >
                 Cancel

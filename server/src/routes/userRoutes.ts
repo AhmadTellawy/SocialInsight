@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getUser, getUserByHandle, updateUser, getUsers, getUserAnalytics, getUserFollowers, getUserFollowing, getNotifications, markNotificationsRead, markSingleNotificationRead, getUserGroups, searchUsers, getSuggestedUsers } from '../controllers/userController';
+import { getUser, getUserByHandle, updateUser, getUsers, getUserAnalytics, getUserFollowers, getUserFollowing, getNotifications, markNotificationsRead, markSingleNotificationRead, getUserGroups, searchUsers, getSuggestedUsers, deleteAccount } from '../controllers/userController';
 import { followUser, getFollowStatus } from '../controllers/followController';
 
 import { requireAuth, optionalAuth } from '../middleware/authMiddleware';
@@ -14,6 +14,7 @@ router.get('/:id/followers', optionalAuth, getUserFollowers);
 router.get('/:id/following', optionalAuth, getUserFollowing);
 
 router.put('/:id', requireAuth, updateUser);
+router.delete('/:id', requireAuth, deleteAccount);
 router.post('/:userId/follow', requireAuth, followUser);
 router.get('/:userId/follow-status', optionalAuth, getFollowStatus); // Just checking, optional
 router.get('/:id/analytics', requireAuth, getUserAnalytics);
