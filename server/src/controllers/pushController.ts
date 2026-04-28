@@ -5,7 +5,7 @@ const prisma = new PrismaClient();
 
 export const subscribeToPush = async (req: Request, res: Response): Promise<void> => {
     try {
-        const userId = req.user?.id; // Assuming requireAuth middleware
+        const userId = req.user?.userId; // Assuming requireAuth middleware
         const { subscription } = req.body;
 
         if (!userId) {
@@ -45,7 +45,7 @@ export const subscribeToPush = async (req: Request, res: Response): Promise<void
 
 export const unsubscribeFromPush = async (req: Request, res: Response): Promise<void> => {
     try {
-        const userId = req.user?.id;
+        const userId = req.user?.userId;
         const { endpoint } = req.body;
 
         if (!userId) {
