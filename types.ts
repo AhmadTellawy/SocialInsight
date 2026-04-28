@@ -166,6 +166,7 @@ export interface Survey {
   author: {
     id: string; // Added id
     name: string;
+    handle?: string; // Added handle
     avatar: string;
     type?: AccountType;
     isFollowing?: boolean; // Added isFollowing
@@ -252,12 +253,14 @@ export const normalizeSurvey = (raw: any): Survey => {
   const author = raw.author ? {
     id: raw.author.id ?? raw.authorId ?? '',
     name: raw.author.name ?? 'Unknown',
+    handle: raw.author.handle,
     avatar: raw.author.avatar ?? '',
     type: raw.author.type,
     isFollowing: raw.author.isFollowing
   } : {
     id: raw.authorId ?? '',
     name: 'Unknown',
+    handle: undefined,
     avatar: ''
   };
 

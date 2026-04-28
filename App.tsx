@@ -61,6 +61,9 @@ const App: React.FC = () => {
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalType, setAuthModalType] = useState<'flow' | 'login'>('flow');
 
+  const getGuestId = () => localStorage.getItem('guest_id') || '';
+  const fetchInitialData = (uid?: string) => fetchData(uid, userProfile || undefined);
+
   const handleAuthSuccess = (user: any) => {
     localStorage.setItem('si_user', JSON.stringify(user));
     setUserProfile(user);
@@ -274,7 +277,7 @@ const App: React.FC = () => {
   const [selectedSurveySurface, setSelectedSurveySurface] = useState<'FEED' | 'PROFILE' | 'SAVED' | 'SEARCH' | 'DEEP_LINK'>('FEED');
   const [detailTab, setDetailTab] = useState<'post' | 'analysis'>('post');
 
-  const [selectedProfile, setSelectedProfile] = useState<{ id: string; name: string; avatar: string } | null>(null);
+  const [selectedProfile, setSelectedProfile] = useState<{ id: string; name: string; avatar: string; handle?: string } | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [externalGroup, setExternalGroup] = useState<Group | null>(null);
   const [isGroupSettingsOpen, setIsGroupSettingsOpen] = useState(false);
@@ -302,10 +305,12 @@ const App: React.FC = () => {
   React.useEffect(() => {
     const path = location.pathname;
     
-    // Clear overriding states if not on their paths
+    // Helper to reset states when not on their paths
     if (!path.startsWith('/post/')) setSelectedSurveyId(null);
-    if (!path.startsWith('/profile/') && path !== '/profile') setSelectedProfile(null);
+    if (!path.startsWith('/profile/') && !path.startsWith('/@') && path !== '/profile') setSelectedProfile(null);
     if (!path.startsWith('/group/')) setSelectedGroupId(null);
+    if (!path.startsWith('/settings/profile')) setIsProfileSettingsOpen(false);
+    if (!path.startsWith('/group/') || !path.endsWith('/settings')) setIsGroupSettingsOpen(false);
 
     if (path === '/' || path === '') setActiveTab('home');
     else if (path === '/search') setActiveTab('search');
@@ -313,19 +318,72 @@ const App: React.FC = () => {
     else if (path === '/notifications') setActiveTab('notifications');
     else if (path === '/messages') setActiveTab('messages');
     else if (path === '/profile') setActiveTab('profile');
+    else if (path === '/settings/profile') {
+       setActiveTab('profile');
+       setIsProfileSettingsOpen(true);
+    }
+    else if (path.startsWith('/@')) {
+       setActiveTab('profile');
+       const handle = path.split('/@')[1];
+       if (handle && handle !== selectedProfile?.handle) {
+          api.getUserByHandle(handle).then(user => {
+              setSelectedProfile(user);
+          }).catch(err => {
+              console.error(err);
+              navigate('/'); // fallback
+          });
+       }
+    }
     else if (path.startsWith('/profile/')) {
+       setActiveTab('profile');
        const id = path.split('/profile/')[1];
        if (id && id !== selectedProfile?.id) {
-          setSelectedProfile({ id, name: 'Loading...', avatar: '' });
+          api.getUser(id).then(user => {
+              if (user.handle) navigate(`/@${user.handle}`, { replace: true });
+              else setSelectedProfile(user);
+          }).catch(console.error);
        }
     }
     else if (path.startsWith('/group/')) {
-       const id = path.split('/group/')[1];
+       const id = path.split('/group/')[1]?.split('/')[0]; // handle /group/id/settings
        if (id && id !== selectedGroupId) setSelectedGroupId(id);
+       if (path.endsWith('/settings')) setIsGroupSettingsOpen(true);
     }
     else if (path.startsWith('/post/')) {
        const id = path.split('/post/')[1];
        if (id && id !== selectedSurveyId) setSelectedSurveyId(id);
+    }
+
+    // Auth Routes
+    if (path === '/login') {
+       setAuthModalType('login');
+       setAuthModalOpen(true);
+    } else if (path === '/signup') {
+       setAuthModalType('flow');
+       setAuthModalOpen(true);
+    } else {
+       if (authModalOpen && !['/login', '/signup'].includes(path)) setAuthModalOpen(false);
+    }
+
+    // Create Routes
+    if (path.startsWith('/create/')) {
+       const type = path.split('/create/')[1];
+       if (['poll', 'survey', 'quiz', 'challenge'].includes(type)) {
+           setIsAddMenuOpen(false);
+           setAccountModalType(null);
+           setActiveCreationFlow(type as any);
+       } else if (type === 'group') {
+           setIsAddMenuOpen(false);
+           setActiveCreationFlow(null);
+           setAccountModalType('group');
+       } else if (type === 'business') {
+           setIsAddMenuOpen(false);
+           setActiveCreationFlow(null);
+           setAccountModalType('company');
+       }
+    } else {
+       if (activeCreationFlow && !path.startsWith('/create/')) setActiveCreationFlow(null);
+       if (accountModalType && !path.startsWith('/create/')) setAccountModalType(null);
     }
   }, [location.pathname]);
 
@@ -575,21 +633,14 @@ const App: React.FC = () => {
 
   const handleAddMenuOption = (option: 'survey' | 'poll' | 'quiz' | 'challenge' | 'group' | 'business') => {
     setIsAddMenuOpen(false);
-    if (option === 'group') {
-      setAccountModalType('group');
-    } else if (option === 'business') {
-      setAccountModalType('company');
-    } else {
-      setActiveCreationGroupId(null);
-      setEditingDraft(null);
-      setActiveCreationFlow(option);
-    }
+    setActiveCreationGroupId(null);
+    setEditingDraft(null);
+    navigate(`/create/${option}`);
   };
 
   const handleTabChange = async (tab: 'home' | 'search' | 'add' | 'trends' | 'profile' | 'notifications' | 'messages') => {
     if ((tab === 'profile' || tab === 'notifications' || tab === 'add' || tab === 'messages') && (!isAuthenticated || !userProfile)) {
-       setAuthModalType('flow');
-       setAuthModalOpen(true);
+       navigate('/signup');
        return;
     }
 
@@ -615,8 +666,11 @@ const App: React.FC = () => {
     navigate(`/post/${id}`);
   };
 
-  const navigateToProfile = (user: {id: string; name?: string; avatar?: string} | null) => {
-    if (user) navigate(`/profile/${user.id}`);
+  const navigateToProfile = (user: {id: string; name?: string; handle?: string; avatar?: string} | null) => {
+    if (user) {
+       if (user.handle) navigate(`/@${user.handle}`);
+       else navigate(`/profile/${user.id}`);
+    }
     else navigate(-1);
   };
 
@@ -814,8 +868,8 @@ const App: React.FC = () => {
       case 'trends':
         return <TrendsScreen surveys={publishedSurveys} onSurveyClick={handleSurveyClick} />;
       case 'profile':
-        if (isProfileSettingsOpen) return <ProfileSettingsScreen userProfile={userProfile!} onUpdateProfile={(prof) => { setUserProfile(prof); localStorage.setItem('si_user', JSON.stringify(prof)); }} onBack={() => setIsProfileSettingsOpen(false)} onLogout={handleLogout} />;
-        return <ProfileScreen surveys={surveys} userGroups={userGroups} userProfile={userProfile!} user={selectedProfile || undefined} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onAuthorClick={navigateToProfile} onSurveyProgress={handleSurveyProgress} onShareToFeed={handleShareToFeed} onSettingsClick={() => setIsProfileSettingsOpen(true)} onEditDraft={(d) => { setActiveCreationFlow(getActiveCreationFlow(d.type)); setEditingDraft(d); }} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} onLike={handleLikePost} />;
+        if (isProfileSettingsOpen) return <ProfileSettingsScreen userProfile={userProfile!} onUpdateProfile={(prof) => { setUserProfile(prof); localStorage.setItem('si_user', JSON.stringify(prof)); }} onBack={() => navigate('/profile')} onLogout={handleLogout} />;
+        return <ProfileScreen surveys={surveys} userGroups={userGroups} userProfile={userProfile!} user={selectedProfile || undefined} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onAuthorClick={navigateToProfile} onSurveyProgress={handleSurveyProgress} onShareToFeed={handleShareToFeed} onSettingsClick={() => navigate('/settings/profile')} onEditDraft={(d) => { navigate(`/create/${d.type.toLowerCase()}`); setEditingDraft(d); }} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} onLike={handleLikePost} />;
       case 'notifications':
         return <NotificationsScreen notifications={notifications} onNotificationsChange={(newNotifs) => {
           if (userProfile?.id) {
@@ -837,6 +891,27 @@ const App: React.FC = () => {
       case 'messages':
         return <MessagesScreen onBack={() => handleTabChange(prevTab)} />;
       default:
+        // When activeTab isn't explicitly matched but a modal is open
+        if (activeCreationFlow || accountModalType) {
+           return <HomeScreen
+             surveys={surveys}
+             userProfile={userProfile}
+             isLoading={isFeedLoading}
+             onSurveyClick={handleSurveyClick}
+             onVote={handleVote}
+             onSurveyProgress={handleSurveyProgress}
+             onAuthorClick={navigateToProfile}
+             onShareToFeed={handleShareToFeed}
+             onUpdateDemographics={handleUpdateDemographics}
+             onCloseShareSheet={() => {}}
+             contextGroups={userGroups}
+             onGroupClick={navigateToGroup}
+             onLike={handleLikePost}
+             onLoadMore={fetchMore}
+             hasNextPage={!!nextCursor}
+             isLoadingMore={isLoadingMore}
+           />;
+        }
         return <div className="flex flex-col items-center justify-center h-[60vh] text-gray-400"><BarChart3 size={48} className="mb-4 opacity-20" /><p>Section coming soon.</p></div>;
     }
   };
@@ -964,9 +1039,9 @@ const App: React.FC = () => {
             <GroupSettingsScreen
               group={activeGroup}
               currentUserId={userProfile.id}
-              onBack={() => setIsGroupSettingsOpen(false)}
+              onBack={() => navigate(`/group/${activeGroup.id}`)}
               onUpdateGroup={(id, updates) => setUserGroups(prev => prev.map(g => g.id === id ? { ...g, ...updates } : g))}
-              onDeleteGroup={(id) => { setUserGroups(prev => prev.filter(g => g.id !== id)); navigateToGroup(null); setIsGroupSettingsOpen(false); }}
+              onDeleteGroup={(id) => { setUserGroups(prev => prev.filter(g => g.id !== id)); navigateToGroup(null); }}
             />
           ) : (
             <GroupScreen
@@ -977,8 +1052,8 @@ const App: React.FC = () => {
               onSurveyClick={handleSurveyClick}
               onVote={handleVote}
               onSurveyProgress={handleSurveyProgress}
-              onSettingsClick={() => setIsGroupSettingsOpen(true)}
-              onCreatePost={() => { setIsAddMenuOpen(true); setActiveCreationGroupId(activeGroup.id); }}
+              onSettingsClick={() => navigate(`/group/${activeGroup.id}/settings`)}
+              onCreatePost={() => { navigate('/create/survey'); setActiveCreationGroupId(activeGroup.id); }}
               onShareToFeed={handleShareToFeed}
               onUpdateDemographics={handleUpdateDemographics}
             />
@@ -1036,11 +1111,11 @@ const App: React.FC = () => {
           <>
             {activeTab !== 'search' && activeTab !== 'profile' && activeTab !== 'notifications' && activeTab !== 'messages' && (
               <Header 
-                onProfileClick={() => setActiveTab('profile')} 
-                onMessagesClick={() => setActiveTab('messages')} 
+                onProfileClick={() => navigate('/profile')} 
+                onMessagesClick={() => navigate('/messages')} 
                 userProfile={userProfile || undefined} 
-                onLoginClick={() => { setAuthModalType('login'); setAuthModalOpen(true); }}
-                onSignUpClick={() => { setAuthModalType('flow'); setAuthModalOpen(true); }}
+                onLoginClick={() => navigate('/login')}
+                onSignUpClick={() => navigate('/signup')}
               />
             )}
 

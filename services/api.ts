@@ -263,6 +263,13 @@ export const api = {
         return response.json();
     },
 
+    getUserByHandle: async (handle: string) => {
+        let cleanHandle = handle.startsWith('@') ? handle.substring(1) : handle;
+        const response = await authFetch(`${API_BASE_URL}/users/handle/${cleanHandle}`);
+        if (!response.ok) throw new Error('Failed to fetch user by handle');
+        return response.json();
+    },
+
     getUserAnalytics: async (userId: string) => {
         const response = await authFetch(`${API_BASE_URL}/users/${userId}/analytics`);
         if (!response.ok) throw new Error('Failed to fetch user analytics');

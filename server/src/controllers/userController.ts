@@ -94,6 +94,44 @@ export const getUser = async (req: Request, res: Response) => {
     }
 };
 
+export const getUserByHandle = async (req: Request, res: Response) => {
+    const { handle } = req.params;
+    try {
+        let cleanHandle = handle as string;
+        if (cleanHandle.startsWith('@')) {
+            cleanHandle = cleanHandle.substring(1);
+        }
+
+        const user = await prisma.user.findUnique({
+            where: { handle: cleanHandle }
+        });
+
+        if (!user) {
+            res.status(404).json({ error: 'User not found' });
+            return;
+        }
+
+        const { password: _, passwordHash: __, ...safeUser } = user;
+
+        const demographics = await prisma.userDemographics.findUnique({
+            where: { userId: user.id }
+        });
+
+        res.json({
+            ...safeUser,
+            demographics: demographics || {},
+            stats: {
+                followers: user.followersCount,
+                following: user.followingCount,
+                responses: 0
+            }
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Failed to fetch user by handle' });
+    }
+};
+
 export const updateUser = async (req: Request, res: Response) => {
     const { id } = req.params;
     const data = req.body;

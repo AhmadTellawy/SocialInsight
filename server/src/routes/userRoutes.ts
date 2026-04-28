@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getUser, updateUser, getUsers, getUserAnalytics, getUserFollowers, getUserFollowing, getNotifications, markNotificationsRead, markSingleNotificationRead, getUserGroups, searchUsers, getSuggestedUsers } from '../controllers/userController';
+import { getUser, getUserByHandle, updateUser, getUsers, getUserAnalytics, getUserFollowers, getUserFollowing, getNotifications, markNotificationsRead, markSingleNotificationRead, getUserGroups, searchUsers, getSuggestedUsers } from '../controllers/userController';
 import { followUser, getFollowStatus } from '../controllers/followController';
 
 import { requireAuth, optionalAuth } from '../middleware/authMiddleware';
@@ -8,6 +8,7 @@ const router = Router();
 
 router.get('/', optionalAuth, getUsers);
 router.get('/search', optionalAuth, searchUsers);
+router.get('/handle/:handle', optionalAuth, getUserByHandle);
 router.get('/:id', optionalAuth, getUser);
 router.get('/:id/followers', optionalAuth, getUserFollowers);
 router.get('/:id/following', optionalAuth, getUserFollowing);
