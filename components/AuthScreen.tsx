@@ -169,8 +169,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess, initialVi
                 </div>
             </div>
             
-            <p className="mt-8 text-xs text-gray-400 font-medium">
-                By logging in, you agree to our <a href="#" className="text-gray-600 hover:text-gray-900 underline underline-offset-2">Terms of Service</a> and <a href="#" className="text-gray-600 hover:text-gray-900 underline underline-offset-2">Privacy Policy</a>.
+            <p className="mt-8 text-xs text-gray-400 font-medium text-center">
+                By logging in, you agree to our <a href="#" className="text-gray-600 hover:text-gray-900 underline underline-offset-2">Terms of Service</a> and <a href="/privacy" className="text-gray-600 hover:text-gray-900 underline underline-offset-2">Privacy Policy</a>.
             </p>
         </div>
     );

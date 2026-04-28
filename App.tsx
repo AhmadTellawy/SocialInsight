@@ -23,6 +23,7 @@ import { GroupScreen } from './components/GroupScreen';
 import { PostAnalysis } from './components/PostAnalysis';
 import { AuthScreen } from './components/AuthScreen';
 import { UsersTableScreen } from './components/UsersTableScreen';
+import { PrivacyPolicyScreen } from './components/PrivacyPolicyScreen';
 import { Survey, Option, Notification, SurveyType, Group, UserProfile } from './types';
 import {
   BarChart3, PieChart, Activity, ArrowLeft, Users, MessageCircle,
@@ -283,6 +284,7 @@ const App: React.FC = () => {
   const [isGroupSettingsOpen, setIsGroupSettingsOpen] = useState(false);
   const [isProfileSettingsOpen, setIsProfileSettingsOpen] = useState(false);
   const [showUsersTable, setShowUsersTable] = useState(false);
+  const [isPrivacyScreenOpen, setIsPrivacyScreenOpen] = useState(false);
 
   React.useEffect(() => {
     if (selectedProfile?.id) {
@@ -311,8 +313,10 @@ const App: React.FC = () => {
     if (!path.startsWith('/group/')) setSelectedGroupId(null);
     if (!path.startsWith('/settings/profile')) setIsProfileSettingsOpen(false);
     if (!path.startsWith('/group/') || !path.endsWith('/settings')) setIsGroupSettingsOpen(false);
+    if (path !== '/privacy') setIsPrivacyScreenOpen(false);
 
     if (path === '/' || path === '') setActiveTab('home');
+    else if (path === '/privacy') setIsPrivacyScreenOpen(true);
     else if (path === '/search') setActiveTab('search');
     else if (path === '/trends') setActiveTab('trends');
     else if (path === '/notifications') setActiveTab('notifications');
@@ -1038,6 +1042,8 @@ const App: React.FC = () => {
 
         {showUsersTable ? (
           <UsersTableScreen onBack={() => setShowUsersTable(false)} onUserClick={(u) => { setShowUsersTable(false); setSelectedProfile({ id: u.id, name: u.name, avatar: u.avatar }); }} />
+        ) : isPrivacyScreenOpen ? (
+          <PrivacyPolicyScreen />
         ) : selectedGroupId && activeGroup ? (
           isGroupSettingsOpen ? (
             <GroupSettingsScreen

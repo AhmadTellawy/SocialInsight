@@ -59,6 +59,7 @@ export const BasicInfoStep: React.FC<StepProps> = ({ onNext, onBack, isLoading }
         email: '',
         dob: ''
     });
+    const [consent, setConsent] = useState(false);
 
     useEffect(() => {
         if (year && month && day) {
@@ -68,7 +69,7 @@ export const BasicInfoStep: React.FC<StepProps> = ({ onNext, onBack, isLoading }
         }
     }, [day, month, year]);
 
-    const isValid = formData.fullName && formData.email && formData.dob;
+    const isValid = formData.fullName && formData.email && formData.dob && consent;
 
     return (
         <div className="flex flex-col h-full bg-white animate-in slide-in-from-right duration-300">
@@ -144,6 +145,19 @@ export const BasicInfoStep: React.FC<StepProps> = ({ onNext, onBack, isLoading }
                             ))}
                         </select>
                     </div>
+                </div>
+
+                <div className="flex items-start gap-3 mt-6">
+                    <button
+                        type="button"
+                        onClick={() => setConsent(!consent)}
+                        className={`w-5 h-5 mt-0.5 rounded flex items-center justify-center shrink-0 transition-colors ${consent ? 'bg-blue-600 border-blue-600' : 'bg-gray-50 border-2 border-gray-200 hover:border-gray-300'}`}
+                    >
+                        {consent && <Check size={14} className="text-white" strokeWidth={3} />}
+                    </button>
+                    <p className="text-xs font-medium text-gray-500 leading-relaxed">
+                        I agree to the <a href="/privacy" target="_blank" className="text-blue-600 hover:underline">Privacy Policy</a> and <a href="#" className="text-blue-600 hover:underline">Terms of Service</a>. I understand that my data will be processed according to these policies.
+                    </p>
                 </div>
             </div>
 

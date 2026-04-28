@@ -1,5 +1,6 @@
 
 import React, { useState, useRef, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, User, Mail, Globe, Lock, Eye, Search, Activity,
   Share2, Users, Bell, Palette, Shield, LifeBuoy, LogOut,
@@ -47,6 +48,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   onBack,
   onLogout
 }) => {
+  const navigate = useNavigate();
   const [currentSubPage, setCurrentSubPage] = useState<SubPage>('main');
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
@@ -676,7 +678,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
         <SectionHeader title="Support & Legal" />
         <div className="bg-white border-y border-gray-100 shadow-sm">
           <SettingItem icon={LifeBuoy} label="Help Center" />
-          <SettingItem icon={Shield} label="Privacy Policy" />
+          <SettingItem icon={Shield} label="Privacy Policy" onClick={() => navigate('/privacy')} />
         </div>
 
         <SectionHeader title="Danger Zone" />
