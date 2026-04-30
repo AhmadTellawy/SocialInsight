@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { User, PieChart } from 'lucide-react';
 import { UserProfile } from '../types';
 import { UserAvatar } from './UserAvatar';
+import { useTranslation } from 'react-i18next';
 
 interface HeaderProps {
   onProfileClick?: () => void;
@@ -12,6 +13,7 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ onProfileClick, userProfile, onLoginClick, onSignUpClick }) => {
+  const { t } = useTranslation();
   const BRAND_BLUE = '#0070BA';
   const BRAND_GREEN = '#00A67E';
 
@@ -47,10 +49,10 @@ export const Header: React.FC<HeaderProps> = ({ onProfileClick, userProfile, onL
         ) : (
           <div className="flex items-center gap-4 mr-2">
             <button onClick={onLoginClick} className="text-[15px] font-bold text-[#0070BA] hover:text-blue-700 transition-colors">
-              Login
+              {t('auth.login', 'Login')}
             </button>
             <button onClick={onSignUpClick} className="bg-[#0070BA] hover:bg-[#005ea3] text-white text-[15px] font-bold py-1.5 px-5 rounded-full transition-all active:scale-95 shadow-sm">
-              Sign Up
+              {t('auth.signup', 'Sign Up')}
             </button>
           </div>
         )}

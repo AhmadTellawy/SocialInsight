@@ -1,0 +1,40 @@
+{
+  "nav": {
+    "home": "ہوم",
+    "search": "تلاش",
+    "add": "پوسٹ",
+    "trends": "ٹرینڈز",
+    "messages": "پیغامات",
+    "profile": "پروفائل"
+  },
+  "settings": {
+    "title": "ترتیبات",
+    "account": "اکاؤنٹ",
+    "edit_profile": "پروفائل میں ترمیم کریں",
+    "demographics": "ڈیموگرافک معلومات",
+    "notifications": "نوٹیفکیشن کی ترتیبات",
+    "language": "زبان",
+    "privacy_social": "پرائیویسی اور سوشل",
+    "show_in_search": "میری پروفائل تلاش میں دکھائیں",
+    "show_activity": "میری سرگرمی کی حالت دکھائیں",
+    "content_groups": "مواد اور گروپس",
+    "allow_sharing": "دوسروں کو میرا مواد شیئر کرنے کی اجازت دیں",
+    "allow_group_invites": "گروپ کی دعوتوں کی اجازت دیں",
+    "show_groups_profile": "پروفائل پر میرے گروپس دکھائیں",
+    "support_legal": "مدد اور قانونی",
+    "help_center": "ہیلپ سینٹر",
+    "privacy_policy": "پرائیویسی پالیسی",
+    "danger_zone": "خطرناک زون",
+    "delete_account": "اکاؤنٹ حذف کریں"
+  },
+  "language_screen": {
+    "title": "زبان",
+    "description": "ایپلی کیشن انٹرفیس کے لیے اپنی پسندیدہ زبان منتخب کریں۔",
+    "english": "انگریزی (English)",
+    "arabic": "عربی (العربية)",
+    "chinese": "چینی (中文)",
+    "hindi": "ہندی (हिन्दी)",
+    "urdu": "اردو",
+    "turkish": "ترک (Türkçe)"
+  }
+}

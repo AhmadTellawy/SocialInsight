@@ -13,6 +13,7 @@ import { BottomSheet } from './BottomSheet';
 import { UserProfile } from '../types';
 import { NotificationSettingsScreen } from './NotificationSettingsScreen';
 import { api } from '../services/api';
+import { useTranslation } from 'react-i18next';
 
 interface ProfileSettingsScreenProps {
   userProfile: UserProfile;
@@ -596,6 +597,54 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
                 className={`w-full flex items-center justify-between p-4 bg-white rounded-2xl border transition-all ${isSelected ? 'border-blue-600 shadow-sm' : 'border-gray-100'}`}
               >
                 <span className={`font-bold ${isSelected ? 'text-blue-600' : 'text-gray-900'}`}>{label}</span>
+                {isSelected && <Check className="text-blue-600" size={20} strokeWidth={3} />}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  if (currentSubPage === 'language') {
+    const languages = [
+      { code: 'en', label: 'English', native: 'English' },
+      { code: 'ar', label: 'Arabic', native: 'العربية' },
+      { code: 'zh', label: 'Chinese', native: '中文' },
+      { code: 'hi', label: 'Hindi', native: 'हिन्दी' },
+      { code: 'ur', label: 'Urdu', native: 'اردو' },
+      { code: 'tr', label: 'Turkish', native: 'Türkçe' }
+    ];
+
+    const currentLang = profileForm.language || 'en';
+
+    return (
+      <div className="flex flex-col h-full bg-gray-50 animate-in slide-in-from-right duration-300">
+        <PageHeader title="Language" showSave={false} />
+        <div className="flex-1 overflow-y-auto px-5 py-6 space-y-4">
+          <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm mb-6">
+            <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4">App Language</h4>
+            <p className="text-sm text-gray-600 leading-relaxed">
+              Choose your preferred language for the application interface.
+            </p>
+          </div>
+          {languages.map(lang => {
+            const isSelected = currentLang === lang.code;
+            return (
+              <button
+                key={lang.code}
+                onClick={() => {
+                  setProfileForm({ ...profileForm, language: lang.code });
+                  setCurrentSubPage('main');
+                  // We also need to update i18n
+                  import('i18next').then(i18next => i18next.default.changeLanguage(lang.code));
+                }}
+                className={`w-full flex items-center justify-between p-4 bg-white rounded-2xl border transition-all ${isSelected ? 'border-blue-600 shadow-sm' : 'border-gray-100'}`}
+              >
+                <div className="flex flex-col items-start">
+                   <span className={`font-bold ${isSelected ? 'text-blue-600' : 'text-gray-900'}`}>{lang.native}</span>
+                   <span className="text-xs text-gray-400">{lang.label}</span>
+                </div>
                 {isSelected && <Check className="text-blue-600" size={20} strokeWidth={3} />}
               </button>
             )

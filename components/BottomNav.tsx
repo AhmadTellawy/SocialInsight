@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { Home, Search, Plus, TrendingUp, Bell, FileText, PieChart, HelpCircle, Users, Building2, Zap } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 interface BottomNavProps {
   activeTab: string;
@@ -21,6 +22,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   onAddMenuOption,
   unreadNotificationsCount = 0
 }) => {
+  const { t } = useTranslation();
+  
   return (
     <nav className={`fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-100 pb-safe h-[60px] max-w-md mx-auto shadow-[0_-5px_10px_rgba(0,0,0,0.02)] transition-transform duration-300 ease-in-out ${
       isVisible ? 'translate-y-0' : 'translate-y-[110%]'
@@ -39,7 +42,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                <div className="w-8 h-8 rounded-full bg-green-100 text-green-600 flex items-center justify-center">
                  <PieChart size={16} />
                </div>
-               <span className="font-semibold text-gray-700 text-sm">Create Poll</span>
+               <span className="font-semibold text-gray-700 text-sm">{t('create_menu.poll', 'Create Poll')}</span>
              </button>
 
              <button 
@@ -49,7 +52,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                <div className="w-8 h-8 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center">
                  <HelpCircle size={16} />
                </div>
-               <span className="font-semibold text-gray-700 text-sm">Create Quiz</span>
+               <span className="font-semibold text-gray-700 text-sm">{t('create_menu.quiz', 'Create Quiz')}</span>
              </button>
 
              <button 
@@ -59,7 +62,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                <div className="w-8 h-8 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center">
                  <Zap size={16} />
                </div>
-               <span className="font-semibold text-gray-700 text-sm">Create Challenge</span>
+               <span className="font-semibold text-gray-700 text-sm">{t('create_menu.challenge', 'Create Challenge')}</span>
              </button>
 
              <button 
@@ -69,7 +72,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center">
                  <FileText size={16} />
                </div>
-               <span className="font-semibold text-gray-700 text-sm">Create Survey</span>
+               <span className="font-semibold text-gray-700 text-sm">{t('create_menu.survey', 'Create Survey')}</span>
              </button>
 
              <div className="h-px bg-gray-100 my-1 mx-2" />
@@ -81,7 +84,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                <div className="w-8 h-8 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center">
                  <Users size={16} />
                </div>
-               <span className="font-semibold text-gray-700 text-sm">Create Group</span>
+               <span className="font-semibold text-gray-700 text-sm">{t('create_menu.group', 'Create Group')}</span>
              </button>
 
              <button 
@@ -91,7 +94,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center">
                  <Building2 size={16} />
                </div>
-               <span className="font-semibold text-gray-700 text-sm">Create Business Page</span>
+               <span className="font-semibold text-gray-700 text-sm">{t('create_menu.business', 'Create Business Page')}</span>
              </button>
            </div>
         </div>

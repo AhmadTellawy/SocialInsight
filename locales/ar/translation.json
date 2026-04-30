@@ -1,0 +1,40 @@
+{
+  "nav": {
+    "home": "الرئيسية",
+    "search": "بحث",
+    "add": "نشر",
+    "trends": "شائع",
+    "messages": "الرسائل",
+    "profile": "الملف الشخصي"
+  },
+  "settings": {
+    "title": "الإعدادات",
+    "account": "الحساب",
+    "edit_profile": "تعديل الملف الشخصي",
+    "demographics": "المعلومات الديموغرافية",
+    "notifications": "إعدادات الإشعارات",
+    "language": "اللغة",
+    "privacy_social": "الخصوصية والتواصل",
+    "show_in_search": "إظهار ملفي الشخصي في البحث",
+    "show_activity": "إظهار حالة نشاطي",
+    "content_groups": "المحتوى والمجموعات",
+    "allow_sharing": "السماح للآخرين بمشاركة محتواي",
+    "allow_group_invites": "السماح بدعوات المجموعات",
+    "show_groups_profile": "إظهار مجموعاتي في الملف الشخصي",
+    "support_legal": "الدعم والقانونية",
+    "help_center": "مركز المساعدة",
+    "privacy_policy": "سياسة الخصوصية",
+    "danger_zone": "منطقة الخطر",
+    "delete_account": "حذف الحساب"
+  },
+  "language_screen": {
+    "title": "اللغة",
+    "description": "اختر لغتك المفضلة لواجهة التطبيق.",
+    "english": "الإنجليزية (English)",
+    "arabic": "العربية",
+    "chinese": "الصينية (中文)",
+    "hindi": "الهندية (हिन्दी)",
+    "urdu": "الأردية (اردو)",
+    "turkish": "التركية (Türkçe)"
+  }
+}

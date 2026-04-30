@@ -1,0 +1,40 @@
+{
+  "nav": {
+    "home": "होम",
+    "search": "खोजें",
+    "add": "पोस्ट",
+    "trends": "ट्रेंड्स",
+    "messages": "संदेश",
+    "profile": "प्रोफ़ाइल"
+  },
+  "settings": {
+    "title": "सेटिंग्स",
+    "account": "खाता",
+    "edit_profile": "प्रोफ़ाइल संपादित करें",
+    "demographics": "जनसांख्यिकीय जानकारी",
+    "notifications": "सूचना सेटिंग्स",
+    "language": "भाषा",
+    "privacy_social": "गोपनीयता और सामाजिक",
+    "show_in_search": "खोज में मेरी प्रोफ़ाइल दिखाएं",
+    "show_activity": "मेरी गतिविधि स्थिति दिखाएं",
+    "content_groups": "सामग्री और समूह",
+    "allow_sharing": "दूसरों को मेरी सामग्री साझा करने दें",
+    "allow_group_invites": "समूह आमंत्रणों की अनुमति दें",
+    "show_groups_profile": "प्रोफ़ाइल पर मेरे समूह दिखाएं",
+    "support_legal": "समर्थन और कानूनी",
+    "help_center": "सहायता केंद्र",
+    "privacy_policy": "गोपनीयता नीति",
+    "danger_zone": "खतरनाक क्षेत्र",
+    "delete_account": "खाता हटाएं"
+  },
+  "language_screen": {
+    "title": "भाषा",
+    "description": "एप्लिकेशन इंटरफ़ेस के लिए अपनी पसंदीदा भाषा चुनें।",
+    "english": "अंग्रेज़ी (English)",
+    "arabic": "अरबी (العربية)",
+    "chinese": "चीनी (中文)",
+    "hindi": "हिन्दी",
+    "urdu": "उर्दू (اردو)",
+    "turkish": "तुर्की (Türkçe)"
+  }
+}

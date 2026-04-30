@@ -1,0 +1,40 @@
+{
+  "nav": {
+    "home": "Home",
+    "search": "Search",
+    "add": "Post",
+    "trends": "Trends",
+    "messages": "Messages",
+    "profile": "Profile"
+  },
+  "settings": {
+    "title": "Settings",
+    "account": "Account",
+    "edit_profile": "Edit Profile",
+    "demographics": "Demographic Info",
+    "notifications": "Notification Settings",
+    "language": "Language",
+    "privacy_social": "Privacy & Social",
+    "show_in_search": "Show my profile in search",
+    "show_activity": "Show my activity status",
+    "content_groups": "Content & Groups",
+    "allow_sharing": "Allow others to share my content",
+    "allow_group_invites": "Allow group invitations",
+    "show_groups_profile": "Show my groups on profile",
+    "support_legal": "Support & Legal",
+    "help_center": "Help Center",
+    "privacy_policy": "Privacy Policy",
+    "danger_zone": "Danger Zone",
+    "delete_account": "Delete account"
+  },
+  "language_screen": {
+    "title": "Language",
+    "description": "Choose your preferred language for the application interface.",
+    "english": "English",
+    "arabic": "Arabic",
+    "chinese": "Chinese",
+    "hindi": "Hindi",
+    "urdu": "Urdu",
+    "turkish": "Turkish"
+  }
+}

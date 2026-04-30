@@ -1,6 +1,7 @@
 
 import React, { useState, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { api } from './services/api';
 import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
@@ -52,6 +53,17 @@ const INITIAL_USER: UserProfile = {
 const App: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { i18n } = useTranslation();
+
+  React.useEffect(() => {
+    if (['ar', 'ur'].includes(i18n.language?.split('-')[0])) {
+      document.documentElement.dir = 'rtl';
+      document.documentElement.lang = i18n.language;
+    } else {
+      document.documentElement.dir = 'ltr';
+      document.documentElement.lang = i18n.language || 'en';
+    }
+  }, [i18n.language]);
 
   const [activeTab, setActiveTab] = useState<'home' | 'search' | 'add' | 'trends' | 'profile' | 'notifications' | 'messages'>('home');
   const [prevTab, setPrevTab] = useState<'home' | 'search' | 'add' | 'trends' | 'profile' | 'notifications'>('home');

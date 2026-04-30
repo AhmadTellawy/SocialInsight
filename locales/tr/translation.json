@@ -1,0 +1,40 @@
+{
+  "nav": {
+    "home": "Ana Sayfa",
+    "search": "Ara",
+    "add": "Paylaş",
+    "trends": "Trendler",
+    "messages": "Mesajlar",
+    "profile": "Profil"
+  },
+  "settings": {
+    "title": "Ayarlar",
+    "account": "Hesap",
+    "edit_profile": "Profili Düzenle",
+    "demographics": "Demografik Bilgiler",
+    "notifications": "Bildirim Ayarları",
+    "language": "Dil",
+    "privacy_social": "Gizlilik ve Sosyal",
+    "show_in_search": "Profilimi aramalarda göster",
+    "show_activity": "Aktivite durumumu göster",
+    "content_groups": "İçerik ve Gruplar",
+    "allow_sharing": "Başkalarının içeriğimi paylaşmasına izin ver",
+    "allow_group_invites": "Grup davetlerine izin ver",
+    "show_groups_profile": "Gruplarımı profilimde göster",
+    "support_legal": "Destek ve Yasal",
+    "help_center": "Yardım Merkezi",
+    "privacy_policy": "Gizlilik Politikası",
+    "danger_zone": "Tehlikeli Alan",
+    "delete_account": "Hesabı sil"
+  },
+  "language_screen": {
+    "title": "Dil",
+    "description": "Uygulama arayüzü için tercih ettiğiniz dili seçin.",
+    "english": "İngilizce (English)",
+    "arabic": "Arapça (العربية)",
+    "chinese": "Çince (中文)",
+    "hindi": "Hintçe (हिन्दी)",
+    "urdu": "Urduca (اردو)",
+    "turkish": "Türkçe"
+  }
+}

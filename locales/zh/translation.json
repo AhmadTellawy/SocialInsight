@@ -1,0 +1,40 @@
+{
+  "nav": {
+    "home": "首页",
+    "search": "搜索",
+    "add": "发布",
+    "trends": "热门",
+    "messages": "消息",
+    "profile": "我的"
+  },
+  "settings": {
+    "title": "设置",
+    "account": "账号",
+    "edit_profile": "编辑资料",
+    "demographics": "个人信息",
+    "notifications": "通知设置",
+    "language": "语言",
+    "privacy_social": "隐私与社交",
+    "show_in_search": "在搜索中显示我的主页",
+    "show_activity": "显示我的活动状态",
+    "content_groups": "内容与群组",
+    "allow_sharing": "允许他人分享我的内容",
+    "allow_group_invites": "允许群组邀请",
+    "show_groups_profile": "在主页显示我的群组",
+    "support_legal": "支持与法律",
+    "help_center": "帮助中心",
+    "privacy_policy": "隐私政策",
+    "danger_zone": "危险操作",
+    "delete_account": "删除账号"
+  },
+  "language_screen": {
+    "title": "语言",
+    "description": "选择您偏好的应用界面语言。",
+    "english": "英语 (English)",
+    "arabic": "阿拉伯语 (العربية)",
+    "chinese": "中文",
+    "hindi": "印地语 (हिन्दी)",
+    "urdu": "乌尔都语 (اردو)",
+    "turkish": "土耳其语 (Türkçe)"
+  }
+}
