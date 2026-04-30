@@ -218,19 +218,26 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const [isDemoSuccess, setIsDemoSuccess] = useState(false);
   const [imageError, setImageError] = useState(false);
 
-  const sourceSurvey = survey.sharedFrom || survey;
+  const isQuote = !!(survey.sharedFrom && survey.sharedCaption && survey.sharedCaption.trim() !== '');
+  const isRepost = !!(survey.sharedFrom && !isQuote);
+  
+  const voteTarget = survey.sharedFrom || survey;
+  const interactionTarget = isRepost ? survey.sharedFrom! : survey;
+
+  // For rendering questions/polls
+  const sourceSurvey = voteTarget;
 
   const [isAnonToggled, setIsAnonToggled] = useState(false);
   const [showShareToast, setShowShareToast] = useState(false);
-  const [isLiked, setIsLiked] = useState(sourceSurvey.isLiked || survey.isLiked || false);
-  const [likeCount, setLikeCount] = useState(sourceSurvey.likes || survey.likes || 0);
-  const [commentsCount, setCommentsCount] = useState(sourceSurvey.commentsCount || survey.commentsCount || 0);
+  const [isLiked, setIsLiked] = useState(interactionTarget.isLiked || false);
+  const [likeCount, setLikeCount] = useState(interactionTarget.likes || 0);
+  const [commentsCount, setCommentsCount] = useState(interactionTarget.commentsCount || 0);
 
   useEffect(() => {
-    setIsLiked(sourceSurvey.isLiked || survey.isLiked || false);
-    setLikeCount(sourceSurvey.likes || survey.likes || 0);
-    setCommentsCount(sourceSurvey.commentsCount || survey.commentsCount || 0);
-  }, [sourceSurvey.isLiked, sourceSurvey.likes, sourceSurvey.commentsCount, survey.isLiked, survey.likes, survey.commentsCount]);
+    setIsLiked(interactionTarget.isLiked || false);
+    setLikeCount(interactionTarget.likes || 0);
+    setCommentsCount(interactionTarget.commentsCount || 0);
+  }, [interactionTarget.isLiked, interactionTarget.likes, interactionTarget.commentsCount]);
 
   // Tracking Refs
   const viewRef = useRef<HTMLDivElement>(null);
@@ -829,7 +836,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
     Analytics.track({
       event_type: nextLiked ? 'LIKE' : 'UNLIKE',
-      post_id: sourceSurvey.id,
+      post_id: interactionTarget.id,
       actor_user_id: userProfile.id,
       source_surface: sourceSurface,
       position_in_feed: positionInFeed
@@ -837,11 +844,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
     if (onLike) {
       // Delegate API call to parent
-      onLike(sourceSurvey.id, nextLiked);
+      onLike(interactionTarget.id, nextLiked);
     } else {
       // Fallback for isolated cards without parents
       try {
-        await api.likeSurvey(sourceSurvey.id, userProfile.id);
+        await api.likeSurvey(interactionTarget.id, userProfile.id);
       } catch (error) {
         console.error("Failed to like survey", error);
         setIsLiked(previousLiked);
@@ -858,11 +865,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     const nextStatus = !previous;
     setIsSaved(nextStatus);
     try {
-      const res = await api.savePost(sourceSurvey.id, userProfile.id);
+      const res = await api.savePost(interactionTarget.id, userProfile.id);
       setIsSaved(res.saved);
       Analytics.track({
         event_type: 'SAVE_TOGGLE',
-        post_id: sourceSurvey.id,
+        post_id: interactionTarget.id,
         new_state: res.saved,
         actor_user_id: userProfile.id,
         source_surface: sourceSurface,
@@ -2007,7 +2014,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       </BottomSheet>
       <BottomSheet isOpen={isCommentsOpen} onClose={() => setIsCommentsOpen(false)} customLayout={true} title={`Comments (${commentsCount})`}>
         <CommentsSheet
-          surveyId={sourceSurvey.id}
+          surveyId={interactionTarget.id}
           userProfile={userProfile}
           onAuthorClick={onAuthorClick}
           sourceSurface={sourceSurface}
@@ -2094,7 +2101,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       <LikersSheet
         isOpen={isLikersSheetOpen}
         onClose={() => setIsLikersSheetOpen(false)}
-        targetId={sourceSurvey.id}
+        targetId={interactionTarget.id}
         type="post"
         onAuthorClick={onAuthorClick}
         currentUser={userProfile}

@@ -41,6 +41,24 @@ export const normalizePostType = (type?: string): string | undefined => {
     return type.charAt(0).toUpperCase() + type.slice(1).toLowerCase();
 };
 
+const resolveInteractionTarget = async (postId: string, type: 'like' | 'comment' | 'vote' | 'share'): Promise<string> => {
+    const post = await prisma.post.findUnique({
+        where: { id: postId },
+        select: { id: true, sharedFromId: true, sharedCaption: true }
+    });
+    if (!post) return postId;
+
+    if (type === 'vote') {
+        return post.sharedFromId || post.id;
+    }
+    if (type === 'like' || type === 'comment' || type === 'share') {
+        const isRepost = post.sharedFromId && (!post.sharedCaption || post.sharedCaption.trim() === '');
+        if (isRepost) return post.sharedFromId!;
+    }
+    return post.id;
+};
+
+
 export const getPosts = async (req: Request, res: Response) => {
     const userId = req.query.userId as any;
     const guestId = req.query.guestId as any;
@@ -732,15 +750,16 @@ export const getSavedPosts = async (req: Request, res: Response) => {
 };
 
 export const votePost = async (req: Request, res: Response) => {
-    const id = req.params.id as string;
+    const rawId = req.params.id as string;
     const { userId, guestId, optionId, optionIds, isAnonymous } = req.body;
-    const guestIp = req.ip || req.socket?.remoteAddress;
-
-    if (!userId && !guestId) {
-        res.status(400).json({ error: 'Authentication or Guest ID is required' });
-        return;
-    }
     try {
+        const id = await resolveInteractionTarget(rawId, 'vote');
+        const guestIp = req.ip || req.socket?.remoteAddress;
+        if (!userId && !guestId) {
+            res.status(400).json({ error: 'Authentication or Guest ID is required' });
+            return;
+        }
+
         const post = await prisma.post.findUnique({
             where: { id },
             select: { allowAnonymous: true, forceAnonymous: true, authorId: true }
@@ -839,8 +858,9 @@ export const votePost = async (req: Request, res: Response) => {
 };
 
 export const getParticipants = async (req: Request, res: Response) => {
-    const id = req.params.id as string;
+    const rawId = req.params.id as string;
     try {
+        const id = await resolveInteractionTarget(rawId, 'vote');
         const post = await prisma.post.findUnique({
             where: { id },
             select: { forceAnonymous: true } as any
@@ -892,8 +912,9 @@ export const getParticipants = async (req: Request, res: Response) => {
 };
 
 export const getPostResults = async (req: Request, res: Response) => {
-    const id = req.params.id as string;
+    const rawId = req.params.id as string;
     try {
+        const id = await resolveInteractionTarget(rawId, 'vote');
         const responses = await prisma.response.findMany({
             where: { postId: id },
             include: {
@@ -948,9 +969,10 @@ const mapComment = (c: any, currentUserId?: string) => ({
 });
 
 export const getComments = async (req: Request, res: Response) => {
-    const id = req.params.id as string;
+    const rawId = req.params.id as string;
     const userId = req.query.userId as string | undefined;
     try {
+        const id = await resolveInteractionTarget(rawId, 'comment');
         const comments = await prisma.comment.findMany({
             where: { postId: id, parentId: null },
             include: {
@@ -970,9 +992,10 @@ export const getComments = async (req: Request, res: Response) => {
 };
 
 export const createComment = async (req: Request, res: Response) => {
-    const id = req.params.id as string;
+    const rawId = req.params.id as string;
     const { text, userId, parentId } = req.body;
     try {
+        const id = await resolveInteractionTarget(rawId, 'comment');
         const [comment, targetPost] = await prisma.$transaction([
             prisma.comment.create({
                 data: { text, userId, postId: id, parentId },
@@ -994,9 +1017,10 @@ export const createComment = async (req: Request, res: Response) => {
 };
 
 export const likePost = async (req: Request, res: Response) => {
-    const id = req.params.id as string;
+    const rawId = req.params.id as string;
     const { userId } = req.body;
     try {
+        const id = await resolveInteractionTarget(rawId, 'like');
         const existing = await prisma.userLike.findUnique({ where: { userId_postId: { userId, postId: id } } });
         if (existing) {
             await prisma.$transaction([
@@ -1042,8 +1066,9 @@ export const likeComment = async (req: Request, res: Response) => {
 };
 
 export const getPostLikers = async (req: Request, res: Response) => {
-    const id = req.params.id as string;
+    const rawId = req.params.id as string;
     try {
+        const id = await resolveInteractionTarget(rawId, 'like');
         const likes = await prisma.userLike.findMany({
             where: { postId: id },
             include: { user: { select: SAFE_USER_SELECT } },
@@ -1388,6 +1413,14 @@ export const deletePost = async (req: Request, res: Response) => {
 
             // Finally delete the post
             await tx.post.delete({ where: { id } });
+
+            // Decrement sharesCount of original post if applicable
+            if (post.sharedFromId) {
+                await tx.post.update({
+                    where: { id: post.sharedFromId },
+                    data: { sharesCount: { decrement: 1 } }
+                });
+            }
         });
 
         res.json({ success: true, message: 'Post permanently deleted' });
