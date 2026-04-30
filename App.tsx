@@ -62,6 +62,26 @@ const App: React.FC = () => {
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalType, setAuthModalType] = useState<'flow' | 'login'>('flow');
 
+  const handleCloseAuth = () => {
+    if (window.history.state && window.history.state.idx > 0) {
+      navigate(-1);
+    } else {
+      navigate('/', { replace: true });
+    }
+    setAuthModalOpen(false);
+  };
+
+  const handleCloseModal = () => {
+    if (window.history.state && window.history.state.idx > 0) {
+      navigate(-1);
+    } else {
+      navigate('/', { replace: true });
+    }
+    setActiveCreationFlow(null);
+    setActiveCreationGroupId(null);
+    setAccountModalType(null);
+  };
+
   const getGuestId = () => localStorage.getItem('guest_id') || '';
   const fetchInitialData = (uid?: string) => fetchData(uid, userProfile || undefined);
 
@@ -326,7 +346,7 @@ const App: React.FC = () => {
     else if (path === '/notifications') setActiveTab('notifications');
     else if (path === '/messages') setActiveTab('messages');
     else if (path === '/profile') setActiveTab('profile');
-    else if (path === '/settings/profile') {
+    else if (path.startsWith('/settings/profile')) {
        setActiveTab('profile');
        setIsProfileSettingsOpen(true);
     }
@@ -1035,7 +1055,7 @@ const App: React.FC = () => {
     <SocketProvider user={userProfile}>
       {authModalOpen && (
         <div className="fixed inset-0 z-[100] bg-white animate-in zoom-in-95 duration-200">
-          <button onClick={() => setAuthModalOpen(false)} className="absolute top-4 right-4 z-[110] p-2 bg-gray-100 rounded-full hover:bg-gray-200">
+          <button onClick={handleCloseAuth} className="absolute top-4 right-4 z-[110] p-2 bg-gray-100 rounded-full hover:bg-gray-200">
             <X size={20} />
           </button>
           <AuthScreen onAuthSuccess={handleAuthSuccess} initialViewMode={authModalType} />
@@ -1156,22 +1176,22 @@ const App: React.FC = () => {
 
         {/* Creation Flows */}
         {activeCreationFlow === 'survey' && (
-          <CreateSurveyModal isOpen={true} onClose={() => { setActiveCreationFlow(null); setActiveCreationGroupId(null); }} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
+          <CreateSurveyModal isOpen={true} onClose={handleCloseModal} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
         )}
 
         {activeCreationFlow === 'poll' && (
-          <CreatePollScreen onClose={() => { setActiveCreationFlow(null); setActiveCreationGroupId(null); }} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
+          <CreatePollScreen onClose={handleCloseModal} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
         )}
 
         {activeCreationFlow === 'quiz' && (
-          <CreateQuizModal isOpen={true} onClose={() => { setActiveCreationFlow(null); setActiveCreationGroupId(null); }} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
+          <CreateQuizModal isOpen={true} onClose={handleCloseModal} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
         )}
 
         {activeCreationFlow === 'challenge' && (
-          <CreateChallengeScreen onClose={() => { setActiveCreationFlow(null); setActiveCreationGroupId(null); }} onSubmit={handleCreateSubmit} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
+          <CreateChallengeScreen onClose={handleCloseModal} onSubmit={handleCreateSubmit} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
         )}
 
-        <CreateAccountModal isOpen={accountModalType !== null} onClose={() => setAccountModalType(null)} initialType={accountModalType} onGroupCreated={(g) => setUserGroups([...userGroups, g])} userProfile={userProfile} />
+        <CreateAccountModal isOpen={accountModalType !== null} onClose={handleCloseModal} initialType={accountModalType} onGroupCreated={(g) => setUserGroups([...userGroups, g])} userProfile={userProfile} />
       </div>
     </div>
     </SocketProvider>

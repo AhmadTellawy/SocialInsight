@@ -49,7 +49,17 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   onLogout
 }) => {
   const navigate = useNavigate();
-  const [currentSubPage, setCurrentSubPage] = useState<SubPage>('main');
+  const location = useLocation();
+  const subPageMatch = location.pathname.split('/settings/profile/')[1];
+  const currentSubPage = (subPageMatch as SubPage) || 'main';
+
+  const setCurrentSubPage = (page: SubPage) => {
+    if (page === 'main') {
+      navigate('/settings/profile');
+    } else {
+      navigate(`/settings/profile/${page}`);
+    }
+  };
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
