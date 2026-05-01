@@ -339,6 +339,9 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
   const flatQuestions: FlatQuestion[] = useMemo(() => {
     const source = survey.sharedFrom || survey;
+    if (source.questions && source.questions.length > 0) {
+      return source.questions.map(q => ({ ...q }));
+    }
     if (!source.sections) return [];
     return source.sections.flatMap(section =>
       section.questions.map(q => ({
@@ -373,7 +376,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
   useEffect(() => {
     const s = survey.sharedFrom || survey;
-    let opts = [...(s.options || [])];
+    let opts = [...(s.options || (s.type === SurveyType.QUIZ && s.questions ? s.questions[0]?.options || [] : (s.type === SurveyType.QUIZ && s.sections ? s.sections.flatMap(sec => sec.questions || [])[0]?.options || [] : [])) || [])];
 
     if (survey.type === SurveyType.CHALLENGE && s.randomPairing && !survey.hasParticipated) {
       opts.sort(() => Math.random() - 0.5);
@@ -552,7 +555,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   };
 
   const isQuizNoTimeLimit = survey.type === SurveyType.QUIZ && !survey.config?.timeLimit;
-  const isSurveyMode = (survey.type === SurveyType.SURVEY || (survey.type === SurveyType.QUIZ && !(isQuizNoTimeLimit && flatQuestions.length === 1))) && (survey.sections || survey.sharedFrom?.sections);
+  const isSurveyMode = (survey.type === SurveyType.SURVEY || (survey.type === SurveyType.QUIZ && !(isQuizNoTimeLimit && flatQuestions.length === 1))) && (survey.sections || survey.questions || survey.sharedFrom?.sections || survey.sharedFrom?.questions);
   const showQuizStartCard = survey.type === SurveyType.QUIZ && !quizStarted && !surveyCompleted && flatQuestions.length > 0 && !!survey.config?.timeLimit;
   const showInteractiveSurvey = isSurveyMode && !surveyCompleted && !isExpired && !showQuizStartCard;
 
@@ -1325,8 +1328,10 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     };
 
     const renderPollStandard = () => {
-    const isHorizontal = sourceSurvey.imageLayout === 'horizontal';
-    const allowUserOptions = sourceSurvey.allowUserOptions || false;
+      const isHorizontal = sourceSurvey.imageLayout === 'horizontal';
+      const isQuiz = sourceSurvey.type === SurveyType.QUIZ;
+      const firstQuestion = flatQuestions?.[0];
+      const allowUserOptions = sourceSurvey.allowUserOptions || false;
 
     const renderHorizontal = () => (
       <div className="flex gap-3 overflow-x-scroll pb-4 snap-x snap-mandatory -mx-4 px-4" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
@@ -1501,6 +1506,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     );
     return (
       <div className="mb-4">
+        {isQuiz && firstQuestion?.image && (
+          <div className="w-full aspect-square rounded-xl overflow-hidden mb-4 border border-gray-100 shadow-sm">
+            <img src={firstQuestion.image} crossOrigin="anonymous" className="w-full h-full object-cover" alt="Question context" />
+          </div>
+        )}
         {isHorizontal ? renderHorizontal() : renderVertical()}
 
         {!hasVoted && !isExpired && allowUserOptions && !hasAddedCustomOption && !isRating && (
