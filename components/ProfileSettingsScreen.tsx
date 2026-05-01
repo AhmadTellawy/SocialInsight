@@ -357,12 +357,19 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
       <div className="flex flex-col h-full bg-gray-50 animate-in slide-in-from-right duration-300">
         <PageHeader title="Demographic Info" />
         <div className="flex-1 overflow-y-auto pb-20 no-scrollbar">
-          <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm m-5 mb-6">
-            <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4">Why we ask?</h4>
-            <p className="text-sm text-gray-600 leading-relaxed">
-              Providing demographic information helps survey creators understand the context of your responses. Your personal data is always anonymized when participating in surveys.
-            </p>
-          </div>
+                      <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm m-5 mb-6">
+              <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4">{t('Why we ask?')}</h4>
+              <div className="text-sm text-gray-600 leading-relaxed space-y-4">
+                <p>{t('Sharing demographic information helps you and post creators get more relevant and meaningful insights.')}</p>
+                <p>{t('It also improves your experience and helps us keep the platform safe and fair.')}</p>
+                <p>{t('Your data is anonymized and used in aggregate — never shared in a way that identifies you.')}</p>
+                <p>
+                  <button onClick={() => navigate('/privacy')} className="text-blue-600 hover:underline font-medium">
+                    {t('Learn more in our Privacy Policy.')}
+                  </button>
+                </p>
+              </div>
+            </div>
 
           <div className="bg-white border-y border-gray-100">
             <SettingItem 
