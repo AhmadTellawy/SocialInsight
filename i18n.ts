@@ -24,6 +24,9 @@ i18n
   .init({
     resources,
     fallbackLng: 'en',
+    react: {
+      useSuspense: false,
+    },
     interpolation: {
       escapeValue: false // React already does escaping
     }

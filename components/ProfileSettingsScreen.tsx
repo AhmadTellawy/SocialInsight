@@ -51,6 +51,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
 }) => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { i18n } = useTranslation();
   const subPageMatch = location.pathname.split('/settings/profile/')[1];
   const currentSubPage = (subPageMatch as SubPage) || 'main';
 
@@ -636,8 +637,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
                 onClick={() => {
                   setProfileForm({ ...profileForm, language: lang.code });
                   setCurrentSubPage('main');
-                  // We also need to update i18n
-                  import('i18next').then(i18next => i18next.default.changeLanguage(lang.code));
+                  i18n.changeLanguage(lang.code);
                 }}
                 className={`w-full flex items-center justify-between p-4 bg-white rounded-2xl border transition-all ${isSelected ? 'border-blue-600 shadow-sm' : 'border-gray-100'}`}
               >
