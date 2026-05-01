@@ -376,7 +376,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
   useEffect(() => {
     const s = survey.sharedFrom || survey;
-    let opts = [...(s.options || (s.type === SurveyType.QUIZ && s.questions && s.questions.length > 0 ? s.questions[0]?.options || [] : (s.type === SurveyType.QUIZ && s.sections && s.sections.length > 0 ? s.sections.flatMap(sec => sec.questions || [])[0]?.options || [] : [])) || [])];
+    let opts = [...((s.options && s.options.length > 0) ? s.options : (s.type === SurveyType.QUIZ && s.questions && s.questions.length > 0 ? s.questions[0]?.options || [] : (s.type === SurveyType.QUIZ && s.sections && s.sections.length > 0 ? s.sections.flatMap(sec => sec.questions || [])[0]?.options || [] : [])))];
 
     if (survey.type === SurveyType.CHALLENGE && s.randomPairing && !survey.hasParticipated) {
       opts.sort(() => Math.random() - 0.5);
