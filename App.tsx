@@ -14,6 +14,7 @@ import { CreateChallengeScreen } from './components/CreateChallengeScreen';
 import { CreateAccountModal } from './components/CreateAccountModal';
 import { GroupSettingsScreen } from './components/GroupSettingsScreen';
 import { ProfileSettingsScreen } from './components/ProfileSettingsScreen';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { PullToRefresh, PullToRefreshHandle } from './components/PullToRefresh';
 import { SearchScreen } from './components/SearchScreen';
 import { ProfileScreen } from './components/ProfileScreen';
@@ -914,7 +915,11 @@ const App: React.FC = () => {
       case 'profile':
         if (isProfileSettingsOpen) {
           if (!userProfile) return <div className="flex-1 flex items-center justify-center p-8 text-center"><h2 className="text-xl font-bold">Please log in to view settings.</h2></div>;
-          return <ProfileSettingsScreen userProfile={userProfile} onUpdateProfile={(prof) => { setUserProfile(prof); localStorage.setItem('si_user', JSON.stringify(prof)); }} onBack={() => navigate('/profile')} onLogout={handleLogout} />;
+          return (
+            <ErrorBoundary>
+              <ProfileSettingsScreen userProfile={userProfile} onUpdateProfile={(prof) => { setUserProfile(prof); localStorage.setItem('si_user', JSON.stringify(prof)); }} onBack={() => navigate('/profile')} onLogout={handleLogout} />
+            </ErrorBoundary>
+          );
         }
         return <ProfileScreen surveys={surveys} userGroups={userGroups} userProfile={userProfile!} user={selectedProfile || undefined} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onAuthorClick={navigateToProfile} onSurveyProgress={handleSurveyProgress} onShareToFeed={handleShareToFeed} onSettingsClick={() => navigate('/settings/profile')} onEditDraft={(d) => { navigate(`/create/${d.type.toLowerCase()}`); setEditingDraft(d); }} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} onLike={handleLikePost} />;
       case 'notifications':

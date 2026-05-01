@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, User, Mail, Globe, Lock, Eye, Search, Activity,
   Share2, Users, Bell, Palette, Shield, LifeBuoy, LogOut,
