@@ -1677,7 +1677,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                   </div>
                   <div className="flex flex-col min-w-0 flex-1">
                     <div className="flex items-center flex-wrap gap-x-1.5">
-                      <h3 className="font-bold text-gray-900 text-[15px] cursor-pointer hover:underline transition-colors truncate max-w-[140px] leading-tight">{authorName}</h3>
+                      <h3 className="font-bold text-gray-900 text-sm cursor-pointer hover:underline transition-colors truncate max-w-[140px] leading-tight">{authorName}</h3>
                       {sourceSurvey.targetGroups && sourceSurvey.targetGroups.length > 0 && (
                         <>
                           <span className="text-gray-400 text-sm shrink-0">▸</span>
@@ -1722,7 +1722,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
               <div className="flex-1 min-w-0">
                 <h2
                   onClick={onContentClick}
-                  className={`font-semibold text-base text-gray-900 leading-tight whitespace-pre-wrap ${onContentClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''} ${!isDetailView ? 'line-clamp-2' : ''}`}
+                  className={`font-semibold text-[15px] text-gray-900 leading-snug whitespace-pre-wrap ${onContentClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''} ${!isDetailView ? 'line-clamp-2' : ''}`}
                 >
                   <RichTextRenderer text={sourceSurvey.title} inline />
                 </h2>
@@ -1803,15 +1803,15 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             <div className="flex flex-col items-center justify-center min-w-[48px]">
               <div className="flex items-center gap-0.5">
                 <button onClick={handleLike} className={`p-1.5 rounded-full transition-transform active:scale-95 group ${isLiked ? 'text-blue-600 bg-blue-50' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'}`}>
-                  <ThumbsUp size={18} fill={isLiked ? "currentColor" : "none"} strokeWidth={2} className={`transition-transform duration-300 ${isLiked ? 'scale-110' : 'group-hover:scale-110'}`} />
+                  <ThumbsUp size={16} fill={isLiked ? "currentColor" : "none"} strokeWidth={2} className={`transition-transform duration-300 ${isLiked ? 'scale-110' : 'group-hover:scale-110'}`} />
                 </button>
                 {likeCount > 0 && (
-                  <button onClick={(e) => { e.stopPropagation(); setIsLikersSheetOpen(true); }} className={`text-[12px] pr-1 font-bold ${isLiked ? 'text-blue-600' : 'text-gray-500'} hover:underline`}>
+                  <button onClick={(e) => { e.stopPropagation(); setIsLikersSheetOpen(true); }} className={`text-[11px] pr-1 font-bold ${isLiked ? 'text-blue-600' : 'text-gray-500'} hover:underline`}>
                     {formatCount(likeCount)}
                   </button>
                 )}
               </div>
-              <span className={`text-[9px] uppercase tracking-widest font-bold mt-0.5 ${isLiked ? 'text-blue-600' : 'text-gray-400'}`}>{t('Like')}</span>
+              <span className={`text-[8px] uppercase tracking-widest font-bold mt-0.5 ${isLiked ? 'text-blue-600' : 'text-gray-400'}`}>{t('Like')}</span>
             </div>
 
             {/* Comment Button */}
@@ -1826,7 +1826,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                     }
                     setIsCommentsOpen(true); 
                   }} className="p-1.5 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-all active:scale-95 group">
-                    <MessageCircle size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
+                    <MessageCircle size={16} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
                   </button>
                   {commentsCount > 0 && (
                     <button onClick={(e) => { 
@@ -1836,12 +1836,12 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                         return;
                       }
                       setIsCommentsOpen(true); 
-                    }} className="text-[12px] pr-1 font-bold text-gray-500 hover:underline">
+                    }} className="text-[11px] pr-1 font-bold text-gray-500 hover:underline">
                       {formatCount(commentsCount)}
                     </button>
                   )}
                 </div>
-                <span className="text-[9px] uppercase tracking-widest font-bold mt-0.5 text-gray-400">{t('COMMENT')}</span>
+                <span className="text-[8px] uppercase tracking-widest font-bold mt-0.5 text-gray-400">{t('COMMENT')}</span>
               </div>
             )}
 
@@ -1856,33 +1856,33 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                   }
                   setIsRepostMenuOpen(true); 
                 }} className={`p-1.5 rounded-full transition-all active:scale-95 group ${survey.hasReposted ? 'text-green-600 bg-green-50' : 'text-gray-500 hover:bg-green-50 hover:text-green-600'}`}>
-                  <Repeat size={18} strokeWidth={2} className={`transition-transform ${survey.hasReposted ? 'scale-110' : 'group-hover:scale-110'}`} />
+                  <Repeat size={16} strokeWidth={2} className={`transition-transform ${survey.hasReposted ? 'scale-110' : 'group-hover:scale-110'}`} />
                 </button>
                 {(survey.repostCount || 0) > 0 && (
-                   <span className={`text-[12px] pr-1 font-bold ${survey.hasReposted ? 'text-green-600' : 'text-gray-500'}`}>{formatCount(survey.repostCount || 0)}</span>
+                   <span className={`text-[11px] pr-1 font-bold ${survey.hasReposted ? 'text-green-600' : 'text-gray-500'}`}>{formatCount(survey.repostCount || 0)}</span>
                 )}
               </div>
-              <span className={`text-[9px] uppercase tracking-widest font-bold mt-0.5 ${survey.hasReposted ? 'text-green-600' : 'text-gray-400 group-hover:text-green-600'}`}>{t('REPOST')}</span>
+              <span className={`text-[8px] uppercase tracking-widest font-bold mt-0.5 ${survey.hasReposted ? 'text-green-600' : 'text-gray-400 group-hover:text-green-600'}`}>{t('REPOST')}</span>
             </div>
 
             {/* Share Button */}
             <div className="flex flex-col items-center justify-center min-w-[48px]">
               <div className="flex items-center gap-0.5">
                 <button onClick={(e) => { e.stopPropagation(); setIsShareSheetOpen(true); }} className="p-1.5 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-all active:scale-95 group">
-                  <Share2 size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
+                  <Share2 size={16} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
                 </button>
               </div>
-              <span className="text-[9px] uppercase tracking-widest font-bold mt-0.5 text-gray-400">{t('SHARE')}</span>
+              <span className="text-[8px] uppercase tracking-widest font-bold mt-0.5 text-gray-400">{t('SHARE')}</span>
             </div>
 
             {/* Analysis Button */}
             <div className="flex flex-col items-center justify-center min-w-[48px]">
               <div className="flex items-center gap-0.5">
                 <button onClick={(e) => { e.stopPropagation(); onAnalysisClick && onAnalysisClick(); }} className="p-1.5 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-all active:scale-95 group">
-                  <BarChart3 size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
+                  <BarChart3 size={16} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
                 </button>
               </div>
-              <span className="text-[9px] uppercase tracking-widest font-bold mt-0.5 text-gray-400">{t('ANALYSIS')}</span>
+              <span className="text-[8px] uppercase tracking-widest font-bold mt-0.5 text-gray-400">{t('ANALYSIS')}</span>
             </div>
 
           </div>
