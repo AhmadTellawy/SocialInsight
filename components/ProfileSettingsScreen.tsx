@@ -51,7 +51,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
 }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const subPageMatch = location.pathname.split('/settings/profile/')[1];
   const currentSubPage = (subPageMatch as SubPage) || 'main';
 
