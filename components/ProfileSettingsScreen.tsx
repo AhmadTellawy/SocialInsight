@@ -57,7 +57,11 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
 
   const setCurrentSubPage = (page: SubPage) => {
     if (page === 'main') {
-      navigate('/settings/profile');
+      if (window.history.length > 2) {
+        navigate(-1);
+      } else {
+        navigate('/settings/profile', { replace: true });
+      }
     } else {
       navigate(`/settings/profile/${page}`);
     }
