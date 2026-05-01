@@ -739,7 +739,7 @@ const App: React.FC = () => {
         if (!isDirect && !isShared) return s;
 
         const applyVote = (target: Survey): Survey => {
-          // 1) Completion path (Survey/Quiz) => no option votes, only mark participated + store anon
+          // 1) Completion path (Survey without questions/options) => no option votes, only mark participated + store anon
           if (optionIds.length === 0) {
             return {
               ...target,
@@ -755,7 +755,34 @@ const App: React.FC = () => {
             };
           }
 
-          // 2) Poll/Challenge vote path
+          // 2) Quiz vote path (update options within questions)
+          if (target.type === 'Quiz' || target.type === 'Survey') {
+            const updatedQuestions = target.questions?.map(q => ({
+              ...q,
+              options: q.options?.map(opt => 
+                optionIds.includes(opt.id)
+                  ? { ...opt, votes: (opt.votes || 0) + 1 }
+                  : opt
+              )
+            }));
+
+            return {
+              ...target,
+              questions: updatedQuestions,
+              hasParticipated: true,
+              userSelectedOptions: optionIds,
+              participants: target.hasParticipated ? target.participants : target.participants + 1,
+              userProgress: {
+                currentQuestionIndex: target.userProgress?.currentQuestionIndex || 0,
+                answers: target.userProgress?.answers || {},
+                followUpAnswers: target.userProgress?.followUpAnswers || {},
+                historyStack: target.userProgress?.historyStack || [],
+                isAnonymous: !!isAnonymous
+              }
+            };
+          }
+
+          // 3) Poll/Challenge vote path
           let updatedOptions = [...(target.options || [])];
 
           if (newOption && !updatedOptions.some(o => o.id === newOption.id)) {
@@ -764,7 +791,7 @@ const App: React.FC = () => {
 
           const newOptions = updatedOptions.map(opt =>
             optionIds.includes(opt.id)
-              ? { ...opt, votes: opt.votes + 1 }
+              ? { ...opt, votes: (opt.votes || 0) + 1 }
               : opt
           );
 
