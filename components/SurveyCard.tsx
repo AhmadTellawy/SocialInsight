@@ -12,6 +12,7 @@ import { RichTextRenderer } from './RichTextRenderer';
 import { UserAvatar } from './UserAvatar';
 import { api } from '../services/api';
 import { useFollowState } from '../hooks/useFollowState';
+import { useTranslation } from 'react-i18next';
 
 interface SurveyCardProps {
   survey: Survey;
@@ -136,6 +137,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   onLike,
   onDelete
 }) => {
+  const { t } = useTranslation();
   const [timeLeftStr, setTimeLeftStr] = useState('');
   const [isExpired, setIsExpired] = useState(false);
   const navigate = useNavigate();
@@ -170,7 +172,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
       if (diff <= 0) {
         setIsExpired(true);
-        setTimeLeftStr('Expired');
+        setTimeLeftStr(t('Expired'));
         return true;
       }
 
@@ -180,10 +182,10 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
       const secs = Math.floor((diff % (1000 * 60)) / 1000);
 
-      if (days > 0) setTimeLeftStr(`${days}d ${hours}h left`);
-      else if (hours > 0) setTimeLeftStr(`${hours}h ${mins}m left`);
-      else if (mins > 0) setTimeLeftStr(`${mins}m ${secs}s left`);
-      else setTimeLeftStr(`${secs}s left`);
+      if (days > 0) setTimeLeftStr(`${days}d ${hours}h ${t('left')}`);
+      else if (hours > 0) setTimeLeftStr(`${hours}h ${mins}m ${t('left')}`);
+      else if (mins > 0) setTimeLeftStr(`${mins}m ${secs}s ${t('left')}`);
+      else setTimeLeftStr(`${secs}s ${t('left')}`);
 
       return false;
     };
@@ -318,8 +320,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     if (!userProfile?.id) return null;
     const isMe = userProfile.id === survey.author?.id;
     if (isMe) return null;
-    const label = authorType === 'Group' ? 'Join' : 'Follow';
-    const activeLabel = authorType === 'Group' ? 'Joined' : 'Following';
+    const label = authorType === 'Group' ? t('Join') : t('Follow');
+    const activeLabel = authorType === 'Group' ? t('Joined') : t('Following');
 
     return (
       <div className="flex items-center">
@@ -959,35 +961,35 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const getPercentage = (votes: number) => totalVotes === 0 ? 0 : Math.round((votes / totalVotes) * 100);
   const formatCount = (num: number) => num >= 1000 ? (num / 1000).toFixed(1) + 'K' : num;
   const getTimeAgo = (dateStr: string) => {
-    if (!dateStr) return 'Just now';
+    if (!dateStr) return t('Just now');
     const now = new Date();
     const past = new Date(dateStr);
-    if (isNaN(past.getTime())) return 'Just now';
+    if (isNaN(past.getTime())) return t('Just now');
     
     const diffInSeconds = Math.floor((now.getTime() - past.getTime()) / 1000);
-    if (diffInSeconds < 60) return 'Just now';
+    if (diffInSeconds < 60) return t('Just now');
     const diffInMinutes = Math.floor(diffInSeconds / 60);
-    if (diffInMinutes < 60) return `${diffInMinutes}m ago`;
+    if (diffInMinutes < 60) return `${diffInMinutes}m ${t('ago')}`;
     const diffInHours = Math.floor(diffInMinutes / 60);
-    if (diffInHours < 24) return `${diffInHours}h ago`;
+    if (diffInHours < 24) return `${diffInHours}h ${t('ago')}`;
     const diffInDays = Math.floor(diffInHours / 24);
-    if (diffInDays < 7) return `${diffInDays}d ago`;
+    if (diffInDays < 7) return `${diffInDays}d ${t('ago')}`;
     const diffInWeeks = Math.floor(diffInDays / 7);
-    if (diffInDays < 30) return `${diffInWeeks}w ago`;
+    if (diffInDays < 30) return `${diffInWeeks}w ${t('ago')}`;
     const diffInMonths = Math.floor(diffInDays / 30);
-    if (diffInMonths < 12) return `${diffInMonths}mo ago`;
+    if (diffInMonths < 12) return `${diffInMonths}mo ${t('ago')}`;
     const diffInYears = Math.floor(diffInDays / 365);
-    return `${diffInYears}y ago`;
+    return `${diffInYears}y ${t('ago')}`;
   };
 
   const getTypeConfig = (type: SurveyType) => {
     switch (type) {
-      case SurveyType.POLL: return { icon: PieChart, label: 'Poll', color: 'text-green-600' };
-      case SurveyType.SURVEY: return { icon: FileText, label: 'Survey', color: 'text-blue-600' };
-      case SurveyType.QUIZ: return { icon: HelpCircle, label: 'Quiz', color: 'text-purple-600' };
-      case SurveyType.CHALLENGE: return { icon: Zap, label: 'Challenge', color: 'text-amber-600' };
-      case SurveyType.TRENDING: return { icon: PieChart, label: 'Poll', color: 'text-green-600' };
-      default: return { icon: FileText, label: 'Survey', color: 'text-blue-600' };
+      case SurveyType.POLL: return { icon: PieChart, label: t('Poll'), color: 'text-green-600' };
+      case SurveyType.SURVEY: return { icon: FileText, label: t('Survey'), color: 'text-blue-600' };
+      case SurveyType.QUIZ: return { icon: HelpCircle, label: t('Quiz'), color: 'text-purple-600' };
+      case SurveyType.CHALLENGE: return { icon: Zap, label: t('Challenge'), color: 'text-amber-600' };
+      case SurveyType.TRENDING: return { icon: PieChart, label: t('Poll'), color: 'text-green-600' };
+      default: return { icon: FileText, label: t('Survey'), color: 'text-blue-600' };
     }
   };
 
@@ -995,7 +997,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const TypeIcon = typeConfig.icon;
   const VisibilityIcon = sourceSurvey.resultsVisibility === 'Private' ? Lock : Globe;
 
-  const authorName = sourceSurvey.author?.name || 'Anonymous';
+  const authorName = sourceSurvey.author?.name || t('Anonymous');
   const authorAvatar = sourceSurvey.author?.avatar || 'https://picsum.photos/40/40';
   const isMyPost = !!userProfile?.id && survey.author?.id === userProfile.id;
   const isMySource = !!userProfile?.id && sourceSurvey.author?.id === userProfile.id;
@@ -1011,15 +1013,15 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           <div className="w-16 h-16 bg-amber-600 text-white rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg ring-4 ring-amber-100">
             <Trophy size={32} strokeWidth={2.5} />
           </div>
-          <h3 className="text-xl font-black text-gray-900 mb-1">Your Final Choice</h3>
-          <p className="text-[10px] font-bold text-amber-600 uppercase tracking-widest mb-6">Challenge Completed</p>
+          <h3 className="text-xl font-black text-gray-900 mb-1">{t('Your Final Choice')}</h3>
+          <p className="text-[10px] font-bold text-amber-600 uppercase tracking-widest mb-6">{t('Challenge Completed')}</p>
 
           <div className="bg-white p-4 rounded-xl border border-amber-200 shadow-sm flex items-center gap-4 text-left">
             {winner.image && <img src={winner.image} crossOrigin="anonymous" className="w-16 h-16 rounded-lg object-cover" alt="" />}
             <div className="flex-1">
               <h4 className="font-bold text-gray-900 leading-tight">{winner.text}</h4>
               <div className="flex items-center gap-1.5 mt-1 text-green-600 font-bold text-[10px] uppercase">
-                <CheckCircle2 size={12} /> Winner
+                <CheckCircle2 size={12} /> {t('Winner')}
               </div>
             </div>
           </div>
@@ -1038,9 +1040,9 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-2">
             <Shuffle size={12} className="text-amber-600" />
-            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Pick your favorite</span>
+            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{t('Pick your favorite')}</span>
           </div>
-          <span className="text-[10px] font-bold text-gray-500 tabular-nums">Round {challengeEliminatedIds.size + 1}</span>
+          <span className="text-[10px] font-bold text-gray-500 tabular-nums">{t('Round')} {challengeEliminatedIds.size + 1}</span>
         </div>
 
         <div className="grid grid-cols-2 gap-3 relative">
@@ -1109,15 +1111,15 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           <Play size={32} fill="currentColor" className="ml-1" />
         </div>
         <h3 className="text-xl font-black text-gray-900 mb-2">{sourceSurvey.title}</h3>
-        <p className="text-sm text-gray-500 mb-8 max-w-xs">{sourceSurvey.description || "Test your knowledge in this challenge."}</p>
+        <p className="text-sm text-gray-500 mb-8 max-w-xs">{sourceSurvey.description || t('Test your knowledge in this challenge.')}</p>
         <div className="flex items-center gap-4 mb-8">
           <div className="flex flex-col items-center">
-            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Challenges</span>
+            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{t('Challenges')}</span>
             <span className="text-lg font-bold text-gray-900">{flatQuestions.length}</span>
           </div>
           <div className="w-px h-6 bg-gray-100" />
           <div className="flex flex-col items-center">
-            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Time Limit</span>
+            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{t('Time Limit')}</span>
             <span className="text-lg font-bold text-gray-900">{sourceSurvey.quizTimeLimit ? `${sourceSurvey.quizTimeLimit}m` : '∞'}</span>
           </div>
         </div>
@@ -1125,7 +1127,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           onClick={() => setQuizStarted(true)}
           className="w-full bg-purple-600 text-white py-4 rounded-xl font-black uppercase tracking-widest text-xs shadow-lg shadow-purple-200 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
         >
-          Start Quiz <ArrowRight size={16} />
+          {t('Start Quiz')} <ArrowRight size={16} />
         </button>
       </div>
     </div>
@@ -1165,7 +1167,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 <h3 className="text-lg font-bold text-gray-900 leading-tight">{resolvedTitle}</h3>
                 {survey.type === SurveyType.QUIZ && currentQuestion.weight && (
                   <span className="shrink-0 bg-purple-50 text-purple-600 text-[10px] font-black px-2 py-1 rounded-md border border-purple-100">
-                    {currentQuestion.weight} PTS
+                    {currentQuestion.weight} {t('PTS')}
                   </span>
                 )}
               </div>
@@ -1223,8 +1225,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                           </button>
                           {isSelected && opt.withFollowUp && (
                             <div className="mt-2 pl-3 animate-in fade-in slide-in-from-top-1">
-                              <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">{opt.followUpLabel || "Please provide more details:"}</label>
-                              <input type="text" value={followUpAnswers[opt.id] || ''} onChange={(e) => handleFollowUpChange(opt.id, e.target.value)} placeholder="Type here..." className="w-full p-2.5 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-500 focus:bg-white transition-all" />
+                              <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">{opt.followUpLabel || t('Please provide more details:')}</label>
+                              <input type="text" value={followUpAnswers[opt.id] || ''} onChange={(e) => handleFollowUpChange(opt.id, e.target.value)} placeholder={t('Type here...')} className="w-full p-2.5 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-500 focus:bg-white transition-all" />
                             </div>
                           )}
                         </div>
@@ -1237,7 +1239,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                       const newAnswers = { ...surveyAnswers, [currentQuestion.id]: e.target.value };
                       setSurveyAnswers(newAnswers);
                       if (onSurveyProgress) onSurveyProgress(sourceSurvey.id, { index: currentQIndex, answers: newAnswers, followUpAnswers, historyStack, isAnonymous: isCurrentlyAnonymous });
-                    }} placeholder="Type your answer here..." className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm min-h-[120px] resize-none" autoFocus />
+                    }} placeholder={t('Type your answer here...')} className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm min-h-[120px] resize-none" autoFocus />
                   </div>
                 )}
               </div>
@@ -1246,9 +1248,9 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         </div>
         <div className="px-5 py-4 border-t border-gray-50 flex items-center justify-between bg-white relative z-10">
           <button onClick={handlePrevQuestion} disabled={currentQIndex === 0 && historyStack.length === 0} className={`flex items-center gap-1 text-sm font-medium transition-colors ${(currentQIndex === 0 && historyStack.length === 0) ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:text-gray-800'}`}>
-            <ChevronLeft size={18} /> Back
+            <ChevronLeft size={18} /> {t('Back')}
           </button>
-          <button onClick={() => handleNextQuestion()} disabled={(!answer || (Array.isArray(answer) && answer.length === 0) || (typeof answer === 'string' && !answer.trim())) || (currentQuestion.minSelection && (Array.isArray(answer) ? answer.length : 1) < currentQuestion.minSelection)} className={`px-6 py-2 rounded-full text-sm font-bold text-white transition-all shadow-md flex items-center gap-2 ${(!answer || (Array.isArray(answer) && answer.length === 0) || (typeof answer === 'string' && !answer.trim())) || (currentQuestion.minSelection && (Array.isArray(answer) ? answer.length : 1) < currentQuestion.minSelection) ? 'bg-gray-300 cursor-not-allowed' : 'bg-gray-900 hover:bg-gray-800 active:scale-[0.99]'}`}>{currentQIndex >= totalQuestions - 1 ? 'Finish' : 'Next'} <ArrowRight size={14} /></button>
+          <button onClick={() => handleNextQuestion()} disabled={(!answer || (Array.isArray(answer) && answer.length === 0) || (typeof answer === 'string' && !answer.trim())) || (currentQuestion.minSelection && (Array.isArray(answer) ? answer.length : 1) < currentQuestion.minSelection)} className={`px-6 py-2 rounded-full text-sm font-bold text-white transition-all shadow-md flex items-center gap-2 ${(!answer || (Array.isArray(answer) && answer.length === 0) || (typeof answer === 'string' && !answer.trim())) || (currentQuestion.minSelection && (Array.isArray(answer) ? answer.length : 1) < currentQuestion.minSelection) ? 'bg-gray-300 cursor-not-allowed' : 'bg-gray-900 hover:bg-gray-800 active:scale-[0.99]'}`}>{currentQIndex >= totalQuestions - 1 ? t('Finish') : t('Next')} <ArrowRight size={14} /></button>
         </div>
       </div>
     );
@@ -1311,13 +1313,13 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                         </div>
                       ) : option.text}
                     </h3>
-                    {shouldShowResults && <div className="text-[10px] text-gray-500 mt-1">{option.votes.toLocaleString()} votes</div>}
+                    {shouldShowResults && <div className="text-[10px] text-gray-500 mt-1">{option.votes.toLocaleString()} {t('votes')}</div>}
                   </div>
                   <div className="shrink-0">
                     {!hasVoted && !isExpired ? (
-                      <button onClick={() => handlePollOptionClick(option.id)} className={`text-sm font-bold px-6 py-2 rounded-lg transition-colors border shadow-sm active:scale-95 ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-100'}`}>{isSelected && isMultiple ? 'Selected' : 'Vote'}</button>
+                      <button onClick={() => handlePollOptionClick(option.id)} className={`text-sm font-bold px-6 py-2 rounded-lg transition-colors border shadow-sm active:scale-95 ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-100'}`}>{isSelected && isMultiple ? t('Selected') : t('Vote')}</button>
                     ) : (
-                      isSelected ? <div className="flex items-center gap-1 text-blue-600 font-bold text-sm bg-blue-50 px-3 py-1.5 rounded-full"><CheckCircle2 size={16} /> <span>Voted</span></div> : <span className="text-sm text-gray-400 font-bold px-2">{percentage}%</span>
+                      isSelected ? <div className="flex items-center gap-1 text-blue-600 font-bold text-sm bg-blue-50 px-3 py-1.5 rounded-full"><CheckCircle2 size={16} /> <span>{t('Voted')}</span></div> : <span className="text-sm text-gray-400 font-bold px-2">{percentage}%</span>
                     )}
                   </div>
                 </div>
@@ -1327,11 +1329,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
               {/* Horizontal Clarification Question */}
               {isSelected && !hasVoted && option.withFollowUp && (
                 <div className="p-4 pt-0 animate-in fade-in slide-in-from-top-1">
-                  <label className="text-[11px] font-black text-blue-600 uppercase tracking-widest mb-1.5 block">{option.followUpLabel || "Please explain:"}</label>
+                  <label className="text-[11px] font-black text-blue-600 uppercase tracking-widest mb-1.5 block">{option.followUpLabel || t('Please explain:')}</label>
                   <textarea
                     value={followUpAnswers[option.id] || ''}
                     onChange={(e) => handleFollowUpChange(option.id, e.target.value)}
-                    placeholder="Your response..."
+                    placeholder={t('Your response...')}
                     className="w-full p-3 text-sm bg-blue-50/50 border border-blue-100 rounded-xl focus:bg-white transition-all min-h-[60px] resize-none"
                   />
                 </div>
@@ -1407,12 +1409,12 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 <div className="px-2 pb-3 pt-1 animate-in fade-in slide-in-from-top-1">
                   <div className="p-4 bg-blue-50/50 border border-blue-100 rounded-2xl">
                     <label className="text-[11px] font-black text-blue-600 uppercase tracking-widest mb-2 block">
-                      {option.followUpLabel || "Please explain your choice:"}
+                      {option.followUpLabel || t('Please explain your choice:')}
                     </label>
                     <textarea
                       value={followUpAnswers[option.id] || ''}
                       onChange={(e) => handleFollowUpChange(option.id, e.target.value)}
-                      placeholder="Type your response..."
+                      placeholder={t('Type your response...')}
                       className="w-full p-3 text-sm bg-white border border-blue-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all min-h-[90px] resize-none shadow-sm"
                     />
                   </div>
@@ -1436,7 +1438,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                   type="text"
                   value={customOptionText}
                   onChange={(e) => setCustomOptionText(e.target.value)}
-                  placeholder="Add your own choice..."
+                  placeholder={t('Add your own choice...')}
                   className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:bg-white focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none transition-all"
                   onKeyDown={(e) => e.key === 'Enter' && handleAddCustomOption()}
                 />
@@ -1459,7 +1461,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 onClick={() => setIsAddingCustomOption(true)}
                 className="w-full py-2.5 border-2 border-dashed border-gray-100 rounded-xl text-gray-400 font-bold text-xs hover:border-blue-300 hover:text-blue-600 transition-all flex items-center justify-center gap-1.5"
               >
-                <Plus size={14} /> Add your own choice
+                <Plus size={14} /> {t('Add your own choice')}
               </button>
             )}
           </div>
@@ -1479,7 +1481,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             disabled={selectedOptions.length === 0 || followUpRequiredAndMissing}
             className={`w-full mt-4 bg-gray-900 text-white py-3 rounded-xl font-semibold text-sm transition-all shadow-lg shadow-gray-200 ${(selectedOptions.length === 0 || followUpRequiredAndMissing) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-800 active:scale-[0.98]'}`}
           >
-            Participate
+            {t('Participate')}
           </button>
         )}
       </div>
@@ -1490,7 +1492,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     const correct = quizStats?.correct || 0;
     const total = quizStats?.total || 1;
     const percentage = (correct / total) * 100;
-    const achievementLabel = percentage === 100 ? 'Perfect Score' : percentage >= 70 ? 'Great Job' : 'Nice Effort';
+    const achievementLabel = percentage === 100 ? t('Perfect Score') : percentage >= 70 ? t('Great Job') : t('Nice Effort');
 
     if (flatQuestions.length > 0) {
       const q = flatQuestions[reviewQIndex];
@@ -1501,14 +1503,14 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         <div className="space-y-4 mt-4 animate-in fade-in duration-500">
           <div className="bg-gray-900 text-white rounded-xl p-3 flex items-center justify-between shadow-lg">
             <div className="flex items-center gap-3">
-              <div className="flex items-center gap-1"><Trophy size={14} className="text-yellow-400" /><span className="text-[10px] font-black uppercase">{correct}/{total} Correct</span></div>
-              <div className="w-px h-3 bg-white/20" /><span className="text-[10px] font-bold text-white/70">{Math.round(percentage)}% Accuracy</span>
+              <div className="flex items-center gap-1"><Trophy size={14} className="text-yellow-400" /><span className="text-[10px] font-black uppercase">{correct}/{total} {t('Correct')}</span></div>
+              <div className="w-px h-3 bg-white/20" /><span className="text-[10px] font-bold text-white/70">{Math.round(percentage)}% {t('Accuracy')}</span>
             </div>
             <span className="text-[10px] font-black uppercase tracking-widest text-purple-400">{achievementLabel}</span>
           </div>
           <div className={`p-4 rounded-2xl border bg-white overflow-hidden transition-all shadow-sm ${isCorrect ? 'border-green-100' : 'border-red-100'}`}>
             <div className="flex justify-between items-center mb-3">
-              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Question {reviewQIndex + 1} of {flatQuestions.length}</span>
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{t('Question')} {reviewQIndex + 1} {t('of')} {flatQuestions.length}</span>
               {isCorrect ? <CheckCircle2 size={16} className="text-green-500" /> : <XCircle size={16} className="text-red-500" />}
             </div>
             {q.image && <div className="w-full aspect-square rounded-xl overflow-hidden mb-4 border border-gray-100 shadow-sm bg-gray-50"><img src={q.image} crossOrigin="anonymous" className="w-full h-full object-cover" alt="Question" /></div>}
@@ -1544,9 +1546,9 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const renderSurveyCompletion = () => (
     <div className="bg-blue-50 rounded-xl p-8 text-center border border-blue-100 mt-4 animate-in zoom-in duration-300">
       <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4"><CheckCircle2 size={32} /></div>
-      <h3 className="text-lg font-bold text-gray-900 mb-2">{isExpired ? 'Survey Closed' : 'Survey Completed!'}</h3>
-      <p className="text-sm text-gray-600 mb-6">{isExpired ? 'This survey has ended.' : 'Thank you for your feedback.'}</p>
-      {resultsPrivate ? <div className="inline-flex items-center gap-2 px-4 py-2 bg-white rounded-lg text-xs font-medium text-gray-500 border border-gray-200"><Lock size={12} /> Results are private</div> : <div className="text-sm text-gray-500 italic">Results available on dashboard</div>}
+      <h3 className="text-lg font-bold text-gray-900 mb-2">{isExpired ? t('Survey Closed') : t('Survey Completed!')}</h3>
+      <p className="text-sm text-gray-600 mb-6">{isExpired ? t('This survey has ended.') : t('Thank you for your feedback.')}</p>
+      {resultsPrivate ? <div className="inline-flex items-center gap-2 px-4 py-2 bg-white rounded-lg text-xs font-medium text-gray-500 border border-gray-200"><Lock size={12} /> {t('Results are private')}</div> : <div className="text-sm text-gray-500 italic">{t('Results available on dashboard')}</div>}
     </div>
   );
 
@@ -1573,9 +1575,9 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           <div className="w-16 h-16 bg-green-50 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm border border-green-100">
             <CheckCircle2 size={32} />
           </div>
-          <h4 className="text-xl font-black text-gray-900">Thank you!</h4>
+          <h4 className="text-xl font-black text-gray-900">{t('Thank you!')}</h4>
           <p className="text-sm text-gray-500 font-medium leading-relaxed px-4">
-            Your information helps us generate more accurate and meaningful insights.
+            {t('Your information helps us generate more accurate and meaningful insights.')}
           </p>
         </div>
       );
@@ -1591,15 +1593,15 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           <div className="flex items-center justify-between px-1">
             <div className="flex items-center gap-1.5">
               <div className="w-1.5 h-1.5 bg-blue-600 rounded-full" />
-              <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">{config.title}</span>
+              <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">{t(config.title)}</span>
             </div>
-            <span className="text-[10px] font-bold text-gray-400 tabular-nums">Step {currentDemoIdx + 1} of {pendingDemoSteps.length}</span>
+            <span className="text-[10px] font-bold text-gray-400 tabular-nums">{t('Step')} {currentDemoIdx + 1} {t('of')} {pendingDemoSteps.length}</span>
           </div>
           <h3 className="text-lg font-bold text-gray-900 leading-tight">
-            {config.question}
+            {t(config.question)}
           </h3>
           <p className="text-[10px] text-gray-400 leading-relaxed font-medium uppercase tracking-wide">
-            Your personal data remains anonymized and protected.
+            {t('Your personal data remains anonymized and protected.')}
           </p>
         </div>
 
@@ -1610,7 +1612,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
               onClick={() => handleDemographicSelection(opt)}
               className={`py-4 px-4 bg-white border border-gray-100 rounded-2xl font-bold text-gray-800 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600 transition-all active:scale-[0.98] shadow-sm text-sm ${opt === 'Prefer not to say' && config.options.length % 2 !== 0 ? 'col-span-2' : ''}`}
             >
-              {opt}
+              {t(opt)}
             </button>
           ))}
         </div>
@@ -1641,7 +1643,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                  onClick={(e) => { e.stopPropagation(); if (onAuthorClick && survey.author) onAuthorClick({ id: survey.author.id, name: survey.author.name, avatar: survey.author.avatar }); }}
                >
                  <Repeat size={14} className="text-gray-400" />
-                 <span>{survey.author?.name || 'Anonymous'} reposted this</span>
+                 <span>{survey.author?.name || t('Anonymous')} {t('reposted this')}</span>
                </div>
                {survey.sharedCaption && <p className="text-gray-900 text-[15px] mb-3 leading-relaxed whitespace-pre-wrap font-normal">{survey.sharedCaption}</p>}
              </div>
@@ -1693,7 +1695,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                                     }
                                   }}
                                 >
-                                  {matchedGroup?.name || 'A Group'}
+                                  {matchedGroup?.name || t('A Group')}
                                 </span>
                               );
                             })()}
@@ -1726,11 +1728,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 </h2>
                 {!isDetailView && (sourceSurvey.title?.length > 80 || (sourceSurvey.title?.match(/\n/g) || []).length > 1) && (
                   <button onClick={onContentClick} className="text-gray-400 hover:text-gray-700 font-bold text-xs mt-0.5 text-left inline-block">
-                    ... See more
+                    ... {t('See more')}
                   </button>
                 )}
               </div>
-              {sourceSurvey.isTrending && <span className="inline-flex items-center gap-1 bg-red-50 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 mt-1"><TrendingUp size={10} /> Hot</span>}
+              {sourceSurvey.isTrending && <span className="inline-flex items-center gap-1 bg-red-50 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 mt-1"><TrendingUp size={10} /> {t('Hot')}</span>}
             </div>
 
             {sourceSurvey.coverImage && <div onClick={onContentClick} className={`w-full rounded-xl overflow-hidden mb-3 bg-gray-100 ${onContentClick ? 'cursor-pointer hover:opacity-95 transition-opacity' : ''}`}><img src={sourceSurvey.coverImage} crossOrigin="anonymous" alt="Cover" className="w-full max-h-[500px] object-cover block" /></div>}
@@ -1744,7 +1746,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
               </p>
               {!isDetailView && (sourceSurvey.description?.length > 150 || (sourceSurvey.description?.match(/\n/g) || []).length > 2) && (
                 <button onClick={onContentClick} className="text-gray-500 hover:text-gray-800 font-bold text-sm mt-0.5 block text-left">
-                  ... See more
+                  ... {t('See more')}
                 </button>
               )}
             </div>
@@ -1755,12 +1757,12 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             <div className="flex items-center gap-3">
               <button onClick={() => setIsParticipantsOpen(true)} className="flex items-center gap-1 hover:text-blue-600 transition-colors">
                 <Users size={12} />
-                <span>{sourceSurvey.participants.toLocaleString()} {survey.type === SurveyType.POLL ? 'votes' : 'responses'}</span>
+                <span>{sourceSurvey.participants.toLocaleString()} {survey.type === SurveyType.POLL ? t('votes') : t('responses')}</span>
               </button>
               {isRating && Number(averageRating) > 0 && (
                 <div className="flex items-center gap-1 text-yellow-600 bg-yellow-50 px-2 py-0.5 rounded-md border border-yellow-200/60 shadow-sm pt-[3px]">
                   <Star size={11} fill="currentColor" />
-                  <span className="font-bold text-[10px] uppercase tracking-widest">{averageRating} Average</span>
+                  <span className="font-bold text-[10px] uppercase tracking-widest">{averageRating} {t('Average')}</span>
                 </div>
               )}
               {timeLeftStr && (
@@ -1778,14 +1780,14 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                   className="flex items-center gap-1 text-gray-500 hover:text-blue-600 transition-colors font-bold uppercase tracking-widest text-[9px]"
                 >
                   <Lock size={10} />
-                  <span>Anonymous responses</span>
+                  <span>{t('Anonymous responses')}</span>
                 </button>
               ) : (sourceSurvey.allowAnonymous && !hasVoted && !isExpired ? (
                 <div className="flex items-center gap-2 cursor-pointer" onClick={() => setIsAnonToggled(!isAnonToggled)}>
-                  <span className="text-[9px] font-bold uppercase tracking-widest text-gray-500">Anonymous</span>
+                  <span className="text-[9px] font-bold uppercase tracking-widest text-gray-500">{t('Anonymous')}</span>
                   <button
                     className={`w-7 h-4 rounded-full relative transition-colors ${isAnonToggled ? 'bg-blue-600' : 'bg-gray-200'}`}
-                    title="Respond Anonymously"
+                    title={t('Respond Anonymously')}
                   >
                     <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${isAnonToggled ? 'left-3.5' : 'left-0.5'}`} />
                   </button>
@@ -1809,7 +1811,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                   </button>
                 )}
               </div>
-              <span className={`text-[9px] uppercase tracking-widest font-bold mt-0.5 ${isLiked ? 'text-blue-600' : 'text-gray-400'}`}>Like</span>
+              <span className={`text-[9px] uppercase tracking-widest font-bold mt-0.5 ${isLiked ? 'text-blue-600' : 'text-gray-400'}`}>{t('Like')}</span>
             </div>
 
             {/* Comment Button */}
@@ -1839,7 +1841,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                     </button>
                   )}
                 </div>
-                <span className="text-[9px] uppercase tracking-widest font-bold mt-0.5 text-gray-400">Comment</span>
+                <span className="text-[9px] uppercase tracking-widest font-bold mt-0.5 text-gray-400">{t('COMMENT')}</span>
               </div>
             )}
 
@@ -1860,7 +1862,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                    <span className={`text-[12px] pr-1 font-bold ${survey.hasReposted ? 'text-green-600' : 'text-gray-500'}`}>{formatCount(survey.repostCount || 0)}</span>
                 )}
               </div>
-              <span className={`text-[9px] uppercase tracking-widest font-bold mt-0.5 ${survey.hasReposted ? 'text-green-600' : 'text-gray-400 group-hover:text-green-600'}`}>Repost</span>
+              <span className={`text-[9px] uppercase tracking-widest font-bold mt-0.5 ${survey.hasReposted ? 'text-green-600' : 'text-gray-400 group-hover:text-green-600'}`}>{t('REPOST')}</span>
             </div>
 
             {/* Share Button */}
@@ -1870,7 +1872,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                   <Share2 size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
                 </button>
               </div>
-              <span className="text-[9px] uppercase tracking-widest font-bold mt-0.5 text-gray-400">Share</span>
+              <span className="text-[9px] uppercase tracking-widest font-bold mt-0.5 text-gray-400">{t('SHARE')}</span>
             </div>
 
             {/* Analysis Button */}
@@ -1880,7 +1882,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                   <BarChart3 size={18} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
                 </button>
               </div>
-              <span className="text-[9px] uppercase tracking-widest font-bold mt-0.5 text-gray-400">Analysis</span>
+              <span className="text-[9px] uppercase tracking-widest font-bold mt-0.5 text-gray-400">{t('ANALYSIS')}</span>
             </div>
 
           </div>

@@ -1,9 +1,10 @@
-
 import React, { useMemo, useState, useEffect } from 'react';
 import { Activity } from 'lucide-react';
 import { Survey, UserProfile } from '../types';
 import { SurveyCard } from './SurveyCard';
 import { SuggestedUsersList } from './SuggestedUsersList';
+import { FollowerFeed } from './FollowerFeed';
+import { useTranslation } from 'react-i18next';
 import { api } from '../services/api';
 
 interface HomeScreenProps {
@@ -23,6 +24,7 @@ interface HomeScreenProps {
   onLoadMore?: () => void;
   hasNextPage?: boolean;
   isLoadingMore?: boolean;
+  onUpdateCurrentUser?: (user: UserProfile) => void;
 }
 
 export const SurveyCardSkeleton = () => (
@@ -66,8 +68,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   isLoading,
   onLoadMore,
   hasNextPage,
-  isLoadingMore
+  isLoadingMore,
+  onUpdateCurrentUser
 }) => {
+  const { t } = useTranslation();
+  const [activeTab, setActiveTab] = useState<'fyp' | 'following'>('fyp');
   const observerRef = React.useRef<IntersectionObserver | null>(null);
   const bottomRef = React.useCallback((node: HTMLDivElement) => {
     if (isLoadingMore) return;
@@ -153,10 +158,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         <div className="px-5 flex items-center justify-between mb-4">
           <div className="flex items-center gap-2" aria-hidden="true">
             <div className="w-1.5 h-6 bg-red-500 rounded-full" />
-            <h3 className="font-black text-gray-900 uppercase tracking-tight text-sm">Trending Now</h3>
+            <h3 className="font-black text-gray-900 uppercase tracking-tight text-sm">{t('TRENDING NOW')}</h3>
           </div>
           <button type="button" className="text-xs font-bold text-blue-600 flex items-center gap-0.5" aria-label="Live Now">
-            Live <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse ml-1" aria-hidden="true" />
+            {t('Live')} <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse ml-1" aria-hidden="true" />
           </button>
         </div>
 

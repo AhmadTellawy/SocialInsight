@@ -1,6 +1,7 @@
 import React from 'react';
 import { UserPlus } from 'lucide-react';
 import { UserProfile } from '../types';
+import { useTranslation } from 'react-i18next';
 
 interface SuggestedUser extends UserProfile {
     suggestionReason?: string;
@@ -13,6 +14,7 @@ interface SuggestedUsersListProps {
 }
 
 export const SuggestedUsersList: React.FC<SuggestedUsersListProps> = ({ users, onFollow, onUserClick }) => {
+    const { t } = useTranslation();
     const [followedIds, setFollowedIds] = React.useState<Set<string>>(new Set());
 
     if (!users || users.length === 0) return null;
@@ -27,7 +29,7 @@ export const SuggestedUsersList: React.FC<SuggestedUsersListProps> = ({ users, o
     return (
         <div className="bg-white border-b border-gray-100 py-4 my-2">
             <div className="px-4 mb-4 flex items-center justify-between">
-                <h3 className="font-bold text-gray-900 text-[15px] tracking-tight">Suggested for you</h3>
+                <h3 className="font-bold text-gray-900 text-[15px] tracking-tight">{t('Suggested for you')}</h3>
             </div>
             
             <div className="flex overflow-x-auto hide-scrollbar px-4 pb-4 gap-3" style={{ scrollSnapType: 'x mandatory' }}>
@@ -70,7 +72,7 @@ export const SuggestedUsersList: React.FC<SuggestedUsersListProps> = ({ users, o
                             disabled={isFollowed}
                             className={`w-full text-[13px] font-bold py-1.5 rounded-full transition-all duration-300 shadow-sm ${isFollowed ? 'bg-gray-100 text-gray-900 border border-gray-200 shadow-inner' : 'bg-gray-900 hover:bg-black text-white hover:scale-105 active:scale-95'}`}
                         >
-                            {isFollowed ? 'Following' : 'Follow'}
+                            {isFollowed ? t('Following') : t('Follow')}
                         </button>
                     </div>
                 )})}

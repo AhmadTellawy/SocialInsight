@@ -635,7 +635,9 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
               <button
                 key={lang.code}
                 onClick={() => {
-                  setProfileForm({ ...profileForm, language: lang.code });
+                  const updatedProfile = { ...profileForm, language: lang.code };
+                  setProfileForm(updatedProfile);
+                  onUpdateProfile(updatedProfile);
                   setCurrentSubPage('main');
                   i18n.changeLanguage(lang.code);
                 }}
@@ -660,91 +662,91 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
         <button onClick={onBack} className="p-2 -ml-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors">
           <ArrowLeft size={24} />
         </button>
-        <span className="font-bold text-lg ml-2">Settings</span>
+        <span className="font-bold text-lg ml-2">{t('Settings')}</span>
       </div>
 
       <div className="flex-1 overflow-y-auto no-scrollbar pb-10">
-        <SectionHeader title="Account" />
+        <SectionHeader title={t('Account')} />
         <div className="bg-white border-y border-gray-100 shadow-sm">
           <SettingItem
             icon={User}
-            label="Edit Profile"
+            label={t('Edit Profile')}
             value={`${profileForm.name}, Bio, Links`}
             onClick={() => setCurrentSubPage('edit-profile')}
           />
           <SettingItem
             icon={MapPin}
-            label="Demographic Info"
+            label={t('Demographic Info')}
             value="Gender, Age, Education, Status"
             onClick={() => setCurrentSubPage('demographics')}
           />
           <SettingItem
             icon={Bell}
-            label="Notification Settings"
+            label={t('Notification Settings')}
             value="Likes, Comments, Shares, Activity"
             onClick={() => setCurrentSubPage('notifications-detailed')}
           />
           <SettingItem
             icon={Languages}
-            label="Language"
+            label={t('Language')}
             value={profileForm.language}
             onClick={() => setCurrentSubPage('language')}
           />
         </div>
 
-        <SectionHeader title="Privacy & Social" />
+        <SectionHeader title={t('Privacy & Social')} />
         <div className="bg-white border-y border-gray-100 shadow-sm">
           <SettingItem
             icon={Search}
-            label="Show my profile in search"
+            label={t('Show my profile in search')}
             type="toggle"
             active={settings.searchVisibility}
             onClick={() => toggleSetting('searchVisibility')}
           />
           <SettingItem
             icon={Activity}
-            label="Show my activity status"
+            label={t('Show my activity status')}
             type="toggle"
             active={settings.activityStatus}
             onClick={() => toggleSetting('activityStatus')}
           />
         </div>
 
-        <SectionHeader title="Content & Groups" />
+        <SectionHeader title={t('Content & Groups')} />
         <div className="bg-white border-y border-gray-100 shadow-sm">
           <SettingItem
             icon={Share2}
-            label="Allow others to share my content"
+            label={t('Allow others to share my content')}
             type="toggle"
             active={settings.allowSharing}
             onClick={() => toggleSetting('allowSharing')}
           />
           <SettingItem
             icon={Mail}
-            label="Allow group invitations"
+            label={t('Allow group invitations')}
             type="toggle"
             active={settings.groupInvites}
             onClick={() => toggleSetting('groupInvites')}
           />
           <SettingItem
             icon={Smartphone}
-            label="Show my groups on profile"
+            label={t('Show my groups on profile')}
             value={(profileForm.groupPrivacy === 'Followers' ? 'Followers Only' : profileForm.groupPrivacy) || 'Public'}
             onClick={() => setCurrentSubPage('group-privacy')}
           />
         </div>
 
-        <SectionHeader title="Support & Legal" />
+        <SectionHeader title={t('Support & Legal')} />
         <div className="bg-white border-y border-gray-100 shadow-sm">
-          <SettingItem icon={LifeBuoy} label="Help Center" />
-          <SettingItem icon={Shield} label="Privacy Policy" onClick={() => navigate('/privacy')} />
+          <SettingItem icon={LifeBuoy} label={t('Help Center')} />
+          <SettingItem icon={Shield} label={t('Privacy Policy')} onClick={() => navigate('/privacy')} />
         </div>
 
-        <SectionHeader title="Danger Zone" />
+        <SectionHeader title={t('Danger Zone')} />
         <div className="bg-white border-y border-gray-100 shadow-sm">
           <SettingItem
             icon={Trash2}
-            label="Delete account"
+            label={t('Delete account')}
             type="danger"
             onClick={() => setShowDeleteModal(true)}
           />
@@ -755,7 +757,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
             onClick={() => setShowLogoutConfirm(true)}
             className="w-full bg-white border border-gray-200 text-red-600 py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all flex items-center justify-center gap-2 shadow-sm"
           >
-            <LogOut size={14} /> Log Out
+            <LogOut size={14} /> {t('Log Out')}
           </button>
         </div>
       </div>
@@ -766,22 +768,22 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
             <div className="w-16 h-16 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
               <LogOut size={32} />
             </div>
-            <h3 className="text-xl font-black text-gray-900 mb-2">Log out?</h3>
+            <h3 className="text-xl font-black text-gray-900 mb-2">{t('Log out of your account?')}</h3>
             <p className="text-sm text-gray-500 mb-8 leading-relaxed">
-              Are you sure you want to log out of your account?
+              {t('Are you sure you want to log out?')}
             </p>
             <div className="flex flex-col gap-2">
               <button
                 onClick={onLogout}
                 className="w-full py-4 bg-red-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all"
               >
-                Log Out
+                {t('Log Out')}
               </button>
               <button
                 onClick={() => setShowLogoutConfirm(false)}
                 className="w-full py-4 bg-gray-100 text-gray-600 rounded-2xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all"
               >
-                Cancel
+                {t('Cancel')}
               </button>
             </div>
           </div>

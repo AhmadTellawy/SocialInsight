@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Settings, Users, Grid, CheckCircle2, MoreHorizontal, MapPin, Link as LinkIcon, Edit3, UserPlus, Shield, ExternalLink, ArrowLeft, Mail, FileText, PieChart, Building2, Globe as GlobeIcon, Plus, ChevronRight, Search, X, UserCircle2, Zap, Info, Lock, BarChart3, TrendingUp, Bookmark, PenTool, Activity } from 'lucide-react';
+import { Settings, Users, Grid, CheckCircle2, MoreHorizontal, MapPin, Link as LinkIcon, Edit3, UserPlus, Shield, ExternalLink, ArrowLeft, Mail, FileText, PieChart, Building2, Globe as GlobeIcon, Plus, ChevronRight, Search, X, UserCircle2, Zap, Info, Lock, BarChart3, TrendingUp, Bookmark, PenTool, Activity, Repeat } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 import { Analytics } from '../utils/analytics';
 import { Survey, SurveyType, Group, UserProfile } from '../types';
@@ -30,8 +31,6 @@ interface ProfileScreenProps {
   onLike?: (surveyId: string, isLiked: boolean) => void;
 }
 
-
-
 type ProfileTab = 'content' | 'reposts' | 'groups' | 'drafts' | 'saved';
 
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({
@@ -54,6 +53,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onFollowChange,
   onLike
 }) => {
+  const { t } = useTranslation();
   const [activeStatSheet, setActiveStatSheet] = useState<'following' | 'followers' | 'posts' | null>(null);
   const [showProfileAnalysis, setShowProfileAnalysis] = useState(false);
   const [statSearch, setStatSearch] = useState('');
@@ -75,21 +75,18 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
   const isMe = !user?.id || user.id === userProfile.id;
 
-  // Load drafts if active tab is drafts
   useEffect(() => {
     if (activeTab === 'drafts' && isMe && userProfile.id) {
       api.getDrafts(userProfile.id).then(setDrafts).catch(console.error);
     }
   }, [activeTab, isMe, userProfile.id]);
 
-  // Load saved posts if active tab is saved
   useEffect(() => {
     if (activeTab === 'saved' && isMe && userProfile.id) {
       api.getSavedPosts(userProfile.id).then(setSavedPosts).catch(console.error);
     }
   }, [activeTab, isMe, userProfile.id]);
 
-  // Load target user's groups if active tab is groups
   useEffect(() => {
     if (activeTab === 'groups') {
       const targetUserId = isMe ? userProfile.id : (user as any)?.id;
@@ -99,12 +96,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     }
   }, [activeTab, isMe, userProfile.id, user]);
 
-  // Load follow status when viewing another user's profile
   useEffect(() => {
     const loadFollowStatus = async () => {
       if (!isMe && user) {
         try {
-          // Fetch full target user profile to get real stats
           const userId = (user as any).id;
           if (userId) {
             const fullUser = await api.getUser(userId);
@@ -128,7 +123,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       }
     };
 
-    // Also load analytics for the displayed user to show real counts
     const loadAnalytics = async () => {
       const targetUserId = isMe ? userProfile.id : (user as any)?.id;
       if (targetUserId) {
@@ -143,7 +137,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     loadAnalytics();
   }, [isMe, user, userProfile?.id]);
 
-  // Load connection list when sheet opens
   useEffect(() => {
     const loadConnections = async () => {
       const targetUserId = isMe ? userProfile.id : (user as any)?.id;
@@ -171,11 +164,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   }, [activeStatSheet, isMe, user, userProfile?.id]);
 
   const handleConnectionAction = async (person: any) => {
-    if (isMe && person.id === userProfile.id) return; // Can't follow self
+    if (isMe && person.id === userProfile.id) return;
     if (!userProfile?.id) return;
 
-    // Determine action: if following, then unfollow. If not following, then follow.
-    // Optimistic update of the list
     setConnectionList(prev => prev.map(p => {
       if (p.id === person.id) {
         return { ...p, isFollowing: !p.isFollowing };
@@ -186,7 +177,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     try {
       const response = await api.followUser(person.id, userProfile.id);
 
-      // Verify consistency and correct if needed
       setConnectionList(prev => prev.map(p => {
         if (p.id === person.id) {
           return { ...p, isFollowing: response.isFollowing };
@@ -194,7 +184,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         return p;
       }));
 
-      // Update Current User Stats (Following count)
       if (response.currentUserFollowing !== undefined && onUpdateCurrentUser) {
         onUpdateCurrentUser({
           stats: {
@@ -204,11 +193,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         });
       }
 
-      // If we are viewing our own profile, updating "Following" list might affect "Following" count stats displayed in header?
-      // If we are viewing someone else's profile, and we follow someone in THEIR list, it doesn't affect THEIR stats (unless we followed THEM).
-      // But if we un/follow the profile owner FROM the list (if they appear there? unlikely), proper updates should happen.
-
-      // If we followed/unfollowed the *profile owner* from a list (e.g. they appeared in someone else's list which is not this view), we should update `isFollowing` state.
       if (user && person.id === (user as any).id) {
         setLocalFollowingState(response.isFollowing);
         if (response.targetUserFollowers !== undefined) {
@@ -222,7 +206,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
     } catch (error) {
       console.error("Connection action failed:", error);
-      // Revert
       setConnectionList(prev => prev.map(p => {
         if (p.id === person.id) {
           return { ...p, isFollowing: !p.isFollowing };
@@ -233,7 +216,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   };
 
   const handleFollow = async () => {
-    if (isMe) return; // Cannot follow yourself
+    if (isMe) return;
 
     const userId = (user as any).id;
     if (!userId || !userProfile?.id) return;
@@ -243,12 +226,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       const response = await api.followUser(userId, userProfile.id);
       setLocalFollowingState(response.isFollowing);
 
-      // Update Target User Stats Locally
       if (response.targetUserFollowers !== undefined) {
         setTargetUser(prev => prev ? ({ ...prev, stats: { ...prev.stats, followers: response.targetUserFollowers } }) : null);
       }
 
-      // Update Current User Stats Locally (Following count changes)
       if (response.currentUserFollowing !== undefined && onUpdateCurrentUser) {
         onUpdateCurrentUser({
           stats: {
@@ -277,7 +258,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   };
 
   const profileUser = useMemo(() => {
-    // If it's me, use my profile + fetched analytics
     if (isMe) {
       return {
         ...userProfile,
@@ -288,8 +268,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       };
     }
 
-    // If external user, wrap in profile structure
-    // Use targetUser if available (fetched from DB), otherwise fall back to passed props or dummy
     if (targetUser) {
       return {
         ...targetUser,
@@ -349,8 +327,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-6 text-gray-300">
             <Lock size={40} />
           </div>
-          <h3 className="text-xl font-black text-gray-900 mb-2">Private Account</h3>
-          <p className="text-gray-500 text-sm">Follow this account to see their activity and posts.</p>
+          <h3 className="text-xl font-black text-gray-900 mb-2">{t('Private Account')}</h3>
+          <p className="text-gray-500 text-sm">{t('Follow this account to see their activity and posts.')}</p>
         </div>
       );
     }
@@ -365,7 +343,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 type="text"
                 value={statSearch}
                 onChange={(e) => setStatSearch(e.target.value)}
-                placeholder="Search posts..."
+                placeholder={t('Search posts...')}
                 className="w-full bg-gray-100 border-none rounded-2xl pl-11 pr-4 py-3 text-sm focus:ring-2 focus:ring-blue-500/10"
               />
             </div>
@@ -399,7 +377,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                       <div className="flex items-center gap-2 mt-1 text-[9px] font-black uppercase tracking-widest text-gray-400">
                         <span>{post.type}</span>
                         <span>•</span>
-                        <span className="text-blue-600">{(post.participants || 0).toLocaleString()} Responses</span>
+                        <span className="text-blue-600">{(post.participants || 0).toLocaleString()} {t('Responses')}</span>
                       </div>
                     </div>
                     <ChevronRight size={18} className="text-gray-300" />
@@ -409,7 +387,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             ) : (
               <div className="py-20 text-center text-gray-400">
                 <Grid size={48} className="mx-auto mb-4 opacity-10" />
-                <p className="text-sm font-bold uppercase tracking-widest">No posts yet — start your first poll</p>
+                <p className="text-sm font-bold uppercase tracking-widest">{t('No posts yet — start your first poll')}</p>
               </div>
             )}
           </div>
@@ -426,7 +404,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               type="text"
               value={statSearch}
               onChange={(e) => setStatSearch(e.target.value)}
-              placeholder="Search connections..."
+              placeholder={t('Search connections...')}
               className="w-full bg-gray-100 border-none rounded-2xl pl-11 pr-4 py-3 text-sm focus:ring-2 focus:ring-blue-500/10"
             />
           </div>
@@ -454,7 +432,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                       onClick={(e) => { e.stopPropagation(); handleConnectionAction(person); }}
                       className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${person.isFollowing ? 'bg-gray-100 text-gray-600' : 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
                         }`}>
-                      {person.isFollowing ? 'Unfollow' : (activeStatSheet === 'followers' ? 'Follow Back' : 'Follow')}
+                      {person.isFollowing ? t('Unfollow') : (activeStatSheet === 'followers' ? t('Follow Back') : t('Follow'))}
                     </button>
                   )}
                 </div>
@@ -463,7 +441,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           ) : (
             <div className="py-20 text-center text-gray-400">
               <Users size={48} className="mx-auto mb-4 opacity-10" />
-              <p className="text-sm font-bold uppercase tracking-widest">No connections yet</p>
+              <p className="text-sm font-bold uppercase tracking-widest">{t('No connections yet')}</p>
             </div>
           )}
         </div>
@@ -473,13 +451,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
   const tabs = useMemo(() => {
     const baseTabs = [
-      { id: 'content', label: 'Posts' },
-      { id: 'reposts', label: 'Reposts' }
+      { id: 'content', label: t('Posts') },
+      { id: 'reposts', label: t('Reposts') }
     ];
 
-    // If not me, we must respect the target user's group privacy settings.
-    // userProfile is passed as the target profile when viewing someone else but targetUser 
-    // holds the full state. Use targetUser if viewing someone else.
     const privacy = (isMe ? profileUser?.groupPrivacy : targetUser?.groupPrivacy || profileUser?.groupPrivacy) || 'Public';
     let canViewGroups = true;
 
@@ -492,15 +467,15 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     }
 
     if (canViewGroups) {
-      baseTabs.push({ id: 'groups', label: 'Groups' });
+      baseTabs.push({ id: 'groups', label: t('Groups') });
     }
 
     if (isMe) {
-      baseTabs.push({ id: 'drafts', label: 'Drafts' });
-      baseTabs.push({ id: 'saved', label: 'Saved' });
+      baseTabs.push({ id: 'drafts', label: t('Drafts') });
+      baseTabs.push({ id: 'saved', label: t('Saved') });
     }
     return baseTabs;
-  }, [isMe, profileUser?.groupPrivacy, targetUser?.groupPrivacy, isFollowing]);
+  }, [isMe, profileUser?.groupPrivacy, targetUser?.groupPrivacy, isFollowing, t]);
 
   const renderTabContent = () => {
     switch (activeTab as any) {
@@ -530,12 +505,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         ) : (
           <div className="flex flex-col items-center justify-center py-20 px-8 text-center text-gray-400">
             <FileText size={48} className="opacity-10 mb-4" />
-            <p className="text-sm font-bold uppercase tracking-widest">No posts yet</p>
+            <p className="text-sm font-bold uppercase tracking-widest">{t('No posts yet')}</p>
           </div>
         );
 
       case 'drafts':
-        const draftPosts = drafts; // Use fetched drafts, no filter needed on props
+        const draftPosts = drafts;
         return draftPosts.length > 0 ? (
           <div className="p-4 grid grid-cols-1 gap-4 animate-in fade-in duration-300">
             {draftPosts.map(survey => (
@@ -548,15 +523,15 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                   <PenTool size={24} />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h4 className="font-bold text-gray-900 text-sm truncate">{survey.title || 'Untitled Draft'}</h4>
+                  <h4 className="font-bold text-gray-900 text-sm truncate">{survey.title || t('Untitled Draft')}</h4>
                   <div className="flex items-center gap-2 mt-1 text-[9px] font-black uppercase tracking-widest text-gray-400">
                     <span>{survey.type}</span>
                     <span>•</span>
-                    <span>Last edited {new Date(survey.createdAt).toLocaleDateString()}</span>
+                    <span>{t('Last edited')} {new Date(survey.createdAt).toLocaleDateString()}</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[8px] font-black text-orange-500 uppercase bg-orange-50 px-2 py-1 rounded-lg">Draft</span>
+                  <span className="text-[8px] font-black text-orange-500 uppercase bg-orange-50 px-2 py-1 rounded-lg">{t('Draft')}</span>
                   <ChevronRight size={18} className="text-gray-300" />
                 </div>
               </button>
@@ -565,7 +540,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         ) : (
           <div className="flex flex-col items-center justify-center py-20 px-8 text-center text-gray-400">
             <PenTool size={48} className="opacity-10 mb-4" />
-            <p className="text-sm font-bold uppercase tracking-widest">No drafts saved</p>
+            <p className="text-sm font-bold uppercase tracking-widest">{t('No drafts saved')}</p>
           </div>
         );
 
@@ -593,7 +568,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         ) : (
           <div className="flex flex-col items-center justify-center py-20 px-8 text-center text-gray-400">
             <Bookmark size={48} className="opacity-10 mb-4" />
-            <p className="text-sm font-bold uppercase tracking-widest">No saved Posts</p>
+            <p className="text-sm font-bold uppercase tracking-widest">{t('No saved Posts')}</p>
           </div>
         );
 
@@ -623,7 +598,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         ) : (
           <div className="flex flex-col items-center justify-center py-20 px-8 text-center text-gray-400">
             <Repeat size={48} className="opacity-10 mb-4" />
-            <p className="text-sm font-bold uppercase tracking-widest">No reposts yet</p>
+            <p className="text-sm font-bold uppercase tracking-widest">{t('No reposts yet')}</p>
           </div>
         );
 
@@ -642,7 +617,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                   <div className="flex items-center gap-2 mt-1 text-[9px] font-black uppercase tracking-widest text-gray-400">
                     <span>{group.category}</span>
                     <span>•</span>
-                    <span className="text-blue-600">{(group.memberCount || 0).toLocaleString()} MEMBERS</span>
+                    <span className="text-blue-600">{(group.memberCount || 0).toLocaleString()} {t('MEMBERS')}</span>
                   </div>
                 </div>
                 <ChevronRight size={18} className="text-gray-300" />
@@ -652,7 +627,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         ) : (
           <div className="flex flex-col items-center justify-center py-20 px-8 text-center text-gray-400">
             <Building2 size={48} className="opacity-10 mb-4" />
-            <p className="text-sm font-bold uppercase tracking-widest">No groups yet</p>
+            <p className="text-sm font-bold uppercase tracking-widest">{t('No groups yet')}</p>
           </div>
         );
 
@@ -737,7 +712,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                   : 'bg-blue-600 text-white shadow-blue-500/20'
                   } ${isFollowLoading ? 'opacity-50' : ''}`}
               >
-                {isFollowing ? 'Following' : 'Follow'}
+                {isFollowing ? t('Following') : t('Follow')}
               </button>
             </div>
           )}
@@ -754,7 +729,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 <div className="text-sm font-black text-gray-900 tabular-nums">
                   {profileUser?.stats?.following?.toLocaleString() || 0}
                 </div>
-                <div className="text-[8px] font-black text-gray-400 uppercase tracking-tighter mt-1">Following</div>
+                <div className="text-[8px] font-black text-gray-400 uppercase tracking-tighter mt-1">{t('Following')}</div>
               </button>
 
               <button
@@ -767,7 +742,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 <div className="text-sm font-black text-gray-900 tabular-nums">
                   {profileUser?.stats?.followers?.toLocaleString() || 0}
                 </div>
-                <div className="text-[8px] font-black text-gray-400 uppercase tracking-tighter mt-1">Followers</div>
+                <div className="text-[8px] font-black text-gray-400 uppercase tracking-tighter mt-1">{t('Followers')}</div>
               </button>
 
               <button
@@ -782,7 +757,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 <div className="text-sm font-black text-gray-900 tabular-nums">
                   {mySurveys.filter(s => !s.isDraft).length || 0}
                 </div>
-                <div className="text-[8px] font-black text-gray-400 uppercase tracking-tighter mt-1">Posts</div>
+                <div className="text-[8px] font-black text-gray-400 uppercase tracking-tighter mt-1">{t('Posts')}</div>
               </button>
 
               <button
@@ -795,7 +770,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 <div className="text-sm font-black text-gray-900 tabular-nums">
                   {responsesCount >= 1000 ? (responsesCount / 1000).toFixed(1) + 'K' : responsesCount}
                 </div>
-                <div className="text-[8px] font-black text-gray-400 uppercase tracking-tighter mt-1">Responses</div>
+                <div className="text-[8px] font-black text-gray-400 uppercase tracking-tighter mt-1">{t('Responses')}</div>
               </button>
             </div>
           </div>
