@@ -376,7 +376,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
   useEffect(() => {
     const s = survey.sharedFrom || survey;
-    let opts = [...(s.options || (s.type === SurveyType.QUIZ && s.questions ? s.questions[0]?.options || [] : (s.type === SurveyType.QUIZ && s.sections ? s.sections.flatMap(sec => sec.questions || [])[0]?.options || [] : [])) || [])];
+    let opts = [...(s.options || (s.type === SurveyType.QUIZ && s.questions && s.questions.length > 0 ? s.questions[0]?.options || [] : (s.type === SurveyType.QUIZ && s.sections && s.sections.length > 0 ? s.sections.flatMap(sec => sec.questions || [])[0]?.options || [] : [])) || [])];
 
     if (survey.type === SurveyType.CHALLENGE && s.randomPairing && !survey.hasParticipated) {
       opts.sort(() => Math.random() - 0.5);
@@ -1228,8 +1228,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           <div key={currentQuestion.id} className={`w-full flex flex-col ${slideDirection === 'next' ? 'animate-in slide-in-from-right-10 fade-in duration-500' : 'animate-in slide-in-from-left-10 fade-in duration-500'}`}>
             <div className="p-5 pb-8 no-scrollbar scroll-smooth">
               {currentQuestion.image && (
-                <div className="w-full aspect-square rounded-xl overflow-hidden mb-4 border border-gray-100 shadow-sm">
-                  <img src={currentQuestion.image} crossOrigin="anonymous" className="w-full h-full object-cover" alt="Question context" />
+                <div className="w-full rounded-xl overflow-hidden mb-3 bg-gray-100">
+                  <img src={currentQuestion.image} crossOrigin="anonymous" className="w-full max-h-[500px] object-cover block" alt="Question context" />
                 </div>
               )}
               <div className="flex items-start justify-between gap-4 mb-3">
@@ -1507,8 +1507,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     return (
       <div className="mb-4">
         {isQuiz && firstQuestion?.image && (
-          <div className="w-full aspect-square rounded-xl overflow-hidden mb-4 border border-gray-100 shadow-sm">
-            <img src={firstQuestion.image} crossOrigin="anonymous" className="w-full h-full object-cover" alt="Question context" />
+          <div className="w-full rounded-xl overflow-hidden mb-3 bg-gray-100">
+            <img src={firstQuestion.image} crossOrigin="anonymous" className="w-full max-h-[500px] object-cover block" alt="Question context" />
           </div>
         )}
         {isHorizontal ? renderHorizontal() : renderVertical()}
