@@ -566,7 +566,7 @@ const App: React.FC = () => {
         }
       } catch (apiError) {
         // Rollback optimistic update on failure only if it's a new temporary post
-        if (!targetId) {
+        if (!isEdit) {
           setSurveys(prev => prev.filter(s => s.id !== tempId));
         }
         throw apiError;
