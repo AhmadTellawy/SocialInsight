@@ -1183,6 +1183,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     const resolvedTitle = resolveDynamicText(currentQuestion.text);
     const isTF = currentQuestion.type === 'true_false';
     const isHorizontal = currentQuestion.imageLayout === 'horizontal' || (!currentQuestion.imageLayout && sourceSurvey.imageLayout === 'horizontal');
+    const isQuiz = survey.type === SurveyType.QUIZ;
 
     return (
       <div className="bg-white rounded-xl overflow-hidden border border-gray-100 shadow-sm mt-3">
