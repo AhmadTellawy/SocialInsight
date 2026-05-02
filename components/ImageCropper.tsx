@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Check, RotateCw, RefreshCw, Square } from 'lucide-react';
+import { X, Check, RotateCw, RefreshCw, Square, Expand } from 'lucide-react';
 
 interface ImageCropperProps {
   imageSrc: string;
@@ -16,15 +16,23 @@ export const ImageCropper: React.FC<ImageCropperProps> = ({ imageSrc, onCrop, on
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [lastTouchDist, setLastTouchDist] = useState<number | null>(null);
   const [showGrid, setShowGrid] = useState(false);
+  const [imgAspect, setImgAspect] = useState(1);
+  const [originalAspect, setOriginalAspect] = useState(1);
+  const [isOriginalAspect, setIsOriginalAspect] = useState(false);
   
   const imgRef = useRef<HTMLImageElement>(null);
-  const containerSize = window.innerWidth * 0.85; // Responsive viewport size
+  
+  const currentAspect = isOriginalAspect ? originalAspect : 1;
+  const baseSize = window.innerWidth * 0.85; // Responsive viewport size
+  const viewportWidth = currentAspect >= 1 ? baseSize : baseSize * currentAspect;
+  const viewportHeight = currentAspect <= 1 ? baseSize : baseSize / currentAspect;
 
   // Reset state when image changes
   useEffect(() => {
     setZoom(1);
     setRotation(0);
     setOffset({ x: 0, y: 0 });
+    setIsOriginalAspect(false);
   }, [imageSrc]);
 
   const handleMouseDown = (clientX: number, clientY: number) => {
@@ -87,9 +95,9 @@ export const ImageCropper: React.FC<ImageCropperProps> = ({ imageSrc, onCrop, on
 
   const handleCrop = () => {
     const canvas = document.createElement('canvas');
-    const size = 1024; // High-res output
-    canvas.width = size;
-    canvas.height = size;
+    const maxSize = 1024; // High-res output
+    canvas.width = currentAspect >= 1 ? maxSize : maxSize * currentAspect;
+    canvas.height = currentAspect <= 1 ? maxSize : maxSize / currentAspect;
     const ctx = canvas.getContext('2d');
     const img = imgRef.current;
 
@@ -97,13 +105,13 @@ export const ImageCropper: React.FC<ImageCropperProps> = ({ imageSrc, onCrop, on
 
     // Fill white background (useful if image doesn't cover whole area)
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, size, size);
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     // Calculate scale factor between UI and Canvas
-    const scaleFactor = size / containerSize;
+    const scaleFactor = canvas.width / viewportWidth;
 
     // Center canvas context
-    ctx.translate(size / 2, size / 2);
+    ctx.translate(canvas.width / 2, canvas.height / 2);
     // Apply drag offset
     ctx.translate(offset.x * scaleFactor, offset.y * scaleFactor);
     // Apply rotation
@@ -112,18 +120,17 @@ export const ImageCropper: React.FC<ImageCropperProps> = ({ imageSrc, onCrop, on
     ctx.scale(zoom, zoom);
 
     // Draw Image
-    const aspect = img.naturalWidth / img.naturalHeight;
     let renderWidth, renderHeight;
     
     // Sizing logic matching the UI render
-    if (aspect > 1) {
-        // Landscape
-        renderHeight = containerSize;
-        renderWidth = containerSize * aspect;
+    if (imgAspect > currentAspect) {
+        // Image is wider than viewport aspect
+        renderHeight = viewportHeight;
+        renderWidth = viewportHeight * imgAspect;
     } else {
-        // Portrait
-        renderWidth = containerSize;
-        renderHeight = containerSize / aspect;
+        // Image is taller than viewport aspect
+        renderWidth = viewportWidth;
+        renderHeight = viewportWidth / imgAspect;
     }
     
     ctx.drawImage(
@@ -160,8 +167,8 @@ export const ImageCropper: React.FC<ImageCropperProps> = ({ imageSrc, onCrop, on
       >
         {/* Viewport Border */}
         <div 
-            className="relative overflow-hidden shadow-[0_0_0_9999px_rgba(0,0,0,0.8)] border border-white/20"
-            style={{ width: containerSize, height: containerSize }}
+            className="relative overflow-hidden shadow-[0_0_0_9999px_rgba(0,0,0,0.8)] border border-white/20 transition-all duration-300"
+            style={{ width: viewportWidth, height: viewportHeight }}
         >
              <div 
                 className="w-full h-full flex items-center justify-center cursor-move"
@@ -179,17 +186,16 @@ export const ImageCropper: React.FC<ImageCropperProps> = ({ imageSrc, onCrop, on
                         transform: `translate(${offset.x}px, ${offset.y}px) rotate(${rotation}deg) scale(${zoom})`,
                         transformOrigin: 'center',
                         maxWidth: 'none',
+                        width: imgAspect > currentAspect ? 'auto' : '100%',
+                        height: imgAspect > currentAspect ? '100%' : 'auto',
                     }}
                     className="max-w-none pointer-events-none select-none transition-transform duration-75 ease-linear"
                     onLoad={(e) => {
                         const img = e.currentTarget;
-                        if (img.naturalWidth / img.naturalHeight > 1) {
-                            img.style.height = '100%';
-                            img.style.width = 'auto';
-                        } else {
-                            img.style.width = '100%';
-                            img.style.height = 'auto';
-                        }
+                        const aspect = img.naturalWidth / img.naturalHeight;
+                        setImgAspect(aspect);
+                        // Clamp aspect ratio between 4:5 (0.8) and 16:9 (1.77) similar to Instagram
+                        setOriginalAspect(Math.max(0.8, Math.min(1.77, aspect)));
                     }}
                 />
              </div>
@@ -235,11 +241,12 @@ export const ImageCropper: React.FC<ImageCropperProps> = ({ imageSrc, onCrop, on
          </button>
          
          <button 
-           className="flex flex-col items-center gap-1.5 text-blue-500 transition-colors"
+           onClick={() => setIsOriginalAspect(!isOriginalAspect)}
+           className={`flex flex-col items-center gap-1.5 transition-colors ${isOriginalAspect ? 'text-white' : 'text-blue-500'}`}
            title="Aspect Ratio"
          >
-           <Square size={22} fill="currentColor" fillOpacity={0.2} />
-           <span className="text-[10px] font-bold uppercase tracking-wider">Square</span>
+           <Expand size={22} />
+           <span className="text-[10px] font-bold uppercase tracking-wider">{isOriginalAspect ? 'Original' : 'Square'}</span>
          </button>
       </div>
     </div>
