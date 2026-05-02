@@ -1254,12 +1254,15 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                     {currentQuestion.options?.map((opt, idx) => {
                       const selectedIds = Array.isArray(answer) ? answer : (answer ? [answer] : []);
                       const isSelected = selectedIds.includes(opt.id);
+                      const hasVotedCurrent = selectedIds.length > 0;
+                      const isCorrect = isQuiz && opt.isCorrect;
+                      const isWrongSelection = isQuiz && isSelected && !isCorrect;
                       const isMaxReached = !isTF && currentQuestion.maxSelection && (currentQuestion.maxSelection || 1) > 1 && selectedIds.length >= (currentQuestion.maxSelection || 1) && !isSelected;
                       const isPortrait = opt.image && portraitImages.has(opt.image);
 
                       return (
-                        <div key={opt.id} className={`group ${isHorizontal && !isTF ? 'min-w-[51%] snap-center' : ''}`}>
-                          <button onClick={() => handleSurveyAnswer(opt.id)} disabled={isMaxReached as boolean} className={`w-full text-left p-3 rounded-xl border transition-all duration-200 flex items-center justify-between active:scale-[0.99] h-auto ${isSelected ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-sm' : isMaxReached ? 'opacity-50 border-gray-100 bg-gray-50' : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/30 active:scale-[0.99]'} ${isTF ? 'flex-col gap-2 items-center text-center justify-center py-6' : ''} ${isHorizontal && opt.image ? 'flex-col items-stretch p-1 pb-3' : ''}`}>
+                        <div key={opt.id} className={`group relative ${isHorizontal && !isTF ? 'min-w-[51%] snap-center' : ''}`}>
+                          <button onClick={() => handleSurveyAnswer(opt.id)} disabled={(isMaxReached || (hasVotedCurrent && isQuiz)) as boolean} className={`w-full text-left p-3 rounded-xl border transition-all duration-200 flex items-center justify-between active:scale-[0.99] h-auto ${hasVotedCurrent && isQuiz ? (isCorrect ? 'border-green-500 bg-green-50 text-green-700 ring-1 ring-green-500/20 shadow-sm' : isWrongSelection ? 'border-red-500 bg-red-50 text-red-700 ring-1 ring-red-500/20 shadow-sm' : 'border-gray-100 bg-gray-50 opacity-50') : isSelected ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-sm' : isMaxReached ? 'opacity-50 border-gray-100 bg-gray-50' : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/30 active:scale-[0.99]'} ${isTF ? 'flex-col gap-2 items-center text-center justify-center py-6' : ''} ${isHorizontal && opt.image ? 'flex-col items-stretch p-1 pb-3' : ''}`}>
                             {opt.image && (
                               <div
                                 className={`${isHorizontal ? 'w-full aspect-square mb-3' : 'w-14 h-14 shrink-0 mr-3'} rounded-lg overflow-hidden border border-gray-100 bg-gray-50 relative group/img`}
@@ -1287,6 +1290,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                             <div className={`flex items-center ${isTF || (isHorizontal && opt.image) ? 'flex-col' : 'gap-3'} flex-1`}>
                               {!isTF && !(isHorizontal && opt.image) && !opt.isRating && <span className={`w-6 h-6 rounded-md text-xs font-bold flex items-center justify-center shrink-0 transition-colors ${isSelected ? 'bg-blue-200 text-blue-700' : 'bg-gray-100 text-gray-500 group-hover:bg-white'}`}>{idx + 1}.</span>}
 
+                              {hasVotedCurrent && isQuiz && isCorrect && <CheckCircle2 size={18} className="text-green-600 shrink-0" />}
+                              {hasVotedCurrent && isQuiz && isWrongSelection && <X size={18} className="text-red-600 shrink-0" />}
                               {opt.isRating ? (
                                 <div className="flex items-center gap-2 py-1">
                                   <div className="flex text-yellow-500">

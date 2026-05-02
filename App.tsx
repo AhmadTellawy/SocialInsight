@@ -850,7 +850,6 @@ const App: React.FC = () => {
 
         const applyProgress = (target: any) => ({
           ...target,
-          hasParticipated: true,
           userProgress: {
             currentQuestionIndex: progress.index,
             answers: progress.answers,
