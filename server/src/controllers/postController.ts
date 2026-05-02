@@ -426,6 +426,7 @@ export const createPost = async (req: Request, res: Response) => {
                     if (q.options?.length) {
                         await prisma.option.createMany({
                             data: q.options.map((opt: any) => ({
+                                id: opt.id,
                                 text: opt.text,
                                 image: opt.image,
                                 isCorrect: q.correctOptionId === opt.id,
@@ -620,6 +621,7 @@ export const updatePost = async (req: Request, res: Response) => {
                     if (q.options?.length) {
                         await prisma.option.createMany({
                             data: q.options.map((opt: any) => ({
+                                id: opt.id,
                                 text: opt.text,
                                 image: opt.image,
                                 isCorrect: q.correctOptionId === opt.id,

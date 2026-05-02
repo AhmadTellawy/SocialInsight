@@ -53,12 +53,12 @@ model User {
   reports                Report[]              @relation("Reporter")
 
   // Existing relations to other models
-  posts        Post[]
-  comments     Comment[]
-  responses    Response[]
-  groups       GroupMember[]
-  likes        UserLike[]
-  commentLikes CommentLike[]
+  posts             Post[]
+  comments          Comment[]
+  responses         Response[]
+  groups            GroupMember[]
+  likes             UserLike[]
+  commentLikes      CommentLike[]
   pushSubscriptions PushSubscription[]
 
   @@map("users")
@@ -234,7 +234,7 @@ model Response {
   answers     Answer[]
   post        Post     @relation(fields: [postId], references: [id])
   user        User?    @relation(fields: [userId], references: [id])
-  
+
   @@index([guestId])
   @@index([postId])
 }

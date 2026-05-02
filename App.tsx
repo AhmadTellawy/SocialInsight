@@ -1201,7 +1201,7 @@ const App: React.FC = () => {
             )}
 
             {activeTab === 'home' ? (
-              <PullToRefresh ref={pullToRefreshRef} onRefresh={async () => { await new Promise(r => setTimeout(r, 1000)); }} onScrollChange={dir => setIsNavVisible(dir === 'up')} className="flex-1 mt-16 pb-[75px] bg-white no-scrollbar">
+              <PullToRefresh ref={pullToRefreshRef} onRefresh={async () => { await fetchData(userProfile?.id || undefined, userProfile); }} onScrollChange={dir => setIsNavVisible(dir === 'up')} className="flex-1 mt-16 pb-[75px] bg-white no-scrollbar">
                 {renderContent()}
               </PullToRefresh>
             ) : (

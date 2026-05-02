@@ -382,6 +382,14 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       opts.sort(() => Math.random() - 0.5);
     } else if (s.pollChoiceType === 'rating') {
       opts.sort((a, b) => (b.ratingValue || 0) - (a.ratingValue || 0));
+    } else if (survey.type === SurveyType.QUIZ) {
+      // Sort quiz options based on the ID timestamp to preserve original order
+      opts.sort((a, b) => {
+         const timeA = parseInt((a.id || '').split('-')[1] || '0', 10);
+         const timeB = parseInt((b.id || '').split('-')[1] || '0', 10);
+         if (timeA && timeB) return timeA - timeB;
+         return 0; // Fallback to original order if ID doesn't have a timestamp
+      });
     }
 
     setLocalOptions(opts);
@@ -1033,10 +1041,10 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const TypeIcon = typeConfig.icon;
   const VisibilityIcon = sourceSurvey.resultsVisibility === 'Private' ? Lock : Globe;
 
-  const authorName = sourceSurvey.author?.name || t('Anonymous');
-  const authorAvatar = sourceSurvey.author?.avatar || 'https://picsum.photos/40/40';
   const isMyPost = !!userProfile?.id && survey.author?.id === userProfile.id;
   const isMySource = !!userProfile?.id && sourceSurvey.author?.id === userProfile.id;
+  const authorName = isMySource ? userProfile?.name : (sourceSurvey.author?.name || t('Anonymous'));
+  const authorAvatar = isMySource ? userProfile?.avatar : (sourceSurvey.author?.avatar || 'https://picsum.photos/40/40');
 
 
 
@@ -1343,7 +1351,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           const isCorrect = isQuiz && option.isCorrect;
           const isWrongSelection = isQuiz && isSelected && !isCorrect;
           return (
-            <div key={option.id} className={`flex-shrink-0 relative w-[75%] sm:w-[280px] rounded-xl border snap-center overflow-hidden flex flex-col transition-all duration-300 bg-white shadow-sm ${isSelected ? 'ring-2 ring-blue-500 border-blue-500' : 'border-gray-200'}`}>
+            <div key={option.id} className={`flex-shrink-0 relative w-[75%] sm:w-[280px] rounded-xl border snap-center overflow-hidden flex flex-col transition-all duration-300 bg-white shadow-sm ${shouldShowResults && isCorrect ? 'border-green-500 ring-2 ring-green-500 bg-green-50' : shouldShowResults && isWrongSelection ? 'border-red-500 ring-2 ring-red-500 bg-red-50' : isSelected ? 'ring-2 ring-blue-500 border-blue-500' : 'border-gray-200'}`}>
               <div className="w-full aspect-square bg-gray-100 relative group/opt-img">
                 {option.image ? (
                   <>
@@ -1376,6 +1384,16 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                     <div className="bg-blue-500 text-white p-2 rounded-full shadow-lg"><CheckCircle2 size={24} /></div>
                   </div>
                 )}
+                {shouldShowResults && isCorrect && (
+                  <div className="absolute inset-0 flex items-center justify-center animate-in fade-in duration-200 pointer-events-none bg-green-500/10">
+                    <div className="bg-green-500 text-white p-2 rounded-full shadow-lg"><CheckCircle2 size={24} /></div>
+                  </div>
+                )}
+                {shouldShowResults && isWrongSelection && (
+                  <div className="absolute inset-0 flex items-center justify-center animate-in fade-in duration-200 pointer-events-none bg-red-500/10">
+                    <div className="bg-red-500 text-white p-2 rounded-full shadow-lg"><X size={24} /></div>
+                  </div>
+                )}
               </div>
               <div className="bg-gray-50 p-4 border-t border-gray-100 flex-1 flex flex-col justify-center min-h-[80px]">
                 <div className="flex justify-between items-center gap-4">
@@ -1392,6 +1410,12 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                     {shouldShowResults && <div className="text-[10px] text-gray-500 mt-1">{option.votes.toLocaleString()} {t('votes')}</div>}
                   </div>
                   <div className="shrink-0">
+                    {isCorrect && (hasVoted || isExpired) && (
+                      <CheckCircle2 size={18} className="text-green-600 shrink-0" />
+                    )}
+                    {isWrongSelection && (hasVoted || isExpired) && (
+                      <X size={18} className="text-red-600 shrink-0" />
+                    )}
                     {!hasVoted && !isExpired ? (
                       <button onClick={() => handlePollOptionClick(option.id)} className={`text-sm font-bold px-6 py-2 rounded-lg transition-colors border shadow-sm active:scale-95 ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-100'}`}>{isSelected && isMultiple ? t('Selected') : t('Vote')}</button>
                     ) : (
@@ -1430,8 +1454,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           const isWrongSelection = isQuiz && isSelected && !isCorrect;
           return (
             <div key={option.id} className="flex flex-col gap-2">
-              <button onClick={() => handlePollOptionClick(option.id)} disabled={hasVoted || isExpired} className={`relative w-full text-left rounded-xl border transition-all duration-300 overflow-hidden group ${hasImages ? 'p-1 pr-3' : 'p-3'} ${hasVoted || isExpired ? isSelected ? 'border-blue-500 bg-blue-50' : 'border-gray-100 bg-gray-50' : isSelected ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500/20' : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/30 active:scale-[0.99]'}`}>
-                {shouldShowResults && <div className={`absolute top-0 left-0 bottom-0 transition-all duration-1000 ease-out ${isSelected ? 'bg-blue-100/50' : 'bg-gray-200/50'}`} style={{ width: `${percentage}%` }} />}
+              <button onClick={() => handlePollOptionClick(option.id)} disabled={hasVoted || isExpired} className={`relative w-full text-left rounded-xl border transition-all duration-300 overflow-hidden group ${hasImages ? 'p-1 pr-3' : 'p-3'} ${hasVoted || isExpired ? (isCorrect ? 'border-green-500 bg-green-50' : isWrongSelection ? 'border-red-500 bg-red-50' : isSelected ? 'border-blue-500 bg-blue-50' : 'border-gray-100 bg-gray-50') : isSelected ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500/20' : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/30 active:scale-[0.99]'}`}>
+                {shouldShowResults && <div className={`absolute top-0 left-0 bottom-0 transition-all duration-1000 ease-out ${isCorrect ? 'bg-green-200/50' : isWrongSelection ? 'bg-red-200/50' : isSelected ? 'bg-blue-100/50' : 'bg-gray-200/50'}`} style={{ width: `${percentage}%` }} />}
                 <div className={`relative flex justify-between items-center z-10 ${hasImages ? 'min-h-[44px]' : ''}`}>
                   <div className={`flex items-center overflow-hidden ${hasImages ? 'gap-3' : 'gap-3'}`}>
                     {hasImages && (
