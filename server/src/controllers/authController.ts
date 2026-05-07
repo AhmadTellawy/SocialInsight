@@ -267,7 +267,7 @@ export const checkHandleAvailability = async (req: Request, res: Response) => {
     const { handle } = req.query;
     const lowerHandle = (handle as string)?.toLowerCase();
     try {
-        const existing = await prisma.user.findFirst({ where: { handle: { equals: lowerHandle } } });
+        const existing = await prisma.user.findFirst({ where: { handle: { equals: lowerHandle, mode: 'insensitive' } } });
         res.json({ available: !existing });
     } catch (error) {
         res.status(500).json({ error: 'Check failed' });

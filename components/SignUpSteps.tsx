@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, ArrowRight, Check, X, Calendar, User, Mail, Lock, Eye, EyeOff, Loader2, AtSign, RefreshCw, Bell } from 'lucide-react';
+import { api } from '../services/api';
 
 interface StepProps {
     onNext: (data: any) => void;
@@ -264,13 +265,11 @@ export const HandleStep: React.FC<StepProps> = ({ onNext, onBack, isLoading: isE
             }
             setIsChecking(true);
             try {
-                const res = await fetch(`/api/auth/handle/check?handle=${debouncedHandle}`);
-                const data = await res.json();
+                const data = await api.checkHandle(debouncedHandle);
                 setIsAvailable(data.available);
             } catch (e) {
                 console.error(e);
-                // Fallback to true if server dead for demo
-                setIsAvailable(true);
+                setIsAvailable(null); // Don't allow passing if check fails
             } finally {
                 setIsChecking(false);
             }
