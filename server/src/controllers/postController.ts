@@ -96,8 +96,8 @@ export const getPosts = async (req: Request, res: Response) => {
                         } : false
                     }
                 },
-                questions: { include: { options: { orderBy: { id: 'asc' } } } },
-                sections: { include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } } },
+                questions: { include: { options: { orderBy: { order: 'asc' } } } },
+                sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
                 responses: (userId || guestId) ? { 
                     where: userId ? { userId } : { guestId }, 
                     take: 1, 
@@ -109,8 +109,8 @@ export const getPosts = async (req: Request, res: Response) => {
                 sharedFrom: {
                     include: {
                         author: { select: SAFE_USER_SELECT },
-                        questions: { include: { options: { orderBy: { id: 'asc' } } } },
-                        sections: { include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } } },
+                        questions: { include: { options: { orderBy: { order: 'asc' } } } },
+                        sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
                         responses: (userId || guestId) ? { 
                             where: userId ? { userId } : { guestId }, 
                             take: 1, 
@@ -209,8 +209,8 @@ export const getPostById = async (req: Request, res: Response) => {
                         } : false
                     }
                 },
-                questions: { include: { options: { orderBy: { id: 'asc' } } } },
-                sections: { include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } } },
+                questions: { include: { options: { orderBy: { order: 'asc' } } } },
+                sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
                 responses: (userId || guestId) ? { 
                     where: userId ? { userId } : { guestId }, 
                     take: 1, 
@@ -228,8 +228,8 @@ export const getPostById = async (req: Request, res: Response) => {
                 sharedFrom: {
                     include: {
                         author: { select: SAFE_USER_SELECT },
-                        questions: { include: { options: { orderBy: { id: 'asc' } } } },
-                        sections: { include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } } },
+                        questions: { include: { options: { orderBy: { order: 'asc' } } } },
+                        sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
                         responses: (userId || guestId) ? { 
                             where: userId ? { userId } : { guestId }, 
                             take: 1, 
@@ -391,15 +391,16 @@ export const createPost = async (req: Request, res: Response) => {
                 data: { text: data.title || "Poll Question", type: 'SingleChoice', postId: post.id }
             });
             await prisma.option.createMany({
-                data: data.options.map((opt: any) => ({
+                data: data.options.map((opt: any, index: number) => ({
                     text: opt.text,
                     image: opt.image,
                     questionId: question.id,
                     isRating: opt.isRating || false,
-                    ratingValue: opt.ratingValue || 0
+                    ratingValue: opt.ratingValue || 0,
+                    order: index
                 }))
             });
-            createdOptions = await prisma.option.findMany({ where: { questionId: question.id } });
+            createdOptions = await prisma.option.findMany({ where: { questionId: question.id }, orderBy: { order: 'asc' } });
         } else if (['Quiz', 'Survey'].includes(typeStr) && data.sections) {
             for (const [sIdx, sec] of data.sections.entries()) {
                 const section = await prisma.section.create({
@@ -425,13 +426,14 @@ export const createPost = async (req: Request, res: Response) => {
 
                     if (q.options?.length) {
                         await prisma.option.createMany({
-                            data: q.options.map((opt: any) => ({
+                            data: q.options.map((opt: any, index: number) => ({
                                 text: opt.text,
                                 image: opt.image,
                                 isCorrect: q.correctOptionId === opt.id,
                                 isRating: opt.isRating || false,
                                 ratingValue: opt.ratingValue || 0,
-                                questionId: question.id
+                                questionId: question.id,
+                                order: index
                             }))
                         });
                     }
@@ -440,7 +442,7 @@ export const createPost = async (req: Request, res: Response) => {
 
             const fullyPopulatedPost = await prisma.post.findUnique({
                 where: { id: post.id },
-                include: { sections: { include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } } } }
+                include: { sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } } }
             });
             if (fullyPopulatedPost?.sections) {
                 createdSections = fullyPopulatedPost.sections;
@@ -553,7 +555,8 @@ export const updatePost = async (req: Request, res: Response) => {
                 await prisma.option.deleteMany({ where: { id: { in: idsToDelete } } });
             }
 
-            for (const opt of incomingOptions) {
+            for (let i = 0; i < incomingOptions.length; i++) {
+                const opt = incomingOptions[i];
                 if (existingIds.includes(opt.id)) {
                     await prisma.option.update({
                         where: { id: opt.id },
@@ -561,7 +564,8 @@ export const updatePost = async (req: Request, res: Response) => {
                             text: opt.text,
                             image: opt.image,
                             isRating: opt.isRating || false,
-                            ratingValue: opt.ratingValue || 0
+                            ratingValue: opt.ratingValue || 0,
+                            order: i
                         }
                     });
                 } else {
@@ -571,16 +575,17 @@ export const updatePost = async (req: Request, res: Response) => {
                             image: opt.image,
                             questionId: question.id,
                             isRating: opt.isRating || false,
-                            ratingValue: opt.ratingValue || 0
+                            ratingValue: opt.ratingValue || 0,
+                            order: i
                         }
                     });
                 }
             }
-            finalOptions = await prisma.option.findMany({ where: { questionId: question.id } });
+            finalOptions = await prisma.option.findMany({ where: { questionId: question.id }, orderBy: { order: 'asc' } });
         } else if (['Poll', 'Challenge', 'Prediction', 'Debate'].includes(typeStr)) {
             const question = await prisma.question.findFirst({ where: { postId: id } });
             if (question) {
-                finalOptions = await prisma.option.findMany({ where: { questionId: question.id } });
+                finalOptions = await prisma.option.findMany({ where: { questionId: question.id }, orderBy: { order: 'asc' } });
             }
         } else if (['Quiz', 'Survey'].includes(typeStr) && data.sections) {
             const oldSections = await prisma.section.findMany({ where: { postId: id }, include: { questions: true } });
@@ -619,13 +624,14 @@ export const updatePost = async (req: Request, res: Response) => {
 
                     if (q.options?.length) {
                         await prisma.option.createMany({
-                            data: q.options.map((opt: any) => ({
+                            data: q.options.map((opt: any, index: number) => ({
                                 text: opt.text,
                                 image: opt.image,
                                 isCorrect: q.correctOptionId === opt.id,
                                 isRating: opt.isRating || false,
                                 ratingValue: opt.ratingValue || 0,
-                                questionId: question.id
+                                questionId: question.id,
+                                order: index
                             }))
                         });
                     }
@@ -634,7 +640,7 @@ export const updatePost = async (req: Request, res: Response) => {
 
             const fullyPopulatedPost = await prisma.post.findUnique({
                 where: { id: post.id },
-                include: { sections: { include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } } } }
+                include: { sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } } }
             });
             if (fullyPopulatedPost?.sections) {
                 finalSections = fullyPopulatedPost.sections;
@@ -642,7 +648,7 @@ export const updatePost = async (req: Request, res: Response) => {
         } else if (['Quiz', 'Survey'].includes(typeStr)) {
             const fullyPopulatedPost = await prisma.post.findUnique({
                 where: { id: post.id },
-                include: { sections: { include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } } } }
+                include: { sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } } }
             });
             if (fullyPopulatedPost?.sections) {
                 finalSections = fullyPopulatedPost.sections;
@@ -674,7 +680,7 @@ export const getDrafts = async (req: Request, res: Response) => {
         const drafts = await prisma.post.findMany({
             where: { authorId: userId, status: 'DRAFT', isDeleted: false },
             include: {
-                questions: { include: { options: { orderBy: { id: 'asc' } } } },
+                questions: { include: { options: { orderBy: { order: 'asc' } } } },
                 author: { select: SAFE_USER_SELECT }
             },
             orderBy: { updatedAt: 'desc' }
@@ -706,8 +712,8 @@ export const getSavedPosts = async (req: Request, res: Response) => {
                 post: {
                     include: {
                         author: { select: SAFE_USER_SELECT },
-                        questions: { include: { options: { orderBy: { id: 'asc' } } } },
-                        sections: { include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } } },
+                        questions: { include: { options: { orderBy: { order: 'asc' } } } },
+                        sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
                         responses: userId ? { where: { userId }, take: 1, include: { answers: true } } : false,
                         likes: userId ? { where: { userId }, take: 1 } : false
                     }
@@ -1149,7 +1155,7 @@ export const sharePost = async (req: Request, res: Response) => {
     try {
         const originalPost = await prisma.post.findUnique({
             where: { id },
-            include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } }
+            include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } }
         });
         if (!originalPost || (originalPost as any).isDeleted) {
             res.status(404).json({ error: 'Original post not found or has been deleted' });
@@ -1224,13 +1230,13 @@ export const sharePost = async (req: Request, res: Response) => {
             where: { id: newPost.id },
             include: {
                 author: { select: SAFE_USER_SELECT },
-                questions: { include: { options: { orderBy: { id: 'asc' } } } },
-                sections: { include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } } },
+                questions: { include: { options: { orderBy: { order: 'asc' } } } },
+                sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
                 sharedFrom: {
                     include: {
                         author: { select: SAFE_USER_SELECT },
-                        questions: { include: { options: { orderBy: { id: 'asc' } } } },
-                        sections: { include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } } },
+                        questions: { include: { options: { orderBy: { order: 'asc' } } } },
+                        sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
                     }
                 }
             }

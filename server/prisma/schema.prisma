@@ -219,6 +219,7 @@ model Option {
   isCorrect   Boolean?
   isRating    Boolean  @default(false)
   ratingValue Int      @default(0)
+  order       Int      @default(0)
   question    Question @relation(fields: [questionId], references: [id])
   answers     Answer[]
 }
