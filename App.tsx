@@ -118,6 +118,7 @@ const App: React.FC = () => {
     setUserProfile(null);
     setSurveys([]);
     setActiveTab('home');
+    navigate('/', { replace: true });
     lastFetchedUserIdRef.current = null;
     localStorage.removeItem('si_user');
     localStorage.removeItem('si_token');
