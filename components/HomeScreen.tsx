@@ -102,12 +102,21 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   }, [surveys]);
 
   const [suggestedUsers, setSuggestedUsers] = useState<any[]>([]);
+  const [isSuggestedLoading, setIsSuggestedLoading] = useState(true);
 
   useEffect(() => {
-    if (userProfile && userProfile.id && !userProfile.isGuest && suggestedUsers.length === 0) {
-      api.getSuggestedUsers(userProfile.id)
-        .then(setSuggestedUsers)
-        .catch(console.error);
+    if (userProfile && userProfile.id && !userProfile.isGuest) {
+      if (suggestedUsers.length === 0) {
+        setIsSuggestedLoading(true);
+        api.getSuggestedUsers(userProfile.id)
+          .then(setSuggestedUsers)
+          .catch(console.error)
+          .finally(() => setIsSuggestedLoading(false));
+      } else {
+        setIsSuggestedLoading(false);
+      }
+    } else {
+      setIsSuggestedLoading(false);
     }
   }, [userProfile?.id]);
 
@@ -219,11 +228,27 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       </div>
 
       {/* 2. Suggested Users (Top) */}
-      {suggestedUsers.length > 0 && (
+      {isSuggestedLoading ? (
+          <div className="mb-2 bg-white border-b border-gray-100 py-4">
+              <div className="px-4 mb-4 flex items-center justify-between">
+                  <div className="w-32 h-4 bg-gray-200 rounded-full animate-pulse" />
+              </div>
+              <div className="flex gap-3 overflow-x-hidden px-4 pb-4">
+                  {[1, 2, 3].map(i => (
+                      <div key={i} className="flex-none w-[140px] h-[216px] border border-gray-100 rounded-2xl p-4 flex flex-col items-center justify-center animate-pulse">
+                          <div className="w-[72px] h-[72px] bg-gray-200 rounded-full mb-3" />
+                          <div className="w-20 h-3 bg-gray-200 rounded-full mb-2" />
+                          <div className="w-16 h-2 bg-gray-100 rounded-full mb-4" />
+                          <div className="w-full h-8 bg-gray-100 rounded-full" />
+                      </div>
+                  ))}
+              </div>
+          </div>
+      ) : suggestedUsers.length > 0 ? (
           <div className="mb-2">
             <SuggestedUsersList users={suggestedUsers} onFollow={handleFollowSuggestion} onDismiss={handleDismissSuggestion} onUserClick={onAuthorClick} />
           </div>
-      )}
+      ) : null}
 
       {/* 3. Main Feed */}
       <div className="space-y-1">
