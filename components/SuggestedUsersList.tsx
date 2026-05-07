@@ -11,13 +11,22 @@ interface SuggestedUsersListProps {
     users: SuggestedUser[];
     onFollow: (userId: string) => void;
     onUserClick?: (user: { id: string, name: string, avatar: string }) => void;
+    onDismiss?: (userId: string) => void;
 }
 
-export const SuggestedUsersList: React.FC<SuggestedUsersListProps> = ({ users, onFollow, onUserClick }) => {
+export const SuggestedUsersList: React.FC<SuggestedUsersListProps> = ({ users, onFollow, onUserClick, onDismiss }) => {
     const { t } = useTranslation();
     const [followedIds, setFollowedIds] = React.useState<Set<string>>(new Set());
+    const [dismissedIds, setDismissedIds] = React.useState<Set<string>>(new Set());
 
     if (!users || users.length === 0) return null;
+
+    const handleDismissClick = (userId: string) => {
+        setDismissedIds(prev => new Set(prev).add(userId));
+        setTimeout(() => {
+            if (onDismiss) onDismiss(userId);
+        }, 300); // Wait for scale down animation
+    };
 
     const handleFollowClick = (userId: string) => {
         // Optimistically update UI
@@ -35,18 +44,21 @@ export const SuggestedUsersList: React.FC<SuggestedUsersListProps> = ({ users, o
             <div className="flex overflow-x-auto hide-scrollbar px-4 pb-4 gap-3" style={{ scrollSnapType: 'x mandatory' }}>
                 {users.map(user => {
                     const isFollowed = followedIds.has(user.id);
+                    const isDismissed = dismissedIds.has(user.id);
                     return (
                     <div 
                         key={user.id} 
-                        className={`flex-none w-[140px] border rounded-2xl p-4 flex flex-col items-center justify-center text-center shadow-sm relative group bg-white transition-all duration-500 ease-out ${isFollowed ? 'border-gray-100 opacity-0 scale-95 pointer-events-none' : 'border-gray-200 hover:bg-gray-50'}`}
+                        className={`flex-none w-[140px] border rounded-2xl p-4 flex flex-col items-center justify-center text-center relative group bg-white transition-all duration-300 ease-out ${isFollowed ? 'border-gray-100 opacity-0 scale-95 pointer-events-none shadow-none' : isDismissed ? 'border-transparent opacity-0 scale-50 pointer-events-none shadow-none w-0 p-0 mx-0 overflow-hidden' : 'border-gray-200 hover:bg-gray-50 shadow-sm'}`}
                         style={{ scrollSnapAlign: 'start', transitionDelay: isFollowed ? '300ms' : '0ms' }}
                     >
+                        {!isDismissed && (
                         <button 
-                         className="absolute top-2 right-2 text-gray-300 hover:text-gray-500 transition-colors bg-white rounded-full p-0.5"
-                         onClick={(e) => { e.stopPropagation(); /* optional dismiss handler */ }}
+                         className="absolute top-2 right-2 text-gray-300 hover:text-gray-600 hover:bg-gray-100 transition-colors bg-white rounded-full p-1 z-10 cursor-pointer"
+                         onClick={(e) => { e.stopPropagation(); handleDismissClick(user.id); }}
                         >
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg>
                         </button>
+                        )}
 
                         <div 
                            className="w-[72px] h-[72px] rounded-full mb-3 overflow-hidden cursor-pointer shadow-sm pointer-events-auto ring-2 ring-transparent group-hover:ring-gray-200 transition-all duration-300"

@@ -131,6 +131,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     }
   };
 
+  const handleDismissSuggestion = (targetId: string) => {
+    setSuggestedUsers(prev => prev.filter(u => u.id !== targetId));
+  };
+
   if (isLoading && surveys.length === 0) {
     return (
       <div className="pb-20 animate-in fade-in duration-500 bg-white">
@@ -217,7 +221,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* 2. Suggested Users (Top) */}
       {suggestedUsers.length > 0 && (
           <div className="mb-2">
-            <SuggestedUsersList users={suggestedUsers} onFollow={handleFollowSuggestion} onUserClick={onAuthorClick} />
+            <SuggestedUsersList users={suggestedUsers} onFollow={handleFollowSuggestion} onDismiss={handleDismissSuggestion} onUserClick={onAuthorClick} />
           </div>
       )}
 
