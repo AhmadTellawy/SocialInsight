@@ -96,8 +96,8 @@ export const getPosts = async (req: Request, res: Response) => {
                         } : false
                     }
                 },
-                questions: { include: { options: true } },
-                sections: { include: { questions: { include: { options: true } } } },
+                questions: { include: { options: { orderBy: { id: 'asc' } } } },
+                sections: { include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } } },
                 responses: (userId || guestId) ? { 
                     where: userId ? { userId } : { guestId }, 
                     take: 1, 
@@ -109,8 +109,8 @@ export const getPosts = async (req: Request, res: Response) => {
                 sharedFrom: {
                     include: {
                         author: { select: SAFE_USER_SELECT },
-                        questions: { include: { options: true } },
-                        sections: { include: { questions: { include: { options: true } } } },
+                        questions: { include: { options: { orderBy: { id: 'asc' } } } },
+                        sections: { include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } } },
                         responses: (userId || guestId) ? { 
                             where: userId ? { userId } : { guestId }, 
                             take: 1, 
@@ -209,8 +209,8 @@ export const getPostById = async (req: Request, res: Response) => {
                         } : false
                     }
                 },
-                questions: { include: { options: true } },
-                sections: { include: { questions: { include: { options: true } } } },
+                questions: { include: { options: { orderBy: { id: 'asc' } } } },
+                sections: { include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } } },
                 responses: (userId || guestId) ? { 
                     where: userId ? { userId } : { guestId }, 
                     take: 1, 
@@ -228,8 +228,8 @@ export const getPostById = async (req: Request, res: Response) => {
                 sharedFrom: {
                     include: {
                         author: { select: SAFE_USER_SELECT },
-                        questions: { include: { options: true } },
-                        sections: { include: { questions: { include: { options: true } } } },
+                        questions: { include: { options: { orderBy: { id: 'asc' } } } },
+                        sections: { include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } } },
                         responses: (userId || guestId) ? { 
                             where: userId ? { userId } : { guestId }, 
                             take: 1, 
@@ -440,7 +440,7 @@ export const createPost = async (req: Request, res: Response) => {
 
             const fullyPopulatedPost = await prisma.post.findUnique({
                 where: { id: post.id },
-                include: { sections: { include: { questions: { include: { options: true } } } } }
+                include: { sections: { include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } } } }
             });
             if (fullyPopulatedPost?.sections) {
                 createdSections = fullyPopulatedPost.sections;
@@ -634,7 +634,7 @@ export const updatePost = async (req: Request, res: Response) => {
 
             const fullyPopulatedPost = await prisma.post.findUnique({
                 where: { id: post.id },
-                include: { sections: { include: { questions: { include: { options: true } } } } }
+                include: { sections: { include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } } } }
             });
             if (fullyPopulatedPost?.sections) {
                 finalSections = fullyPopulatedPost.sections;
@@ -642,7 +642,7 @@ export const updatePost = async (req: Request, res: Response) => {
         } else if (['Quiz', 'Survey'].includes(typeStr)) {
             const fullyPopulatedPost = await prisma.post.findUnique({
                 where: { id: post.id },
-                include: { sections: { include: { questions: { include: { options: true } } } } }
+                include: { sections: { include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } } } }
             });
             if (fullyPopulatedPost?.sections) {
                 finalSections = fullyPopulatedPost.sections;
@@ -674,7 +674,7 @@ export const getDrafts = async (req: Request, res: Response) => {
         const drafts = await prisma.post.findMany({
             where: { authorId: userId, status: 'DRAFT', isDeleted: false },
             include: {
-                questions: { include: { options: true } },
+                questions: { include: { options: { orderBy: { id: 'asc' } } } },
                 author: { select: SAFE_USER_SELECT }
             },
             orderBy: { updatedAt: 'desc' }
@@ -706,8 +706,8 @@ export const getSavedPosts = async (req: Request, res: Response) => {
                 post: {
                     include: {
                         author: { select: SAFE_USER_SELECT },
-                        questions: { include: { options: true } },
-                        sections: { include: { questions: { include: { options: true } } } },
+                        questions: { include: { options: { orderBy: { id: 'asc' } } } },
+                        sections: { include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } } },
                         responses: userId ? { where: { userId }, take: 1, include: { answers: true } } : false,
                         likes: userId ? { where: { userId }, take: 1 } : false
                     }
@@ -1149,7 +1149,7 @@ export const sharePost = async (req: Request, res: Response) => {
     try {
         const originalPost = await prisma.post.findUnique({
             where: { id },
-            include: { questions: { include: { options: true } } }
+            include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } }
         });
         if (!originalPost || (originalPost as any).isDeleted) {
             res.status(404).json({ error: 'Original post not found or has been deleted' });
@@ -1224,13 +1224,13 @@ export const sharePost = async (req: Request, res: Response) => {
             where: { id: newPost.id },
             include: {
                 author: { select: SAFE_USER_SELECT },
-                questions: { include: { options: true } },
-                sections: { include: { questions: { include: { options: true } } } },
+                questions: { include: { options: { orderBy: { id: 'asc' } } } },
+                sections: { include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } } },
                 sharedFrom: {
                     include: {
                         author: { select: SAFE_USER_SELECT },
-                        questions: { include: { options: true } },
-                        sections: { include: { questions: { include: { options: true } } } },
+                        questions: { include: { options: { orderBy: { id: 'asc' } } } },
+                        sections: { include: { questions: { include: { options: { orderBy: { id: 'asc' } } } } } },
                     }
                 }
             }

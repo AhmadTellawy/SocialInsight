@@ -143,6 +143,13 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const navigate = useNavigate();
 
   useEffect(() => {
+    const upstreamIndex = survey.userProgress?.currentQuestionIndex;
+    if (upstreamIndex !== undefined && upstreamIndex > currentQIndex) {
+      setCurrentQIndex(upstreamIndex);
+    }
+  }, [survey.userProgress?.currentQuestionIndex]);
+
+  useEffect(() => {
     let interval: NodeJS.Timeout;
     const calculateTime = () => {
       const now = new Date().getTime();
@@ -552,11 +559,13 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     let correctCount = 0;
     flatQuestions.forEach(q => {
       const userAns = answers[q.id];
-      const correctId = q.correctOptionId;
-      if (correctId && userAns && Array.isArray(userAns) && userAns.includes(correctId)) {
-        correctCount++;
-      } else if (correctId && userAns === correctId) {
-        correctCount++;
+      const correctOptions = q.options?.filter(opt => opt.isCorrect).map(o => o.id) || [];
+      if (correctOptions.length > 0 && userAns) {
+        const userAnsArray = Array.isArray(userAns) ? userAns : [userAns];
+        const isCorrect = userAnsArray.some(id => correctOptions.includes(id));
+        if (isCorrect) {
+          correctCount++;
+        }
       }
     });
     setQuizStats({ correct: correctCount, total: flatQuestions.length });
