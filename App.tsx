@@ -255,6 +255,20 @@ const App: React.FC = () => {
     }
   };
 
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.currentTarget;
+    const scrollBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+    
+    // Trigger load more 800px before reaching the bottom
+    if (scrollBottom < 800) {
+      if (!isLoadingMore && nextCursor) {
+        if (activeTab === 'home' || activeTab === 'profile' || activeTab === 'search') {
+          fetchMore();
+        }
+      }
+    }
+  };
+
   const lastFetchedUserIdRef = useRef<string | null>(null);
 
   React.useEffect(() => {
@@ -1216,11 +1230,11 @@ const App: React.FC = () => {
             )}
 
             {activeTab === 'home' ? (
-              <PullToRefresh ref={pullToRefreshRef} onRefresh={async () => { await fetchData(userProfile?.id || undefined, userProfile); }} onScrollChange={dir => setIsNavVisible(dir === 'up')} className="flex-1 mt-16 pb-[75px] bg-white no-scrollbar">
+              <PullToRefresh ref={pullToRefreshRef} onScroll={handleScroll} onRefresh={async () => { await fetchData(userProfile?.id || undefined, userProfile); }} onScrollChange={dir => setIsNavVisible(dir === 'up')} className="flex-1 mt-16 pb-[75px] bg-white no-scrollbar">
                 {renderContent()}
               </PullToRefresh>
             ) : (
-              <div className={`flex-1 ${activeTab !== 'search' && activeTab !== 'profile' && activeTab !== 'notifications' && activeTab !== 'messages' ? 'mt-16' : ''} pb-[75px] bg-white overflow-y-auto no-scrollbar`}>
+              <div onScroll={handleScroll} className={`flex-1 ${activeTab !== 'search' && activeTab !== 'profile' && activeTab !== 'notifications' && activeTab !== 'messages' ? 'mt-16' : ''} pb-[75px] bg-white overflow-y-auto no-scrollbar`}>
                 {renderContent()}
               </div>
             )}

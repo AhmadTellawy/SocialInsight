@@ -12,9 +12,10 @@ interface PullToRefreshProps {
   children: React.ReactNode;
   className?: string;
   onScrollChange?: (direction: 'up' | 'down') => void;
+  onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
 }
 
-export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>(({ onRefresh, children, className, onScrollChange }, ref) => {
+export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>(({ onRefresh, children, className, onScrollChange, onScroll }, ref) => {
   const [startY, setStartY] = useState(0);
   const [pullDistance, setPullDistance] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -138,6 +139,7 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
+      onScroll={onScroll}
       style={{ WebkitOverflowScrolling: 'touch' }} // iOS smooth momentum scrolling
     >
       {/* Refresh Indicator */}
