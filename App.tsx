@@ -242,7 +242,11 @@ const App: React.FC = () => {
       const res = await api.getSurveys(currentUserId, nextCursor);
       const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
       
-      setSurveys(prev => [...prev, ...newSurveys]);
+      setSurveys(prev => {
+        const existingIds = new Set(prev.map(s => s.id));
+        const uniqueNew = newSurveys.filter((s: Survey) => !existingIds.has(s.id));
+        return [...prev, ...uniqueNew];
+      });
       setNextCursor(res.nextCursor);
     } catch (error) {
       console.error("Failed to load more data", error);

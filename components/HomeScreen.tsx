@@ -75,14 +75,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   const [activeTab, setActiveTab] = useState<'fyp' | 'following'>('fyp');
   const observerRef = React.useRef<IntersectionObserver | null>(null);
   const bottomRef = React.useCallback((node: HTMLDivElement) => {
-    if (isLoadingMore) return;
     if (observerRef.current) observerRef.current.disconnect();
     
     observerRef.current = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting && hasNextPage && onLoadMore) {
+      if (entries[0].isIntersecting && hasNextPage && !isLoadingMore && onLoadMore) {
         onLoadMore();
       }
-    }, { rootMargin: '200px' });
+    }, { rootMargin: '100px' });
     
     if (node) observerRef.current.observe(node);
   }, [isLoadingMore, hasNextPage, onLoadMore]);
@@ -275,19 +274,24 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         ))}
       </div>
 
-      {/* 3. Footer Decoration & Loading trigger */}
-      <div ref={bottomRef} className="py-12 flex flex-col items-center justify-center">
+      {/* 4. Footer Decoration & Loading trigger */}
+      <div ref={bottomRef} className="py-8 flex flex-col items-center justify-center min-h-[120px] transition-all">
         {isLoadingMore ? (
             <div className="flex flex-col items-center animate-pulse opacity-50">
-                <Activity size={32} className="text-gray-400 mb-2 animate-spin-slow" />
-                <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Loading More...</p>
+                <Activity size={32} className="text-gray-400 mb-3 animate-spin-slow" />
+                <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">{t('Loading More...')}</p>
             </div>
         ) : !hasNextPage ? (
             <div className="flex flex-col items-center opacity-20">
-                <Activity size={32} className="text-gray-400 mb-2" />
-                <p className="text-xs font-bold uppercase tracking-widest text-gray-400">You've reached the end</p>
+                <Activity size={32} className="text-gray-400 mb-3" />
+                <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">{t("You've reached the end")}</p>
             </div>
-        ) : null}
+        ) : (
+            <div className="flex flex-col items-center opacity-0">
+                <Activity size={32} className="mb-3" />
+                <p className="text-[10px] font-black uppercase tracking-widest">Spacer</p>
+            </div>
+        )}
       </div>
     </div>
   );
