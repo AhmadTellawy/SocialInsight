@@ -323,6 +323,7 @@ const App: React.FC = () => {
   const [isProfileSettingsOpen, setIsProfileSettingsOpen] = useState(false);
   const [showUsersTable, setShowUsersTable] = useState(false);
   const [isPrivacyScreenOpen, setIsPrivacyScreenOpen] = useState(false);
+  const [isProfileLoading, setIsProfileLoading] = useState(false);
 
   React.useEffect(() => {
     if (selectedProfile?.id) {
@@ -368,11 +369,14 @@ const App: React.FC = () => {
        setActiveTab('profile');
        const handle = path.split('/@')[1];
        if (handle && handle !== selectedProfile?.handle) {
+          setIsProfileLoading(true);
           api.getUserByHandle(handle).then(user => {
               setSelectedProfile(user);
           }).catch(err => {
               console.error(err);
               navigate('/'); // fallback
+          }).finally(() => {
+              setIsProfileLoading(false);
           });
        }
     }
@@ -380,10 +384,11 @@ const App: React.FC = () => {
        setActiveTab('profile');
        const id = path.split('/profile/')[1];
        if (id && id !== selectedProfile?.id) {
+          setIsProfileLoading(true);
           api.getUser(id).then(user => {
               if (user.handle) navigate(`/@${user.handle}`, { replace: true });
               else setSelectedProfile(user);
-          }).catch(console.error);
+          }).catch(console.error).finally(() => setIsProfileLoading(false));
        }
     }
     else if (path.startsWith('/group/')) {
@@ -948,7 +953,7 @@ const App: React.FC = () => {
             </ErrorBoundary>
           );
         }
-        return <ProfileScreen surveys={surveys} userGroups={userGroups} userProfile={userProfile!} user={selectedProfile || undefined} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onAuthorClick={navigateToProfile} onSurveyProgress={handleSurveyProgress} onShareToFeed={handleShareToFeed} onSettingsClick={() => navigate('/settings/profile')} onEditDraft={(d) => { navigate(`/create/${d.type.toLowerCase()}`); setEditingDraft(d); }} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} onLike={handleLikePost} />;
+        return <ProfileScreen isLoading={isProfileLoading} surveys={surveys} userGroups={userGroups} userProfile={userProfile!} user={selectedProfile || undefined} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onAuthorClick={navigateToProfile} onSurveyProgress={handleSurveyProgress} onShareToFeed={handleShareToFeed} onSettingsClick={() => navigate('/settings/profile')} onEditDraft={(d) => { navigate(`/create/${d.type.toLowerCase()}`); setEditingDraft(d); }} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} onLike={handleLikePost} />;
       case 'notifications':
         return <NotificationsScreen notifications={notifications} onNotificationsChange={(newNotifs) => {
           if (userProfile?.id) {

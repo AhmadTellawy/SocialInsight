@@ -29,6 +29,7 @@ interface ProfileScreenProps {
   onUpdateCurrentUser?: (updates: Partial<UserProfile>) => void;
   onFollowChange?: (targetUserId: string, isFollowing: boolean) => void;
   onLike?: (surveyId: string, isLiked: boolean) => void;
+  isLoading?: boolean;
 }
 
 type ProfileTab = 'content' | 'reposts' | 'groups' | 'drafts' | 'saved';
@@ -51,7 +52,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onUpdateDemographics,
   onUpdateCurrentUser,
   onFollowChange,
-  onLike
+  onLike,
+  isLoading
 }) => {
   const { t } = useTranslation();
   const [activeStatSheet, setActiveStatSheet] = useState<'following' | 'followers' | 'posts' | null>(null);
@@ -638,6 +640,30 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
   if (showProfileAnalysis) {
     return <ProfileAnalysis userProfile={profileUser} onBack={() => setShowProfileAnalysis(false)} />;
+  }
+
+  if (isLoading) {
+    return (
+      <div className="bg-white flex-1 overflow-y-auto min-h-full flex flex-col no-scrollbar">
+        <div className={`flex items-center px-4 h-[60px] sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-gray-50 ${onBack ? 'justify-between' : 'justify-end'}`}>
+          {onBack && (
+            <button onClick={onBack} className="p-2 -ml-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors">
+              <ArrowLeft size={24} />
+            </button>
+          )}
+          <button className="p-2 text-gray-400 hover:bg-gray-50 rounded-full transition-colors">
+            <MoreHorizontal size={22} />
+          </button>
+        </div>
+        <div className="relative bg-white pb-6 px-6 flex flex-col items-center pt-2">
+          <div className="w-28 h-28 rounded-[2.5rem] bg-gray-100 animate-pulse mb-6 border-4 border-white shadow-xl"></div>
+          <div className="w-40 h-8 bg-gray-100 animate-pulse rounded-full mb-2"></div>
+          <div className="w-24 h-4 bg-gray-100 animate-pulse rounded-full mb-6"></div>
+          <div className="w-full max-w-sm h-12 bg-gray-50 animate-pulse rounded-2xl mb-8"></div>
+          <div className="w-full bg-white rounded-[2.5rem] border border-gray-100 shadow-xl shadow-gray-200/40 px-3 py-6 h-[100px] animate-pulse"></div>
+        </div>
+      </div>
+    );
   }
 
   return (
