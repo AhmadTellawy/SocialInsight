@@ -199,6 +199,7 @@ const App: React.FC = () => {
   });
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const isLoadingMoreRef = useRef(false);
 
   const [userGroups, setUserGroups] = useState<Group[]>([]);
 
@@ -235,7 +236,8 @@ const App: React.FC = () => {
   };
 
   const fetchMore = async () => {
-    if (isLoadingMore || !nextCursor) return;
+    if (isLoadingMoreRef.current || !nextCursor) return;
+    isLoadingMoreRef.current = true;
     setIsLoadingMore(true);
     try {
       const currentUserId = userProfile?.id || undefined;
@@ -251,6 +253,7 @@ const App: React.FC = () => {
     } catch (error) {
       console.error("Failed to load more data", error);
     } finally {
+      isLoadingMoreRef.current = false;
       setIsLoadingMore(false);
     }
   };
@@ -261,7 +264,7 @@ const App: React.FC = () => {
     
     // Trigger load more 800px before reaching the bottom
     if (scrollBottom < 800) {
-      if (!isLoadingMore && nextCursor) {
+      if (!isLoadingMoreRef.current && nextCursor) {
         if (activeTab === 'home' || activeTab === 'profile' || activeTab === 'search') {
           fetchMore();
         }
