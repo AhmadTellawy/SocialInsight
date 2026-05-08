@@ -79,8 +79,17 @@ export const getUser = async (req: Request, res: Response) => {
             where: { userId: user.id }
         });
 
+                let isFollowing = false;
+        if (req.user?.userId && req.user.userId !== user.id) {
+            const follow = await prisma.follow.findUnique({
+                where: { followerId_followingId: { followerId: req.user.userId, followingId: user.id } }
+            });
+            isFollowing = !!follow;
+        }
+
         res.json({
             ...safeUser,
+            isFollowing,
             demographics: demographics || {},
             stats: {
                 followers: user.followersCount,
@@ -117,8 +126,17 @@ export const getUserByHandle = async (req: Request, res: Response) => {
             where: { userId: user.id }
         });
 
+                let isFollowing = false;
+        if (req.user?.userId && req.user.userId !== user.id) {
+            const follow = await prisma.follow.findUnique({
+                where: { followerId_followingId: { followerId: req.user.userId, followingId: user.id } }
+            });
+            isFollowing = !!follow;
+        }
+
         res.json({
             ...safeUser,
+            isFollowing,
             demographics: demographics || {},
             stats: {
                 followers: user.followersCount,
