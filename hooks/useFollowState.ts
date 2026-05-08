@@ -30,11 +30,15 @@ export const useFollowState = (
     initialStatus: boolean
 ): [boolean, (status: boolean) => void] => {
     const [isFollowing, setIsFollowing] = useState(initialStatus);
+    const [prevStatus, setPrevStatus] = useState(initialStatus);
+    const [prevUserId, setPrevUserId] = useState(targetUserId);
 
-    // Update local state if initialStatus prop changes (e.g. on new fetch)
-    useEffect(() => {
+    // Update state synchronously during render if props change to prevent flickering
+    if (targetUserId !== prevUserId || initialStatus !== prevStatus) {
+        setPrevUserId(targetUserId);
+        setPrevStatus(initialStatus);
         setIsFollowing(initialStatus);
-    }, [initialStatus, targetUserId]);
+    }
 
     // Listen for global sync events
     useEffect(() => {

@@ -21,7 +21,7 @@ interface SurveyCardProps {
   onContentClick?: () => void;
   onVote?: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: Option) => void;
   onSurveyProgress?: (surveyId: string, progress: { index: number, answers: Record<string, any>, followUpAnswers?: Record<string, string>, historyStack?: number[], isAnonymous?: boolean }) => void;
-  onAuthorClick?: (author: { id: string; name: string; avatar: string }) => void;
+  onAuthorClick?: (author: { id: string; name: string; avatar: string; handle?: string }) => void;
   onShareToFeed?: (survey: Survey, caption: string) => void;
   onUpdateDemographics?: (demographics: Partial<NonNullable<UserProfile['demographics']>>) => void;
   positionInFeed?: number;
@@ -1009,7 +1009,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const handleAuthorClickInternal = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (onAuthorClick && survey.author) {
-      onAuthorClick({ id: survey.author.id, name: survey.author.name, avatar: survey.author.avatar });
+      onAuthorClick({ id: survey.author.id, name: survey.author.name, avatar: survey.author.avatar, handle: survey.author.handle });
     }
   };
 
@@ -1778,7 +1778,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
              <div className="mb-3">
                <div
                  className="flex items-center text-gray-500 font-bold text-xs gap-1.5 cursor-pointer hover:text-blue-600 transition-colors mb-2"
-                 onClick={(e) => { e.stopPropagation(); if (onAuthorClick && survey.author) onAuthorClick({ id: survey.author.id, name: survey.author.name, avatar: survey.author.avatar }); }}
+                 onClick={(e) => { e.stopPropagation(); if (onAuthorClick && survey.author) onAuthorClick({ id: survey.author.id, name: survey.author.name, avatar: survey.author.avatar, handle: survey.author.handle }); }}
                >
                  <Repeat size={14} className="text-gray-400" />
                  <span>{survey.author?.name || t('Anonymous')} {t('reposted this')}</span>
@@ -1795,7 +1795,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 <div className="flex items-center gap-3 group-hover:opacity-80 transition-opacity flex-1 overflow-hidden" onClick={(e) => {
                   e.stopPropagation();
                   if (onAuthorClick && sourceSurvey.author) {
-                    onAuthorClick({ id: sourceSurvey.author.id, name: sourceSurvey.author.name, avatar: sourceSurvey.author.avatar });
+                    onAuthorClick({ id: sourceSurvey.author.id, name: sourceSurvey.author.name, avatar: sourceSurvey.author.avatar, handle: sourceSurvey.author.handle });
                   }
                 }}>
                   <div className="relative shrink-0">

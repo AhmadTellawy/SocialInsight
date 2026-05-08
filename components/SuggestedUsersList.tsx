@@ -10,7 +10,7 @@ interface SuggestedUser extends UserProfile {
 interface SuggestedUsersListProps {
     users: SuggestedUser[];
     onFollow: (userId: string) => void;
-    onUserClick?: (user: { id: string, name: string, avatar: string }) => void;
+    onUserClick?: (user: { id: string, name: string, avatar: string, handle?: string }) => void;
     onDismiss?: (userId: string) => void;
 }
 

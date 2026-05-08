@@ -6,7 +6,7 @@ import { UserAvatar } from './UserAvatar';
 interface SearchScreenProps {
   surveys: Survey[];
   onSurveyClick: (id: string, surface?: string) => void;
-  onAuthorClick?: (author: { id: string; name: string; avatar: string }) => void;
+  onAuthorClick?: (author: { id: string; name: string; avatar: string; handle?: string }) => void;
 }
 
 // Helper for highlighting text
@@ -270,7 +270,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                             </div>
                           </div>
                           <button
-                            onClick={() => onAuthorClick?.({ id: person.id, name: person.name, avatar: person.avatar })}
+                            onClick={() => onAuthorClick?.({ id: person.id, name: person.name, avatar: person.avatar, handle: person.handle })}
                             className="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-xs font-bold hover:bg-gray-200">View</button>
                         </div>
                       ))}

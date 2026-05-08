@@ -13,7 +13,7 @@ interface HomeScreenProps {
   onSurveyClick: (id: string, sourceSurface?: 'FEED' | 'TRENDING') => void;
   onVote: (surveyId: string, optionIds: string[], newOption?: any) => void;
   onSurveyProgress: (surveyId: string, progress: any) => void;
-  onAuthorClick: (author: { name: string; avatar: string }) => void;
+  onAuthorClick: (author: { id: string; name: string; avatar: string; handle?: string }) => void;
   onShareToFeed: (survey: Survey, caption: string) => void;
   onUpdateDemographics: (demographics: Partial<NonNullable<UserProfile['demographics']>>) => void;
   onCloseShareSheet: () => void;

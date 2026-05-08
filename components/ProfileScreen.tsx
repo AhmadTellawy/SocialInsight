@@ -20,7 +20,7 @@ interface ProfileScreenProps {
   onSurveyProgress?: (surveyId: string, progress: { index: number, answers: Record<string, any>, followUpAnswers?: Record<string, string>, historyStack?: number[], isAnonymous?: boolean }) => void;
   user?: { id?: string; name: string; avatar: string };
   onBack?: () => void;
-  onAuthorClick?: (author: { name: string; avatar: string }) => void;
+  onAuthorClick?: (author: { id: string; name: string; avatar: string; handle?: string }) => void;
   onShareToFeed?: (survey: Survey, caption: string) => void;
   contextGroups?: any[];
   onSettingsClick?: () => void;
@@ -420,7 +420,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                     className="flex items-center gap-3 flex-1 min-w-0"
                     onClick={() => {
                       setActiveStatSheet(null);
-                      if (onAuthorClick) onAuthorClick({ id: person.id, name: person.name, avatar: person.avatar });
+                      if (onAuthorClick) onAuthorClick({ id: person.id, name: person.name, avatar: person.avatar, handle: person.handle });
                     }}
                   >
                     <img src={person.avatar} className="w-12 h-12 rounded-full object-cover border border-gray-100" alt="" />
