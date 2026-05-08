@@ -65,7 +65,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [targetUser, setTargetUser] = useState<UserProfile | null>(null);
 
   const viewUserId = (!user?.id || user.id === userProfile.id) ? userProfile.id : (user as any)?.id;
-  const [isFollowing, setLocalFollowingState] = useFollowState(viewUserId, false);
+  const [isFollowing, setLocalFollowingState] = useFollowState(viewUserId, (user as any)?.isFollowing || false);
 
   const [drafts, setDrafts] = useState<Survey[]>([]);
   const [savedPosts, setSavedPosts] = useState<Survey[]>([]);

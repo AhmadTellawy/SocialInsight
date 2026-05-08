@@ -372,11 +372,11 @@ const App: React.FC = () => {
           setIsProfileLoading(true);
           api.getUserByHandle(handle).then(user => {
               setSelectedProfile(user);
+              setIsProfileLoading(false);
           }).catch(err => {
               console.error(err);
-              navigate('/'); // fallback
-          }).finally(() => {
               setIsProfileLoading(false);
+              navigate('/'); // fallback
           });
        }
     }
@@ -386,9 +386,15 @@ const App: React.FC = () => {
        if (id && id !== selectedProfile?.id) {
           setIsProfileLoading(true);
           api.getUser(id).then(user => {
-              if (user.handle) navigate(`/@${user.handle}`, { replace: true });
-              else setSelectedProfile(user);
-          }).catch(console.error).finally(() => setIsProfileLoading(false));
+              setSelectedProfile(user);
+              setIsProfileLoading(false);
+              if (user.handle) {
+                 navigate(`/@${user.handle}`, { replace: true });
+              }
+          }).catch(err => {
+              console.error(err);
+              setIsProfileLoading(false);
+          });
        }
     }
     else if (path.startsWith('/group/')) {
