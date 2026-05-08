@@ -327,6 +327,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     if (!userProfile?.id) return null;
     const isMe = userProfile.id === survey.author?.id;
     if (isMe) return null;
+    if (isInteracted) return null;
+
     const label = authorType === 'Group' ? t('Join') : t('Follow');
     const activeLabel = authorType === 'Group' ? t('Joined') : t('Following');
 
