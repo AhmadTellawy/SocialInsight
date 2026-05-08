@@ -201,6 +201,12 @@ const App: React.FC = () => {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const isLoadingMoreRef = useRef(false);
 
+  // Profile-specific feed states
+  const [profileSurveys, setProfileSurveys] = useState<Survey[]>([]);
+  const [profileNextCursor, setProfileNextCursor] = useState<string | null>(null);
+  const [isProfileLoadingMore, setIsProfileLoadingMore] = useState(false);
+  const isProfileLoadingMoreRef = useRef(false);
+
   const [userGroups, setUserGroups] = useState<Group[]>([]);
 
   const fetchData = async (currentUserId?: string, currentUser?: UserProfile | null, retries = 5) => {
@@ -236,6 +242,30 @@ const App: React.FC = () => {
   };
 
   const fetchMore = async () => {
+    if (activeTab === 'profile') {
+      if (isProfileLoadingMoreRef.current || !profileNextCursor || !selectedProfile) return;
+      isProfileLoadingMoreRef.current = true;
+      setIsProfileLoadingMore(true);
+      try {
+        const currentUserId = userProfile?.id || undefined;
+        const res = await api.getSurveys(currentUserId, profileNextCursor, 10, selectedProfile.id);
+        const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
+        
+        setProfileSurveys(prev => {
+          const existingIds = new Set(prev.map(s => s.id));
+          const uniqueNew = newSurveys.filter((s: Survey) => !existingIds.has(s.id));
+          return [...prev, ...uniqueNew];
+        });
+        setProfileNextCursor(res.nextCursor);
+      } catch (error) {
+        console.error("Failed to load more profile data", error);
+      } finally {
+        isProfileLoadingMoreRef.current = false;
+        setIsProfileLoadingMore(false);
+      }
+      return;
+    }
+
     if (isLoadingMoreRef.current || !nextCursor) return;
     isLoadingMoreRef.current = true;
     setIsLoadingMore(true);
@@ -264,9 +294,15 @@ const App: React.FC = () => {
     
     // Trigger load more 800px before reaching the bottom
     if (scrollBottom < 800) {
-      if (!isLoadingMoreRef.current && nextCursor) {
-        if (activeTab === 'home' || activeTab === 'profile' || activeTab === 'search') {
+      if (activeTab === 'profile') {
+        if (!isProfileLoadingMoreRef.current && profileNextCursor) {
           fetchMore();
+        }
+      } else {
+        if (!isLoadingMoreRef.current && nextCursor) {
+          if (activeTab === 'home' || activeTab === 'search') {
+            fetchMore();
+          }
         }
       }
     }
@@ -351,12 +387,12 @@ const App: React.FC = () => {
       const currentUserId = userProfile?.id || undefined;
       api.getSurveys(currentUserId, undefined, 10, selectedProfile.id).then(res => {
         const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
-        setSurveys(prev => {
-          const map = new Map(prev.map(s => [s.id, s]));
-          newSurveys.forEach(s => map.set(s.id, s));
-          return Array.from(map.values());
-        });
+        setProfileSurveys(newSurveys);
+        setProfileNextCursor(res.nextCursor);
       }).catch(console.error);
+    } else {
+      setProfileSurveys([]);
+      setProfileNextCursor(null);
     }
   }, [selectedProfile?.id]);
 
@@ -980,7 +1016,7 @@ const App: React.FC = () => {
             </ErrorBoundary>
           );
         }
-        return <ProfileScreen isLoading={isProfileLoading} surveys={surveys} userGroups={userGroups} userProfile={userProfile!} user={selectedProfile || undefined} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onAuthorClick={navigateToProfile} onSurveyProgress={handleSurveyProgress} onShareToFeed={handleShareToFeed} onSettingsClick={() => navigate('/settings/profile')} onEditDraft={(d) => { navigate(`/create/${d.type.toLowerCase()}`); setEditingDraft(d); }} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} onLike={handleLikePost} />;
+        return <ProfileScreen isLoading={isProfileLoading} surveys={profileSurveys} userGroups={userGroups} userProfile={userProfile!} user={selectedProfile || undefined} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onAuthorClick={navigateToProfile} onSurveyProgress={handleSurveyProgress} onShareToFeed={handleShareToFeed} onSettingsClick={() => navigate('/settings/profile')} onEditDraft={(d) => { navigate(`/create/${d.type.toLowerCase()}`); setEditingDraft(d); }} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} onLike={handleLikePost} />;
       case 'notifications':
         return <NotificationsScreen notifications={notifications} onNotificationsChange={(newNotifs) => {
           if (userProfile?.id) {
@@ -1172,7 +1208,7 @@ const App: React.FC = () => {
             />
           )
         ) : selectedProfile ? (
-          <ProfileScreen surveys={surveys} userGroups={[]} userProfile={userProfile} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onSurveyProgress={handleSurveyProgress} user={selectedProfile} onBack={() => navigateToProfile(null)} onAuthorClick={navigateToProfile} onShareToFeed={handleShareToFeed} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} />
+          <ProfileScreen surveys={profileSurveys} userGroups={[]} userProfile={userProfile} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onSurveyProgress={handleSurveyProgress} user={selectedProfile} onBack={() => navigateToProfile(null)} onAuthorClick={navigateToProfile} onShareToFeed={handleShareToFeed} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} />
         ) : selectedSurveyId && selectedSurvey ? (
           <>
             <div className="bg-white z-10 sticky top-0 border-b border-gray-100">

@@ -296,11 +296,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     } as UserProfile;
   }, [isMe, user, userProfile, analytics, targetUser]);
 
-  const mySurveys = useMemo(() => surveys.filter(s =>
-    isMe
-      ? s.author.id === userProfile.id
-      : s.author.id === profileUser.id
-  ), [surveys, isMe, userProfile.id, profileUser.id]);
+  const mySurveys = surveys;
 
   const responsesCount = useMemo(() => {
     return profileUser?.stats?.responses || 0;

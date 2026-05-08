@@ -181,8 +181,8 @@ export const getPosts = async (req: Request, res: Response) => {
 
         let nextCursor: string | null = null;
         if (mappedPosts.length > limit) {
-            const nextItem = mappedPosts.pop(); // Remove the extra item
-            nextCursor = nextItem!.id;
+            mappedPosts.pop(); // Remove the extra item
+            nextCursor = mappedPosts[mappedPosts.length - 1].id;
         }
 
         res.json({ data: mappedPosts, nextCursor });
