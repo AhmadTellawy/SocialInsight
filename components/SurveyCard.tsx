@@ -31,6 +31,7 @@ interface SurveyCardProps {
   onGroupClick?: (groupId: string) => void;
   onLike?: (surveyId: string, isLiked: boolean) => void;
   onDelete?: (surveyId: string) => void;
+  onEditDraft?: (survey: Survey) => void;
 }
 
 interface FlatQuestion {
@@ -135,7 +136,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   contextGroups = [],
   onGroupClick,
   onLike,
-  onDelete
+  onDelete,
+  onEditDraft
 }) => {
   const { t } = useTranslation();
   const [timeLeftStr, setTimeLeftStr] = useState('');
