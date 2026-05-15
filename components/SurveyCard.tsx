@@ -238,6 +238,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   // For rendering questions/polls
   const sourceSurvey = voteTarget;
 
+  const isAuthor = !!userProfile?.id && String(survey.author?.id) === String(userProfile.id);
+
   const [isAnonToggled, setIsAnonToggled] = useState(false);
   const [showShareToast, setShowShareToast] = useState(false);
   const [isLiked, setIsLiked] = useState(interactionTarget.isLiked || false);
@@ -1283,7 +1285,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                       const selectedIds = Array.isArray(answer) ? answer : (answer ? [answer] : []);
                       const isSelected = selectedIds.includes(opt.id);
                       const hasVotedCurrent = selectedIds.length > 0;
-                      const isCorrect = isQuiz && opt.isCorrect;
+                      const isCorrect = isQuiz && opt.id === currentQuestion.correctOptionId;
                       const isWrongSelection = isQuiz && isSelected && !isCorrect;
                       const isMaxReached = !isTF && currentQuestion.maxSelection && (currentQuestion.maxSelection || 1) > 1 && selectedIds.length >= (currentQuestion.maxSelection || 1) && !isSelected;
                       const isPortrait = opt.image && portraitImages.has(opt.image);
