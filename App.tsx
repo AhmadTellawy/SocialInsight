@@ -103,7 +103,7 @@ const App: React.FC = () => {
     setUserProfile(user);
     setIsAuthenticated(true);
     setAuthModalOpen(false);
-    
+
     // Initialize Push Notifications if permission granted
     api.setupPushNotifications().catch(console.error);
 
@@ -132,6 +132,7 @@ const App: React.FC = () => {
   const [activeCreationGroupId, setActiveCreationGroupId] = useState<string | null>(null);
   const [editingDraft, setEditingDraft] = useState<Survey | null>(null);
   const [accountModalType, setAccountModalType] = useState<'group' | 'company' | null>(null);
+  const [editRestrictionState, setEditRestrictionState] = useState<{isOpen: boolean, surveyId?: string}>({isOpen: false});
 
 
 
@@ -193,7 +194,7 @@ const App: React.FC = () => {
   const [isFeedLoading, setIsFeedLoading] = useState<boolean>(() => {
     try {
       return !localStorage.getItem('si_feed_cache');
-    } catch(e) {
+    } catch (e) {
       return true;
     }
   });
@@ -214,13 +215,13 @@ const App: React.FC = () => {
       if (surveys.length === 0) setIsFeedLoading(true);
       const res = await api.getSurveys(currentUserId);
       const surveysData = res.data;
-      
+
       try {
         localStorage.setItem('si_feed_cache', JSON.stringify(surveysData.slice(0, 10)));
       } catch (storageError) {
         console.warn('Failed to cache feed to localStorage due to quota limits');
       }
-      
+
       setSurveys(surveysData.map((s: any) => normalizeSurvey(s, currentUser)));
       setNextCursor(res.nextCursor);
 
@@ -250,7 +251,7 @@ const App: React.FC = () => {
         const currentUserId = userProfile?.id || undefined;
         const res = await api.getSurveys(currentUserId, profileNextCursor, 10, selectedProfile.id);
         const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
-        
+
         setProfileSurveys(prev => {
           const existingIds = new Set(prev.map(s => s.id));
           const uniqueNew = newSurveys.filter((s: Survey) => !existingIds.has(s.id));
@@ -273,7 +274,7 @@ const App: React.FC = () => {
       const currentUserId = userProfile?.id || undefined;
       const res = await api.getSurveys(currentUserId, nextCursor);
       const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
-      
+
       setSurveys(prev => {
         const existingIds = new Set(prev.map(s => s.id));
         const uniqueNew = newSurveys.filter((s: Survey) => !existingIds.has(s.id));
@@ -291,7 +292,7 @@ const App: React.FC = () => {
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
     const scrollBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
-    
+
     // Trigger load more 800px before reaching the bottom
     if (scrollBottom < 800) {
       if (activeTab === 'profile') {
@@ -402,7 +403,7 @@ const App: React.FC = () => {
 
   React.useEffect(() => {
     const path = location.pathname;
-    
+
     // Helper to reset states when not on their paths
     if (!path.startsWith('/post/')) setSelectedSurveyId(null);
     if (!path.startsWith('/profile/') && !path.startsWith('/@') && path !== '/profile') setSelectedProfile(null);
@@ -418,87 +419,87 @@ const App: React.FC = () => {
     else if (path === '/notifications') setActiveTab('notifications');
     else if (path === '/messages') setActiveTab('messages');
     else if (path === '/profile') {
-       setActiveTab('profile');
-       if (userProfile && selectedProfile?.id !== userProfile.id) {
-           setSelectedProfile(userProfile);
-       }
+      setActiveTab('profile');
+      if (userProfile && selectedProfile?.id !== userProfile.id) {
+        setSelectedProfile(userProfile);
+      }
     }
     else if (path.startsWith('/settings/profile')) {
-       setActiveTab('profile');
-       setIsProfileSettingsOpen(true);
+      setActiveTab('profile');
+      setIsProfileSettingsOpen(true);
     }
     else if (path.startsWith('/@')) {
-       setActiveTab('profile');
-       const handle = path.split('/@')[1];
-       if (handle && handle !== selectedProfile?.handle) {
-          setIsProfileLoading(true);
-          api.getUserByHandle(handle).then(user => {
-              setSelectedProfile(user);
-              setIsProfileLoading(false);
-          }).catch(err => {
-              console.error(err);
-              setIsProfileLoading(false);
-              navigate('/'); // fallback
-          });
-       }
+      setActiveTab('profile');
+      const handle = path.split('/@')[1];
+      if (handle && handle !== selectedProfile?.handle) {
+        setIsProfileLoading(true);
+        api.getUserByHandle(handle).then(user => {
+          setSelectedProfile(user);
+          setIsProfileLoading(false);
+        }).catch(err => {
+          console.error(err);
+          setIsProfileLoading(false);
+          navigate('/'); // fallback
+        });
+      }
     }
     else if (path.startsWith('/profile/')) {
-       setActiveTab('profile');
-       const id = path.split('/profile/')[1];
-       if (id && id !== selectedProfile?.id) {
-          setIsProfileLoading(true);
-          api.getUser(id).then(user => {
-              setSelectedProfile(user);
-              setIsProfileLoading(false);
-              if (user.handle) {
-                 navigate(`/@${user.handle}`, { replace: true });
-              }
-          }).catch(err => {
-              console.error(err);
-              setIsProfileLoading(false);
-          });
-       }
+      setActiveTab('profile');
+      const id = path.split('/profile/')[1];
+      if (id && id !== selectedProfile?.id) {
+        setIsProfileLoading(true);
+        api.getUser(id).then(user => {
+          setSelectedProfile(user);
+          setIsProfileLoading(false);
+          if (user.handle) {
+            navigate(`/@${user.handle}`, { replace: true });
+          }
+        }).catch(err => {
+          console.error(err);
+          setIsProfileLoading(false);
+        });
+      }
     }
     else if (path.startsWith('/group/')) {
-       const id = path.split('/group/')[1]?.split('/')[0]; // handle /group/id/settings
-       if (id && id !== selectedGroupId) setSelectedGroupId(id);
-       if (path.endsWith('/settings')) setIsGroupSettingsOpen(true);
+      const id = path.split('/group/')[1]?.split('/')[0]; // handle /group/id/settings
+      if (id && id !== selectedGroupId) setSelectedGroupId(id);
+      if (path.endsWith('/settings')) setIsGroupSettingsOpen(true);
     }
     else if (path.startsWith('/post/')) {
-       const id = path.split('/post/')[1];
-       if (id && id !== selectedSurveyId) setSelectedSurveyId(id);
+      const id = path.split('/post/')[1];
+      if (id && id !== selectedSurveyId) setSelectedSurveyId(id);
     }
 
     // Auth Routes
     if (path === '/login') {
-       setAuthModalType('login');
-       setAuthModalOpen(true);
+      setAuthModalType('login');
+      setAuthModalOpen(true);
     } else if (path === '/signup') {
-       setAuthModalType('flow');
-       setAuthModalOpen(true);
+      setAuthModalType('flow');
+      setAuthModalOpen(true);
     } else {
-       if (authModalOpen && !['/login', '/signup'].includes(path)) setAuthModalOpen(false);
+      if (authModalOpen && !['/login', '/signup'].includes(path)) setAuthModalOpen(false);
     }
 
     // Create Routes
     if (path.startsWith('/create/')) {
-       const type = path.split('/create/')[1];
-       if (['poll', 'survey', 'quiz', 'challenge'].includes(type)) {
-           setIsAddMenuOpen(false);
-           setAccountModalType(null);
-           setActiveCreationFlow(type as any);
-       } else if (type === 'group') {
-           setIsAddMenuOpen(false);
-           setActiveCreationFlow(null);
-           setAccountModalType('group');
-       } else if (type === 'business') {
-           setIsAddMenuOpen(false);
-           setActiveCreationFlow(null);
-           setAccountModalType('company');
-       }
+      const type = path.split('/create/')[1];
+      if (['poll', 'survey', 'quiz', 'challenge'].includes(type)) {
+        setIsAddMenuOpen(false);
+        setAccountModalType(null);
+        setActiveCreationFlow(type as any);
+      } else if (type === 'group') {
+        setIsAddMenuOpen(false);
+        setActiveCreationFlow(null);
+        setAccountModalType('group');
+      } else if (type === 'business') {
+        setIsAddMenuOpen(false);
+        setActiveCreationFlow(null);
+        setAccountModalType('company');
+      }
     } else {
-       if (activeCreationFlow && !path.startsWith('/create/')) setActiveCreationFlow(null);
-       if (accountModalType && !path.startsWith('/create/')) setAccountModalType(null);
+      if (activeCreationFlow && !path.startsWith('/create/')) setActiveCreationFlow(null);
+      if (accountModalType && !path.startsWith('/create/')) setAccountModalType(null);
     }
   }, [location.pathname]);
 
@@ -544,7 +545,7 @@ const App: React.FC = () => {
 
     // Refetch data to get suddenly accessible 'Followers Only' posts
     if (userProfile?.id) {
-        fetchData(userProfile.id, userProfile);
+      fetchData(userProfile.id, userProfile);
     }
   };
 
@@ -558,6 +559,17 @@ const App: React.FC = () => {
     window.addEventListener('onFollowStateChange', handleGlobalFollowSync);
     return () => window.removeEventListener('onFollowStateChange', handleGlobalFollowSync);
   }, [selectedProfile]);
+
+  React.useEffect(() => {
+    const handleEditRestricted = (e: Event) => {
+      const customEvent = e as CustomEvent<any>;
+      if (customEvent.detail && customEvent.detail.surveyId) {
+        setEditRestrictionState({ isOpen: true, surveyId: customEvent.detail.surveyId });
+      }
+    };
+    window.addEventListener('onEditRestricted', handleEditRestricted);
+    return () => window.removeEventListener('onEditRestricted', handleEditRestricted);
+  }, []);
 
   const handleCreateSubmit = async (newSurveyData: Partial<Survey>) => {
     console.log("handleCreateSubmit called with data:", newSurveyData);
@@ -583,6 +595,21 @@ const App: React.FC = () => {
 
       // Determine final status
       const status = newSurveyData.status || (newSurveyData.isDraft ? 'DRAFT' : 'PUBLISHED');
+
+      // Strict Enforcement: Reject edit if > 5 minutes
+      if (targetId && status === 'PUBLISHED') {
+        const createdAtTime = newSurveyData.createdAt || editingDraft?.createdAt;
+        if (createdAtTime) {
+          const createdAt = new Date(createdAtTime).getTime();
+          const now = Date.now();
+          const diffInMinutes = (now - createdAt) / (1000 * 60);
+          
+          if (diffInMinutes > 5) {
+            setEditRestrictionState({ isOpen: true, surveyId: targetId });
+            return;
+          }
+        }
+      }
       console.log(`Determined status: ${status}, targetId: ${targetId}`);
 
       // Optimistic Update only for Published posts
@@ -663,18 +690,18 @@ const App: React.FC = () => {
     try {
       // 1. Save to DB
       const resultSurvey = await api.sharePost(originalSurvey.id, userProfile.id, caption);
-      
+
       if (resultSurvey.action === 'unshared') {
-          // Remove the repost from the feed if it's there
-          setSurveys(prev => prev.filter(s => !(s.sharedFrom?.id === originalSurvey.id && s.author?.id === userProfile.id && !s.sharedCaption)));
-          // Decrement original count in state
-          setSurveys(prev => prev.map(s => {
-              if (s.id === originalSurvey.id) {
-                  return { ...s, repostCount: Math.max(0, (s.repostCount || 0) - 1), hasReposted: false };
-              }
-              return s;
-          }));
-          return;
+        // Remove the repost from the feed if it's there
+        setSurveys(prev => prev.filter(s => !(s.sharedFrom?.id === originalSurvey.id && s.author?.id === userProfile.id && !s.sharedCaption)));
+        // Decrement original count in state
+        setSurveys(prev => prev.map(s => {
+          if (s.id === originalSurvey.id) {
+            return { ...s, repostCount: Math.max(0, (s.repostCount || 0) - 1), hasReposted: false };
+          }
+          return s;
+        }));
+        return;
       }
 
       // 2. Normalize with current user perspective
@@ -682,14 +709,14 @@ const App: React.FC = () => {
 
       // 3. Update UI Feed
       setSurveys(prev => {
-          // If it was a clean repost, also update the original post's stats locally
-          const updatedFeed = prev.map(s => {
-              if (s.id === originalSurvey.id) {
-                  return { ...s, repostCount: (s.repostCount || 0) + 1, hasReposted: true };
-              }
-              return s;
-          });
-          return [normalizedResult, ...updatedFeed];
+        // If it was a clean repost, also update the original post's stats locally
+        const updatedFeed = prev.map(s => {
+          if (s.id === originalSurvey.id) {
+            return { ...s, repostCount: (s.repostCount || 0) + 1, hasReposted: true };
+          }
+          return s;
+        });
+        return [normalizedResult, ...updatedFeed];
       });
 
       setActiveTab('home');
@@ -750,8 +777,8 @@ const App: React.FC = () => {
 
   const handleAddMenuOption = (option: 'survey' | 'poll' | 'quiz' | 'challenge' | 'group' | 'business') => {
     if (!isAuthenticated || !userProfile) {
-       navigate('/signup');
-       return;
+      navigate('/signup');
+      return;
     }
     setIsAddMenuOpen(false);
     setActiveCreationGroupId(null);
@@ -761,8 +788,8 @@ const App: React.FC = () => {
 
   const handleTabChange = async (tab: 'home' | 'search' | 'add' | 'trends' | 'profile' | 'notifications' | 'messages') => {
     if ((tab === 'profile' || tab === 'notifications' || tab === 'add' || tab === 'messages' || tab === 'trends') && (!isAuthenticated || !userProfile)) {
-       navigate('/signup');
-       return;
+      navigate('/signup');
+      return;
     }
 
     if (tab === 'home' && activeTab === 'home') {
@@ -787,10 +814,10 @@ const App: React.FC = () => {
     navigate(`/post/${id}`);
   };
 
-  const navigateToProfile = (user: {id: string; name?: string; handle?: string; avatar?: string} | null) => {
+  const navigateToProfile = (user: { id: string; name?: string; handle?: string; avatar?: string } | null) => {
     if (user) {
-       if (user.handle) navigate(`/@${user.handle}`);
-       else navigate(`/profile/${user.id}`);
+      if (user.handle) navigate(`/@${user.handle}`);
+      else navigate(`/profile/${user.id}`);
     }
     else navigate(-1);
   };
@@ -811,7 +838,7 @@ const App: React.FC = () => {
       prev.map(s => {
         const isDirect = s.id === surveyId;
         const isShared = s.sharedFrom?.id === surveyId;
-        
+
         if (!isDirect && !isShared) return s;
 
         const applyVote = (target: Survey): Survey => {
@@ -835,7 +862,7 @@ const App: React.FC = () => {
           if (target.type === 'Quiz' || target.type === 'Survey') {
             const updatedQuestions = target.questions?.map(q => ({
               ...q,
-              options: q.options?.map(opt => 
+              options: q.options?.map(opt =>
                 optionIds.includes(opt.id)
                   ? { ...opt, votes: (opt.votes || 0) + 1 }
                   : opt
@@ -903,8 +930,8 @@ const App: React.FC = () => {
     if (optionIds.length > 0) {
       api.vote(surveyId, optionIds, userProfile?.id, isAnonymous)
         .catch(error => {
-            console.error("Failed to submit votes to server, rolling back:", error);
-            setSurveys(previousSurveys);
+          console.error("Failed to submit votes to server, rolling back:", error);
+          setSurveys(previousSurveys);
         });
     }
   };
@@ -1047,24 +1074,24 @@ const App: React.FC = () => {
       default:
         // When activeTab isn't explicitly matched but a modal is open
         if (activeCreationFlow || accountModalType) {
-           return <HomeScreen
-             surveys={surveys}
-             userProfile={userProfile}
-             isLoading={isFeedLoading}
-             onSurveyClick={handleSurveyClick}
-             onVote={handleVote}
-             onSurveyProgress={handleSurveyProgress}
-             onAuthorClick={navigateToProfile}
-             onShareToFeed={handleShareToFeed}
-             onUpdateDemographics={handleUpdateDemographics}
-             onCloseShareSheet={() => {}}
-             contextGroups={userGroups}
-             onGroupClick={navigateToGroup}
-             onLike={handleLikePost}
-             onLoadMore={fetchMore}
-             hasNextPage={!!nextCursor}
-             isLoadingMore={isLoadingMore}
-           />;
+          return <HomeScreen
+            surveys={surveys}
+            userProfile={userProfile}
+            isLoading={isFeedLoading}
+            onSurveyClick={handleSurveyClick}
+            onVote={handleVote}
+            onSurveyProgress={handleSurveyProgress}
+            onAuthorClick={navigateToProfile}
+            onShareToFeed={handleShareToFeed}
+            onUpdateDemographics={handleUpdateDemographics}
+            onCloseShareSheet={() => { }}
+            contextGroups={userGroups}
+            onGroupClick={navigateToGroup}
+            onLike={handleLikePost}
+            onLoadMore={fetchMore}
+            hasNextPage={!!nextCursor}
+            isLoadingMore={isLoadingMore}
+          />;
         }
         return <div className="flex flex-col items-center justify-center h-[60vh] text-gray-400"><BarChart3 size={48} className="mb-4 opacity-20" /><p>Section coming soon.</p></div>;
     }
@@ -1123,12 +1150,12 @@ const App: React.FC = () => {
 
     const handleTouchMove = (e: TouchEvent) => {
       if (startX === null || startY === null) return;
-      
+
       // If swipe started from the very edge (iOS Safari / PWA back gesture zone)
       if (startX < 40 || startX > window.innerWidth - 40) {
         const diffX = e.touches[0].clientX - startX;
         const diffY = e.touches[0].clientY - startY;
-        
+
         // If it's a primarily horizontal swipe, aggressively prevent browser traversal
         if (Math.abs(diffX) > Math.abs(diffY)) {
           if (e.cancelable) {
@@ -1140,21 +1167,21 @@ const App: React.FC = () => {
 
     const handleTouchEnd = (e: TouchEvent) => {
       if (startX === null || startY === null) return;
-      
+
       if (startX < 40 || startX > window.innerWidth - 40) {
         const endX = e.changedTouches[0].clientX;
         const endY = e.changedTouches[0].clientY;
         const diffX = endX - startX;
         const diffY = endY - startY;
-        
+
         if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
-           if (selectedSurveyId || selectedProfile || selectedGroupId) {
-             setSelectedSurveyId(null);
-             setSelectedProfile(null);
-             setSelectedGroupId(null);
-           } else if (activeTab === 'home') {
-             if (pullToRefreshRef.current) pullToRefreshRef.current.triggerRefresh();
-           }
+          if (selectedSurveyId || selectedProfile || selectedGroupId) {
+            setSelectedSurveyId(null);
+            setSelectedProfile(null);
+            setSelectedGroupId(null);
+          } else if (activeTab === 'home') {
+            if (pullToRefreshRef.current) pullToRefreshRef.current.triggerRefresh();
+          }
         }
       }
       startX = null;
@@ -1186,136 +1213,181 @@ const App: React.FC = () => {
       <div className="min-h-screen bg-gray-100/50 flex justify-center items-center">
         <div className="w-full max-w-md bg-white h-[100dvh] max-h-screen relative shadow-2xl overflow-hidden flex flex-col">
 
-        {showUsersTable ? (
-          <UsersTableScreen onBack={() => setShowUsersTable(false)} onUserClick={(u) => { setShowUsersTable(false); setSelectedProfile({ id: u.id, name: u.name, avatar: u.avatar }); }} />
-        ) : isPrivacyScreenOpen ? (
-          <PrivacyPolicyScreen />
-        ) : selectedGroupId && activeGroup ? (
-          isGroupSettingsOpen ? (
-            <GroupSettingsScreen
-              group={activeGroup}
-              currentUserId={userProfile.id}
-              onBack={() => navigate(`/group/${activeGroup.id}`)}
-              onUpdateGroup={(id, updates) => setUserGroups(prev => prev.map(g => g.id === id ? { ...g, ...updates } : g))}
-              onDeleteGroup={(id) => { setUserGroups(prev => prev.filter(g => g.id !== id)); navigateToGroup(null); }}
-            />
-          ) : (
-            <GroupScreen
-              group={activeGroup}
-              surveys={surveys}
-              userProfile={userProfile}
-              onBack={() => navigateToGroup(null)}
-              onSurveyClick={handleSurveyClick}
-              onVote={handleVote}
-              onSurveyProgress={handleSurveyProgress}
-              onSettingsClick={() => navigate(`/group/${activeGroup.id}/settings`)}
-              onCreatePost={() => { navigate('/create/survey'); setActiveCreationGroupId(activeGroup.id); }}
-              onShareToFeed={handleShareToFeed}
-              onUpdateDemographics={handleUpdateDemographics}
-            />
-          )
-        ) : selectedProfile ? (
-          <ProfileScreen surveys={profileSurveys} userGroups={[]} userProfile={userProfile} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onSurveyProgress={handleSurveyProgress} user={selectedProfile} onBack={() => navigateToProfile(null)} onAuthorClick={navigateToProfile} onShareToFeed={handleShareToFeed} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} />
-        ) : selectedSurveyId && selectedSurvey ? (
-          <>
-            <div className="bg-white z-10 sticky top-0 border-b border-gray-100">
-              <div className="flex items-center px-4 py-3">
-                <button onClick={() => navigate(-1)} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-600 transition-colors"><ArrowLeft size={24} /></button>
-                <span className="font-bold text-lg ml-2">Detail View</span>
-              </div>
-              {/* Detail Tabs */}
-              <div className="flex px-4">
-                <button
-                  onClick={() => setDetailTab('post')}
-                  className={`flex-1 py-3 text-sm font-black uppercase tracking-widest transition-all relative ${detailTab === 'post' ? 'text-blue-600' : 'text-gray-400'}`}
-                >
-                  Post
-                  {detailTab === 'post' && <div className="absolute bottom-0 left-1/4 right-1/4 h-1 bg-blue-600 rounded-full" />}
-                </button>
-                <button
-                  onClick={() => setDetailTab('analysis')}
-                  className={`flex-1 py-3 text-sm font-black uppercase tracking-widest transition-all relative ${detailTab === 'analysis' ? 'text-blue-600' : 'text-gray-400'}`}
-                >
-                  Analysis
-                  {detailTab === 'analysis' && <div className="absolute bottom-0 left-1/4 right-1/4 h-1 bg-blue-600 rounded-full" />}
-                </button>
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto bg-white no-scrollbar">
-              {detailTab === 'post' ? (
-                <SurveyCard
-                  survey={selectedSurvey}
-                  userProfile={userProfile || undefined}
-                  contextGroups={userGroups}
-                  isDetailView={true}
-                  onVote={handleVote}
-                  onSurveyProgress={handleSurveyProgress}
-                  onAuthorClick={navigateToProfile}
-                  onShareToFeed={handleShareToFeed}
-                  onUpdateDemographics={handleUpdateDemographics}
-                  onGroupClick={navigateToGroup}
-                  sourceSurface="FEED" /* Or PROFILE if we track where they came from */
-                  onLike={handleLikePost}
-                />
-              ) : (
-                <PostAnalysis survey={selectedSurvey} isAccessDenied={!canSeeAnalysis} />
-              )}
-            </div>
-          </>
-        ) : (
-          <>
-            {activeTab !== 'search' && activeTab !== 'profile' && activeTab !== 'notifications' && activeTab !== 'messages' && (
-              <Header 
-                onProfileClick={() => navigate('/profile')} 
-                onMessagesClick={() => navigate('/messages')} 
-                userProfile={userProfile || undefined} 
-                onLoginClick={() => navigate('/login')}
-                onSignUpClick={() => navigate('/signup')}
+          {showUsersTable ? (
+            <UsersTableScreen onBack={() => setShowUsersTable(false)} onUserClick={(u) => { setShowUsersTable(false); setSelectedProfile({ id: u.id, name: u.name, avatar: u.avatar }); }} />
+          ) : isPrivacyScreenOpen ? (
+            <PrivacyPolicyScreen />
+          ) : selectedGroupId && activeGroup ? (
+            isGroupSettingsOpen ? (
+              <GroupSettingsScreen
+                group={activeGroup}
+                currentUserId={userProfile.id}
+                onBack={() => navigate(`/group/${activeGroup.id}`)}
+                onUpdateGroup={(id, updates) => setUserGroups(prev => prev.map(g => g.id === id ? { ...g, ...updates } : g))}
+                onDeleteGroup={(id) => { setUserGroups(prev => prev.filter(g => g.id !== id)); navigateToGroup(null); }}
               />
-            )}
-
-            {activeTab === 'home' ? (
-              <PullToRefresh ref={pullToRefreshRef} onScroll={handleScroll} onRefresh={async () => { await fetchData(userProfile?.id || undefined, userProfile); }} onScrollChange={dir => setIsNavVisible(dir === 'up')} className="flex-1 mt-16 pb-[75px] bg-white no-scrollbar">
-                {renderContent()}
-              </PullToRefresh>
             ) : (
-              <div onScroll={handleScroll} className={`flex-1 ${activeTab !== 'search' && activeTab !== 'profile' && activeTab !== 'notifications' && activeTab !== 'messages' ? 'mt-16' : ''} pb-[75px] bg-white overflow-y-auto no-scrollbar`}>
-                {renderContent()}
+              <GroupScreen
+                group={activeGroup}
+                surveys={surveys}
+                userProfile={userProfile}
+                onBack={() => navigateToGroup(null)}
+                onSurveyClick={handleSurveyClick}
+                onVote={handleVote}
+                onSurveyProgress={handleSurveyProgress}
+                onSettingsClick={() => navigate(`/group/${activeGroup.id}/settings`)}
+                onCreatePost={() => { navigate('/create/survey'); setActiveCreationGroupId(activeGroup.id); }}
+                onShareToFeed={handleShareToFeed}
+                onUpdateDemographics={handleUpdateDemographics}
+              />
+            )
+          ) : selectedProfile ? (
+            <ProfileScreen surveys={profileSurveys} userGroups={[]} userProfile={userProfile} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onSurveyProgress={handleSurveyProgress} user={selectedProfile} onBack={() => navigateToProfile(null)} onAuthorClick={navigateToProfile} onShareToFeed={handleShareToFeed} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} />
+          ) : selectedSurveyId && selectedSurvey ? (
+            <>
+              <div className="bg-white z-10 sticky top-0 border-b border-gray-100">
+                <div className="flex items-center px-4 py-3">
+                  <button onClick={() => navigate(-1)} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-600 transition-colors"><ArrowLeft size={24} /></button>
+                  <span className="font-bold text-lg ml-2">Detail View</span>
+                </div>
+                {/* Detail Tabs */}
+                <div className="flex px-4">
+                  <button
+                    onClick={() => setDetailTab('post')}
+                    className={`flex-1 py-3 text-sm font-black uppercase tracking-widest transition-all relative ${detailTab === 'post' ? 'text-blue-600' : 'text-gray-400'}`}
+                  >
+                    Post
+                    {detailTab === 'post' && <div className="absolute bottom-0 left-1/4 right-1/4 h-1 bg-blue-600 rounded-full" />}
+                  </button>
+                  <button
+                    onClick={() => setDetailTab('analysis')}
+                    className={`flex-1 py-3 text-sm font-black uppercase tracking-widest transition-all relative ${detailTab === 'analysis' ? 'text-blue-600' : 'text-gray-400'}`}
+                  >
+                    Analysis
+                    {detailTab === 'analysis' && <div className="absolute bottom-0 left-1/4 right-1/4 h-1 bg-blue-600 rounded-full" />}
+                  </button>
+                </div>
               </div>
-            )}
 
-            <BottomNav
-              activeTab={activeTab} onTabChange={handleTabChange}
-              onAddClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
-              isVisible={(isNavVisible || activeTab !== 'home') && activeTab !== 'messages'}
-              isAddMenuOpen={isAddMenuOpen}
-              onAddMenuOption={handleAddMenuOption}
-              unreadNotificationsCount={unreadNotificationsCount}
-            />
-          </>
-        )}
+              <div className="flex-1 overflow-y-auto bg-white no-scrollbar">
+                {detailTab === 'post' ? (
+                  <SurveyCard
+                    survey={selectedSurvey}
+                    userProfile={userProfile || undefined}
+                    contextGroups={userGroups}
+                    isDetailView={true}
+                    onVote={handleVote}
+                    onSurveyProgress={handleSurveyProgress}
+                    onAuthorClick={navigateToProfile}
+                    onShareToFeed={handleShareToFeed}
+                    onUpdateDemographics={handleUpdateDemographics}
+                    onGroupClick={navigateToGroup}
+                    sourceSurface="FEED" /* Or PROFILE if we track where they came from */
+                    onLike={handleLikePost}
+                  />
+                ) : (
+                  <PostAnalysis survey={selectedSurvey} isAccessDenied={!canSeeAnalysis} />
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              {activeTab !== 'search' && activeTab !== 'profile' && activeTab !== 'notifications' && activeTab !== 'messages' && (
+                <Header
+                  onProfileClick={() => navigate('/profile')}
+                  onMessagesClick={() => navigate('/messages')}
+                  userProfile={userProfile || undefined}
+                  onLoginClick={() => navigate('/login')}
+                  onSignUpClick={() => navigate('/signup')}
+                />
+              )}
 
-        {/* Creation Flows */}
-        {activeCreationFlow === 'survey' && (
-          <CreateSurveyModal isOpen={true} onClose={handleCloseModal} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
-        )}
+              {activeTab === 'home' ? (
+                <PullToRefresh ref={pullToRefreshRef} onScroll={handleScroll} onRefresh={async () => { await fetchData(userProfile?.id || undefined, userProfile); }} onScrollChange={dir => setIsNavVisible(dir === 'up')} className="flex-1 mt-16 pb-[75px] bg-white no-scrollbar">
+                  {renderContent()}
+                </PullToRefresh>
+              ) : (
+                <div onScroll={handleScroll} className={`flex-1 ${activeTab !== 'search' && activeTab !== 'profile' && activeTab !== 'notifications' && activeTab !== 'messages' ? 'mt-16' : ''} pb-[75px] bg-white overflow-y-auto no-scrollbar`}>
+                  {renderContent()}
+                </div>
+              )}
 
-        {activeCreationFlow === 'poll' && (
-          <CreatePollScreen onClose={handleCloseModal} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
-        )}
+              <BottomNav
+                activeTab={activeTab} onTabChange={handleTabChange}
+                onAddClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
+                isVisible={(isNavVisible || activeTab !== 'home') && activeTab !== 'messages'}
+                isAddMenuOpen={isAddMenuOpen}
+                onAddMenuOption={handleAddMenuOption}
+                unreadNotificationsCount={unreadNotificationsCount}
+              />
+            </>
+          )}
 
-        {activeCreationFlow === 'quiz' && (
-          <CreateQuizModal isOpen={true} onClose={handleCloseModal} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
-        )}
+          {/* Creation Flows */}
+          {activeCreationFlow === 'survey' && (
+            <CreateSurveyModal isOpen={true} onClose={handleCloseModal} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
+          )}
 
-        {activeCreationFlow === 'challenge' && (
-          <CreateChallengeScreen onClose={handleCloseModal} onSubmit={handleCreateSubmit} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
-        )}
+          {activeCreationFlow === 'poll' && (
+            <CreatePollScreen onClose={handleCloseModal} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
+          )}
 
-        <CreateAccountModal isOpen={accountModalType !== null} onClose={handleCloseModal} initialType={accountModalType} onGroupCreated={(g) => setUserGroups([...userGroups, g])} userProfile={userProfile} />
+          {activeCreationFlow === 'quiz' && (
+            <CreateQuizModal isOpen={true} onClose={handleCloseModal} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
+          )}
+
+          {activeCreationFlow === 'challenge' && (
+            <CreateChallengeScreen onClose={handleCloseModal} onSubmit={handleCreateSubmit} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
+          )}
+
+          <CreateAccountModal isOpen={accountModalType !== null} onClose={handleCloseModal} initialType={accountModalType} onGroupCreated={(g) => setUserGroups([...userGroups, g])} userProfile={userProfile} />
+        </div>
       </div>
-    </div>
+
+      <BottomSheet isOpen={editRestrictionState.isOpen} onClose={() => {
+        setEditRestrictionState({ isOpen: false });
+        setActiveTab('home');
+        navigate('/');
+      }} title={t('Editing Disabled')}>
+        <div className="p-4 space-y-4">
+          <p className="text-sm text-gray-600 whitespace-pre-wrap">{t('Edit Restricted Message')}</p>
+          <div className="flex gap-3 pt-2">
+            <button
+              onClick={async () => {
+                const confirmDelete = window.confirm("Are you sure you want to delete this post? This action cannot be undone.");
+                if (confirmDelete) {
+                  const sid = editRestrictionState.surveyId;
+                  if (sid && userProfile?.id) {
+                    try {
+                      await api.deletePost(sid, userProfile.id);
+                      setSurveys(prev => prev.filter(s => s.id !== sid));
+                      setProfileSurveys(prev => prev.filter(s => s.id !== sid));
+                    } catch (e) {
+                      console.error("Failed to delete post:", e);
+                    }
+                  }
+                }
+                setEditRestrictionState({ isOpen: false });
+                setActiveTab('home');
+                navigate('/');
+              }}
+              className="flex-1 bg-red-600 text-white p-3 rounded-xl font-bold shadow-md shadow-red-600/20 active:scale-95 transition-all"
+            >
+              {t('Delete Post')}
+            </button>
+            <button
+              onClick={() => {
+                setEditRestrictionState({ isOpen: false });
+                setActiveTab('home');
+                navigate('/');
+              }}
+              className="flex-1 bg-gray-100 text-gray-700 p-3 rounded-xl font-bold active:scale-95 transition-all"
+            >
+              {t('Cancel')}
+            </button>
+          </div>
+        </div>
+      </BottomSheet>
     </SocketProvider>
   );
 };

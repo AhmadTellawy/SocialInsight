@@ -73,15 +73,15 @@ const DEM_CONFIG: Record<string, { title: string, question: string, options: str
     title: 'Education Level',
     question: 'What is your highest level of education?',
     options: [
-      'Primary Education', 
-      'Preparatory / Middle School', 
-      'Secondary Education (High School)', 
-      'Diploma', 
-      'Higher Diploma / Postgraduate Diploma', 
-      'Bachelor’s Degree', 
-      'Professional Diploma', 
-      'Master’s Degree', 
-      'Doctorate (PhD)', 
+      'Primary Education',
+      'Preparatory / Middle School',
+      'Secondary Education (High School)',
+      'Diploma',
+      'Higher Diploma / Postgraduate Diploma',
+      'Bachelor’s Degree',
+      'Professional Diploma',
+      'Master’s Degree',
+      'Doctorate (PhD)',
       'Prefer not to say'
     ],
     profileKey: 'education'
@@ -203,7 +203,6 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   }, [survey.id, survey.sharedFrom, survey.expiresAt]);
 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isEditRestrictedOpen, setIsEditRestrictedOpen] = useState(false);
   const [isReportSheetOpen, setIsReportSheetOpen] = useState(false);
   const [reportReason, setReportReason] = useState('');
   const [reportDescription, setReportDescription] = useState('');
@@ -230,7 +229,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
   const isQuote = !!(survey.sharedFrom && survey.sharedCaption && survey.sharedCaption.trim() !== '');
   const isRepost = !!(survey.sharedFrom && !isQuote);
-  
+
   const voteTarget = survey.sharedFrom || survey;
   const interactionTarget = isRepost ? survey.sharedFrom! : survey;
 
@@ -395,10 +394,10 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     } else if (survey.type === SurveyType.QUIZ) {
       // Sort quiz options based on the ID timestamp to preserve original order
       opts.sort((a, b) => {
-         const timeA = parseInt((a.id || '').split('-')[1] || '0', 10);
-         const timeB = parseInt((b.id || '').split('-')[1] || '0', 10);
-         if (timeA && timeB) return timeA - timeB;
-         return 0; // Fallback to original order if ID doesn't have a timestamp
+        const timeA = parseInt((a.id || '').split('-')[1] || '0', 10);
+        const timeB = parseInt((b.id || '').split('-')[1] || '0', 10);
+        if (timeA && timeB) return timeA - timeB;
+        return 0; // Fallback to original order if ID doesn't have a timestamp
       });
     }
 
@@ -634,46 +633,46 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     setSurveyAnswers(newAnswers);
 
     if (onSurveyProgress) {
-        onSurveyProgress(sourceSurvey.id, {
-          index: currentQIndex,
-          answers: newAnswers,
-          followUpAnswers,
-          historyStack,
-          isAnonymous: isCurrentlyAnonymous
-        });
+      onSurveyProgress(sourceSurvey.id, {
+        index: currentQIndex,
+        answers: newAnswers,
+        followUpAnswers,
+        historyStack,
+        isAnonymous: isCurrentlyAnonymous
+      });
+    }
+
+    // Auto-advance for quizzes if no time limit
+    if (isQuiz && !survey.config?.timeLimit) {
+      if (!isDetailView && onContentClick) {
+        onContentClick();
       }
-      
-      // Auto-advance for quizzes if no time limit
-      if (isQuiz && !survey.config?.timeLimit) {
-         if (!isDetailView && onContentClick) {
-             onContentClick();
-         }
-         setTimeout(() => {
-            if (currentQIndex < totalQuestions - 1) {
-               // handleNext logic manually to avoid closure issues
-               setSlideDirection('next');
-               const newStack = [...historyStack, currentQIndex];
-               setHistoryStack(newStack);
-               setCurrentQIndex(currentQIndex + 1);
-               if (onSurveyProgress) {
-                 onSurveyProgress(sourceSurvey.id, {
-                   index: currentQIndex + 1,
-                   answers: newAnswers,
-                   followUpAnswers,
-                   historyStack: newStack,
-                   isAnonymous: isCurrentlyAnonymous
-                 });
-               }
-            } else {
-               // Finish Quiz
-               if (onVote) {
-                 const allSelectedOptionIds = Object.values(newAnswers).flat().filter(Boolean);
-                 onVote(sourceSurvey.id, allSelectedOptionIds, isCurrentlyAnonymous, undefined);
-               }
-               setSurveyCompleted(true);
-            }
-         }, 400); // slight delay
-      }
+      setTimeout(() => {
+        if (currentQIndex < totalQuestions - 1) {
+          // handleNext logic manually to avoid closure issues
+          setSlideDirection('next');
+          const newStack = [...historyStack, currentQIndex];
+          setHistoryStack(newStack);
+          setCurrentQIndex(currentQIndex + 1);
+          if (onSurveyProgress) {
+            onSurveyProgress(sourceSurvey.id, {
+              index: currentQIndex + 1,
+              answers: newAnswers,
+              followUpAnswers,
+              historyStack: newStack,
+              isAnonymous: isCurrentlyAnonymous
+            });
+          }
+        } else {
+          // Finish Quiz
+          if (onVote) {
+            const allSelectedOptionIds = Object.values(newAnswers).flat().filter(Boolean);
+            onVote(sourceSurvey.id, allSelectedOptionIds, isCurrentlyAnonymous, undefined);
+          }
+          setSurveyCompleted(true);
+        }
+      }, 400); // slight delay
+    }
   };
 
   const handleFollowUpChange = (optionId: string, text: string) => {
@@ -946,7 +945,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     const diffInMinutes = (now - createdAt) / (1000 * 60);
     
     if (diffInMinutes > 5) {
-      setIsEditRestrictedOpen(true);
+      window.dispatchEvent(new CustomEvent('onEditRestricted', { detail: { surveyId: sourceSurvey.id } }));
     } else {
       if (onEditDraft) {
         onEditDraft(sourceSurvey);
@@ -1036,7 +1035,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     const now = new Date();
     const past = new Date(dateStr);
     if (isNaN(past.getTime())) return t('Just now');
-    
+
     const diffInSeconds = Math.floor((now.getTime() - past.getTime()) / 1000);
     if (diffInSeconds < 60) return t('Just now');
     const diffInMinutes = Math.floor(diffInSeconds / 60);
@@ -1215,51 +1214,50 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     return (
       <div className="bg-white rounded-xl overflow-hidden border border-gray-100 shadow-sm mt-3">
         {survey.type === SurveyType.QUIZ && !survey.config?.timeLimit ? (
-            <div className="bg-white px-4 py-4 border-b border-gray-100">
-              {totalQuestions <= 7 ? (
-                <div className="flex items-center justify-between relative w-full">
-                  {/* Background connecting line */}
-                  <div className="absolute left-0 right-0 top-1/2 h-0.5 bg-blue-100 -translate-y-1/2 z-0" />
-                  
-                  {Array.from({ length: totalQuestions }).map((_, i) => {
-                    const isCompleted = i < currentQIndex;
-                    const isCurrent = i === currentQIndex;
-                    
-                    return (
-                      <div key={i} className="relative z-10 flex flex-col items-center gap-1.5 bg-white px-1">
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-all duration-300 ${
-                          isCompleted ? 'bg-blue-500 text-white' : 
-                          isCurrent ? 'border-2 border-blue-500 text-blue-500 shadow-[0_0_0_3px_white,0_0_0_4px_rgba(59,130,246,0.3)]' : 
-                          'border-2 border-blue-200 text-blue-300 bg-white'
+          <div className="bg-white px-4 py-4 border-b border-gray-100">
+            {totalQuestions <= 7 ? (
+              <div className="flex items-center justify-between relative w-full">
+                {/* Background connecting line */}
+                <div className="absolute left-0 right-0 top-1/2 h-0.5 bg-blue-100 -translate-y-1/2 z-0" />
+
+                {Array.from({ length: totalQuestions }).map((_, i) => {
+                  const isCompleted = i < currentQIndex;
+                  const isCurrent = i === currentQIndex;
+
+                  return (
+                    <div key={i} className="relative z-10 flex flex-col items-center gap-1.5 bg-white px-1">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-all duration-300 ${isCompleted ? 'bg-blue-500 text-white' :
+                          isCurrent ? 'border-2 border-blue-500 text-blue-500 shadow-[0_0_0_3px_white,0_0_0_4px_rgba(59,130,246,0.3)]' :
+                            'border-2 border-blue-200 text-blue-300 bg-white'
                         }`}>
-                          {isCompleted ? <Check size={16} strokeWidth={3} /> : <span className="text-sm font-bold">{i + 1}</span>}
-                        </div>
-                        <div className={`w-6 h-1 rounded-full ${isCompleted || isCurrent ? 'bg-blue-500' : 'bg-transparent'}`} />
+                        {isCompleted ? <Check size={16} strokeWidth={3} /> : <span className="text-sm font-bold">{i + 1}</span>}
                       </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="text-center font-bold text-gray-500 text-sm py-2">
-                  Question {currentQIndex + 1} of {totalQuestions}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="bg-gray-50 px-4 py-3 border-b border-gray-100">
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-xs font-bold text-blue-600 uppercase tracking-wider flex items-center gap-1">
-                  <FileText size={10} /> {currentQuestion.sectionTitle}
-                </span>
-                <span className="text-xs font-medium text-gray-400 tabular-nums">
-                  {currentQIndex + 1} / {totalQuestions}
-                </span>
+                      <div className={`w-6 h-1 rounded-full ${isCompleted || isCurrent ? 'bg-blue-500' : 'bg-transparent'}`} />
+                    </div>
+                  );
+                })}
               </div>
-              <div className="h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
-                <div className="h-full bg-blue-600 rounded-full transition-all duration-500 ease-out" style={{ width: `${Math.max(5, progressPercentage)}%` }} />
+            ) : (
+              <div className="text-center font-bold text-gray-500 text-sm py-2">
+                Question {currentQIndex + 1} of {totalQuestions}
               </div>
+            )}
+          </div>
+        ) : (
+          <div className="bg-gray-50 px-4 py-3 border-b border-gray-100">
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-xs font-bold text-blue-600 uppercase tracking-wider flex items-center gap-1">
+                <FileText size={10} /> {currentQuestion.sectionTitle}
+              </span>
+              <span className="text-xs font-medium text-gray-400 tabular-nums">
+                {currentQIndex + 1} / {totalQuestions}
+              </span>
             </div>
-          )}
+            <div className="h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
+              <div className="h-full bg-blue-600 rounded-full transition-all duration-500 ease-out" style={{ width: `${Math.max(5, progressPercentage)}%` }} />
+            </div>
+          </div>
+        )}
         <div className="relative overflow-hidden">
           <div key={currentQuestion.id} className={`w-full flex flex-col ${slideDirection === 'next' ? 'animate-in slide-in-from-right-10 fade-in duration-500' : 'animate-in slide-in-from-left-10 fade-in duration-500'}`}>
             <div className="p-5 pb-8 no-scrollbar scroll-smooth">
@@ -1357,22 +1355,22 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           </div>
         </div>
         {!isQuizNoTimeLimit && (
-            <div className="px-5 py-4 border-t border-gray-50 flex items-center justify-between bg-white relative z-10">
-              <button onClick={handlePrevQuestion} disabled={currentQIndex === 0 && historyStack.length === 0} className={`flex items-center gap-1 text-sm font-medium transition-colors ${(currentQIndex === 0 && historyStack.length === 0) ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:text-gray-800'}`}>
-                <ChevronLeft size={18} /> {/*t('Back')*/}Back
-              </button>
-              <button onClick={() => handleNextQuestion()} disabled={(!answer || (Array.isArray(answer) && answer.length === 0) || (typeof answer === 'string' && !answer.trim())) || (currentQuestion.minSelection && (Array.isArray(answer) ? answer.length : 1) < currentQuestion.minSelection)} className={`px-6 py-2 rounded-full text-sm font-bold text-white transition-all shadow-md flex items-center gap-2 ${(!answer || (Array.isArray(answer) && answer.length === 0) || (typeof answer === 'string' && !answer.trim())) || (currentQuestion.minSelection && (Array.isArray(answer) ? answer.length : 1) < currentQuestion.minSelection) ? 'bg-gray-300 cursor-not-allowed' : 'bg-gray-900 hover:bg-gray-800 active:scale-[0.99]'}`}>{currentQIndex >= totalQuestions - 1 ? /*t('Finish')*/'Finish' : /*t('Next')*/'Next'} <ArrowRight size={14} /></button>
-            </div>
-          )}
-        </div>
-      );
-    };
+          <div className="px-5 py-4 border-t border-gray-50 flex items-center justify-between bg-white relative z-10">
+            <button onClick={handlePrevQuestion} disabled={currentQIndex === 0 && historyStack.length === 0} className={`flex items-center gap-1 text-sm font-medium transition-colors ${(currentQIndex === 0 && historyStack.length === 0) ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:text-gray-800'}`}>
+              <ChevronLeft size={18} /> {/*t('Back')*/}Back
+            </button>
+            <button onClick={() => handleNextQuestion()} disabled={(!answer || (Array.isArray(answer) && answer.length === 0) || (typeof answer === 'string' && !answer.trim())) || (currentQuestion.minSelection && (Array.isArray(answer) ? answer.length : 1) < currentQuestion.minSelection)} className={`px-6 py-2 rounded-full text-sm font-bold text-white transition-all shadow-md flex items-center gap-2 ${(!answer || (Array.isArray(answer) && answer.length === 0) || (typeof answer === 'string' && !answer.trim())) || (currentQuestion.minSelection && (Array.isArray(answer) ? answer.length : 1) < currentQuestion.minSelection) ? 'bg-gray-300 cursor-not-allowed' : 'bg-gray-900 hover:bg-gray-800 active:scale-[0.99]'}`}>{currentQIndex >= totalQuestions - 1 ? /*t('Finish')*/'Finish' : /*t('Next')*/'Next'} <ArrowRight size={14} /></button>
+          </div>
+        )}
+      </div>
+    );
+  };
 
-    const renderPollStandard = () => {
-      const isHorizontal = sourceSurvey.imageLayout === 'horizontal';
-      const isQuiz = sourceSurvey.type === SurveyType.QUIZ;
-      const firstQuestion = flatQuestions?.[0];
-      const allowUserOptions = sourceSurvey.allowUserOptions || false;
+  const renderPollStandard = () => {
+    const isHorizontal = sourceSurvey.imageLayout === 'horizontal';
+    const isQuiz = sourceSurvey.type === SurveyType.QUIZ;
+    const firstQuestion = flatQuestions?.[0];
+    const allowUserOptions = sourceSurvey.allowUserOptions || false;
 
     const renderHorizontal = () => (
       <div className="flex gap-3 overflow-x-scroll pb-4 pt-1 snap-x snap-mandatory -mx-4 px-4" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
@@ -1639,74 +1637,74 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   };
 
   const renderQuizCompletion = () => {
-      const correct = quizStats?.correct || 0;
-      const total = quizStats?.total || 1;
-      const percentage = (correct / total) * 100;
-      
-      let title = t('Good Effort!');
-      let subtitle = t('Keep practicing, you will get better!');
-      let bgColor = 'bg-blue-50';
-      let iconColor = 'text-blue-500';
-      let topPercent = 0;
+    const correct = quizStats?.correct || 0;
+    const total = quizStats?.total || 1;
+    const percentage = (correct / total) * 100;
 
-      if (percentage === 100) {
-        title = t('Perfect Score!');
-        subtitle = t('You are an absolute expert!');
-        bgColor = 'bg-yellow-50';
-        iconColor = 'text-yellow-500';
-        topPercent = 1;
-      } else if (percentage >= 80) {
-        title = t('Excellent Work!');
-        subtitle = t('You did a fantastic job!');
-        bgColor = 'bg-green-50';
-        iconColor = 'text-green-500';
-        topPercent = 15;
-      } else if (percentage >= 50) {
-        title = t('Well Done!');
-        subtitle = t('You passed the quiz successfully.');
-        bgColor = 'bg-blue-50';
-        iconColor = 'text-blue-500';
-        topPercent = Math.max(20, Math.round(100 - percentage));
-      } else {
-        topPercent = Math.max(50, Math.round(100 - percentage));
-      }
+    let title = t('Good Effort!');
+    let subtitle = t('Keep practicing, you will get better!');
+    let bgColor = 'bg-blue-50';
+    let iconColor = 'text-blue-500';
+    let topPercent = 0;
 
-      return (
-        <div className="mt-4 animate-in fade-in duration-500 border border-gray-100 rounded-2xl overflow-hidden shadow-sm bg-white">
-          <div className={`p-8 text-center flex flex-col items-center justify-center ${bgColor}`}>
-            <div className={`w-20 h-20 rounded-full flex items-center justify-center bg-white shadow-sm mb-4 ${iconColor}`}>
-              {percentage === 100 ? <Trophy size={40} /> : percentage >= 50 ? <CheckCircle2 size={40} /> : <Target size={40} />}
-            </div>
-            <h3 className="text-2xl font-black text-gray-900 mb-2">{title}</h3>
-            <p className="text-gray-600 mb-6 font-medium">{subtitle}</p>
-            
-            <div className="flex items-center gap-6 bg-white px-6 py-4 rounded-2xl shadow-sm border border-gray-100 w-full max-w-sm">
-              <div className="flex-1 text-center">
-                <div className="text-3xl font-black text-gray-900">{correct}</div>
-                <div className="text-xs font-bold text-gray-400 uppercase tracking-wider">{t('Correct')}</div>
-              </div>
-              <div className="w-px h-12 bg-gray-100" />
-              <div className="flex-1 text-center">
-                <div className="text-3xl font-black text-gray-900">{total}</div>
-                <div className="text-xs font-bold text-gray-400 uppercase tracking-wider">{t('Questions')}</div>
-              </div>
-            </div>
+    if (percentage === 100) {
+      title = t('Perfect Score!');
+      subtitle = t('You are an absolute expert!');
+      bgColor = 'bg-yellow-50';
+      iconColor = 'text-yellow-500';
+      topPercent = 1;
+    } else if (percentage >= 80) {
+      title = t('Excellent Work!');
+      subtitle = t('You did a fantastic job!');
+      bgColor = 'bg-green-50';
+      iconColor = 'text-green-500';
+      topPercent = 15;
+    } else if (percentage >= 50) {
+      title = t('Well Done!');
+      subtitle = t('You passed the quiz successfully.');
+      bgColor = 'bg-blue-50';
+      iconColor = 'text-blue-500';
+      topPercent = Math.max(20, Math.round(100 - percentage));
+    } else {
+      topPercent = Math.max(50, Math.round(100 - percentage));
+    }
+
+    return (
+      <div className="mt-4 animate-in fade-in duration-500 border border-gray-100 rounded-2xl overflow-hidden shadow-sm bg-white">
+        <div className={`p-8 text-center flex flex-col items-center justify-center ${bgColor}`}>
+          <div className={`w-20 h-20 rounded-full flex items-center justify-center bg-white shadow-sm mb-4 ${iconColor}`}>
+            {percentage === 100 ? <Trophy size={40} /> : percentage >= 50 ? <CheckCircle2 size={40} /> : <Target size={40} />}
           </div>
-          
-          <div className="p-6 bg-white text-center">
-            <div className="inline-flex items-center gap-2 bg-blue-50 text-blue-700 px-4 py-2 rounded-lg text-sm font-bold border border-blue-100 mb-4">
-              <TrendingUp size={16} />
-              {t('You are in the top')} {topPercent}% {t('of participants so far!')}
+          <h3 className="text-2xl font-black text-gray-900 mb-2">{title}</h3>
+          <p className="text-gray-600 mb-6 font-medium">{subtitle}</p>
+
+          <div className="flex items-center gap-6 bg-white px-6 py-4 rounded-2xl shadow-sm border border-gray-100 w-full max-w-sm">
+            <div className="flex-1 text-center">
+              <div className="text-3xl font-black text-gray-900">{correct}</div>
+              <div className="text-xs font-bold text-gray-400 uppercase tracking-wider">{t('Correct')}</div>
             </div>
-            <p className="text-xs text-gray-400 mb-0">
-              {sourceSurvey.participants || 1} {t('people have taken this quiz.')}
-            </p>
+            <div className="w-px h-12 bg-gray-100" />
+            <div className="flex-1 text-center">
+              <div className="text-3xl font-black text-gray-900">{total}</div>
+              <div className="text-xs font-bold text-gray-400 uppercase tracking-wider">{t('Questions')}</div>
+            </div>
           </div>
         </div>
-      );
-    };
 
-    const renderSurveyCompletion = () => (
+        <div className="p-6 bg-white text-center">
+          <div className="inline-flex items-center gap-2 bg-blue-50 text-blue-700 px-4 py-2 rounded-lg text-sm font-bold border border-blue-100 mb-4">
+            <TrendingUp size={16} />
+            {t('You are in the top')} {topPercent}% {t('of participants so far!')}
+          </div>
+          <p className="text-xs text-gray-400 mb-0">
+            {sourceSurvey.participants || 1} {t('people have taken this quiz.')}
+          </p>
+        </div>
+      </div>
+    );
+  };
+
+  const renderSurveyCompletion = () => (
     <div className="bg-blue-50 rounded-xl p-8 text-center border border-blue-100 mt-4 animate-in zoom-in duration-300">
       <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4"><CheckCircle2 size={32} /></div>
       <h3 className="text-lg font-bold text-gray-900 mb-2">{isExpired ? t('Survey Closed') : t('Survey Completed!')}</h3>
@@ -1797,19 +1795,19 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     <>
       <div ref={viewRef} className="bg-white pt-5 pb-2 border-b-8 border-gray-100 animate-in fade-in slide-in-from-bottom-4 duration-500 relative">
         <div className="px-4">
-          
+
           {/* SHARER HEADER (If this is a repost) */}
           {survey.sharedFrom && (
-             <div className="mb-3">
-               <div
-                 className="flex items-center text-gray-500 font-bold text-xs gap-1.5 cursor-pointer hover:text-blue-600 transition-colors mb-2"
-                 onClick={(e) => { e.stopPropagation(); if (onAuthorClick && survey.author) onAuthorClick({ id: survey.author.id, name: survey.author.name, avatar: survey.author.avatar, handle: survey.author.handle }); }}
-               >
-                 <Repeat size={14} className="text-gray-400" />
-                 <span>{survey.author?.name || t('Anonymous')} {t('reposted this')}</span>
-               </div>
-               {survey.sharedCaption && <p className="text-gray-900 text-[15px] mb-3 leading-relaxed whitespace-pre-wrap font-normal">{survey.sharedCaption}</p>}
-             </div>
+            <div className="mb-3">
+              <div
+                className="flex items-center text-gray-500 font-bold text-xs gap-1.5 cursor-pointer hover:text-blue-600 transition-colors mb-2"
+                onClick={(e) => { e.stopPropagation(); if (onAuthorClick && survey.author) onAuthorClick({ id: survey.author.id, name: survey.author.name, avatar: survey.author.avatar, handle: survey.author.handle }); }}
+              >
+                <Repeat size={14} className="text-gray-400" />
+                <span>{survey.author?.name || t('Anonymous')} {t('reposted this')}</span>
+              </div>
+              {survey.sharedCaption && <p className="text-gray-900 text-[15px] mb-3 leading-relaxed whitespace-pre-wrap font-normal">{survey.sharedCaption}</p>}
+            </div>
           )}
 
           {/* INNER ORIGINAL POST CONTAINER */}
@@ -1880,85 +1878,85 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
               <button onClick={() => setIsMenuOpen(true)} className="text-gray-400 hover:text-gray-600 p-2 -mr-2 rounded-full hover:bg-gray-50 transition-colors shrink-0"><MoreHorizontal size={20} /></button>
             </div>
 
-          <div className="mb-4">
-            <div className="flex items-start gap-2 mb-2">
-              <div className="flex-1 min-w-0">
-                <h2
+            <div className="mb-4">
+              <div className="flex items-start gap-2 mb-2">
+                <div className="flex-1 min-w-0">
+                  <h2
+                    onClick={onContentClick}
+                    className={`font-semibold text-[15px] text-gray-900 leading-snug whitespace-pre-wrap ${onContentClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''} ${!isDetailView ? 'line-clamp-2' : ''}`}
+                  >
+                    <RichTextRenderer text={sourceSurvey.title} inline />
+                  </h2>
+                  {!isDetailView && (sourceSurvey.title?.length > 80 || (sourceSurvey.title?.match(/\n/g) || []).length > 1) && (
+                    <button onClick={onContentClick} className="text-gray-400 hover:text-gray-700 font-bold text-xs mt-0.5 text-left inline-block">
+                      ... {t('See more')}
+                    </button>
+                  )}
+                </div>
+                {sourceSurvey.isTrending && <span className="inline-flex items-center gap-1 bg-red-50 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 mt-1"><TrendingUp size={10} /> {t('Hot')}</span>}
+              </div>
+
+              {sourceSurvey.coverImage && <div onClick={onContentClick} className={`w-full rounded-xl overflow-hidden mb-3 bg-gray-100 ${onContentClick ? 'cursor-pointer hover:opacity-95 transition-opacity' : ''}`}><img src={sourceSurvey.coverImage} crossOrigin="anonymous" alt="Cover" className="w-full max-h-[500px] object-cover block" /></div>}
+
+              <div className="relative mb-3">
+                <p
                   onClick={onContentClick}
-                  className={`font-semibold text-[15px] text-gray-900 leading-snug whitespace-pre-wrap ${onContentClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''} ${!isDetailView ? 'line-clamp-2' : ''}`}
+                  className={`text-gray-600 text-[13px] leading-relaxed whitespace-pre-wrap ${onContentClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''} ${!isDetailView ? 'line-clamp-3' : ''}`}
                 >
-                  <RichTextRenderer text={sourceSurvey.title} inline />
-                </h2>
-                {!isDetailView && (sourceSurvey.title?.length > 80 || (sourceSurvey.title?.match(/\n/g) || []).length > 1) && (
-                  <button onClick={onContentClick} className="text-gray-400 hover:text-gray-700 font-bold text-xs mt-0.5 text-left inline-block">
+                  <RichTextRenderer text={sourceSurvey.description} />
+                </p>
+                {!isDetailView && (sourceSurvey.description?.length > 150 || (sourceSurvey.description?.match(/\n/g) || []).length > 2) && (
+                  <button onClick={onContentClick} className="text-gray-500 hover:text-gray-800 font-bold text-sm mt-0.5 block text-left">
                     ... {t('See more')}
                   </button>
                 )}
               </div>
-              {sourceSurvey.isTrending && <span className="inline-flex items-center gap-1 bg-red-50 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 mt-1"><TrendingUp size={10} /> {t('Hot')}</span>}
+              {renderBodyContent()}
             </div>
 
-            {sourceSurvey.coverImage && <div onClick={onContentClick} className={`w-full rounded-xl overflow-hidden mb-3 bg-gray-100 ${onContentClick ? 'cursor-pointer hover:opacity-95 transition-opacity' : ''}`}><img src={sourceSurvey.coverImage} crossOrigin="anonymous" alt="Cover" className="w-full max-h-[500px] object-cover block" /></div>}
-
-            <div className="relative mb-3">
-              <p
-                onClick={onContentClick}
-                className={`text-gray-600 text-[13px] leading-relaxed whitespace-pre-wrap ${onContentClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''} ${!isDetailView ? 'line-clamp-3' : ''}`}
-              >
-                <RichTextRenderer text={sourceSurvey.description} />
-              </p>
-              {!isDetailView && (sourceSurvey.description?.length > 150 || (sourceSurvey.description?.match(/\n/g) || []).length > 2) && (
-                <button onClick={onContentClick} className="text-gray-500 hover:text-gray-800 font-bold text-sm mt-0.5 block text-left">
-                  ... {t('See more')}
+            <div className="flex items-center justify-between text-[11px] text-gray-400 font-medium mb-3 px-1 mt-2">
+              <div className="flex items-center gap-3">
+                <button onClick={() => setIsParticipantsOpen(true)} className="flex items-center gap-1 hover:text-blue-600 transition-colors">
+                  <Users size={12} />
+                  <span>{sourceSurvey.participants.toLocaleString()} {survey.type === SurveyType.POLL ? t('votes') : t('responses')}</span>
                 </button>
-              )}
-            </div>
-            {renderBodyContent()}
-          </div>
+                {isRating && Number(averageRating) > 0 && (
+                  <div className="flex items-center gap-1 text-yellow-600 bg-yellow-50 px-2 py-0.5 rounded-md border border-yellow-200/60 shadow-sm pt-[3px]">
+                    <Star size={11} fill="currentColor" />
+                    <span className="font-bold text-[10px] uppercase tracking-widest">{averageRating} {t('Average')}</span>
+                  </div>
+                )}
+                {timeLeftStr && (
+                  <div className="flex items-center gap-1">
+                    {isExpired ? <XCircle size={12} className="text-red-500" /> : <Clock size={12} />}
+                    <span className={isExpired ? 'text-red-500 font-bold' : ''}>{timeLeftStr}</span>
+                  </div>
+                )}
+              </div>
 
-          <div className="flex items-center justify-between text-[11px] text-gray-400 font-medium mb-3 px-1 mt-2">
-            <div className="flex items-center gap-3">
-              <button onClick={() => setIsParticipantsOpen(true)} className="flex items-center gap-1 hover:text-blue-600 transition-colors">
-                <Users size={12} />
-                <span>{sourceSurvey.participants.toLocaleString()} {survey.type === SurveyType.POLL ? t('votes') : t('responses')}</span>
-              </button>
-              {isRating && Number(averageRating) > 0 && (
-                <div className="flex items-center gap-1 text-yellow-600 bg-yellow-50 px-2 py-0.5 rounded-md border border-yellow-200/60 shadow-sm pt-[3px]">
-                  <Star size={11} fill="currentColor" />
-                  <span className="font-bold text-[10px] uppercase tracking-widest">{averageRating} {t('Average')}</span>
-                </div>
-              )}
-              {timeLeftStr && (
-                <div className="flex items-center gap-1">
-                  {isExpired ? <XCircle size={12} className="text-red-500" /> : <Clock size={12} />}
-                  <span className={isExpired ? 'text-red-500 font-bold' : ''}>{timeLeftStr}</span>
-                </div>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2">
-              {sourceSurvey.forceAnonymous ? (
-                <button
-                  onClick={() => setIsAnonInfoOpen(true)}
-                  className="flex items-center gap-1 text-gray-500 hover:text-blue-600 transition-colors font-bold uppercase tracking-widest text-[9px]"
-                >
-                  <Lock size={10} />
-                  <span>{t('Anonymous responses')}</span>
-                </button>
-              ) : (sourceSurvey.allowAnonymous && !hasVoted && !isExpired ? (
-                <div className="flex items-center gap-2 cursor-pointer" onClick={() => setIsAnonToggled(!isAnonToggled)}>
-                  <span className="text-[9px] font-bold uppercase tracking-widest text-gray-500">{t('Anonymous')}</span>
+              <div className="flex items-center gap-2">
+                {sourceSurvey.forceAnonymous ? (
                   <button
-                    className={`w-7 h-4 rounded-full relative transition-colors ${isAnonToggled ? 'bg-blue-600' : 'bg-gray-200'}`}
-                    title={t('Respond Anonymously')}
+                    onClick={() => setIsAnonInfoOpen(true)}
+                    className="flex items-center gap-1 text-gray-500 hover:text-blue-600 transition-colors font-bold uppercase tracking-widest text-[9px]"
                   >
-                    <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${isAnonToggled ? 'left-3.5' : 'left-0.5'}`} />
+                    <Lock size={10} />
+                    <span>{t('Anonymous responses')}</span>
                   </button>
-                </div>
-              ) : null)}
+                ) : (sourceSurvey.allowAnonymous && !hasVoted && !isExpired ? (
+                  <div className="flex items-center gap-2 cursor-pointer" onClick={() => setIsAnonToggled(!isAnonToggled)}>
+                    <span className="text-[9px] font-bold uppercase tracking-widest text-gray-500">{t('Anonymous')}</span>
+                    <button
+                      className={`w-7 h-4 rounded-full relative transition-colors ${isAnonToggled ? 'bg-blue-600' : 'bg-gray-200'}`}
+                      title={t('Respond Anonymously')}
+                    >
+                      <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${isAnonToggled ? 'left-3.5' : 'left-0.5'}`} />
+                    </button>
+                  </div>
+                ) : null)}
+              </div>
             </div>
           </div>
-         </div>
         </div>
         <div className="border-t border-gray-100 mt-2 px-1 pt-1 pb-1">
           <div className="flex items-center justify-between">
@@ -1981,24 +1979,24 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             {survey.allowComments !== false && (
               <div className="flex flex-col items-center justify-center min-w-[48px]">
                 <div className="flex items-center gap-0.5">
-                  <button onClick={(e) => { 
-                    e.stopPropagation(); 
+                  <button onClick={(e) => {
+                    e.stopPropagation();
                     if (!userProfile?.id) {
                       navigate('/signup');
                       return;
                     }
-                    setIsCommentsOpen(true); 
+                    setIsCommentsOpen(true);
                   }} className="p-1.5 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-all active:scale-95 group">
                     <MessageCircle size={16} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
                   </button>
                   {commentsCount > 0 && (
-                    <button onClick={(e) => { 
-                      e.stopPropagation(); 
+                    <button onClick={(e) => {
+                      e.stopPropagation();
                       if (!userProfile?.id) {
                         navigate('/signup');
                         return;
                       }
-                      setIsCommentsOpen(true); 
+                      setIsCommentsOpen(true);
                     }} className="text-[11px] pr-1 font-bold text-gray-500 hover:underline">
                       {formatCount(commentsCount)}
                     </button>
@@ -2011,18 +2009,18 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             {/* Repost Button */}
             <div className="flex flex-col items-center justify-center min-w-[48px]">
               <div className="flex items-center gap-0.5">
-                <button onClick={(e) => { 
-                  e.stopPropagation(); 
+                <button onClick={(e) => {
+                  e.stopPropagation();
                   if (!userProfile?.id) {
                     navigate('/signup');
                     return;
                   }
-                  setIsRepostMenuOpen(true); 
+                  setIsRepostMenuOpen(true);
                 }} className={`p-1.5 rounded-full transition-all active:scale-95 group ${survey.hasReposted ? 'text-green-600 bg-green-50' : 'text-gray-500 hover:bg-green-50 hover:text-green-600'}`}>
                   <Repeat size={16} strokeWidth={2} className={`transition-transform ${survey.hasReposted ? 'scale-110' : 'group-hover:scale-110'}`} />
                 </button>
                 {(survey.repostCount || 0) > 0 && (
-                   <span className={`text-[11px] pr-1 font-bold ${survey.hasReposted ? 'text-green-600' : 'text-gray-500'}`}>{formatCount(survey.repostCount || 0)}</span>
+                  <span className={`text-[11px] pr-1 font-bold ${survey.hasReposted ? 'text-green-600' : 'text-gray-500'}`}>{formatCount(survey.repostCount || 0)}</span>
                 )}
               </div>
               <span className={`text-[8px] uppercase tracking-widest font-bold mt-0.5 ${survey.hasReposted ? 'text-green-600' : 'text-gray-400 group-hover:text-green-600'}`}>{t('REPOST')}</span>
@@ -2157,29 +2155,6 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         </div>
       </BottomSheet>
 
-      <BottomSheet isOpen={isEditRestrictedOpen} onClose={() => setIsEditRestrictedOpen(false)} title={t('Editing Disabled')}>
-        <div className="p-4 space-y-4">
-          <p className="text-sm text-gray-600 whitespace-pre-wrap">{t('Edit Restricted Message')}</p>
-          <div className="flex gap-3 pt-2">
-            <button
-              onClick={() => {
-                setIsEditRestrictedOpen(false);
-                handleDeletePost();
-              }}
-              className="flex-1 bg-red-600 text-white p-3 rounded-xl font-bold shadow-md shadow-red-600/20 active:scale-95 transition-all"
-            >
-              {t('Delete Post')}
-            </button>
-            <button
-              onClick={() => setIsEditRestrictedOpen(false)}
-              className="flex-1 bg-gray-100 text-gray-700 p-3 rounded-xl font-bold active:scale-95 transition-all"
-            >
-              {t('Cancel')}
-            </button>
-          </div>
-        </div>
-      </BottomSheet>
-
       <BottomSheet isOpen={isReportSheetOpen} onClose={() => setIsReportSheetOpen(false)} title="Report Post">
         <div className="p-4 space-y-4">
           <p className="text-sm text-gray-500 mb-4">Why are you reporting this post?</p>
@@ -2233,11 +2208,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       <BottomSheet isOpen={isRepostMenuOpen} onClose={() => setIsRepostMenuOpen(false)} customLayout={false}>
         <div className="p-2 space-y-1">
           <button onClick={() => {
-             setIsRepostMenuOpen(false);
-             if (onShareToFeed) onShareToFeed(survey, '');
+            setIsRepostMenuOpen(false);
+            if (onShareToFeed) onShareToFeed(survey, '');
           }} className="w-full flex items-center gap-4 p-4 hover:bg-gray-50 rounded-xl transition-colors text-left group">
             <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${survey.hasReposted ? 'bg-red-50 text-red-600 group-hover:bg-red-100' : 'bg-green-50 text-green-600 group-hover:bg-green-100'}`}>
-               <Repeat size={22} strokeWidth={1.5} />
+              <Repeat size={22} strokeWidth={1.5} />
             </div>
             <div>
               <div className={`font-bold text-[15px] ${survey.hasReposted ? 'text-red-600' : 'text-gray-900'}`}>{survey.hasReposted ? 'Undo Repost' : 'Repost'}</div>
@@ -2247,12 +2222,12 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
           {!survey.hasReposted && (
             <button onClick={() => {
-               setIsRepostMenuOpen(false);
-               setShareSheetInitialStep('repost-editor');
-               setIsShareSheetOpen(true);
+              setIsRepostMenuOpen(false);
+              setShareSheetInitialStep('repost-editor');
+              setIsShareSheetOpen(true);
             }} className="w-full flex items-center gap-4 p-4 hover:bg-gray-50 rounded-xl transition-colors text-left group">
               <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center group-hover:bg-blue-100 transition-colors">
-                 <Edit3 size={22} strokeWidth={1.5} />
+                <Edit3 size={22} strokeWidth={1.5} />
               </div>
               <div>
                 <div className="font-bold text-gray-900 text-[15px]">Quote</div>
