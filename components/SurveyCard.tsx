@@ -1359,7 +1359,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       const allowUserOptions = sourceSurvey.allowUserOptions || false;
 
     const renderHorizontal = () => (
-      <div className="flex gap-3 overflow-x-scroll pb-4 snap-x snap-mandatory -mx-4 px-4" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+      <div className="flex gap-3 overflow-x-scroll pb-4 pt-1 snap-x snap-mandatory -mx-4 px-4" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
         {(localOptions || []).map((option) => {
           const isSelected = selectedOptions.includes(option.id);
           const percentage = shouldShowResults ? getPercentage(option.votes) : 0;
@@ -1368,7 +1368,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           const isCorrect = isQuiz && option.isCorrect;
           const isWrongSelection = isQuiz && isSelected && !isCorrect;
           return (
-            <div key={option.id} className={`flex-shrink-0 relative w-[75%] sm:w-[280px] rounded-xl border snap-center overflow-hidden flex flex-col transition-all duration-300 bg-white shadow-sm ${shouldShowResults && isCorrect ? 'border-green-500 ring-2 ring-green-500 bg-green-50' : shouldShowResults && isWrongSelection ? 'border-red-500 ring-2 ring-red-500 bg-red-50' : isSelected ? 'ring-2 ring-blue-500 border-blue-500' : 'border-gray-200'}`}>
+            <div key={option.id} className={`flex-shrink-0 relative w-[65%] sm:w-[250px] rounded-xl border snap-center overflow-hidden flex flex-col transition-all duration-300 bg-white shadow-sm ${shouldShowResults && isCorrect ? 'border-green-500 ring-2 ring-green-500 bg-green-50' : shouldShowResults && isWrongSelection ? 'border-red-500 ring-2 ring-red-500 bg-red-50' : isSelected ? 'ring-2 ring-blue-500 border-blue-500' : 'border-gray-200'}`}>
               <div className="w-full aspect-square bg-gray-100 relative group/opt-img">
                 {option.image ? (
                   <>
@@ -1436,7 +1436,16 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                     {!hasVoted && !isExpired ? (
                       <button onClick={() => handlePollOptionClick(option.id)} className={`text-sm font-bold px-6 py-2 rounded-lg transition-colors border shadow-sm active:scale-95 ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-100'}`}>{isSelected && isMultiple ? t('Selected') : t('Vote')}</button>
                     ) : (
-                      isSelected ? <div className="flex items-center gap-1 text-blue-600 font-bold text-sm bg-blue-50 px-3 py-1.5 rounded-full"><CheckCircle2 size={16} /> <span>{t('Voted')}</span></div> : <span className="text-sm text-gray-400 font-bold px-2">{percentage}%</span>
+                      isSelected ? (
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1 text-blue-600 font-bold text-[11px] bg-blue-50 px-2 py-1 rounded-full whitespace-nowrap">
+                            <CheckCircle2 size={12} /> <span>{t('Voted')}</span>
+                          </div>
+                          {shouldShowResults && <span className="text-sm text-blue-700 font-extrabold">{percentage}%</span>}
+                        </div>
+                      ) : (
+                        <span className="text-sm text-gray-400 font-bold px-2">{percentage}%</span>
+                      )
                     )}
                   </div>
                 </div>

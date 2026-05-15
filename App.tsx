@@ -417,7 +417,12 @@ const App: React.FC = () => {
     else if (path === '/trends') setActiveTab('trends');
     else if (path === '/notifications') setActiveTab('notifications');
     else if (path === '/messages') setActiveTab('messages');
-    else if (path === '/profile') setActiveTab('profile');
+    else if (path === '/profile') {
+       setActiveTab('profile');
+       if (userProfile && selectedProfile?.id !== userProfile.id) {
+           setSelectedProfile(userProfile);
+       }
+    }
     else if (path.startsWith('/settings/profile')) {
        setActiveTab('profile');
        setIsProfileSettingsOpen(true);
@@ -593,8 +598,10 @@ const App: React.FC = () => {
 
           if (!targetId) {
             setSurveys(prev => [optimisticSurvey, ...prev]);
+            setProfileSurveys(prev => [optimisticSurvey, ...prev]);
           } else {
             setSurveys(prev => [optimisticSurvey, ...prev.filter(s => s.id !== targetId)]);
+            setProfileSurveys(prev => [optimisticSurvey, ...prev.filter(s => s.id !== targetId)]);
           }
 
           setTimeout(() => {
