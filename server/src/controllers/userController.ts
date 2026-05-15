@@ -87,6 +87,15 @@ export const getUser = async (req: Request, res: Response) => {
             isFollowing = !!follow;
         }
 
+        const [postsCount, responsesCount] = await Promise.all([
+            prisma.post.count({
+                where: { authorId: user.id, isDeleted: false, status: 'PUBLISHED' }
+            }),
+            prisma.response.count({
+                where: { post: { authorId: user.id } }
+            })
+        ]);
+
         res.json({
             ...safeUser,
             isFollowing,
@@ -94,7 +103,8 @@ export const getUser = async (req: Request, res: Response) => {
             stats: {
                 followers: user.followersCount,
                 following: user.followingCount,
-                responses: 0
+                posts: postsCount,
+                responses: responsesCount
             }
         });
     } catch (error) {
@@ -134,6 +144,15 @@ export const getUserByHandle = async (req: Request, res: Response) => {
             isFollowing = !!follow;
         }
 
+        const [postsCount, responsesCount] = await Promise.all([
+            prisma.post.count({
+                where: { authorId: user.id, isDeleted: false, status: 'PUBLISHED' }
+            }),
+            prisma.response.count({
+                where: { post: { authorId: user.id } }
+            })
+        ]);
+
         res.json({
             ...safeUser,
             isFollowing,
@@ -141,7 +160,8 @@ export const getUserByHandle = async (req: Request, res: Response) => {
             stats: {
                 followers: user.followersCount,
                 following: user.followingCount,
-                responses: 0
+                posts: postsCount,
+                responses: responsesCount
             }
         });
     } catch (error) {

@@ -455,18 +455,19 @@ const App: React.FC = () => {
       const id = path.split('/profile/')[1];
       if (id && id !== selectedProfile?.id) {
         setIsProfileLoading(true);
-        api.getUser(id).then(user => {
-          const currentUserId = userProfile?.id || undefined;
-          return api.getSurveys(currentUserId, undefined, 10, user.id).then(res => {
-            const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
-            setProfileSurveys(newSurveys);
-            setProfileNextCursor(res.nextCursor);
-            setSelectedProfile(user);
-            setIsProfileLoading(false);
-            if (user.handle) {
-              navigate(`/@${user.handle}`, { replace: true });
-            }
-          });
+        const currentUserId = userProfile?.id || undefined;
+        Promise.all([
+          api.getUser(id),
+          api.getSurveys(currentUserId, undefined, 10, id)
+        ]).then(([user, res]) => {
+          const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
+          setProfileSurveys(newSurveys);
+          setProfileNextCursor(res.nextCursor);
+          setSelectedProfile(user);
+          setIsProfileLoading(false);
+          if (user.handle) {
+            navigate(`/@${user.handle}`, { replace: true });
+          }
         }).catch(err => {
           console.error(err);
           setIsProfileLoading(false);

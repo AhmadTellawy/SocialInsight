@@ -791,7 +791,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                   {profileUser.isPrivate && !isMe && <Lock size={8} className="absolute top-1 right-1" />}
                 </div>
                 <div className="text-sm font-black text-gray-900 tabular-nums">
-                  {mySurveys.filter(s => !s.isDraft).length || 0}
+                  {profileUser?.stats?.posts || 0}
                 </div>
                 <div className="text-[8px] font-black text-gray-400 uppercase tracking-tighter mt-1">{t('Posts')}</div>
               </button>
