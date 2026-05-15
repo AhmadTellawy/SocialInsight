@@ -9,6 +9,7 @@ import { SurveyCard } from './components/SurveyCard';
 import { HomeScreen } from './components/HomeScreen';
 import { CreateSurveyModal } from './components/CreateSurveyModal';
 import { CreatePollScreen } from './components/CreatePollScreen';
+import { BottomSheet } from './components/BottomSheet';
 import { CreateQuizModal } from './components/CreateQuizModal';
 import { CreateChallengeScreen } from './components/CreateChallengeScreen';
 import { CreateAccountModal } from './components/CreateAccountModal';
