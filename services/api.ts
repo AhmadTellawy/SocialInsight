@@ -72,7 +72,7 @@ const authFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<
 };
 
 export const api = {
-    getSurveys: async (userId?: string, cursor?: string, limit: number = 10, authorId?: string) => {
+    getSurveys: async (userId?: string, cursor?: string, limit: number = 10, authorId?: string, authorHandle?: string) => {
         const guestId = !userId ? getGuestId() : undefined;
         let url = userId ? `${API_BASE_URL}/posts?userId=${userId}&limit=${limit}` : `${API_BASE_URL}/posts?guestId=${guestId}&limit=${limit}`;
         if (cursor) {
@@ -80,6 +80,9 @@ export const api = {
         }
         if (authorId) {
             url += `&authorId=${authorId}`;
+        }
+        if (authorHandle) {
+            url += `&authorHandle=${authorHandle}`;
         }
         const response = await authFetch(url);
         if (!response.ok) throw new Error('Failed to fetch posts');

@@ -92,7 +92,7 @@ export const getUser = async (req: Request, res: Response) => {
                 where: { authorId: user.id, isDeleted: false, status: 'PUBLISHED' }
             }),
             prisma.response.count({
-                where: { post: { authorId: user.id } }
+                where: { post: { authorId: user.id, isDeleted: false, status: 'PUBLISHED' } }
             })
         ]);
 
@@ -149,7 +149,7 @@ export const getUserByHandle = async (req: Request, res: Response) => {
                 where: { authorId: user.id, isDeleted: false, status: 'PUBLISHED' }
             }),
             prisma.response.count({
-                where: { post: { authorId: user.id } }
+                where: { post: { authorId: user.id, isDeleted: false, status: 'PUBLISHED' } }
             })
         ]);
 

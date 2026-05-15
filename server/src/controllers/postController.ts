@@ -63,6 +63,7 @@ export const getPosts = async (req: Request, res: Response) => {
     const userId = req.query.userId as any;
     const guestId = req.query.guestId as any;
     const authorId = req.query.authorId as string | undefined;
+    const authorHandle = req.query.authorHandle as string | undefined;
     const cursor = req.query.cursor as string | undefined;
     const limit = parseInt(req.query.limit as string) || 10;
     
@@ -73,7 +74,8 @@ export const getPosts = async (req: Request, res: Response) => {
             where: {
                 isDeleted: false,
                 ...(authorId ? { authorId } : {}),
-                ...(userId && !authorId ? {
+                ...(authorHandle ? { author: { handle: authorHandle } } : {}),
+                ...(userId && !authorId && !authorHandle ? {
                     NOT: { hiddenBy: { some: { userId } } }
                 } : {}),
                 OR: [
