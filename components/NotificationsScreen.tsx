@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { ArrowLeft, Trash2, User, PieChart, FileText, Users, Clock, Trophy, Bell } from 'lucide-react';
+import { ArrowLeft, Trash2, User, PieChart, FileText, Users, Clock, Trophy, Bell, Heart, UserPlus } from 'lucide-react';
 import { Notification } from '../types';
 
 interface NotificationsScreenProps {
@@ -16,8 +16,6 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
   onBack,
   onItemClick
 }) => {
-  const [filter, setFilter] = useState<'All' | 'Mentions' | 'Groups'>('All');
-
   const getTimeAgo = (dateStr: string) => {
     const date = new Date(dateStr);
     const now = new Date();
@@ -70,6 +68,8 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
       case 'group_invite': icon = <Users size={18} />; bgClass = 'bg-orange-100 text-orange-600'; break;
       case 'expiry': icon = <Clock size={18} />; bgClass = 'bg-red-100 text-red-600'; break;
       case 'milestone': icon = <Trophy size={18} />; bgClass = 'bg-yellow-100 text-yellow-600'; break;
+      case 'like': icon = <Heart size={18} />; bgClass = 'bg-pink-100 text-pink-600'; break;
+      case 'follow': icon = <UserPlus size={18} />; bgClass = 'bg-teal-100 text-teal-600'; break;
       default: icon = <Bell size={18} />; break;
     }
 
@@ -80,12 +80,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
     );
   };
 
-  const filteredList = notifications.filter(n => {
-    if (filter === 'All') return true;
-    if (filter === 'Mentions') return n.type === 'response' || n.type === 'vote' || n.type === 'following_post';
-    if (filter === 'Groups') return n.type === 'group_invite';
-    return true;
-  });
+  const filteredList = notifications;
 
   return (
     <div className="bg-white min-h-[100dvh] flex flex-col">
@@ -115,21 +110,6 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
           >
             Mark all read
           </button>
-        </div>
-
-        <div className="flex px-4 pb-0 space-x-6 overflow-x-auto no-scrollbar">
-          {['All', 'Mentions', 'Groups'].map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setFilter(tab as any)}
-              className={`pb-3 text-sm font-bold border-b-2 transition-colors whitespace-nowrap ${filter === tab
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
-            >
-              {tab}
-            </button>
-          ))}
         </div>
       </div>
 
@@ -162,6 +142,8 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                       {notification.type === 'vote' && <div className="bg-green-100 text-green-600 rounded-full p-0.5"><PieChart size={10} /></div>}
                       {notification.type === 'response' && <div className="bg-blue-100 text-blue-600 rounded-full p-0.5"><FileText size={10} /></div>}
                       {notification.type === 'group_invite' && <div className="bg-orange-100 text-orange-600 rounded-full p-0.5"><Users size={10} /></div>}
+                      {notification.type === 'like' && <div className="bg-pink-100 text-pink-600 rounded-full p-0.5"><Heart size={10} /></div>}
+                      {notification.type === 'follow' && <div className="bg-teal-100 text-teal-600 rounded-full p-0.5"><UserPlus size={10} /></div>}
                     </div>
                   )}
                 </div>

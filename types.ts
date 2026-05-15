@@ -225,7 +225,7 @@ export interface Survey {
 
 export interface Notification {
   id: string;
-  type: 'vote' | 'response' | 'result' | 'following_post' | 'group_invite' | 'expiry' | 'milestone';
+  type: 'vote' | 'response' | 'result' | 'following_post' | 'group_invite' | 'expiry' | 'milestone' | 'follow' | 'like';
   actor: {
     id?: string;
     name: string;
