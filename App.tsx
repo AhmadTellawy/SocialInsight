@@ -1291,7 +1291,7 @@ const App: React.FC = () => {
               hasNextPage={!!profileNextCursor}
               onLoadMore={fetchMore}
             />
-          ) : (selectedSurveyId && selectedSurvey ? (
+          ) : selectedSurveyId && selectedSurvey ? (
             <>
               <div className="bg-white z-10 sticky top-0 border-b border-gray-100">
                 <div className="flex items-center px-4 py-3">
