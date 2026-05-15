@@ -112,10 +112,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           if (userId) {
             const fullUser = await api.getUser(userId);
             setTargetUser(fullUser);
-          }
-
-          if (fullUser && fullUser.isFollowing !== undefined) {
-            setLocalFollowingState(fullUser.isFollowing);
+            if (fullUser && fullUser.isFollowing !== undefined) {
+              setLocalFollowingState(fullUser.isFollowing);
+            }
           }
 
           Analytics.track({

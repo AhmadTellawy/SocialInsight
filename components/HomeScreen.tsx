@@ -3,7 +3,7 @@ import { Activity } from 'lucide-react';
 import { Survey, UserProfile } from '../types';
 import { SurveyCard } from './SurveyCard';
 import { SuggestedUsersList } from './SuggestedUsersList';
-import { FollowerFeed } from './FollowerFeed';
+
 import { useTranslation } from 'react-i18next';
 import { api } from '../services/api';
 
