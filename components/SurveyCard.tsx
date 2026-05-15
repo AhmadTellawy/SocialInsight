@@ -563,7 +563,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     let correctCount = 0;
     flatQuestions.forEach(q => {
       const userAns = answers[q.id];
-      const correctOptions = q.options?.filter(opt => opt.isCorrect).map(o => o.id) || [];
+      const correctOptions = q.correctOptionId ? [q.correctOptionId] : [];
       if (correctOptions.length > 0 && userAns) {
         const userAnsArray = Array.isArray(userAns) ? userAns : [userAns];
         const isCorrect = userAnsArray.some(id => correctOptions.includes(id));
