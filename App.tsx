@@ -54,7 +54,7 @@ const INITIAL_USER: UserProfile = {
 const App: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   React.useEffect(() => {
     if (['ar', 'ur'].includes(i18n.language?.split('-')[0])) {
