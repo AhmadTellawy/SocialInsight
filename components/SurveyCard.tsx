@@ -203,6 +203,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   }, [survey.id, survey.sharedFrom, survey.expiresAt]);
 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isEditRestrictedOpen, setIsEditRestrictedOpen] = useState(false);
   const [isReportSheetOpen, setIsReportSheetOpen] = useState(false);
   const [reportReason, setReportReason] = useState('');
   const [reportDescription, setReportDescription] = useState('');
@@ -935,6 +936,21 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     } catch (error) {
       console.error(error);
       setIsSaved(previous);
+    }
+  };
+
+  const handleEditClick = () => {
+    setIsMenuOpen(false);
+    const createdAt = new Date(sourceSurvey.createdAt).getTime();
+    const now = Date.now();
+    const diffInMinutes = (now - createdAt) / (1000 * 60);
+    
+    if (diffInMinutes > 5) {
+      setIsEditRestrictedOpen(true);
+    } else {
+      if (onEditDraft) {
+        onEditDraft(sourceSurvey);
+      }
     }
   };
 
@@ -2062,6 +2078,17 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
       <BottomSheet isOpen={isMenuOpen} onClose={() => setIsMenuOpen(false)}>
         <div className="space-y-1">
+          {isAuthor && (
+            <button onClick={handleEditClick} className="w-full flex items-center gap-4 p-3.5 hover:bg-gray-50 rounded-xl transition-colors text-left group">
+              <div className="w-10 h-10 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center group-hover:bg-gray-200">
+                <Edit3 size={22} strokeWidth={1.5} />
+              </div>
+              <div>
+                <div className="font-semibold text-gray-900 text-sm">{t('Edit')}</div>
+                <div className="text-xs text-gray-500">{t('Edit Post')}</div>
+              </div>
+            </button>
+          )}
           <button onClick={handleSave} className="w-full flex items-center gap-4 p-3.5 hover:bg-gray-50 rounded-xl transition-colors text-left group">
             <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isSaved ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-700'} group-hover:bg-gray-200`}>
               <Bookmark size={22} strokeWidth={1.5} fill={isSaved ? "currentColor" : "none"} />
@@ -2127,6 +2154,29 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
               <div className="text-xs text-gray-500">I'm concerned about this post</div>
             </div>
           </button>
+        </div>
+      </BottomSheet>
+
+      <BottomSheet isOpen={isEditRestrictedOpen} onClose={() => setIsEditRestrictedOpen(false)} title={t('Editing Disabled')}>
+        <div className="p-4 space-y-4">
+          <p className="text-sm text-gray-600 whitespace-pre-wrap">{t('Edit Restricted Message')}</p>
+          <div className="flex gap-3 pt-2">
+            <button
+              onClick={() => {
+                setIsEditRestrictedOpen(false);
+                handleDeletePost();
+              }}
+              className="flex-1 bg-red-600 text-white p-3 rounded-xl font-bold shadow-md shadow-red-600/20 active:scale-95 transition-all"
+            >
+              {t('Delete Post')}
+            </button>
+            <button
+              onClick={() => setIsEditRestrictedOpen(false)}
+              className="flex-1 bg-gray-100 text-gray-700 p-3 rounded-xl font-bold active:scale-95 transition-all"
+            >
+              {t('Cancel')}
+            </button>
+          </div>
         </div>
       </BottomSheet>
 

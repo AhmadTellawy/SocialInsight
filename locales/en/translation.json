@@ -242,5 +242,10 @@
   "Questions": "Questions",
   "You are in the top": "You are in the top",
   "of participants so far!": "of participants so far!",
-  "people have taken this quiz.": "people have taken this quiz."
+  "people have taken this quiz.": "people have taken this quiz.",
+  "Edit": "Edit",
+  "Edit Post": "Edit Post",
+  "Editing Disabled": "Editing Disabled",
+  "Edit Restricted Message": "To ensure result integrity, posts cannot be edited after 5 minutes of publication.\nAny changes could affect user responses and their context.\n\nYou can delete the current post and publish a new version with your required changes.",
+  "Delete Post": "Delete Post"
 }
