@@ -211,6 +211,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const [isReporting, setIsReporting] = useState(false);
   const [isSaved, setIsSaved] = useState(survey.isSaved || false);
   const [isHidden, setIsHidden] = useState(false);
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const [isCommentsOpen, setIsCommentsOpen] = useState(false);
   const [isShareSheetOpen, setIsShareSheetOpen] = useState(false);
@@ -957,11 +959,17 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     }
   };
 
-  const handleDeletePost = async () => {
-    if (!window.confirm("Are you sure you want to delete this post? This action cannot be undone.")) return;
+  const handleDeleteClick = () => {
+    setIsMenuOpen(false);
+    setIsDeleteConfirmOpen(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (isDeleting) return;
+    setIsDeleting(true);
     try {
-      setIsMenuOpen(false);
       await api.deletePost(survey.id, userProfile?.id || '');
+      setIsDeleteConfirmOpen(false);
       if (onDelete) {
         onDelete(survey.id);
       } else {
@@ -969,6 +977,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       }
     } catch (err) {
       console.error('Failed to delete post:', err);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -2114,7 +2124,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           <hr className="my-2 border-gray-100" />
 
           {isMyPost && (
-            <button onClick={handleDeletePost} className="w-full flex items-center gap-4 p-3.5 hover:bg-red-50 rounded-xl transition-colors text-left group">
+            <button onClick={handleDeleteClick} className="w-full flex items-center gap-4 p-3.5 hover:bg-red-50 rounded-xl transition-colors text-left group">
               <div className="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center group-hover:bg-red-200">
                 <Trash2 size={22} strokeWidth={1.5} />
               </div>
@@ -2274,6 +2284,36 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         title="Help Us Improve"
       >
         {renderDemographicStep()}
+      </BottomSheet>
+
+      <BottomSheet isOpen={isDeleteConfirmOpen} onClose={() => !isDeleting && setIsDeleteConfirmOpen(false)}>
+        <div className="p-4 pt-2 text-center space-y-5">
+          <div className="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto mb-2 shadow-sm border border-red-100">
+            <Trash2 size={32} strokeWidth={1.5} />
+          </div>
+          <div>
+            <h3 className="text-xl font-black text-gray-900 mb-2">Delete Post</h3>
+            <p className="text-sm text-gray-500 leading-relaxed max-w-xs mx-auto">
+              Are you sure you want to delete this post? This action cannot be undone.
+            </p>
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button
+              disabled={isDeleting}
+              onClick={handleConfirmDelete}
+              className="flex-1 bg-red-600 text-white p-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg shadow-red-600/20 active:scale-95 transition-all disabled:opacity-50"
+            >
+              {isDeleting ? 'Deleting...' : 'Delete Post'}
+            </button>
+            <button
+              disabled={isDeleting}
+              onClick={() => setIsDeleteConfirmOpen(false)}
+              className="flex-1 bg-gray-100 text-gray-700 p-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-gray-200 active:scale-95 transition-all disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       </BottomSheet>
 
       <LikersSheet

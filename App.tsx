@@ -31,7 +31,7 @@ import { Survey, Option, Notification, SurveyType, Group, UserProfile } from './
 import {
   BarChart3, PieChart, Activity, ArrowLeft, Users, MessageCircle,
   Share2, MoreVertical, Globe, ShieldCheck, ChevronRight, BarChart,
-  TrendingUp, FileText, Settings, HelpCircle, PlusCircle, PenLine, Zap, X
+  TrendingUp, FileText, Settings, HelpCircle, PlusCircle, PenLine, Zap, X, Trash2
 } from 'lucide-react';
 import { SocketProvider } from './components/SocketContext';
 
@@ -133,7 +133,7 @@ const App: React.FC = () => {
   const [activeCreationGroupId, setActiveCreationGroupId] = useState<string | null>(null);
   const [editingDraft, setEditingDraft] = useState<Survey | null>(null);
   const [accountModalType, setAccountModalType] = useState<'group' | 'company' | null>(null);
-  const [editRestrictionState, setEditRestrictionState] = useState<{isOpen: boolean, surveyId?: string}>({isOpen: false});
+  const [editRestrictionState, setEditRestrictionState] = useState<{isOpen: boolean, surveyId?: string, isConfirming?: boolean}>({isOpen: false});
 
 
 
@@ -385,14 +385,7 @@ const App: React.FC = () => {
   const [isProfileLoading, setIsProfileLoading] = useState(false);
 
   React.useEffect(() => {
-    if (selectedProfile?.id) {
-      const currentUserId = userProfile?.id || undefined;
-      api.getSurveys(currentUserId, undefined, 10, selectedProfile.id).then(res => {
-        const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
-        setProfileSurveys(newSurveys);
-        setProfileNextCursor(res.nextCursor);
-      }).catch(console.error);
-    } else {
+    if (!selectedProfile?.id) {
       setProfileSurveys([]);
       setProfileNextCursor(null);
     }
@@ -422,7 +415,14 @@ const App: React.FC = () => {
     else if (path === '/profile') {
       setActiveTab('profile');
       if (userProfile && selectedProfile?.id !== userProfile.id) {
-        setSelectedProfile(userProfile);
+        setIsProfileLoading(true);
+        api.getSurveys(userProfile.id, undefined, 10, userProfile.id).then(res => {
+          const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
+          setProfileSurveys(newSurveys);
+          setProfileNextCursor(res.nextCursor);
+          setSelectedProfile(userProfile);
+          setIsProfileLoading(false);
+        }).catch(() => setIsProfileLoading(false));
       }
     }
     else if (path.startsWith('/settings/profile')) {
@@ -435,8 +435,14 @@ const App: React.FC = () => {
       if (handle && handle !== selectedProfile?.handle) {
         setIsProfileLoading(true);
         api.getUserByHandle(handle).then(user => {
-          setSelectedProfile(user);
-          setIsProfileLoading(false);
+          const currentUserId = userProfile?.id || undefined;
+          return api.getSurveys(currentUserId, undefined, 10, user.id).then(res => {
+            const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
+            setProfileSurveys(newSurveys);
+            setProfileNextCursor(res.nextCursor);
+            setSelectedProfile(user);
+            setIsProfileLoading(false);
+          });
         }).catch(err => {
           console.error(err);
           setIsProfileLoading(false);
@@ -450,11 +456,17 @@ const App: React.FC = () => {
       if (id && id !== selectedProfile?.id) {
         setIsProfileLoading(true);
         api.getUser(id).then(user => {
-          setSelectedProfile(user);
-          setIsProfileLoading(false);
-          if (user.handle) {
-            navigate(`/@${user.handle}`, { replace: true });
-          }
+          const currentUserId = userProfile?.id || undefined;
+          return api.getSurveys(currentUserId, undefined, 10, user.id).then(res => {
+            const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
+            setProfileSurveys(newSurveys);
+            setProfileNextCursor(res.nextCursor);
+            setSelectedProfile(user);
+            setIsProfileLoading(false);
+            if (user.handle) {
+              navigate(`/@${user.handle}`, { replace: true });
+            }
+          });
         }).catch(err => {
           console.error(err);
           setIsProfileLoading(false);
@@ -1242,9 +1254,44 @@ const App: React.FC = () => {
                 onUpdateDemographics={handleUpdateDemographics}
               />
             )
+          ) : isProfileLoading ? (
+            <div className="flex-1 flex flex-col items-center justify-center pt-20">
+              <div className="w-24 h-24 bg-gray-200 rounded-full animate-pulse mb-6 shadow-md border-4 border-white"></div>
+              <div className="w-40 h-6 bg-gray-200 rounded-full animate-pulse mb-3"></div>
+              <div className="w-24 h-4 bg-gray-200 rounded-full animate-pulse mb-8"></div>
+              
+              <div className="flex gap-12 mb-10 w-full max-w-sm px-8 justify-center">
+                <div className="flex flex-col items-center"><div className="w-10 h-6 bg-gray-200 rounded mb-1 animate-pulse"></div><div className="w-16 h-3 bg-gray-200 rounded animate-pulse"></div></div>
+                <div className="flex flex-col items-center"><div className="w-10 h-6 bg-gray-200 rounded mb-1 animate-pulse"></div><div className="w-16 h-3 bg-gray-200 rounded animate-pulse"></div></div>
+                <div className="flex flex-col items-center"><div className="w-10 h-6 bg-gray-200 rounded mb-1 animate-pulse"></div><div className="w-16 h-3 bg-gray-200 rounded animate-pulse"></div></div>
+              </div>
+
+              <div className="w-full px-4 space-y-4">
+                <div className="w-full h-32 bg-gray-100 rounded-2xl animate-pulse"></div>
+                <div className="w-full h-32 bg-gray-100 rounded-2xl animate-pulse"></div>
+              </div>
+            </div>
           ) : selectedProfile ? (
-            <ProfileScreen surveys={profileSurveys} userGroups={[]} userProfile={userProfile} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onSurveyProgress={handleSurveyProgress} user={selectedProfile} onBack={() => navigateToProfile(null)} onAuthorClick={navigateToProfile} onShareToFeed={handleShareToFeed} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} />
-          ) : selectedSurveyId && selectedSurvey ? (
+            <ProfileScreen 
+              surveys={profileSurveys} 
+              userGroups={[]} 
+              userProfile={userProfile} 
+              onSurveyClick={handleSurveyClick} 
+              onGroupClick={navigateToGroup} 
+              onVote={handleVote} 
+              onSurveyProgress={handleSurveyProgress} 
+              user={selectedProfile} 
+              onBack={() => navigateToProfile(null)} 
+              onAuthorClick={navigateToProfile} 
+              onShareToFeed={handleShareToFeed} 
+              onUpdateDemographics={handleUpdateDemographics} 
+              onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} 
+              onFollowChange={handleFollowChange}
+              isLoadingMore={isProfileLoadingMore}
+              hasNextPage={!!profileNextCursor}
+              onLoadMore={fetchMore}
+            />
+          ) : (selectedSurveyId && selectedSurvey ? (
             <>
               <div className="bg-white z-10 sticky top-0 border-b border-gray-100">
                 <div className="flex items-center px-4 py-3">
@@ -1351,42 +1398,67 @@ const App: React.FC = () => {
         navigate('/');
       }} title={t('Editing Disabled')}>
         <div className="p-4 space-y-4">
-          <p className="text-sm text-gray-600 whitespace-pre-wrap">{t('Edit Restricted Message')}</p>
-          <div className="flex gap-3 pt-2">
-            <button
-              onClick={async () => {
-                const confirmDelete = window.confirm("Are you sure you want to delete this post? This action cannot be undone.");
-                if (confirmDelete) {
-                  const sid = editRestrictionState.surveyId;
-                  if (sid && userProfile?.id) {
-                    try {
-                      await api.deletePost(sid, userProfile.id);
-                      setSurveys(prev => prev.filter(s => s.id !== sid));
-                      setProfileSurveys(prev => prev.filter(s => s.id !== sid));
-                    } catch (e) {
-                      console.error("Failed to delete post:", e);
+          {editRestrictionState.isConfirming ? (
+            <div className="text-center space-y-4">
+              <div className="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto mb-2 shadow-sm border border-red-100">
+                <Trash2 size={32} strokeWidth={1.5} />
+              </div>
+              <h3 className="text-xl font-black text-gray-900 mb-2">Delete Post</h3>
+              <p className="text-sm text-gray-500 leading-relaxed max-w-xs mx-auto">
+                Are you sure you want to delete this post? This action cannot be undone.
+              </p>
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={async () => {
+                    const sid = editRestrictionState.surveyId;
+                    if (sid && userProfile?.id) {
+                      try {
+                        await api.deletePost(sid, userProfile.id);
+                        setSurveys(prev => prev.filter(s => s.id !== sid));
+                        setProfileSurveys(prev => prev.filter(s => s.id !== sid));
+                      } catch (e) {
+                        console.error("Failed to delete post:", e);
+                      }
                     }
-                  }
-                }
-                setEditRestrictionState({ isOpen: false });
-                setActiveTab('home');
-                navigate('/');
-              }}
-              className="flex-1 bg-red-600 text-white p-3 rounded-xl font-bold shadow-md shadow-red-600/20 active:scale-95 transition-all"
-            >
-              {t('Delete Post')}
-            </button>
-            <button
-              onClick={() => {
-                setEditRestrictionState({ isOpen: false });
-                setActiveTab('home');
-                navigate('/');
-              }}
-              className="flex-1 bg-gray-100 text-gray-700 p-3 rounded-xl font-bold active:scale-95 transition-all"
-            >
-              {t('Cancel')}
-            </button>
-          </div>
+                    setEditRestrictionState({ isOpen: false });
+                    setActiveTab('home');
+                    navigate('/');
+                  }}
+                  className="flex-1 bg-red-600 text-white p-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg shadow-red-600/20 active:scale-95 transition-all"
+                >
+                  Confirm Delete
+                </button>
+                <button
+                  onClick={() => setEditRestrictionState(prev => ({ ...prev, isConfirming: false }))}
+                  className="flex-1 bg-gray-100 text-gray-700 p-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-gray-200 active:scale-95 transition-all"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className="text-sm text-gray-600 whitespace-pre-wrap">{t('Edit Restricted Message')}</p>
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setEditRestrictionState(prev => ({ ...prev, isConfirming: true }))}
+                  className="flex-1 bg-red-600 text-white p-3 rounded-xl font-bold shadow-md shadow-red-600/20 active:scale-95 transition-all"
+                >
+                  {t('Delete Post')}
+                </button>
+                <button
+                  onClick={() => {
+                    setEditRestrictionState({ isOpen: false });
+                    setActiveTab('home');
+                    navigate('/');
+                  }}
+                  className="flex-1 bg-gray-100 text-gray-700 p-3 rounded-xl font-bold active:scale-95 transition-all"
+                >
+                  {t('Cancel')}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </BottomSheet>
     </SocketProvider>

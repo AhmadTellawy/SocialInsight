@@ -30,6 +30,9 @@ interface ProfileScreenProps {
   onFollowChange?: (targetUserId: string, isFollowing: boolean) => void;
   onLike?: (surveyId: string, isLiked: boolean) => void;
   isLoading?: boolean;
+  isLoadingMore?: boolean;
+  hasNextPage?: boolean;
+  onLoadMore?: () => void;
 }
 
 type ProfileTab = 'content' | 'reposts' | 'groups' | 'drafts' | 'saved';
@@ -53,7 +56,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onUpdateCurrentUser,
   onFollowChange,
   onLike,
-  isLoading
+  isLoading,
+  isLoadingMore,
+  hasNextPage,
+  onLoadMore
 }) => {
   const { t } = useTranslation();
   const [activeStatSheet, setActiveStatSheet] = useState<'following' | 'followers' | 'posts' | null>(null);
@@ -661,8 +667,17 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     );
   }
 
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.currentTarget;
+    const scrollBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+    // Trigger load more 500px before reaching the bottom
+    if (scrollBottom < 500 && onLoadMore && hasNextPage && !isLoadingMore) {
+      onLoadMore();
+    }
+  };
+
   return (
-    <div className="bg-white flex-1 overflow-y-auto min-h-full flex flex-col no-scrollbar">
+    <div onScroll={handleScroll} className="bg-white flex-1 overflow-y-auto min-h-full flex flex-col no-scrollbar">
       <div className={`flex items-center px-4 h-[60px] sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-gray-50 ${onBack ? 'justify-between' : 'justify-end'}`}>
         {onBack && (
           <button onClick={onBack} className="p-2 -ml-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors">
@@ -818,6 +833,21 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
         <div className="pb-20">
           {renderTabContent()}
+          {(activeTab === 'content' || activeTab === 'reposts') && (
+            <div className="py-8 flex flex-col items-center justify-center min-h-[120px] transition-all">
+              {isLoadingMore ? (
+                <div className="flex flex-col items-center animate-pulse opacity-50">
+                  <Activity size={32} className="text-gray-400 mb-3 animate-spin-slow" />
+                  <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">{t('Loading More...')}</p>
+                </div>
+              ) : !hasNextPage && (mySurveys.length > 0) ? (
+                <div className="flex flex-col items-center opacity-20">
+                  <Activity size={32} className="text-gray-400 mb-3" />
+                  <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">{t("You've reached the end")}</p>
+                </div>
+              ) : null}
+            </div>
+          )}
         </div>
       </div>
 
