@@ -133,7 +133,10 @@ export function useGroupPosts(groupId: string, userId?: string) {
 
             const url = `/api/groups/${groupId}/posts?page=${pageNum}&limit=10${userId ? `&currentUserId=${userId}` : ''}`;
             const res = await fetch(url);
-            if (!res.ok) throw new Error('Failed to fetch posts');
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.error || 'Failed to fetch posts');
+            }
             const data: { posts: any[]; hasMore: boolean } = await res.json();
             const normalizedPosts = data.posts.map(normalizeSurvey);
 
@@ -195,8 +198,11 @@ export function useGroupStats(groupId: string) {
         setIsLoading(true);
 
         fetch(`/api/groups/${groupId}/stats`)
-            .then((res) => {
-                if (!res.ok) throw new Error('Failed to fetch group stats');
+            .then(async (res) => {
+                if (!res.ok) {
+                    const errData = await res.json().catch(() => ({}));
+                    throw new Error(errData.error || 'Failed to fetch group stats');
+                }
                 return res.json();
             })
             .then((data: GroupStats) => {

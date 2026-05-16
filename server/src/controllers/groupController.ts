@@ -213,9 +213,9 @@ export const getGroupStats = async (req: Request, res: Response) => {
             postsCount,
             votesCount: 0 // Placeholder or computed if needed
         });
-    } catch (error) {
+    } catch (error: any) {
         console.error('Failed to get group stats:', error);
-        res.status(500).json({ error: 'Failed to get group stats' });
+        res.status(500).json({ error: error.message || 'Failed to get group stats' });
     }
 };
 
@@ -338,8 +338,8 @@ export const getGroupPosts = async (req: Request, res: Response) => {
             posts: mappedPosts,
             hasMore: page * limit < total
         });
-    } catch (error) {
+    } catch (error: any) {
         console.error('Failed to fetch group posts:', error);
-        res.status(500).json({ error: 'Failed to fetch group posts' });
+        res.status(500).json({ error: error.message || 'Failed to fetch group posts' });
     }
 };
