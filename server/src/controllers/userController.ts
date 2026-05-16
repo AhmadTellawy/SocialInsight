@@ -523,6 +523,8 @@ export const getUserGroups = async (req: Request, res: Response) => {
 
         const groups = memberships.map(m => ({
             ...m.group,
+            memberCount: m.group._count?.members || 0,
+            postsCount: m.group._count?.posts || 0,
             permissions: {
                 canViewMembers: true,
                 canManageSettings: m.role === 'Admin' || m.role === 'Owner',
