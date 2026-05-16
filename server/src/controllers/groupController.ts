@@ -67,7 +67,6 @@ export const getGroupById = async (req: Request, res: Response) => {
                     select: {
                         userId: true,
                         role: true,
-                        status: true,
                         user: {
                             select: { id: true, name: true, avatar: true, handle: true }
                         }
@@ -110,7 +109,6 @@ export const createGroup = async (req: Request, res: Response) => {
                 category: category || 'General',
                 image: image || `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=random&color=fff&size=200`,
                 isPublic: isPublic !== false,
-                memberCount: 1,
                 members: {
                     create: {
                         userId: creatorId,
@@ -184,16 +182,10 @@ export const joinGroup = async (req: Request, res: Response) => {
                 return;
             } else if (existingMember.status === 'INVITED' || (group.isPublic && existingMember.status === 'PENDING')) {
                 // Accept invite or automatically accept pending if public
-                const [updated] = await prisma.$transaction([
-                    prisma.groupMember.update({
-                        where: { userId_groupId: { userId: String(currentUserId), groupId: String(id) } },
-                        data: { status: 'JOINED' }
-                    }),
-                    prisma.group.update({
-                        where: { id: String(id) },
-                        data: { memberCount: { increment: 1 } }
-                    })
-                ]);
+                const updated = await prisma.groupMember.update({
+                    where: { userId_groupId: { userId: String(currentUserId), groupId: String(id) } },
+                    data: { status: 'JOINED' }
+                });
                 res.json({ status: 'JOINED', role: updated.role });
                 return;
             } else {
@@ -208,22 +200,16 @@ export const joinGroup = async (req: Request, res: Response) => {
             return;
         }
 
-        const newMember = await prisma.$transaction([
-            prisma.groupMember.create({
-                data: {
-                    userId: String(currentUserId),
-                    groupId: String(id),
-                    role: 'Member',
-                    status: 'JOINED'
-                }
-            }),
-            prisma.group.update({
-                where: { id: String(id) },
-                data: { memberCount: { increment: 1 } }
-            })
-        ]);
+        const newMember = await prisma.groupMember.create({
+            data: {
+                userId: String(currentUserId),
+                groupId: String(id),
+                role: 'Member',
+                status: 'JOINED'
+            }
+        });
 
-        res.json({ status: 'JOINED', role: newMember[0].role });
+        res.json({ status: 'JOINED', role: newMember.role });
     } catch (error) {
         console.error('Failed to join group:', error);
         res.status(500).json({ error: 'Failed to join group' });
@@ -249,22 +235,9 @@ export const leaveGroup = async (req: Request, res: Response) => {
             return;
         }
 
-        const transaction: any[] = [
-            prisma.groupMember.delete({
-                where: { userId_groupId: { userId: currentUserId as string, groupId: id as string } }
-            })
-        ];
-
-        if (membership.status === 'JOINED') {
-            transaction.push(
-                prisma.group.update({
-                    where: { id: id as string },
-                    data: { memberCount: { decrement: 1 } }
-                })
-            );
-        }
-
-        await prisma.$transaction(transaction);
+        await prisma.groupMember.delete({
+            where: { userId_groupId: { userId: currentUserId as string, groupId: id as string } }
+        });
 
         res.json({ status: 'NOT_JOINED', role: null });
     } catch (error: any) {
@@ -383,16 +356,10 @@ export const requestJoin = async (req: Request, res: Response) => {
                 return;
             }
             if (existing.status === 'INVITED') {
-                await prisma.$transaction([
-                    prisma.groupMember.update({
-                        where: { userId_groupId: { userId: currentUserId, groupId: id as string } },
-                        data: { status: 'JOINED' }
-                    }),
-                    prisma.group.update({
-                        where: { id: id as string },
-                        data: { memberCount: { increment: 1 } }
-                    })
-                ]);
+                await prisma.groupMember.update({
+                    where: { userId_groupId: { userId: currentUserId, groupId: id as string } },
+                    data: { status: 'JOINED' }
+                });
                 res.json({ status: 'JOINED', role: existing.role });
                 return;
             }
@@ -455,7 +422,6 @@ export const getGroupPosts = async (req: Request, res: Response) => {
                     }
                 },
                 questions: { include: { options: true } },
-                sections: { include: { questions: { include: { options: true } } } },
                 ...(currentUserId ? {
                     responses: { where: { userId: currentUserId }, take: 1 },
                     likes: { where: { userId: currentUserId }, take: 1 },
