@@ -11,7 +11,7 @@ interface HomeScreenProps {
   surveys: Survey[];
   userProfile: UserProfile;
   onSurveyClick: (id: string, sourceSurface?: 'FEED' | 'TRENDING', action?: 'analysis') => void;
-  onVote: (surveyId: string, optionIds: string[], newOption?: any) => void;
+  onVote: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: any) => void;
   onSurveyProgress: (surveyId: string, progress: any) => void;
   onAuthorClick: (author: { id: string; name: string; avatar: string; handle?: string }) => void;
   onShareToFeed: (survey: Survey, caption: string) => void;
@@ -78,7 +78,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       const s = surveys[i];
       if (s.isTrending && trending.length < 6) {
         trending.push(s);
-      } else if (!s.isTrending) {
+      } else {
         regular.push(s);
       }
     }
@@ -134,31 +134,34 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     return () => observer.disconnect();
   }, [hasNextPage, isLoadingMore, onLoadMore]);
 
-  const handleFollowSuggestion = async (targetId: string) => {
-    if (!userProfile) return;
+  const handleFollowSuggestion = async (targetId: string): Promise<void> => {
+    if (!userProfile) return Promise.resolve();
     
-    const originalUsers = [...suggestedUsers];
+    // Optimistically dispatch follow event for the rest of the app
+    window.dispatchEvent(new CustomEvent('onFollowStateChange', {
+      detail: { targetUserId: targetId, isFollowing: true }
+    }));
     
-    try {
-      // Optimistically dispatch follow event for the rest of the app
-      window.dispatchEvent(new CustomEvent('onFollowStateChange', {
-        detail: { targetUserId: targetId, isFollowing: true }
-      }));
-      
-      // Delay removal so the "Following" animation can complete smoothly
-      setTimeout(() => {
-          setSuggestedUsers(prev => prev.filter(u => u.id !== targetId));
-      }, 800);
+    // We need to keep a reference to a timeout so we can cancel it on failure
+    const removeTimeout = setTimeout(() => {
+        setSuggestedUsers(prev => prev.filter(u => u.id !== targetId));
+    }, 800);
 
+    try {
       // Await API response to ensure success
       await api.followUser(targetId, userProfile.id);
     } catch (err) {
       console.error('Failed to follow user, rolling back', err);
+      // Cancel the removal timeout so the user stays in the list!
+      clearTimeout(removeTimeout);
+      
       // Rollback optimistic updates
       window.dispatchEvent(new CustomEvent('onFollowStateChange', {
         detail: { targetUserId: targetId, isFollowing: false }
       }));
-      setSuggestedUsers(originalUsers);
+      
+      // Re-throw so SuggestedUsersList can catch and rollback its UI
+      throw err;
     }
   };
 

@@ -25,7 +25,7 @@ interface SurveyCardProps {
   onShareToFeed?: (survey: Survey, caption: string) => void;
   onUpdateDemographics?: (demographics: Partial<NonNullable<UserProfile['demographics']>>) => void;
   positionInFeed?: number;
-  sourceSurface?: 'FEED' | 'PROFILE' | 'SAVED' | 'SEARCH' | 'DEEP_LINK';
+  sourceSurface?: 'FEED' | 'PROFILE' | 'SAVED' | 'SEARCH' | 'DEEP_LINK' | 'SHARE_CAPTURE';
   onAnalysisClick?: () => void;
   contextGroups?: any[];
   onGroupClick?: (groupId: string) => void;
@@ -291,18 +291,18 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
   const [quizStats, setQuizStats] = useState<{ correct: number, total: number } | null>(null);
 
-  const authorType = survey.author?.type || 'User'; // Adjust based on your schema if needed
-  const [isInteracted, setIsInteracted] = useFollowState(survey.author?.id, survey.author?.isFollowing || false);
+  const authorType = sourceSurvey.author?.type || 'User'; // Adjust based on your schema if needed
+  const [isInteracted, setIsInteracted] = useFollowState(sourceSurvey.author?.id, sourceSurvey.author?.isFollowing || false);
   const [isInteractLoading, setIsInteractLoading] = useState(false);
 
   useEffect(() => {
-    setIsInteracted(survey.author?.isFollowing || false);
-  }, [survey.author?.isFollowing]);
+    setIsInteracted(sourceSurvey.author?.isFollowing || false);
+  }, [sourceSurvey.author?.isFollowing]);
 
   const handleFollowInteraction = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!userProfile?.id || !survey.author?.id) return;
-    const authorId = survey.author.id;
+    if (!userProfile?.id || !sourceSurvey.author?.id) return;
+    const authorId = sourceSurvey.author.id;
     const newStatus = !isInteracted;
     setIsInteracted(newStatus);
     setIsInteractLoading(true);
@@ -331,7 +331,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
   const renderInteractionButton = () => {
     if (!userProfile?.id) return null;
-    const isMe = userProfile.id === survey.author?.id;
+    const isMe = userProfile.id === sourceSurvey.author?.id;
     if (isMe) return null;
     if (isInteracted) return null;
 
@@ -673,7 +673,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           // Finish Quiz
           if (onVote) {
             const allSelectedOptionIds = Object.values(newAnswers).flat().filter(Boolean);
-            onVote(sourceSurvey.id, allSelectedOptionIds, isCurrentlyAnonymous, undefined);
+            onVote(sourceSurvey.id, allSelectedOptionIds, isCurrentlyAnonymous);
           }
           setSurveyCompleted(true);
         }
@@ -787,7 +787,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
     if (onVote) {
       const allSelectedOptionIds = Object.values(finalAnswers).flat().filter(Boolean) as string[];
-      onVote(sourceSurvey.id, allSelectedOptionIds, undefined, isCurrentlyAnonymous);
+      onVote(sourceSurvey.id, allSelectedOptionIds, isCurrentlyAnonymous);
     }
 
     if (onSurveyProgress) {
@@ -1877,7 +1877,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                           </div>
                         </>
                       )}
-                      {((userProfile?.id !== survey.author?.id) && !survey.sharedFrom) && renderInteractionButton()}
+                      {((userProfile?.id !== sourceSurvey.author?.id) && !survey.sharedFrom) && renderInteractionButton()}
                     </div>
                     <div className="flex items-center flex-wrap gap-y-1 gap-x-1 text-xs text-gray-500 mt-0.5 font-medium">
                       <span>{getTimeAgo(sourceSurvey.createdAt)}</span>

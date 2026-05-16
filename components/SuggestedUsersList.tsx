@@ -9,7 +9,7 @@ interface SuggestedUser extends UserProfile {
 
 interface SuggestedUsersListProps {
     users: SuggestedUser[];
-    onFollow: (userId: string) => void;
+    onFollow: (userId: string) => Promise<void>;
     onUserClick?: (user: { id: string, name: string, avatar: string, handle?: string }) => void;
     onDismiss?: (userId: string) => void;
 }
@@ -28,11 +28,20 @@ export const SuggestedUsersList: React.FC<SuggestedUsersListProps> = ({ users, o
         }, 300); // Wait for scale down animation
     };
 
-    const handleFollowClick = (userId: string) => {
+    const handleFollowClick = async (userId: string) => {
         // Optimistically update UI
         setFollowedIds(prev => new Set(prev).add(userId));
-        // Trigger parent callback (which delays removal for 1s)
-        onFollow(userId);
+        
+        try {
+            await onFollow(userId);
+        } catch (error) {
+            // Rollback on failure
+            setFollowedIds(prev => {
+                const next = new Set(prev);
+                next.delete(userId);
+                return next;
+            });
+        }
     };
 
     return (
