@@ -358,7 +358,7 @@ export const createPost = async (req: Request, res: Response) => {
             imageLayout: data.imageLayout,
             currentStep: data.currentStep || 1,
             targetAudience: data.targetAudience,
-            targetGroups: data.targetGroups && Array.isArray(data.targetGroups) && data.targetGroups.length > 0 
+            targetedGroups: data.targetGroups && Array.isArray(data.targetGroups) && data.targetGroups.length > 0 
                 ? { connect: data.targetGroups.map((id: string) => ({ id })) } 
                 : undefined,
             resultsWho: data.resultsWho,
@@ -464,7 +464,7 @@ export const createPost = async (req: Request, res: Response) => {
             allowAnonymous: post.allowAnonymous,
             forceAnonymous: (post as any).forceAnonymous,
             demographics: parseJsonArray(post.demographics),
-            targetGroups: parseJsonArray(post.targetGroups)
+            targetGroups: (post as any).targetedGroups ? (post as any).targetedGroups.map((g: any) => g.id) : []
         };
 
         res.json(mappedPost);
@@ -522,7 +522,11 @@ export const updatePost = async (req: Request, res: Response) => {
             ...(data.resultsDetail !== undefined && { resultsDetail: data.resultsDetail }),
             ...(data.resultsTiming !== undefined && { resultsTiming: data.resultsTiming }),
             ...(data.targetAudience !== undefined && { targetAudience: data.targetAudience }),
-            ...(data.targetGroups !== undefined && { targetGroups: Array.isArray(data.targetGroups) ? JSON.stringify(data.targetGroups) : data.targetGroups }),
+            ...(data.targetGroups !== undefined && { 
+                targetedGroups: { 
+                    set: Array.isArray(data.targetGroups) ? data.targetGroups.map((id: string) => ({ id })) : [] 
+                } 
+            }),
             ...(data.pollChoiceType !== undefined && { pollChoiceType: data.pollChoiceType }),
             ...(data.imageLayout !== undefined && { imageLayout: data.imageLayout }),
             ...(data.demographics !== undefined && { demographics: Array.isArray(data.demographics) ? JSON.stringify(data.demographics) : data.demographics })
@@ -699,7 +703,7 @@ export const getDrafts = async (req: Request, res: Response) => {
             allowAnonymous: d.allowAnonymous,
             forceAnonymous: d.forceAnonymous,
             demographics: parseJsonArray(d.demographics),
-            targetGroups: parseJsonArray(d.targetGroups)
+            targetGroups: d.targetedGroups ? d.targetedGroups.map((g: any) => g.id) : []
         }));
         res.json(mappedDrafts);
     } catch (error) {
@@ -750,7 +754,7 @@ export const getSavedPosts = async (req: Request, res: Response) => {
                 allowAnonymous: p.allowAnonymous,
                 forceAnonymous: !!p.forceAnonymous,
                 demographics: parseJsonArray(p.demographics),
-                targetGroups: parseJsonArray(p.targetGroups)
+                targetGroups: p.targetedGroups ? p.targetedGroups.map((g: any) => g.id) : []
             };
         });
         res.json(posts);
@@ -1159,7 +1163,7 @@ export const sharePost = async (req: Request, res: Response) => {
     try {
         const originalPost = await prisma.post.findUnique({
             where: { id },
-            include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } }
+            include: { questions: { include: { options: { orderBy: { order: 'asc' } } } }, targetedGroups: true }
         });
         if (!originalPost || (originalPost as any).isDeleted) {
             res.status(404).json({ error: 'Original post not found or has been deleted' });
@@ -1221,7 +1225,9 @@ export const sharePost = async (req: Request, res: Response) => {
                 allowUserOptions: originalPost.allowUserOptions,
                 resultsWho: originalPost.resultsWho,
                 resultsTiming: originalPost.resultsTiming,
-                targetGroups: originalPost.targetGroups
+                targetedGroups: (originalPost as any).targetedGroups && (originalPost as any).targetedGroups.length > 0 ? {
+                    connect: (originalPost as any).targetedGroups.map((g: any) => ({ id: g.id }))
+                } : undefined
             }
             }),
             prisma.post.update({

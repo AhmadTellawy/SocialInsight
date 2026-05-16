@@ -31,7 +31,7 @@ export const getGroupById = async (req: Request, res: Response) => {
     const { id } = req.params;
     const currentUserId = req.user?.userId;
     try {
-        const hasAccess = await checkGroupAccess(id, currentUserId);
+        const hasAccess = await checkGroupAccess(id as string, currentUserId);
         if (!hasAccess) {
             res.status(403).json({ error: 'Forbidden or Group not found' });
             return;
@@ -230,7 +230,7 @@ export const getGroupStats = async (req: Request, res: Response) => {
     const currentUserId = req.user?.userId;
 
     try {
-        const hasAccess = await checkGroupAccess(id, currentUserId);
+        const hasAccess = await checkGroupAccess(id as string, currentUserId);
         if (!hasAccess) {
             res.status(403).json({ error: 'Forbidden or Group not found' });
             return;
@@ -250,7 +250,7 @@ export const getGroupStats = async (req: Request, res: Response) => {
         try {
             postsCount = await prisma.post.count({
                 where: {
-                    targetGroups: { some: { id } }
+                    targetedGroups: { some: { id: id as string } }
                 }
             });
         } catch (err) {
@@ -260,12 +260,12 @@ export const getGroupStats = async (req: Request, res: Response) => {
         // Calculate votes by counting responses on posts targeted at this group
         const votesCount = await prisma.response.count({
             where: {
-                post: { targetGroups: { some: { id } } }
+                post: { targetedGroups: { some: { id: id as string } } }
             }
         });
 
         const activeMembersCount = await prisma.groupMember.count({
-            where: { groupId: id, status: 'JOINED' }
+            where: { groupId: id as string, status: 'JOINED' }
         });
 
         res.json({
@@ -286,7 +286,7 @@ export const getGroupMembers = async (req: Request, res: Response) => {
     const currentUserId = req.user?.userId;
 
     try {
-        const hasAccess = await checkGroupAccess(id, currentUserId);
+        const hasAccess = await checkGroupAccess(id as string, currentUserId);
         if (!hasAccess) {
             res.status(403).json({ error: 'Forbidden or Group not found' });
             return;
@@ -334,11 +334,11 @@ export const requestJoin = async (req: Request, res: Response) => {
 
     try {
         await prisma.groupMember.upsert({
-            where: { userId_groupId: { userId: currentUserId, groupId: id } },
+            where: { userId_groupId: { userId: currentUserId, groupId: id as string } },
             update: { status: 'PENDING' },
             create: {
                 userId: currentUserId,
-                groupId: id,
+                groupId: id as string,
                 role: 'Member',
                 status: 'PENDING'
             }
@@ -359,14 +359,14 @@ export const getGroupPosts = async (req: Request, res: Response) => {
     const currentUserId = req.user?.userId;
 
     try {
-        const hasAccess = await checkGroupAccess(id, currentUserId);
+        const hasAccess = await checkGroupAccess(id as string, currentUserId);
         if (!hasAccess) {
             res.status(403).json({ error: 'Forbidden or Group not found' });
             return;
         }
 
         const whereClause = {
-            targetGroups: { some: { id } },
+            targetedGroups: { some: { id: id as string } },
             ...(currentUserId ? { NOT: { hiddenBy: { some: { userId: currentUserId } } } } : {})
         };
 
