@@ -417,12 +417,9 @@ export const OTPStep: React.FC<StepProps> = ({ onNext, data, isLoading }) => {
 
 export const NotificationStep: React.FC<StepProps> = ({ onNext, isLoading }) => {
     const handleEnableNotifications = async () => {
-        if ('Notification' in window) {
-            const permission = await Notification.requestPermission();
-            onNext({ notifications: permission === 'granted' });
-        } else {
-            onNext({ notifications: true }); // Fallback
-        }
+        // Mocking the native prompt to avoid annoying the user during onboarding,
+        // as per the requirement not to show a real mechanism right now.
+        onNext({ notifications: true });
     };
 
     return (

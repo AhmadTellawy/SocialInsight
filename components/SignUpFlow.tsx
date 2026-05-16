@@ -46,13 +46,21 @@ export const SignUpFlow: React.FC<SignUpFlowProps> = ({ onComplete, onCancel }) 
                     setCollectedData({ ...collectedData, ...stepData, user: res.user, token: res.token });
 
                     // Skip OTP UI Step (Step 5) and go directly to Notifications (Step 6)
-                    setStep(6);
+                    if ('Notification' in window && Notification.permission !== 'default') {
+                        onComplete(res.user);
+                    } else {
+                        setStep(6);
+                    }
                 }
             } else if (step === 5) {
                 if (pendingId) {
                     const res = await api.completeRegistration(pendingId, stepData.code);
                     setCollectedData({ ...collectedData, user: res.user, token: res.token });
-                    setStep(6);
+                    if ('Notification' in window && Notification.permission !== 'default') {
+                        onComplete(res.user);
+                    } else {
+                        setStep(6);
+                    }
                 }
             } else if (step === 6) {
                 onComplete(collectedData.user);

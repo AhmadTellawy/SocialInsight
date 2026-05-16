@@ -151,7 +151,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                 <div className="flex-1 min-w-0">
                   <div className="mb-0.5">
                     <span className={`text-sm ${notification.isRead ? 'font-semibold text-gray-900' : 'font-bold text-black'}`}>
-                      {notification.actor?.name ?? 'System'}
+                      {notification.actor?.name ?? (['vote', 'response'].includes(notification.type) ? 'ضيف' : 'النظام')}
                     </span>
                     <span className={`text-sm ${notification.isRead ? 'text-gray-600' : 'text-gray-800 font-medium'}`}>
                       {' '}{notification.message}
