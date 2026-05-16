@@ -26,14 +26,17 @@ export const getGroups = async (req: Request, res: Response) => {
     }
 };
 const checkGroupAccess = async (groupId: string, userId: string | undefined): Promise<boolean> => {
-    const group = await prisma.group.findUnique({ where: { id: groupId }, select: { isPublic: true } });
-    if (!group) return false;
-    if (group.isPublic) return true;
-    if (!userId) return false;
-    const member = await prisma.groupMember.findUnique({
-        where: { userId_groupId: { userId, groupId } }
+    const group = await prisma.group.findFirst({
+        where: {
+            id: groupId,
+            OR: [
+                { isPublic: true },
+                ...(userId ? [{ members: { some: { userId, status: 'JOINED' } } }] : [])
+            ]
+        },
+        select: { id: true }
     });
-    return member?.status === 'JOINED';
+    return !!group;
 };
 
 export const getGroupById = async (req: Request, res: Response) => {
@@ -49,6 +52,7 @@ export const getGroupById = async (req: Request, res: Response) => {
             where: { id: id as string },
             include: {
                 members: {
+                    where: { status: 'JOINED' },
                     take: 10,
                     include: { user: true }
                 },
@@ -163,10 +167,16 @@ export const joinGroup = async (req: Request, res: Response) => {
                 return;
             } else if (existingMember.status === 'INVITED' || (group.isPublic && existingMember.status === 'PENDING')) {
                 // Accept invite or automatically accept pending if public
-                const updated = await prisma.groupMember.update({
-                    where: { userId_groupId: { userId: String(currentUserId), groupId: String(id) } },
-                    data: { status: 'JOINED' }
-                });
+                const [updated] = await prisma.$transaction([
+                    prisma.groupMember.update({
+                        where: { userId_groupId: { userId: String(currentUserId), groupId: String(id) } },
+                        data: { status: 'JOINED' }
+                    }),
+                    prisma.group.update({
+                        where: { id: String(id) },
+                        data: { memberCount: { increment: 1 } }
+                    })
+                ]);
                 res.json({ status: 'JOINED', role: updated.role });
                 return;
             } else {
@@ -285,12 +295,8 @@ export const getGroupStats = async (req: Request, res: Response) => {
             }
         });
 
-        const activeMembersCount = await prisma.groupMember.count({
-            where: { groupId: id as string, status: 'JOINED' }
-        });
-
         res.json({
-            membersCount: activeMembersCount,
+            membersCount: group.memberCount,
             postsCount,
             votesCount
         });
@@ -379,14 +385,18 @@ export const requestJoin = async (req: Request, res: Response) => {
             }
         }
 
-        await prisma.groupMember.create({
-            data: {
-                userId: currentUserId,
-                groupId: id as string,
-                role: 'Member',
-                status: 'PENDING'
-            }
-        });
+        try {
+            await prisma.groupMember.create({
+                data: {
+                    userId: currentUserId,
+                    groupId: id as string,
+                    role: 'Member',
+                    status: 'PENDING'
+                }
+            });
+        } catch (err: any) {
+            if (err.code !== 'P2002') throw err;
+        }
         res.json({ status: 'PENDING' });
     } catch (error) {
         console.error('Failed to request join:', error);
