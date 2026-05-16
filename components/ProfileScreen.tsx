@@ -315,7 +315,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   }, [statSearch, connectionList]);
 
   const filteredPosts = useMemo(() => {
-    let list = mySurveys.filter(s => !s.isDraft);
+    let list = mySurveys.filter(s => !s.isDraft && !s.sharedFrom);
     if (postFilter !== 'All') {
       list = list.filter(s => s.type === postFilter);
     }
@@ -858,7 +858,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         title={
           activeStatSheet === 'following' ? `Following (${profileUser.stats.following})` :
             activeStatSheet === 'followers' ? `Followers (${profileUser.stats.followers})` :
-              `Posts (${mySurveys.filter(s => !s.isDraft).length})`
+              `Posts (${mySurveys.filter(s => !s.isDraft && !s.sharedFrom).length})`
         }
       >
         {renderStatSheetContent()}

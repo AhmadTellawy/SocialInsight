@@ -301,13 +301,13 @@ export const getUserAnalytics = async (req: Request, res: Response) => {
             totalResponses += responseCount;
             byType[type] = (byType[type] || 0) + responseCount;
 
-            post.responses.forEach(response => {
+            post.responses.forEach((response: any) => {
                 const rUser = response.user;
-                if (rUser.country) {
+                if (rUser && rUser.country) {
                     byCountry[rUser.country] = (byCountry[rUser.country] || 0) + 1;
                 }
 
-                const demo = rUser.demographics as any; // Cast to any to avoid strict type checks here for now
+                const demo = rUser?.demographics as any;
                 if (demo) {
                     if (demo.gender) byGender[demo.gender] = (byGender[demo.gender] || 0) + 1;
                     if (demo.ageGroup) byAge[demo.ageGroup] = (byAge[demo.ageGroup] || 0) + 1;
