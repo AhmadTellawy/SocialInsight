@@ -358,7 +358,9 @@ export const createPost = async (req: Request, res: Response) => {
             imageLayout: data.imageLayout,
             currentStep: data.currentStep || 1,
             targetAudience: data.targetAudience,
-            targetGroups: data.targetGroups ? (Array.isArray(data.targetGroups) ? JSON.stringify(data.targetGroups) : data.targetGroups) : undefined,
+            targetGroups: data.targetGroups && Array.isArray(data.targetGroups) && data.targetGroups.length > 0 
+                ? { connect: data.targetGroups.map((id: string) => ({ id })) } 
+                : undefined,
             resultsWho: data.resultsWho,
             resultsDetail: data.resultsDetail,
             resultsTiming: data.resultsTiming,

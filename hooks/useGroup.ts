@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { MembershipStatus, Survey, normalizeSurvey } from '../types';
+import { authFetch } from '../services/api';
 
 export interface GroupStats {
     postsCount: number;
@@ -22,9 +23,12 @@ export function useGroupMembership(groupId: string, userId?: string) {
 
         // Fetch initial membership status
         const url = userId ? `/api/groups/${groupId}/membership?currentUserId=${userId}` : `/api/groups/${groupId}/membership`;
-        fetch(url)
+        authFetch(url)
             .then((res) => {
-                if (!res.ok) throw new Error('Failed to fetch membership status');
+                if (!res.ok) {
+                    if (res.status === 403) return { status: 'NOT_JOINED' };
+                    throw new Error('Failed to fetch membership status');
+                }
                 return res.json();
             })
             .then((data: { status: MembershipStatus, role?: string }) => {
@@ -50,12 +54,15 @@ export function useGroupMembership(groupId: string, userId?: string) {
         try {
             if (!userId) throw new Error('Must be logged in to join');
             setIsLoading(true);
-            const res = await fetch(`/api/groups/${groupId}/join`, {
+            const res = await authFetch(`/api/groups/${groupId}/join`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ currentUserId: userId })
+                body: JSON.stringify({})
             });
-            if (!res.ok) throw new Error('Failed to join group');
+            if (!res.ok) {
+                if (res.status === 403) setMembershipStatus('NOT_JOINED');
+                throw new Error('Failed to join group');
+            }
             const data = await res.json();
             setMembershipStatus(data.status);
             setRole(data.role || 'Member');
@@ -70,12 +77,15 @@ export function useGroupMembership(groupId: string, userId?: string) {
         try {
             if (!userId) throw new Error('Must be logged in to leave');
             setIsLoading(true);
-            const res = await fetch(`/api/groups/${groupId}/leave`, {
+            const res = await authFetch(`/api/groups/${groupId}/leave`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ currentUserId: userId })
+                body: JSON.stringify({})
             });
-            if (!res.ok) throw new Error('Failed to leave group');
+            if (!res.ok) {
+                if (res.status === 403) setMembershipStatus('NOT_JOINED');
+                throw new Error('Failed to leave group');
+            }
             setMembershipStatus('NOT_JOINED');
             setRole(null);
         } catch (err: any) {
@@ -89,12 +99,15 @@ export function useGroupMembership(groupId: string, userId?: string) {
         try {
             if (!userId) throw new Error('Must be logged in to request join');
             setIsLoading(true);
-            const res = await fetch(`/api/groups/${groupId}/request-join`, {
+            const res = await authFetch(`/api/groups/${groupId}/request-join`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ currentUserId: userId })
+                body: JSON.stringify({})
             });
-            if (!res.ok) throw new Error('Failed to request to join group');
+            if (!res.ok) {
+                if (res.status === 403) setMembershipStatus('NOT_JOINED');
+                throw new Error('Failed to request to join group');
+            }
             setMembershipStatus('PENDING');
         } catch (err: any) {
             setError(err.message);
@@ -131,9 +144,10 @@ export function useGroupPosts(groupId: string, userId?: string) {
             else setIsFetchingNextPage(true);
             setError(null);
 
-            const url = `/api/groups/${groupId}/posts?page=${pageNum}&limit=10${userId ? `&currentUserId=${userId}` : ''}`;
-            const res = await fetch(url);
+            const url = `/api/groups/${groupId}/posts?page=${pageNum}&limit=10`;
+            const res = await authFetch(url);
             if (!res.ok) {
+                if (res.status === 403) throw new Error('Private group posts are hidden.');
                 const errData = await res.json().catch(() => ({}));
                 throw new Error(errData.error || 'Failed to fetch posts');
             }
@@ -197,9 +211,10 @@ export function useGroupStats(groupId: string) {
         let isMounted = true;
         setIsLoading(true);
 
-        fetch(`/api/groups/${groupId}/stats`)
+        authFetch(`/api/groups/${groupId}/stats`)
             .then(async (res) => {
                 if (!res.ok) {
+                    if (res.status === 403) throw new Error('Private group stats are hidden.');
                     const errData = await res.json().catch(() => ({}));
                     throw new Error(errData.error || 'Failed to fetch group stats');
                 }
@@ -243,8 +258,11 @@ export function useGroupMembers(groupId: string) {
             else setIsFetchingNextPage(true);
             setError(null);
 
-            const res = await fetch(`/api/groups/${groupId}/members?page=${pageNum}&limit=20`);
-            if (!res.ok) throw new Error('Failed to fetch members');
+            const res = await authFetch(`/api/groups/${groupId}/members?page=${pageNum}&limit=20`);
+            if (!res.ok) {
+                if (res.status === 403) throw new Error('Private group members are hidden.');
+                throw new Error('Failed to fetch members');
+            }
             const data: { members: any[]; hasMore: boolean } = await res.json();
 
             setMembers((prev) => (isInitial ? data.members : [...prev, ...data.members]));

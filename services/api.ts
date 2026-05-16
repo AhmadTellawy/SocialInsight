@@ -34,7 +34,7 @@ const resolveAssets = (obj: any): any => {
     return obj;
 };
 
-const authFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+export const authFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const token = localStorage.getItem('si_token');
     const headers = new Headers(init?.headers);
     if (token) {

@@ -16,10 +16,26 @@ export const getGroups = async (req: Request, res: Response) => {
         res.status(500).json({ error: 'Failed to fetch groups' });
     }
 };
+const checkGroupAccess = async (groupId: string, userId: string | undefined): Promise<boolean> => {
+    const group = await prisma.group.findUnique({ where: { id: groupId }, select: { isPublic: true } });
+    if (!group) return false;
+    if (group.isPublic) return true;
+    if (!userId) return false;
+    const member = await prisma.groupMember.findUnique({
+        where: { userId_groupId: { userId, groupId } }
+    });
+    return member?.status === 'JOINED';
+};
 
 export const getGroupById = async (req: Request, res: Response) => {
     const { id } = req.params;
+    const currentUserId = req.user?.userId;
     try {
+        const hasAccess = await checkGroupAccess(id, currentUserId);
+        if (!hasAccess) {
+            res.status(403).json({ error: 'Forbidden or Group not found' });
+            return;
+        }
         const group = await prisma.group.findUnique({
             where: { id: id as string },
             include: {
@@ -48,10 +64,11 @@ export const getGroupById = async (req: Request, res: Response) => {
 };
 
 export const createGroup = async (req: Request, res: Response) => {
-    const { name, description, category, image, isPublic, creatorId } = req.body;
+    const { name, description, category, image, isPublic } = req.body;
+    const creatorId = req.user?.userId;
 
     if (!name || !creatorId) {
-        res.status(400).json({ error: 'Missing name or creatorId' });
+        res.status(400).json({ error: 'Missing name or not authenticated' });
         return;
     }
 
@@ -67,7 +84,8 @@ export const createGroup = async (req: Request, res: Response) => {
                 members: {
                     create: {
                         userId: creatorId,
-                        role: 'Owner'
+                        role: 'Owner',
+                        status: 'JOINED'
                     }
                 }
             }
@@ -82,10 +100,10 @@ export const createGroup = async (req: Request, res: Response) => {
 
 export const getMembership = async (req: Request, res: Response) => {
     const { id } = req.params; // groupId
-    const { currentUserId } = req.query;
+    const currentUserId = req.user?.userId;
 
     if (!currentUserId) {
-        res.status(400).json({ error: 'currentUserId is required' });
+        res.json({ status: 'NOT_JOINED', role: null });
         return;
     }
 
@@ -93,7 +111,7 @@ export const getMembership = async (req: Request, res: Response) => {
         const membership = await prisma.groupMember.findUnique({
             where: {
                 userId_groupId: {
-                    userId: currentUserId as string,
+                    userId: currentUserId,
                     groupId: id as string
                 }
             }
@@ -112,20 +130,45 @@ export const getMembership = async (req: Request, res: Response) => {
 
 export const joinGroup = async (req: Request, res: Response) => {
     const { id } = req.params;
-    const { currentUserId } = req.body;
+    const currentUserId = req.user?.userId;
 
     if (!currentUserId) {
-        res.status(400).json({ error: 'currentUserId is required' });
+        res.status(401).json({ error: 'Unauthorized' });
         return;
     }
 
     try {
+        const group = await prisma.group.findUnique({ where: { id: String(id) }, select: { isPublic: true } });
+        if (!group) {
+            res.status(404).json({ error: 'Group not found' });
+            return;
+        }
+
         const existingMember = await prisma.groupMember.findUnique({
             where: { userId_groupId: { userId: String(currentUserId), groupId: String(id) } }
         });
 
         if (existingMember) {
-            res.json({ status: 'JOINED', role: existingMember.role });
+            if (existingMember.status === 'JOINED') {
+                res.json({ status: 'JOINED', role: existingMember.role });
+                return;
+            } else if (existingMember.status === 'INVITED' || (group.isPublic && existingMember.status === 'PENDING')) {
+                // Accept invite or automatically accept pending if public
+                const updated = await prisma.groupMember.update({
+                    where: { userId_groupId: { userId: String(currentUserId), groupId: String(id) } },
+                    data: { status: 'JOINED' }
+                });
+                res.json({ status: 'JOINED', role: updated.role });
+                return;
+            } else {
+                // Still pending in a private group
+                res.json({ status: 'PENDING', role: existingMember.role });
+                return;
+            }
+        }
+
+        if (!group.isPublic) {
+            res.status(403).json({ error: 'Group is private, please request to join' });
             return;
         }
 
@@ -134,7 +177,8 @@ export const joinGroup = async (req: Request, res: Response) => {
                 data: {
                     userId: String(currentUserId),
                     groupId: String(id),
-                    role: 'Member'
+                    role: 'Member',
+                    status: 'JOINED'
                 }
             }),
             prisma.group.update({
@@ -152,10 +196,10 @@ export const joinGroup = async (req: Request, res: Response) => {
 
 export const leaveGroup = async (req: Request, res: Response) => {
     const { id } = req.params;
-    const { currentUserId } = req.body;
+    const currentUserId = req.user?.userId;
 
     if (!currentUserId) {
-        res.status(400).json({ error: 'currentUserId is required' });
+        res.status(401).json({ error: 'Unauthorized' });
         return;
     }
 
@@ -183,8 +227,15 @@ export const leaveGroup = async (req: Request, res: Response) => {
 
 export const getGroupStats = async (req: Request, res: Response) => {
     const { id } = req.params;
+    const currentUserId = req.user?.userId;
 
     try {
+        const hasAccess = await checkGroupAccess(id, currentUserId);
+        if (!hasAccess) {
+            res.status(403).json({ error: 'Forbidden or Group not found' });
+            return;
+        }
+
         const group = await prisma.group.findUnique({
             where: { id: id as string },
             select: { memberCount: true }
@@ -199,19 +250,28 @@ export const getGroupStats = async (req: Request, res: Response) => {
         try {
             postsCount = await prisma.post.count({
                 where: {
-                    targetGroups: { contains: `"${id}"` }
+                    targetGroups: { some: { id } }
                 }
             });
         } catch (err) {
             console.error('Failed to count group posts:', err);
         }
 
-        // Summing up votes requires aggregating responses or likes, but for now we fallback to 0 or count responses via Post
-        // simplified logic since we don't have direct group-level vote aggregation
+        // Calculate votes by counting responses on posts targeted at this group
+        const votesCount = await prisma.response.count({
+            where: {
+                post: { targetGroups: { some: { id } } }
+            }
+        });
+
+        const activeMembersCount = await prisma.groupMember.count({
+            where: { groupId: id, status: 'JOINED' }
+        });
+
         res.json({
-            membersCount: group.memberCount,
+            membersCount: activeMembersCount,
             postsCount,
-            votesCount: 0 // Placeholder or computed if needed
+            votesCount
         });
     } catch (error: any) {
         console.error('Failed to get group stats:', error);
@@ -223,8 +283,15 @@ export const getGroupMembers = async (req: Request, res: Response) => {
     const { id } = req.params;
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 20;
+    const currentUserId = req.user?.userId;
 
     try {
+        const hasAccess = await checkGroupAccess(id, currentUserId);
+        if (!hasAccess) {
+            res.status(403).json({ error: 'Forbidden or Group not found' });
+            return;
+        }
+
         const members = await prisma.groupMember.findMany({
             where: { groupId: id as string },
             skip: (page - 1) * limit,
@@ -257,9 +324,30 @@ export const getGroupMembers = async (req: Request, res: Response) => {
 };
 
 export const requestJoin = async (req: Request, res: Response) => {
-    // Basic placeholder, in a real system this might create a PendingRequest record
-    // For now we just return PENDING
-    res.json({ status: 'PENDING' });
+    const { id } = req.params;
+    const currentUserId = req.user?.userId;
+
+    if (!currentUserId) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+    }
+
+    try {
+        await prisma.groupMember.upsert({
+            where: { userId_groupId: { userId: currentUserId, groupId: id } },
+            update: { status: 'PENDING' },
+            create: {
+                userId: currentUserId,
+                groupId: id,
+                role: 'Member',
+                status: 'PENDING'
+            }
+        });
+        res.json({ status: 'PENDING' });
+    } catch (error) {
+        console.error('Failed to request join:', error);
+        res.status(500).json({ error: 'Failed to request join' });
+    }
 };
 
 import { SAFE_USER_SELECT, normalizePostType, parseJsonArray } from './postController';
@@ -268,18 +356,22 @@ export const getGroupPosts = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 10;
-    const currentUserId = req.query.currentUserId as string | undefined;
+    const currentUserId = req.user?.userId;
 
     try {
+        const hasAccess = await checkGroupAccess(id, currentUserId);
+        if (!hasAccess) {
+            res.status(403).json({ error: 'Forbidden or Group not found' });
+            return;
+        }
+
+        const whereClause = {
+            targetGroups: { some: { id } },
+            ...(currentUserId ? { NOT: { hiddenBy: { some: { userId: currentUserId } } } } : {})
+        };
+
         const posts = await prisma.post.findMany({
-            where: {
-                targetGroups: {
-                    contains: `"${id}"`
-                },
-                ...(currentUserId ? {
-                    NOT: { hiddenBy: { some: { userId: currentUserId } } }
-                } : {})
-            },
+            where: whereClause,
             take: limit,
             skip: (page - 1) * limit,
             orderBy: { createdAt: 'desc' },
@@ -306,14 +398,7 @@ export const getGroupPosts = async (req: Request, res: Response) => {
         });
 
         const total = await prisma.post.count({
-            where: {
-                targetGroups: {
-                    contains: id
-                },
-                ...(currentUserId ? {
-                    NOT: { hiddenBy: { some: { userId: currentUserId } } }
-                } : {})
-            }
+            where: whereClause
         });
 
         const mappedPosts = posts.map((s: any) => ({
