@@ -2,11 +2,20 @@ import { Request, Response } from 'express';
 import prisma from '../prisma';
 
 export const getGroups = async (req: Request, res: Response) => {
+    const currentUserId = req.user?.userId;
     try {
+        const whereClause = currentUserId ? {
+            OR: [
+                { isPublic: true },
+                { members: { some: { userId: currentUserId, status: 'JOINED' } } }
+            ]
+        } : { isPublic: true };
+
         const groups = await prisma.group.findMany({
+            where: whereClause,
             include: {
                 _count: {
-                    select: { members: true, posts: true }
+                    select: { posts: true } // We rely on memberCount for members, not _count
                 }
             }
         });
@@ -118,7 +127,7 @@ export const getMembership = async (req: Request, res: Response) => {
         });
 
         if (membership) {
-            res.json({ status: 'JOINED', role: membership.role });
+            res.json({ status: membership.status, role: membership.role });
         } else {
             res.json({ status: 'NOT_JOINED', role: null });
         }
@@ -204,24 +213,36 @@ export const leaveGroup = async (req: Request, res: Response) => {
     }
 
     try {
-        await prisma.$transaction([
+        const membership = await prisma.groupMember.findUnique({
+            where: { userId_groupId: { userId: currentUserId as string, groupId: id as string } }
+        });
+
+        if (!membership) {
+            res.status(404).json({ error: 'Not a member of this group' });
+            return;
+        }
+
+        const transaction: any[] = [
             prisma.groupMember.delete({
                 where: { userId_groupId: { userId: currentUserId as string, groupId: id as string } }
-            }),
-            prisma.group.update({
-                where: { id: id as string },
-                data: { memberCount: { decrement: 1 } }
             })
-        ]);
+        ];
+
+        if (membership.status === 'JOINED') {
+            transaction.push(
+                prisma.group.update({
+                    where: { id: id as string },
+                    data: { memberCount: { decrement: 1 } }
+                })
+            );
+        }
+
+        await prisma.$transaction(transaction);
 
         res.json({ status: 'NOT_JOINED', role: null });
     } catch (error: any) {
-        if (error.code === 'P2025') {
-            res.status(404).json({ error: 'Not a member of this group' });
-        } else {
-            console.error('Failed to leave group:', error);
-            res.status(500).json({ error: 'Failed to leave group' });
-        }
+        console.error('Failed to leave group:', error);
+        res.status(500).json({ error: 'Failed to leave group' });
     }
 };
 
@@ -293,7 +314,7 @@ export const getGroupMembers = async (req: Request, res: Response) => {
         }
 
         const members = await prisma.groupMember.findMany({
-            where: { groupId: id as string },
+            where: { groupId: id as string, status: 'JOINED' },
             skip: (page - 1) * limit,
             take: limit,
             include: {
@@ -303,7 +324,7 @@ export const getGroupMembers = async (req: Request, res: Response) => {
             }
         });
 
-        const total = await prisma.groupMember.count({ where: { groupId: id as string } });
+        const total = await prisma.groupMember.count({ where: { groupId: id as string, status: 'JOINED' } });
 
         const formattedMembers = members.map((m: any) => ({
             id: m.userId,
@@ -333,10 +354,33 @@ export const requestJoin = async (req: Request, res: Response) => {
     }
 
     try {
-        await prisma.groupMember.upsert({
-            where: { userId_groupId: { userId: currentUserId, groupId: id as string } },
-            update: { status: 'PENDING' },
-            create: {
+        const existing = await prisma.groupMember.findUnique({
+            where: { userId_groupId: { userId: currentUserId, groupId: id as string } }
+        });
+
+        if (existing) {
+            if (existing.status === 'JOINED' || existing.status === 'PENDING') {
+                res.json({ status: existing.status });
+                return;
+            }
+            if (existing.status === 'INVITED') {
+                await prisma.$transaction([
+                    prisma.groupMember.update({
+                        where: { userId_groupId: { userId: currentUserId, groupId: id as string } },
+                        data: { status: 'JOINED' }
+                    }),
+                    prisma.group.update({
+                        where: { id: id as string },
+                        data: { memberCount: { increment: 1 } }
+                    })
+                ]);
+                res.json({ status: 'JOINED' });
+                return;
+            }
+        }
+
+        await prisma.groupMember.create({
+            data: {
                 userId: currentUserId,
                 groupId: id as string,
                 role: 'Member',
