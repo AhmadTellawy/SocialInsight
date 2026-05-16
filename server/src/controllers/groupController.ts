@@ -61,7 +61,7 @@ export const createGroup = async (req: Request, res: Response) => {
                 name,
                 description: description || '',
                 category: category || 'General',
-                image: image || null,
+                image: image || `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=random&color=fff&size=200`,
                 isPublic: isPublic !== false,
                 memberCount: 1,
                 members: {
@@ -195,11 +195,16 @@ export const getGroupStats = async (req: Request, res: Response) => {
             return;
         }
 
-        const postsCount = await prisma.post.count({
-            where: {
-                targetGroups: { contains: `"${id}"` }
-            }
-        });
+        let postsCount = 0;
+        try {
+            postsCount = await prisma.post.count({
+                where: {
+                    targetGroups: { contains: `"${id}"` }
+                }
+            });
+        } catch (err) {
+            console.error('Failed to count group posts:', err);
+        }
 
         // Summing up votes requires aggregating responses or likes, but for now we fallback to 0 or count responses via Post
         // simplified logic since we don't have direct group-level vote aggregation
@@ -282,17 +287,21 @@ export const getGroupPosts = async (req: Request, res: Response) => {
                 author: {
                     select: {
                         ...SAFE_USER_SELECT,
-                        following: currentUserId ? {
-                            where: { followerId: currentUserId },
-                            select: { followerId: true }
-                        } : false
+                        ...(currentUserId ? {
+                            following: {
+                                where: { followerId: currentUserId },
+                                select: { followerId: true }
+                            }
+                        } : {})
                     }
                 },
                 questions: { include: { options: true } },
                 sections: { include: { questions: { include: { options: true } } } },
-                responses: currentUserId ? { where: { userId: currentUserId }, take: 1 } : false,
-                likes: currentUserId ? { where: { userId: currentUserId }, take: 1 } : false,
-                savedBy: currentUserId ? { where: { userId: currentUserId }, take: 1 } : false
+                ...(currentUserId ? {
+                    responses: { where: { userId: currentUserId }, take: 1 },
+                    likes: { where: { userId: currentUserId }, take: 1 },
+                    savedBy: { where: { userId: currentUserId }, take: 1 }
+                } : {})
             }
         });
 

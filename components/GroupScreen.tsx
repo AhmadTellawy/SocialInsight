@@ -53,9 +53,9 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
   const isJoined = membershipStatus === 'JOINED';
 
   const permissions = group.permissions || {
-    canViewMembers: false,
-    canManageSettings: false,
-    canPost: false,
+    canViewMembers: true,
+    canManageSettings: role === 'Owner' || role === 'Admin',
+    canPost: true,
   };
   const isAdmin = permissions.canManageSettings || role === 'Owner' || role === 'Admin';
 
@@ -304,7 +304,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
       {/* Header Image & Actions */}
       <div className="relative h-48 shrink-0">
         <div className="absolute inset-0 bg-gradient-to-br from-blue-600 to-indigo-700">
-          <SafeImage src={group.image} fallback="https://picsum.photos/400/200" className="w-full h-full object-cover opacity-60" />
+          <SafeImage src={group.image?.includes('ui-avatars') ? undefined : group.image} fallback="https://images.unsplash.com/photo-1557682250-33bd709cbe85?auto=format&fit=crop&w=800&q=80" className="w-full h-full object-cover opacity-60" />
         </div>
         <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
 

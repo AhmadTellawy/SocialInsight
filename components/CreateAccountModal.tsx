@@ -80,7 +80,6 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({ isOpen, 
           description: formData.description || (type === 'company' ? `Official page for ${formData.name}` : ''),
           category: type === 'company' ? formData.industry : formData.category,
           isPublic: type === 'company' ? true : formData.isPublic,
-          image: `https://picsum.photos/200/200?random=${Date.now()}`,
           creatorId: userProfile.id
         });
 
