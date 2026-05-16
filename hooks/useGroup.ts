@@ -22,7 +22,7 @@ export function useGroupMembership(groupId: string, userId?: string) {
         setIsLoading(true);
 
         // Fetch initial membership status
-        const url = userId ? `/api/groups/${groupId}/membership?currentUserId=${userId}` : `/api/groups/${groupId}/membership`;
+        const url = `/api/groups/${groupId}/membership`;
         authFetch(url)
             .then((res) => {
                 if (!res.ok) {
@@ -152,7 +152,17 @@ export function useGroupPosts(groupId: string, userId?: string) {
                 throw new Error(errData.error || 'Failed to fetch posts');
             }
             const data: { posts: any[]; hasMore: boolean } = await res.json();
-            const normalizedPosts = data.posts.map(normalizeSurvey);
+            
+            console.log(`[useGroupPosts] Raw response data:`, data);
+            
+            const normalizedPosts = data.posts.map(post => {
+                try {
+                    return normalizeSurvey(post);
+                } catch (e) {
+                    console.error(`[useGroupPosts] Failed to normalize post:`, post.id, e, post);
+                    return null;
+                }
+            }).filter(Boolean) as Survey[];
 
             setPosts((prev) => (isInitial ? normalizedPosts : [...prev, ...normalizedPosts]));
             setHasMore(data.hasMore);

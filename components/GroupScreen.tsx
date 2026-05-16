@@ -166,7 +166,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
             {isPostsLoading && posts.length === 0 ? (
               <div className="py-10 text-center text-gray-500 animate-pulse">Loading posts...</div>
             ) : postsError ? (
-              <div className="py-10 text-center text-red-500 text-sm">Error: {errorToText(postsError)}</div>
+              <div className="py-10 text-center text-red-500 text-sm">Error: {postsError}</div>
             ) : posts.length > 0 ? (
               <>
                 {posts.map(post => (
@@ -366,16 +366,18 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
         </div>
 
         <div className="flex gap-2">
-          <button
-            onClick={handleJoinClick}
-            disabled={isJoinDisabled}
-            className={`px-6 py-2 rounded-full font-bold text-xs transition-all active:scale-95 ${isJoined
-              ? 'bg-gray-100 text-gray-600 border border-gray-200'
-              : isJoinDisabled ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-blue-600 text-white shadow-lg shadow-blue-200'
-              }`}
-          >
-            {getJoinButtonLabel()}
-          </button>
+          {(!isMembershipLoading && role !== 'Owner' && role !== 'Admin' && membershipStatus !== 'JOINED') && (
+            <button
+              onClick={handleJoinClick}
+              disabled={isJoinDisabled}
+              className={`px-6 py-2.5 rounded-full font-bold text-xs transition-all shadow-md active:scale-95 ${membershipStatus === 'JOINED'
+                  ? 'bg-gray-100 text-gray-700 hover:bg-gray-200 shadow-none'
+                  : 'bg-blue-600 text-white hover:bg-blue-700 hover:shadow-lg'
+                }`}
+            >
+              {getJoinButtonLabel()}
+            </button>
+          )}
         </div>
       </div>
 

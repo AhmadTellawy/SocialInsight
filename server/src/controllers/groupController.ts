@@ -166,7 +166,7 @@ export const joinGroup = async (req: Request, res: Response) => {
     }
 
     try {
-        const group = await prisma.group.findUnique({ where: { id: String(id) }, select: { isPublic: true } });
+        const group = await prisma.group.findUnique({ where: { id: String(id) }, select: { isPublic: true, joinPolicy: true } });
         if (!group) {
             res.status(404).json({ error: 'Group not found' });
             return;
@@ -180,8 +180,8 @@ export const joinGroup = async (req: Request, res: Response) => {
             if (existingMember.status === 'JOINED') {
                 res.json({ status: 'JOINED', role: existingMember.role });
                 return;
-            } else if (existingMember.status === 'INVITED' || (group.isPublic && existingMember.status === 'PENDING')) {
-                // Accept invite or automatically accept pending if public
+            } else if (existingMember.status === 'INVITED' || (group.joinPolicy === 'OPEN' && existingMember.status === 'PENDING')) {
+                // Accept invite or automatically accept pending if policy is OPEN
                 const updated = await prisma.groupMember.update({
                     where: { userId_groupId: { userId: String(currentUserId), groupId: String(id) } },
                     data: { status: 'JOINED' }
@@ -189,27 +189,29 @@ export const joinGroup = async (req: Request, res: Response) => {
                 res.json({ status: 'JOINED', role: updated.role });
                 return;
             } else {
-                // Still pending in a private group
+                // Still pending
                 res.json({ status: 'PENDING', role: existingMember.role });
                 return;
             }
         }
 
-        if (!group.isPublic) {
-            res.status(403).json({ error: 'Group is private, please request to join' });
+        if (group.joinPolicy === 'INVITE_ONLY') {
+            res.status(403).json({ error: 'Group is invite-only' });
             return;
         }
+
+        const newStatus = group.joinPolicy === 'REQUEST' ? 'PENDING' : 'JOINED';
 
         const newMember = await prisma.groupMember.create({
             data: {
                 userId: String(currentUserId),
                 groupId: String(id),
                 role: 'Member',
-                status: 'JOINED'
+                status: newStatus
             }
         });
 
-        res.json({ status: 'JOINED', role: newMember.role });
+        res.json({ status: newMember.status, role: newMember.role });
     } catch (error) {
         console.error('Failed to join group:', error);
         res.status(500).json({ error: 'Failed to join group' });
@@ -251,9 +253,9 @@ export const getGroupStats = async (req: Request, res: Response) => {
     const currentUserId = req.user?.userId;
 
     try {
-        const hasAccess = await checkGroupAccess(id as string, currentUserId);
-        if (!hasAccess) {
-            res.status(403).json({ error: 'Forbidden or Group not found' });
+        const access = await checkGroupAccess(id as string, currentUserId);
+        if (access.status !== 200) {
+            res.status(access.status).json({ error: access.status === 404 ? 'Group not found' : 'Forbidden' });
             return;
         }
 
@@ -346,6 +348,23 @@ export const requestJoin = async (req: Request, res: Response) => {
     }
 
     try {
+        const group = await prisma.group.findUnique({ where: { id: id as string }, select: { joinPolicy: true } });
+        if (!group) {
+            res.status(404).json({ error: 'Group not found' });
+            return;
+        }
+
+        if (group.joinPolicy === 'INVITE_ONLY') {
+            res.status(403).json({ error: 'Group is invite-only' });
+            return;
+        }
+
+        if (group.joinPolicy === 'OPEN') {
+            // Technically they should call joinGroup directly, but we can just let them join
+            res.status(400).json({ error: 'Group is open, use join endpoint instead' });
+            return;
+        }
+
         const existing = await prisma.groupMember.findUnique({
             where: { userId_groupId: { userId: currentUserId, groupId: id as string } }
         });
@@ -421,12 +440,23 @@ export const getGroupPosts = async (req: Request, res: Response) => {
                         } : {})
                     }
                 },
-                questions: { include: { options: true } },
-                ...(currentUserId ? {
-                    responses: { where: { userId: currentUserId }, take: 1 },
-                    likes: { where: { userId: currentUserId }, take: 1 },
-                    savedBy: { where: { userId: currentUserId }, take: 1 }
-                } : {})
+                questions: { include: { options: { orderBy: { order: 'asc' } } } },
+                sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                responses: currentUserId ? { where: { userId: currentUserId }, take: 1, include: { answers: true } } : false,
+                likes: currentUserId ? { where: { userId: currentUserId }, take: 1 } : false,
+                shares: currentUserId ? { where: { authorId: currentUserId }, take: 1 } : false,
+                savedBy: currentUserId ? { where: { userId: currentUserId }, take: 1 } : false,
+                sharedFrom: {
+                    include: {
+                        author: { select: SAFE_USER_SELECT },
+                        questions: { include: { options: { orderBy: { order: 'asc' } } } },
+                        sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                        responses: currentUserId ? { where: { userId: currentUserId }, take: 1, include: { answers: true } } : false,
+                        likes: currentUserId ? { where: { userId: currentUserId }, take: 1 } : false,
+                        shares: currentUserId ? { where: { authorId: currentUserId }, take: 1 } : false,
+                        savedBy: currentUserId ? { where: { userId: currentUserId }, take: 1 } : false,
+                    }
+                }
             }
         });
 
@@ -434,23 +464,53 @@ export const getGroupPosts = async (req: Request, res: Response) => {
             where: whereClause
         });
 
-        const mappedPosts = posts.map((s: any) => ({
-            ...s,
-            likes: s.likesCount,
-            participants: s.responseCount,
-            coverImage: s.image,
-            hasParticipated: currentUserId ? (s.responses && s.responses.length > 0) : false,
-            isLiked: currentUserId ? (s.likes && s.likes.length > 0) : false,
-            isSaved: currentUserId ? (s.savedBy && s.savedBy.length > 0) : false,
-            options: normalizePostType(s.type) === 'Poll' && s.questions?.length > 0 ? s.questions[0].options : [],
-            author: {
-                ...s.author,
-                isFollowing: currentUserId ? (s.author.following && s.author.following.length > 0) : false
-            },
-            allowAnonymous: s.allowAnonymous,
-            forceAnonymous: s.forceAnonymous,
-            demographics: parseJsonArray(s.demographics)
-        }));
+        const mappedPosts = posts.map((s: any) => {
+            const actualResponse = s.sharedFrom ? s.sharedFrom.responses?.[0] : s.responses?.[0];
+            const userAnswers = actualResponse?.answers || [];
+            
+            let mappedSharedFrom: any = undefined;
+            if (s.sharedFrom) {
+                mappedSharedFrom = {
+                    ...s.sharedFrom,
+                    options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(s.sharedFrom.type) || '') && s.sharedFrom.questions?.length > 0 ? s.sharedFrom.questions[0].options : [],
+                    demographics: parseJsonArray(s.sharedFrom.demographics),
+                    author: s.sharedFrom.author ? {
+                        ...s.sharedFrom.author,
+                        isFollowing: currentUserId ? (s.sharedFrom.author.following && s.sharedFrom.author.following.length > 0) : false
+                    } : undefined,
+                    likes: s.sharedFrom.likesCount,
+                    repostCount: s.sharedFrom.sharesCount || 0,
+                    commentsCount: s.sharedFrom.commentsCount || 0,
+                    participants: s.sharedFrom.responseCount || 0,
+                    hasParticipated: currentUserId ? (s.sharedFrom.responses && s.sharedFrom.responses.length > 0) : false,
+                    isLiked: currentUserId ? (s.sharedFrom.likes && s.sharedFrom.likes.length > 0) : false,
+                    isSaved: currentUserId ? (s.sharedFrom.savedBy && s.sharedFrom.savedBy.length > 0) : false,
+                };
+            }
+
+            return {
+                ...s,
+                likes: s.likesCount,
+                participants: s.responseCount,
+                coverImage: s.image,
+                hasParticipated: currentUserId ? (s.responses && s.responses.length > 0) : false,
+                isLiked: currentUserId ? (s.likes && s.likes.length > 0) : false,
+                isSaved: currentUserId ? (s.savedBy && s.savedBy.length > 0) : false,
+                options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(s.type) || '') && s.questions?.length > 0 ? s.questions[0].options : [],
+                author: {
+                    ...s.author,
+                    isFollowing: currentUserId ? (s.author.following && s.author.following.length > 0) : false
+                },
+                demographics: parseJsonArray(s.demographics),
+                targetGroups: parseJsonArray(s.targetGroups),
+                sharedFrom: mappedSharedFrom,
+                userProgress: actualResponse?.progressState || {},
+                userSelectedOptions: userAnswers.map((a: any) => a.optionId),
+                responses: actualResponse ? { answers: actualResponse.answers } : undefined,
+                allowAnonymous: s.allowAnonymous,
+                forceAnonymous: s.forceAnonymous,
+            };
+        });
 
         res.json({
             posts: mappedPosts,

@@ -346,6 +346,35 @@ export const createPost = async (req: Request, res: Response) => {
         }
         // --------------------------
 
+        if (data.targetGroups && Array.isArray(data.targetGroups) && data.targetGroups.length > 0) {
+            for (const groupId of data.targetGroups) {
+                const group = await prisma.group.findUnique({
+                    where: { id: groupId },
+                    select: { postingPermissions: true }
+                });
+                if (group) {
+                    const membership = await prisma.groupMember.findUnique({
+                        where: { userId_groupId: { userId: authorId, groupId } }
+                    });
+
+                    if (!membership || membership.status !== 'JOINED') {
+                        res.status(403).json({ error: 'You must be a member of the group to post.' });
+                        return;
+                    }
+
+                    if (group.postingPermissions === 'AdminsOnly' && membership.role === 'Member') {
+                        res.status(403).json({ error: 'Only admins can post in this group.' });
+                        return;
+                    }
+
+                    if (group.postingPermissions === 'ApprovalNeeded' && membership.role === 'Member') {
+                        res.status(403).json({ error: 'Posts require admin approval in this group (feature pending).' });
+                        return;
+                    }
+                }
+            }
+        }
+
         const postData: any = {
             title: data.title || "Untitled",
             description: data.description || "",
