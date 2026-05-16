@@ -21,6 +21,11 @@ export function useGroupMembership(groupId: string, userId?: string) {
         let isMounted = true;
         setIsLoading(true);
 
+        if (!groupId) {
+            setIsLoading(false);
+            return;
+        }
+
         // Fetch initial membership status
         const url = `/api/groups/${groupId}/membership`;
         authFetch(url)
@@ -39,7 +44,11 @@ export function useGroupMembership(groupId: string, userId?: string) {
                 }
             })
             .catch((err) => {
-                if (isMounted) setError(err.message);
+                if (isMounted) {
+                    setError(err.message);
+                    setMembershipStatus('NOT_JOINED');
+                    setRole(null);
+                }
             })
             .finally(() => {
                 if (isMounted) setIsLoading(false);
@@ -139,6 +148,12 @@ export function useGroupPosts(groupId: string, userId?: string) {
     const [hasMore, setHasMore] = useState(true);
 
     const fetchPosts = useCallback(async (pageNum: number, isInitial = false) => {
+        if (!groupId) {
+            setIsLoading(false);
+            setIsFetchingNextPage(false);
+            return;
+        }
+
         try {
             if (isInitial) setIsLoading(true);
             else setIsFetchingNextPage(true);
@@ -153,19 +168,24 @@ export function useGroupPosts(groupId: string, userId?: string) {
             }
             const data: { posts: any[]; hasMore: boolean } = await res.json();
             
-            console.log(`[useGroupPosts] Raw response data:`, data);
+            if (!data || !Array.isArray(data.posts)) {
+                console.error('[useGroupPosts] Unexpected group posts response:', data);
+                throw new Error('Unexpected server response format');
+            }
             
-            const normalizedPosts = data.posts.map(post => {
+            const rawPosts = data.posts;
+            
+            const normalizedPosts = rawPosts.map(post => {
                 try {
                     return normalizeSurvey(post);
                 } catch (e) {
-                    console.error(`[useGroupPosts] Failed to normalize post:`, post.id, e, post);
+                    console.error(`[useGroupPosts] Failed to normalize post:`, post?.id, e, post);
                     return null;
                 }
             }).filter(Boolean) as Survey[];
 
             setPosts((prev) => (isInitial ? normalizedPosts : [...prev, ...normalizedPosts]));
-            setHasMore(data.hasMore);
+            setHasMore(data.hasMore ?? false);
         } catch (err: any) {
             setError(err.message);
         } finally {
@@ -220,6 +240,10 @@ export function useGroupStats(groupId: string) {
     useEffect(() => {
         let isMounted = true;
         setIsLoading(true);
+        if (!groupId) {
+            setIsLoading(false);
+            return;
+        }
 
         authFetch(`/api/groups/${groupId}/stats`)
             .then(async (res) => {
@@ -263,6 +287,12 @@ export function useGroupMembers(groupId: string) {
     const [hasMore, setHasMore] = useState(true);
 
     const fetchMembers = useCallback(async (pageNum: number, isInitial = false) => {
+        if (!groupId) {
+            setIsLoading(false);
+            setIsFetchingNextPage(false);
+            return;
+        }
+
         try {
             if (isInitial) setIsLoading(true);
             else setIsFetchingNextPage(true);

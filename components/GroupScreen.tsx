@@ -366,7 +366,14 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
         </div>
 
         <div className="flex gap-2">
-          {(!isMembershipLoading && role !== 'Owner' && role !== 'Admin' && membershipStatus !== 'JOINED') && (
+          {isMembershipLoading ? (
+            <button
+              disabled
+              className="px-6 py-2.5 rounded-full font-bold text-xs bg-gray-200 text-gray-400 cursor-not-allowed animate-pulse"
+            >
+              Loading...
+            </button>
+          ) : (!isMembershipLoading && role !== 'Owner' && role !== 'Admin' && membershipStatus !== 'JOINED') && (
             <button
               onClick={handleJoinClick}
               disabled={isJoinDisabled}
