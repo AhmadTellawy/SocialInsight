@@ -44,7 +44,7 @@ export function useGroupMembership(groupId: string, userId?: string) {
         return () => {
             isMounted = false;
         };
-    }, [groupId]);
+    }, [groupId, userId]);
 
     const joinGroup = async () => {
         try {
