@@ -10,7 +10,7 @@ import { api } from '../services/api';
 interface HomeScreenProps {
   surveys: Survey[];
   userProfile: UserProfile;
-  onSurveyClick: (id: string, sourceSurface?: 'FEED' | 'TRENDING') => void;
+  onSurveyClick: (id: string, sourceSurface?: 'FEED' | 'TRENDING', action?: 'analysis') => void;
   onVote: (surveyId: string, optionIds: string[], newOption?: any) => void;
   onSurveyProgress: (surveyId: string, progress: any) => void;
   onAuthorClick: (author: { id: string; name: string; avatar: string; handle?: string }) => void;
@@ -24,7 +24,6 @@ interface HomeScreenProps {
   onLoadMore?: () => void;
   hasNextPage?: boolean;
   isLoadingMore?: boolean;
-  onUpdateCurrentUser?: (user: UserProfile) => void;
 }
 
 export const SurveyCardSkeleton = () => (
@@ -69,10 +68,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   onLoadMore,
   hasNextPage,
   isLoadingMore,
-  onUpdateCurrentUser
 }) => {
   const { t } = useTranslation();
-  const [activeTab, setActiveTab] = useState<'fyp' | 'following'>('fyp');
 
   const { trendingSurveys, regularSurveys } = useMemo(() => {
     const trending: Survey[] = [];
@@ -92,23 +89,56 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   const [isSuggestedLoading, setIsSuggestedLoading] = useState(true);
 
   useEffect(() => {
+    let isMounted = true;
+    
     if (userProfile && userProfile.id && !userProfile.isGuest) {
-      if (suggestedUsers.length === 0) {
-        setIsSuggestedLoading(true);
-        api.getSuggestedUsers(userProfile.id)
-          .then(setSuggestedUsers)
-          .catch(console.error)
-          .finally(() => setIsSuggestedLoading(false));
-      } else {
-        setIsSuggestedLoading(false);
-      }
+      setIsSuggestedLoading(true);
+      api.getSuggestedUsers(userProfile.id)
+        .then(users => {
+          if (isMounted) {
+            setSuggestedUsers(users);
+          }
+        })
+        .catch(err => {
+          if (isMounted) console.error('Failed to fetch suggested users:', err);
+        })
+        .finally(() => {
+          if (isMounted) setIsSuggestedLoading(false);
+        });
     } else {
+      setSuggestedUsers([]);
       setIsSuggestedLoading(false);
     }
+    
+    return () => {
+      isMounted = false;
+    };
   }, [userProfile?.id]);
+
+  const observerTarget = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries[0].isIntersecting && hasNextPage && !isLoadingMore && onLoadMore) {
+          onLoadMore();
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    if (observerTarget.current) {
+      observer.observe(observerTarget.current);
+    }
+
+    return () => observer.disconnect();
+  }, [hasNextPage, isLoadingMore, onLoadMore]);
 
   const handleFollowSuggestion = async (targetId: string) => {
     if (!userProfile) return;
+    
+    const originalUsers = [...suggestedUsers];
+    
     try {
       // Optimistically dispatch follow event for the rest of the app
       window.dispatchEvent(new CustomEvent('onFollowStateChange', {
@@ -120,10 +150,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           setSuggestedUsers(prev => prev.filter(u => u.id !== targetId));
       }, 800);
 
-      // Perform request in background without blocking UI
-      api.followUser(targetId, userProfile.id).catch(console.error);
+      // Await API response to ensure success
+      await api.followUser(targetId, userProfile.id);
     } catch (err) {
-      console.error(err);
+      console.error('Failed to follow user, rolling back', err);
+      // Rollback optimistic updates
+      window.dispatchEvent(new CustomEvent('onFollowStateChange', {
+        detail: { targetUserId: targetId, isFollowing: false }
+      }));
+      setSuggestedUsers(originalUsers);
     }
   };
 
@@ -263,7 +298,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       </div>
 
       {/* 4. Footer Loading Indicator */}
-      <div className="py-8 flex flex-col items-center justify-center min-h-[120px] transition-all">
+      <div ref={observerTarget} className="py-8 flex flex-col items-center justify-center min-h-[120px] transition-all">
         {isLoadingMore ? (
             <div className="flex flex-col items-center animate-pulse opacity-50">
                 <Activity size={32} className="text-gray-400 mb-3 animate-spin-slow" />
