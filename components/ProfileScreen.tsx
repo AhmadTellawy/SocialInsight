@@ -269,7 +269,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         ...userProfile,
         stats: {
           ...userProfile.stats,
-          responses: analytics?.totalResponses || 0
+          responses: analytics?.totalResponses ?? userProfile.stats?.responses ?? 0
         }
       };
     }
@@ -279,7 +279,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         ...targetUser,
         stats: {
           ...targetUser.stats,
-          responses: analytics?.totalResponses || targetUser.stats.responses || 0
+          responses: analytics?.totalResponses ?? targetUser.stats?.responses ?? 0
         }
       };
     }
