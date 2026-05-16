@@ -15,37 +15,47 @@ export const getGroups = async (req: Request, res: Response) => {
             where: whereClause,
             include: {
                 _count: {
-                    select: { posts: true } // We rely on memberCount for members, not _count
+                    select: { posts: true, members: { where: { status: 'JOINED' } } }
                 }
             }
         });
-        res.json(groups);
+        
+        // Map to include membersCount from _count
+        const formattedGroups = groups.map(g => ({
+            ...g,
+            memberCount: g._count.members,
+            postsCount: g._count.posts
+        }));
+        
+        res.json(formattedGroups);
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Failed to fetch groups' });
     }
 };
-const checkGroupAccess = async (groupId: string, userId: string | undefined): Promise<boolean> => {
-    const group = await prisma.group.findFirst({
-        where: {
-            id: groupId,
-            OR: [
-                { isPublic: true },
-                ...(userId ? [{ members: { some: { userId, status: 'JOINED' } } }] : [])
-            ]
-        },
-        select: { id: true }
+const checkGroupAccess = async (groupId: string, userId: string | undefined): Promise<{ status: 200 | 403 | 404 }> => {
+    const group = await prisma.group.findUnique({
+        where: { id: groupId },
+        select: {
+            isPublic: true,
+            ...(userId ? { members: { where: { userId, status: 'JOINED' }, select: { id: true } } } : {})
+        }
     });
-    return !!group;
+
+    if (!group) return { status: 404 };
+    if (group.isPublic) return { status: 200 };
+    if (!userId) return { status: 403 };
+    if (group.members && group.members.length > 0) return { status: 200 };
+    return { status: 403 };
 };
 
 export const getGroupById = async (req: Request, res: Response) => {
     const { id } = req.params;
     const currentUserId = req.user?.userId;
     try {
-        const hasAccess = await checkGroupAccess(id as string, currentUserId);
-        if (!hasAccess) {
-            res.status(403).json({ error: 'Forbidden or Group not found' });
+        const access = await checkGroupAccess(id as string, currentUserId);
+        if (access.status !== 200) {
+            res.status(access.status).json({ error: access.status === 404 ? 'Group not found' : 'Forbidden' });
             return;
         }
         const group = await prisma.group.findUnique({
@@ -54,7 +64,14 @@ export const getGroupById = async (req: Request, res: Response) => {
                 members: {
                     where: { status: 'JOINED' },
                     take: 10,
-                    include: { user: true }
+                    select: {
+                        userId: true,
+                        role: true,
+                        status: true,
+                        user: {
+                            select: { id: true, name: true, avatar: true, handle: true }
+                        }
+                    }
                 },
                 posts: {
                     take: 10,
@@ -267,15 +284,7 @@ export const getGroupStats = async (req: Request, res: Response) => {
             return;
         }
 
-        const group = await prisma.group.findUnique({
-            where: { id: id as string },
-            select: { memberCount: true }
-        });
-
-        if (!group) {
-            res.status(404).json({ error: 'Group not found' });
-            return;
-        }
+        // Removed unnecessary findUnique for group memberCount since we use DB count now
 
         let postsCount = 0;
         try {
@@ -295,8 +304,12 @@ export const getGroupStats = async (req: Request, res: Response) => {
             }
         });
 
+        const activeMembersCount = await prisma.groupMember.count({
+            where: { groupId: id as string, status: 'JOINED' }
+        });
+
         res.json({
-            membersCount: group.memberCount,
+            membersCount: activeMembersCount,
             postsCount,
             votesCount
         });
@@ -313,9 +326,9 @@ export const getGroupMembers = async (req: Request, res: Response) => {
     const currentUserId = req.user?.userId;
 
     try {
-        const hasAccess = await checkGroupAccess(id as string, currentUserId);
-        if (!hasAccess) {
-            res.status(403).json({ error: 'Forbidden or Group not found' });
+        const access = await checkGroupAccess(id as string, currentUserId);
+        if (access.status !== 200) {
+            res.status(access.status).json({ error: access.status === 404 ? 'Group not found' : 'Forbidden' });
             return;
         }
 
@@ -366,7 +379,7 @@ export const requestJoin = async (req: Request, res: Response) => {
 
         if (existing) {
             if (existing.status === 'JOINED' || existing.status === 'PENDING') {
-                res.json({ status: existing.status });
+                res.json({ status: existing.status, role: existing.role });
                 return;
             }
             if (existing.status === 'INVITED') {
@@ -380,7 +393,7 @@ export const requestJoin = async (req: Request, res: Response) => {
                         data: { memberCount: { increment: 1 } }
                     })
                 ]);
-                res.json({ status: 'JOINED' });
+                res.json({ status: 'JOINED', role: existing.role });
                 return;
             }
         }
@@ -397,7 +410,7 @@ export const requestJoin = async (req: Request, res: Response) => {
         } catch (err: any) {
             if (err.code !== 'P2002') throw err;
         }
-        res.json({ status: 'PENDING' });
+        res.json({ status: 'PENDING', role: 'Member' });
     } catch (error) {
         console.error('Failed to request join:', error);
         res.status(500).json({ error: 'Failed to request join' });
@@ -413,9 +426,9 @@ export const getGroupPosts = async (req: Request, res: Response) => {
     const currentUserId = req.user?.userId;
 
     try {
-        const hasAccess = await checkGroupAccess(id as string, currentUserId);
-        if (!hasAccess) {
-            res.status(403).json({ error: 'Forbidden or Group not found' });
+        const access = await checkGroupAccess(id as string, currentUserId);
+        if (access.status !== 200) {
+            res.status(access.status).json({ error: access.status === 404 ? 'Group not found' : 'Forbidden' });
             return;
         }
 
