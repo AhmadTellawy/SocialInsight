@@ -89,7 +89,7 @@ export const getUser = async (req: Request, res: Response) => {
 
         const [postsCount, responsesCount] = await Promise.all([
             prisma.post.count({
-                where: { authorId: user.id, isDeleted: false, status: 'PUBLISHED' }
+                where: { authorId: user.id, isDeleted: false, status: 'PUBLISHED', sharedFromId: null }
             }),
             prisma.response.count({
                 where: { post: { authorId: user.id, isDeleted: false, status: 'PUBLISHED' } }
@@ -146,7 +146,7 @@ export const getUserByHandle = async (req: Request, res: Response) => {
 
         const [postsCount, responsesCount] = await Promise.all([
             prisma.post.count({
-                where: { authorId: user.id, isDeleted: false, status: 'PUBLISHED' }
+                where: { authorId: user.id, isDeleted: false, status: 'PUBLISHED', sharedFromId: null }
             }),
             prisma.response.count({
                 where: { post: { authorId: user.id, isDeleted: false, status: 'PUBLISHED' } }
@@ -241,10 +241,24 @@ export const updateUser = async (req: Request, res: Response) => {
             demographics = await prisma.userDemographics.findUnique({ where: { userId: id } });
         }
 
+        const [postsCount, responsesCount] = await Promise.all([
+            prisma.post.count({
+                where: { authorId: id as string, isDeleted: false, status: 'PUBLISHED', sharedFromId: null }
+            }),
+            prisma.response.count({
+                where: { post: { authorId: id as string, isDeleted: false, status: 'PUBLISHED' } }
+            })
+        ]);
+
         res.json({
             ...user,
             demographics,
-            stats: data.stats || { followers: 0, following: 0, responses: 0 }
+            stats: {
+                followers: user.followersCount,
+                following: user.followingCount,
+                posts: postsCount,
+                responses: responsesCount
+            }
         });
     } catch (error) {
         console.error("Update User Error:", error);
@@ -256,7 +270,7 @@ export const getUserAnalytics = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     try {
         const posts = await prisma.post.findMany({
-            where: { authorId: id },
+            where: { authorId: id, isDeleted: false, status: 'PUBLISHED', sharedFromId: null },
             include: {
                 responses: {
                     include: {
