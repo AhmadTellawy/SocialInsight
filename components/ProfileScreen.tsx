@@ -685,9 +685,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         )}
         <button
           onClick={isMe ? onSettingsClick : undefined}
-          className="p-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors"
+          className="p-3 -mr-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors relative z-20"
+          aria-label="Settings"
         >
-          {isMe ? <Settings size={22} /> : <MoreHorizontal size={22} />}
+          {isMe ? <Settings size={24} /> : <MoreHorizontal size={24} />}
         </button>
       </div>
 
@@ -707,9 +708,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             {isMe && (
               <button
                 onClick={onSettingsClick}
-                className="absolute -bottom-1 -right-1 p-2 bg-blue-600 text-white rounded-2xl shadow-lg hover:bg-blue-700 transition-colors border-2 border-white active:scale-90"
+                className="absolute -bottom-2 -right-2 p-3 bg-blue-600 text-white rounded-2xl shadow-lg hover:bg-blue-700 transition-colors border-[3px] border-white active:scale-90 z-20"
+                aria-label="Edit Profile"
               >
-                <Edit3 size={16} />
+                <Edit3 size={18} />
               </button>
             )}
           </div>
