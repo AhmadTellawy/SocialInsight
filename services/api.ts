@@ -51,7 +51,16 @@ export const authFetch = async (input: RequestInfo | URL, init?: RequestInit): P
         headers
     };
 
-    const response = await fetch(input, modifiedInit);
+    let fetchUrl = input;
+    if (typeof input === 'string') {
+        if (input.startsWith('/api')) {
+            fetchUrl = input.replace(/^\/api/, API_BASE_URL);
+        } else if (input.startsWith('/') && !input.startsWith('http')) {
+            fetchUrl = `${API_BASE_URL}${input}`;
+        }
+    }
+
+    const response = await fetch(fetchUrl, modifiedInit);
     
     if (response.status === 401) {
         // Handle unauthorized (expired token or invalid)
