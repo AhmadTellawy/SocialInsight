@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 import { Request, Response } from 'express';
 import prisma from '../prisma';
 import { processBase64Image } from '../utils/imageProcessor';
@@ -171,7 +171,12 @@ export const getUserByHandle = async (req: Request, res: Response) => {
 };
 
 export const updateUser = async (req: Request, res: Response) => {
-    const { id } = req.params;
+    const id = req.params.id as string;
+    
+    if (req.user?.userId !== id) {
+        return res.status(403).json({ error: 'Forbidden: You can only update your own profile' });
+    }
+
     const data = req.body;
 
     try {
@@ -214,7 +219,6 @@ export const updateUser = async (req: Request, res: Response) => {
                 sector: typeof rawDemo.sector === 'string' ? rawDemo.sector : undefined
             };
 
-            // @ts-ignore
             demographics = await prisma.userDemographics.upsert({
                 where: { userId: id },
                 create: {
@@ -393,7 +397,11 @@ export const getUserFollowing = async (req: Request, res: Response) => {
 
 export const getNotifications = async (req: Request, res: Response) => {
     console.log(`[API] getNotifications requested for userId: ${req.params.id}`);
-    const { id } = req.params;
+    const id = req.params.id as string;
+
+    if (req.user?.userId !== id) {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
     try {
         console.log(`[API] Calling prisma.notification.findMany for ${id}`);
         const notifications = await prisma.notification.findMany({
@@ -431,14 +439,10 @@ export const getNotifications = async (req: Request, res: Response) => {
 };
 
 export const getNotificationSettings = async (req: Request, res: Response) => {
-    // Basic auth check: usually frontend might pass it via header if not using sessions
-    let userId = req.headers['x-user-id'] as string;
-
-    // Fallback: If no header, and since App.tsx has fc04e8a5, we try to use a default or require it.
-    // For this context, let's assume the frontend will start sending x-user-id or we use a hardcoded one for now to fix the bug,
-    // actually, let's check `apiPutSettings` in NotificationSettingsScreen.tsx. It doesn't send headers except Content-Type.
-    // Wait... if it doesn't send headers, we need to modify the frontend to send the user ID, or rely on a generic one.
-    if (!userId) userId = 'fc04e8a5-f754-4d2b-8b1d-1c8448e3ce0f'; // Default to the main user for this demo if not provided
+    const userId = req.user?.userId;
+    if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized: User ID is missing' });
+    }
 
     try {
         const settings = await prisma.notificationSettings.findUnique({
@@ -458,8 +462,10 @@ export const getNotificationSettings = async (req: Request, res: Response) => {
 };
 
 export const updateNotificationSettings = async (req: Request, res: Response) => {
-    let userId = req.headers['x-user-id'] as string;
-    if (!userId) userId = 'fc04e8a5-f754-4d2b-8b1d-1c8448e3ce0f';
+    const userId = req.user?.userId;
+    if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized: User ID is missing' });
+    }
 
     const { settings, updatedAt } = req.body;
     try {
@@ -478,7 +484,11 @@ export const updateNotificationSettings = async (req: Request, res: Response) =>
 };
 
 export const markNotificationsRead = async (req: Request, res: Response) => {
-    const { id } = req.params;
+    const id = req.params.id as string;
+
+    if (req.user?.userId !== id) {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
     try {
         await prisma.notification.updateMany({
             where: { userId: id as string, isRead: false },
@@ -492,7 +502,12 @@ export const markNotificationsRead = async (req: Request, res: Response) => {
 };
 
 export const markSingleNotificationRead = async (req: Request, res: Response) => {
-    const { id, notifId } = req.params;
+    const id = req.params.id as string;
+    const notifId = req.params.notifId as string;
+
+    if (req.user?.userId !== id) {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
     try {
         await prisma.notification.update({
             where: { id: notifId, userId: id as string },
@@ -618,7 +633,11 @@ export const getSuggestedUsers = async (req: Request, res: Response) => {
 };
 
 export const deleteAccount = async (req: Request, res: Response) => {
-    const { id } = req.params;
+    const id = req.params.id as string;
+
+    if (req.user?.userId !== id) {
+        return res.status(403).json({ error: 'Forbidden: You can only delete your own account' });
+    }
     try {
         await prisma.$transaction(async (tx) => {
             // Nullify user PII and soft delete

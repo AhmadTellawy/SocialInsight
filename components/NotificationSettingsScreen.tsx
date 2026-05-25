@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ArrowLeft, MessageSquare, Repeat, Users, Mail } from 'lucide-react';
+import { authFetch } from '../services/api';
 
 export interface NotificationSettingsScreenProps {
   userId: string;
@@ -84,24 +85,16 @@ const getLocalUpdatedAt = (userId: string): string | null => {
 };
 
 async function apiGetSettings(userId: string): Promise<{ settings: NotificationSettings; updatedAt: string } | null> {
-  const res = await fetch('http://localhost:3001/api/notification-settings', {
-    headers: { 'x-user-id': userId },
-    credentials: 'omit'
-  });
+  const res = await authFetch('/api/notification-settings');
   if (res.status === 204 || res.status === 404) return null;
   if (!res.ok) throw new Error('Failed to fetch settings');
   return res.json();
 }
 
 async function apiPutSettings(userId: string, payload: { settings: NotificationSettings; updatedAt: string }): Promise<{ settings: NotificationSettings; updatedAt: string }> {
-  const res = await fetch('http://localhost:3001/api/notification-settings', {
+  const res = await authFetch('/api/notification-settings', {
     method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-user-id': userId
-    },
-    body: JSON.stringify(payload),
-    credentials: 'omit' // use internal handling, omit avoids some local dev CORS issues depending on setup
+    body: JSON.stringify(payload)
   });
   if (!res.ok) throw new Error('Failed to update settings');
   return res.json();
