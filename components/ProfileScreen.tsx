@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Settings, Users, Grid, CheckCircle2, MoreHorizontal, MapPin, Link as LinkIcon, Edit3, UserPlus, Shield, ExternalLink, ArrowLeft, Mail, FileText, PieChart, Building2, Globe as GlobeIcon, Plus, ChevronRight, Search, X, UserCircle2, Zap, Info, Lock, BarChart3, TrendingUp, Bookmark, PenTool, Activity, Repeat } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -76,6 +76,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [drafts, setDrafts] = useState<Survey[]>([]);
   const [savedPosts, setSavedPosts] = useState<Survey[]>([]);
   const [displayedGroups, setDisplayedGroups] = useState<Group[]>([]);
+  const [isGroupsLoading, setIsGroupsLoading] = useState(false);
+  const [groupsError, setGroupsError] = useState<string | null>(null);
+  const groupsRequestRef = useRef(0);
 
   const [analytics, setAnalytics] = useState<any>(null);
   const [connectionList, setConnectionList] = useState<any[]>([]);
@@ -96,13 +99,40 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   }, [activeTab, isMe, userProfile.id]);
 
   useEffect(() => {
-    if (activeTab === 'groups') {
-      const targetUserId = isMe ? userProfile.id : (user as any)?.id;
-      if (targetUserId) {
-        api.getUserGroups(targetUserId).then(setDisplayedGroups).catch(console.error);
-      }
+    if (activeTab !== 'groups') return;
+
+    const targetUserId = isMe ? userProfile.id : (user as any)?.id;
+    if (!targetUserId) {
+      setDisplayedGroups([]);
+      setIsGroupsLoading(false);
+      setGroupsError(null);
+      return;
     }
-  }, [activeTab, isMe, userProfile.id, user]);
+
+    const requestId = ++groupsRequestRef.current;
+    setGroupsError(null);
+    setIsGroupsLoading(true);
+
+    if (isMe && userGroups.length > 0) {
+      setDisplayedGroups(userGroups);
+    } else {
+      setDisplayedGroups([]);
+    }
+
+    api.getUserGroups(targetUserId)
+      .then(groups => {
+        if (groupsRequestRef.current === requestId) setDisplayedGroups(groups);
+      })
+      .catch(error => {
+        if (groupsRequestRef.current !== requestId) return;
+        console.error(error);
+        setGroupsError('Failed to load groups.');
+        setDisplayedGroups([]);
+      })
+      .finally(() => {
+        if (groupsRequestRef.current === requestId) setIsGroupsLoading(false);
+      });
+  }, [activeTab, isMe, userProfile.id, user, userGroups]);
 
   useEffect(() => {
     const loadFollowStatus = async () => {
@@ -605,6 +635,31 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         );
 
       case 'groups':
+        if (isGroupsLoading && displayedGroups.length === 0) {
+          return (
+            <div className="p-4 grid grid-cols-1 gap-3 animate-in fade-in duration-200">
+              {[1, 2, 3].map(item => (
+                <div key={item} className="w-full flex items-center gap-4 p-4 rounded-3xl bg-white border border-gray-100 shadow-sm">
+                  <div className="w-14 h-14 rounded-2xl bg-gray-100 animate-pulse" />
+                  <div className="flex-1 min-w-0">
+                    <div className="w-36 h-4 bg-gray-200 rounded-full animate-pulse mb-3" />
+                    <div className="w-28 h-3 bg-gray-100 rounded-full animate-pulse" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        }
+
+        if (groupsError) {
+          return (
+            <div className="flex flex-col items-center justify-center py-20 px-8 text-center text-gray-400">
+              <Building2 size={48} className="opacity-10 mb-4" />
+              <p className="text-sm font-bold uppercase tracking-widest">{t('Unable to load groups')}</p>
+            </div>
+          );
+        }
+
         return displayedGroups.length > 0 ? (
           <div className="p-4 grid grid-cols-1 gap-3 animate-in fade-in duration-300">
             {displayedGroups.map(group => (
