@@ -52,6 +52,8 @@ const INITIAL_USER: UserProfile = {
   }
 };
 
+const getFeedCacheKey = (userId?: string | null) => `si_feed_cache:${userId || 'guest'}`;
+
 const App: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -73,6 +75,7 @@ const App: React.FC = () => {
   // User Profile State
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authBootstrapped, setAuthBootstrapped] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalType, setAuthModalType] = useState<'flow' | 'login'>('flow');
 
@@ -103,18 +106,16 @@ const App: React.FC = () => {
     localStorage.setItem('si_user', JSON.stringify(user));
     setUserProfile(user);
     setIsAuthenticated(true);
+    setAuthBootstrapped(true);
     setAuthModalOpen(false);
+    lastFetchedUserIdRef.current = null;
 
     // Initialize Push Notifications if permission granted
     api.setupPushNotifications().catch(console.error);
-
-    if (lastFetchedUserIdRef.current !== user.id) {
-      lastFetchedUserIdRef.current = user.id;
-      fetchData(user.id, user);
-    }
   };
 
   const handleLogout = () => {
+    const previousUserId = userProfile?.id;
     setIsAuthenticated(false);
     setUserProfile(null);
     setSurveys([]);
@@ -124,7 +125,7 @@ const App: React.FC = () => {
     localStorage.removeItem('si_user');
     localStorage.removeItem('si_token');
     localStorage.removeItem('si_feed_cache');
-    fetchData(); // Immediately fetch anonymous feed
+    if (previousUserId) localStorage.removeItem(getFeedCacheKey(previousUserId));
   };
 
   // Creation Flow State
@@ -181,10 +182,10 @@ const App: React.FC = () => {
 
   const [surveys, setSurveys] = useState<Survey[]>(() => {
     try {
-      const cached = localStorage.getItem('si_feed_cache');
+      const savedUser = localStorage.getItem('si_user');
+      const user = savedUser ? JSON.parse(savedUser) : null;
+      const cached = localStorage.getItem(getFeedCacheKey(user?.id));
       if (cached) {
-        const savedUser = localStorage.getItem('si_user');
-        const user = savedUser ? JSON.parse(savedUser) : null;
         return JSON.parse(cached).map((s: any) => normalizeSurvey(s, user));
       }
     } catch (e) {
@@ -194,7 +195,9 @@ const App: React.FC = () => {
   });
   const [isFeedLoading, setIsFeedLoading] = useState<boolean>(() => {
     try {
-      return !localStorage.getItem('si_feed_cache');
+      const savedUser = localStorage.getItem('si_user');
+      const user = savedUser ? JSON.parse(savedUser) : null;
+      return !localStorage.getItem(getFeedCacheKey(user?.id));
     } catch (e) {
       return true;
     }
@@ -213,12 +216,12 @@ const App: React.FC = () => {
 
   const fetchData = async (currentUserId?: string, currentUser?: UserProfile | null, retries = 5) => {
     try {
-      if (surveys.length === 0) setIsFeedLoading(true);
+      setIsFeedLoading(true);
       const res = await api.getSurveys(currentUserId);
       const surveysData = res.data;
 
       try {
-        localStorage.setItem('si_feed_cache', JSON.stringify(surveysData.slice(0, 10)));
+        localStorage.setItem(getFeedCacheKey(currentUserId), JSON.stringify(surveysData.slice(0, 10)));
       } catch (storageError) {
         console.warn('Failed to cache feed to localStorage due to quota limits');
       }
@@ -315,32 +318,45 @@ const App: React.FC = () => {
   React.useEffect(() => {
     const savedUser = localStorage.getItem('si_user');
     if (savedUser) {
-      const user = JSON.parse(savedUser);
-      setUserProfile(user);
-      setIsAuthenticated(true);
+      try {
+        const user = JSON.parse(savedUser);
+        setUserProfile(user);
+        setIsAuthenticated(true);
 
-      // Fetch fresh user profile to get latest stats
-      api.getUser(user.id).then(freshUser => {
-        setUserProfile(freshUser);
-        localStorage.setItem('si_user', JSON.stringify(freshUser));
-      }).catch(err => {
-        console.error("Failed to refresh user profile, invalidating session", err);
+        // Confirm the cached session before route-specific fetches use it.
+        api.getUser(user.id).then(freshUser => {
+          setUserProfile(freshUser);
+          localStorage.setItem('si_user', JSON.stringify(freshUser));
+          setAuthBootstrapped(true);
+        }).catch(err => {
+          console.error("Failed to refresh user profile, invalidating session", err);
+          localStorage.removeItem('si_user');
+          localStorage.removeItem('si_token');
+          localStorage.removeItem(getFeedCacheKey(user.id));
+          setIsAuthenticated(false);
+          setUserProfile(null);
+          setSurveys([]);
+          setAuthBootstrapped(true);
+        });
+      } catch (err) {
+        console.error("Failed to parse cached user, starting guest session", err);
         localStorage.removeItem('si_user');
         setIsAuthenticated(false);
         setUserProfile(null);
-        setSurveys([]); // Clear private feed
-        fetchData(); // Load public feed
-      });
+        setSurveys([]);
+        setAuthBootstrapped(true);
+      }
     } else {
-      // Guest mode fetch
-      fetchData();
+      setAuthBootstrapped(true);
     }
 
     const handleAuthExpired = () => {
+      const expiredUserId = userProfile?.id;
       setIsAuthenticated(false);
       setUserProfile(null);
-      setSurveys([]); // Clear private feed
-      fetchData(); // Refetch as guest
+      setSurveys([]);
+      lastFetchedUserIdRef.current = null;
+      if (expiredUserId) localStorage.removeItem(getFeedCacheKey(expiredUserId));
     };
 
     window.addEventListener('auth_expired', handleAuthExpired);
@@ -348,12 +364,23 @@ const App: React.FC = () => {
   }, []);
 
   React.useEffect(() => {
+    if (!authBootstrapped) return;
+
     if (isAuthenticated && userProfile?.id) {
-      if (lastFetchedUserIdRef.current === userProfile.id) return;
-      lastFetchedUserIdRef.current = userProfile.id;
+      const viewerKey = `user:${userProfile.id}`;
+      if (lastFetchedUserIdRef.current === viewerKey) return;
+      lastFetchedUserIdRef.current = viewerKey;
       fetchData(userProfile.id, userProfile);
+      return;
     }
-  }, [isAuthenticated, userProfile?.id]);
+
+    if (!isAuthenticated) {
+      const viewerKey = 'guest';
+      if (lastFetchedUserIdRef.current === viewerKey) return;
+      lastFetchedUserIdRef.current = viewerKey;
+      fetchData();
+    }
+  }, [authBootstrapped, isAuthenticated, userProfile?.id]);
 
 
 
@@ -372,17 +399,26 @@ const App: React.FC = () => {
   }, [isAuthenticated, userProfile?.id]);
 
   const [selectedSurveyId, setSelectedSurveyId] = useState<string | null>(null);
-  const [selectedSurveySurface, setSelectedSurveySurface] = useState<'FEED' | 'PROFILE' | 'SAVED' | 'SEARCH' | 'DEEP_LINK'>('FEED');
+  const [selectedSurveySurface, setSelectedSurveySurface] = useState<'FEED' | 'PROFILE' | 'SAVED' | 'SEARCH' | 'DEEP_LINK' | 'GROUP'>('DEEP_LINK');
+  const [detailSurvey, setDetailSurvey] = useState<Survey | null>(null);
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const detailRequestRef = useRef(0);
   const [detailTab, setDetailTab] = useState<'post' | 'analysis'>('post');
 
   const [selectedProfile, setSelectedProfile] = useState<{ id: string; name: string; avatar: string; handle?: string } | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [externalGroup, setExternalGroup] = useState<Group | null>(null);
+  const [isGroupLoading, setIsGroupLoading] = useState(false);
+  const [groupError, setGroupError] = useState<string | null>(null);
+  const groupRequestRef = useRef(0);
   const [isGroupSettingsOpen, setIsGroupSettingsOpen] = useState(false);
   const [isProfileSettingsOpen, setIsProfileSettingsOpen] = useState(false);
   const [showUsersTable, setShowUsersTable] = useState(false);
   const [isPrivacyScreenOpen, setIsPrivacyScreenOpen] = useState(false);
   const [isProfileLoading, setIsProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const profileRequestRef = useRef(0);
 
   React.useEffect(() => {
     if (!selectedProfile?.id) {
@@ -396,14 +432,32 @@ const App: React.FC = () => {
   }, []);
 
   React.useEffect(() => {
+    if (!authBootstrapped) return;
+
     const path = location.pathname;
+    const isPostRoute = path.startsWith('/post/');
+    const isProfileRoute = path.startsWith('/profile/') || path.startsWith('/@') || path === '/profile';
+    const isGroupRoute = path.startsWith('/group/');
 
     // Helper to reset states when not on their paths
-    if (!path.startsWith('/post/')) setSelectedSurveyId(null);
-    if (!path.startsWith('/profile/') && !path.startsWith('/@') && path !== '/profile') setSelectedProfile(null);
-    if (!path.startsWith('/group/')) setSelectedGroupId(null);
+    if (!isPostRoute) {
+      setSelectedSurveyId(null);
+      setDetailSurvey(null);
+      setDetailError(null);
+      setIsDetailLoading(false);
+    }
+    if (!isProfileRoute) {
+      setSelectedProfile(null);
+      setProfileError(null);
+      setIsProfileLoading(false);
+    }
+    if (!isGroupRoute) {
+      setSelectedGroupId(null);
+      setGroupError(null);
+      setIsGroupLoading(false);
+    }
     if (!path.startsWith('/settings/profile')) setIsProfileSettingsOpen(false);
-    if (!path.startsWith('/group/') || !path.endsWith('/settings')) setIsGroupSettingsOpen(false);
+    if (!isGroupRoute || !path.endsWith('/settings')) setIsGroupSettingsOpen(false);
     if (path !== '/privacy') setIsPrivacyScreenOpen(false);
 
     if (path === '/' || path === '') setActiveTab('home');
@@ -414,75 +468,110 @@ const App: React.FC = () => {
     else if (path === '/messages') setActiveTab('messages');
     else if (path === '/profile') {
       setActiveTab('profile');
-      if (userProfile && selectedProfile?.id !== userProfile.id) {
+      if (!userProfile?.id) {
+        setIsProfileLoading(false);
+        navigate('/login', { replace: true });
+      } else {
+        const requestId = ++profileRequestRef.current;
         setIsProfileLoading(true);
-        api.getSurveys(userProfile.id, undefined, 10, userProfile.id).then(res => {
+        setProfileError(null);
+        setSelectedProfile(null);
+        setProfileSurveys([]);
+        Promise.all([
+          api.getUser(userProfile.id),
+          api.getSurveys(userProfile.id, undefined, 10, userProfile.id)
+        ]).then(([freshUser, res]) => {
+          if (profileRequestRef.current !== requestId) return;
           const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
+          setUserProfile(freshUser);
+          localStorage.setItem('si_user', JSON.stringify(freshUser));
           setProfileSurveys(newSurveys);
           setProfileNextCursor(res.nextCursor);
-          setSelectedProfile(userProfile);
-          setIsProfileLoading(false);
-        }).catch(() => setIsProfileLoading(false));
+          setSelectedProfile(freshUser);
+        }).catch(err => {
+          if (profileRequestRef.current !== requestId) return;
+          console.error(err);
+          setProfileError('Failed to load profile.');
+        }).finally(() => {
+          if (profileRequestRef.current === requestId) setIsProfileLoading(false);
+        });
       }
     }
     else if (path.startsWith('/settings/profile')) {
       setActiveTab('profile');
-      setIsProfileSettingsOpen(true);
+      if (!userProfile?.id) {
+        navigate('/login', { replace: true });
+      } else {
+        setIsProfileSettingsOpen(true);
+      }
     }
     else if (path.startsWith('/@')) {
       setActiveTab('profile');
-      const handle = path.split('/@')[1];
-      if (handle && handle !== selectedProfile?.handle) {
+      const handle = decodeURIComponent(path.split('/@')[1] || '').split('/')[0];
+      if (handle) {
+        const requestId = ++profileRequestRef.current;
         setIsProfileLoading(true);
+        setProfileError(null);
+        setSelectedProfile(null);
+        setProfileSurveys([]);
         const currentUserId = userProfile?.id || undefined;
         Promise.all([
           api.getUserByHandle(handle),
           api.getSurveys(currentUserId, undefined, 10, undefined, handle)
         ]).then(([user, res]) => {
+          if (profileRequestRef.current !== requestId) return;
           const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
           setProfileSurveys(newSurveys);
           setProfileNextCursor(res.nextCursor);
           setSelectedProfile(user);
-          setIsProfileLoading(false);
         }).catch(err => {
+          if (profileRequestRef.current !== requestId) return;
           console.error(err);
-          setIsProfileLoading(false);
-          navigate('/'); // fallback
+          setProfileError('Failed to load profile.');
+        }).finally(() => {
+          if (profileRequestRef.current === requestId) setIsProfileLoading(false);
         });
       }
     }
     else if (path.startsWith('/profile/')) {
       setActiveTab('profile');
-      const id = path.split('/profile/')[1];
-      if (id && id !== selectedProfile?.id) {
+      const id = decodeURIComponent(path.split('/profile/')[1] || '').split('/')[0];
+      if (id) {
+        const requestId = ++profileRequestRef.current;
         setIsProfileLoading(true);
+        setProfileError(null);
+        setSelectedProfile(null);
+        setProfileSurveys([]);
         const currentUserId = userProfile?.id || undefined;
         Promise.all([
           api.getUser(id),
           api.getSurveys(currentUserId, undefined, 10, id)
         ]).then(([user, res]) => {
+          if (profileRequestRef.current !== requestId) return;
           const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
           setProfileSurveys(newSurveys);
           setProfileNextCursor(res.nextCursor);
           setSelectedProfile(user);
-          setIsProfileLoading(false);
           if (user.handle) {
             navigate(`/@${user.handle}`, { replace: true });
           }
         }).catch(err => {
+          if (profileRequestRef.current !== requestId) return;
           console.error(err);
-          setIsProfileLoading(false);
+          setProfileError('Failed to load profile.');
+        }).finally(() => {
+          if (profileRequestRef.current === requestId) setIsProfileLoading(false);
         });
       }
     }
     else if (path.startsWith('/group/')) {
       const id = path.split('/group/')[1]?.split('/')[0]; // handle /group/id/settings
-      if (id && id !== selectedGroupId) setSelectedGroupId(id);
+      if (id) setSelectedGroupId(id);
       if (path.endsWith('/settings')) setIsGroupSettingsOpen(true);
     }
     else if (path.startsWith('/post/')) {
-      const id = path.split('/post/')[1];
-      if (id && id !== selectedSurveyId) setSelectedSurveyId(id);
+      const id = path.split('/post/')[1]?.split('/')[0];
+      if (id) setSelectedSurveyId(id);
     }
 
     // Auth Routes
@@ -516,15 +605,78 @@ const App: React.FC = () => {
       if (activeCreationFlow && !path.startsWith('/create/')) setActiveCreationFlow(null);
       if (accountModalType && !path.startsWith('/create/')) setAccountModalType(null);
     }
-  }, [location.pathname]);
+  }, [location.pathname, authBootstrapped, userProfile?.id]);
 
   React.useEffect(() => {
-    if (selectedGroupId && !userGroups.find(g => g.id === selectedGroupId)) {
-      api.getGroupById(selectedGroupId).then(setExternalGroup).catch(console.error);
-    } else {
+    if (!authBootstrapped) return;
+
+    if (!selectedGroupId) {
       setExternalGroup(null);
+      setIsGroupLoading(false);
+      setGroupError(null);
+      return;
     }
-  }, [selectedGroupId, userGroups]);
+
+    if (userGroups.find(g => g.id === selectedGroupId)) {
+      setExternalGroup(null);
+      setIsGroupLoading(false);
+      setGroupError(null);
+      return;
+    }
+
+    const requestId = ++groupRequestRef.current;
+    setIsGroupLoading(true);
+    setGroupError(null);
+    setExternalGroup(null);
+
+    api.getGroupById(selectedGroupId)
+      .then(group => {
+        if (groupRequestRef.current === requestId) setExternalGroup(group);
+      })
+      .catch(err => {
+        if (groupRequestRef.current !== requestId) return;
+        console.error(err);
+        setGroupError('Failed to load group.');
+      })
+      .finally(() => {
+        if (groupRequestRef.current === requestId) setIsGroupLoading(false);
+      });
+  }, [authBootstrapped, selectedGroupId, userGroups]);
+
+  React.useEffect(() => {
+    if (!authBootstrapped) return;
+
+    if (!selectedSurveyId) {
+      setDetailSurvey(null);
+      setDetailError(null);
+      setIsDetailLoading(false);
+      return;
+    }
+
+    const requestId = ++detailRequestRef.current;
+    setDetailSurvey(null);
+    setDetailError(null);
+    setIsDetailLoading(true);
+
+    api.getSurveyById(selectedSurveyId, userProfile?.id || undefined)
+      .then(post => {
+        if (detailRequestRef.current !== requestId) return;
+        const normalized = normalizeSurvey(post, userProfile);
+        setDetailSurvey(normalized);
+        setSurveys(prev => {
+          const exists = prev.some(s => s.id === normalized.id);
+          return exists ? prev.map(s => s.id === normalized.id ? normalized : s) : [normalized, ...prev];
+        });
+      })
+      .catch(err => {
+        if (detailRequestRef.current !== requestId) return;
+        console.error(err);
+        setDetailError('Failed to load post.');
+      })
+      .finally(() => {
+        if (detailRequestRef.current === requestId) setIsDetailLoading(false);
+      });
+  }, [authBootstrapped, selectedSurveyId, userProfile?.id]);
 
   const pullToRefreshRef = useRef<PullToRefreshHandle>(null);
 
@@ -1115,7 +1267,12 @@ const App: React.FC = () => {
   const unreadNotificationsCount = notifications.filter(n => !n.isRead).length;
 
   const activeGroup = userGroups.find(g => g.id === selectedGroupId) || externalGroup;
-  const selectedSurvey = surveys.find(s => s.id === selectedSurveyId);
+  const selectedSurveyFromFeed = useMemo(
+    () => surveys.find(s => s.id === selectedSurveyId),
+    [surveys, selectedSurveyId]
+  );
+  const selectedSurvey = detailSurvey || selectedSurveyFromFeed;
+  const viewerProfile = userProfile || INITIAL_USER;
 
   const canSeeAnalysis = useMemo(() => {
     if (!selectedSurvey) return false;
@@ -1228,15 +1385,38 @@ const App: React.FC = () => {
       <div className="min-h-screen bg-gray-100/50 flex justify-center items-center">
         <div className="w-full max-w-md bg-white h-[100dvh] max-h-screen relative shadow-2xl overflow-hidden flex flex-col">
 
-          {showUsersTable ? (
+          {!authBootstrapped ? (
+            <div className="flex-1 flex flex-col items-center justify-center bg-white px-8">
+              <div className="w-16 h-16 rounded-full bg-gray-200 animate-pulse mb-5" />
+              <div className="w-40 h-4 rounded-full bg-gray-200 animate-pulse mb-3" />
+              <div className="w-28 h-3 rounded-full bg-gray-100 animate-pulse" />
+            </div>
+          ) : showUsersTable ? (
             <UsersTableScreen onBack={() => setShowUsersTable(false)} onUserClick={(u) => { setShowUsersTable(false); setSelectedProfile({ id: u.id, name: u.name, avatar: u.avatar }); }} />
           ) : isPrivacyScreenOpen ? (
             <PrivacyPolicyScreen />
+          ) : selectedGroupId && isGroupLoading ? (
+            <div className="flex-1 bg-white pt-10 px-5">
+              <div className="w-full h-40 rounded-2xl bg-gray-100 animate-pulse mb-5" />
+              <div className="w-44 h-6 rounded-full bg-gray-200 animate-pulse mb-3" />
+              <div className="w-64 h-4 rounded-full bg-gray-100 animate-pulse mb-8" />
+              <div className="space-y-4">
+                <div className="w-full h-28 rounded-2xl bg-gray-100 animate-pulse" />
+                <div className="w-full h-28 rounded-2xl bg-gray-100 animate-pulse" />
+              </div>
+            </div>
+          ) : selectedGroupId && groupError ? (
+            <div className="flex-1 flex flex-col items-center justify-center bg-white px-8 text-center">
+              <Users size={42} className="text-gray-300 mb-4" />
+              <h2 className="text-lg font-black text-gray-900 mb-2">Group unavailable</h2>
+              <p className="text-sm text-gray-500 mb-6">{groupError}</p>
+              <button onClick={() => navigate('/')} className="px-5 py-2 rounded-full bg-gray-900 text-white text-sm font-bold">Back home</button>
+            </div>
           ) : selectedGroupId && activeGroup ? (
             isGroupSettingsOpen ? (
               <GroupSettingsScreen
                 group={activeGroup}
-                currentUserId={userProfile.id}
+                currentUserId={viewerProfile.id || ''}
                 onBack={() => navigate(`/group/${activeGroup.id}`)}
                 onUpdateGroup={(id, updates) => setUserGroups(prev => prev.map(g => g.id === id ? { ...g, ...updates } : g))}
                 onDeleteGroup={(id) => { setUserGroups(prev => prev.filter(g => g.id !== id)); navigateToGroup(null); }}
@@ -1245,17 +1425,25 @@ const App: React.FC = () => {
               <GroupScreen
                 group={activeGroup}
                 surveys={surveys}
-                userProfile={userProfile}
+                userProfile={viewerProfile}
                 onBack={() => navigateToGroup(null)}
-                onSurveyClick={handleSurveyClick}
+                onPostClick={handleSurveyClick}
                 onVote={handleVote}
                 onSurveyProgress={handleSurveyProgress}
                 onSettingsClick={() => navigate(`/group/${activeGroup.id}/settings`)}
                 onCreatePost={() => { navigate('/create/survey'); setActiveCreationGroupId(activeGroup.id); }}
                 onShareToFeed={handleShareToFeed}
                 onUpdateDemographics={handleUpdateDemographics}
+                onLike={handleLikePost}
               />
             )
+          ) : profileError ? (
+            <div className="flex-1 flex flex-col items-center justify-center bg-white px-8 text-center">
+              <Users size={42} className="text-gray-300 mb-4" />
+              <h2 className="text-lg font-black text-gray-900 mb-2">Profile unavailable</h2>
+              <p className="text-sm text-gray-500 mb-6">{profileError}</p>
+              <button onClick={() => navigate('/')} className="px-5 py-2 rounded-full bg-gray-900 text-white text-sm font-bold">Back home</button>
+            </div>
           ) : isProfileLoading ? (
             <div className="flex-1 flex flex-col items-center justify-center pt-20">
               <div className="w-24 h-24 bg-gray-200 rounded-full animate-pulse mb-6 shadow-md border-4 border-white"></div>
@@ -1277,7 +1465,7 @@ const App: React.FC = () => {
             <ProfileScreen 
               surveys={profileSurveys} 
               userGroups={[]} 
-              userProfile={userProfile} 
+              userProfile={viewerProfile}
               onSurveyClick={handleSurveyClick} 
               onGroupClick={navigateToGroup} 
               onVote={handleVote} 
@@ -1293,8 +1481,9 @@ const App: React.FC = () => {
               hasNextPage={!!profileNextCursor}
               onLoadMore={fetchMore}
             />
-          ) : selectedSurveyId && selectedSurvey ? (
-            <>
+          ) : selectedSurveyId ? (
+            selectedSurvey ? (
+              <>
               <div className="bg-white z-10 sticky top-0 border-b border-gray-100">
                 <div className="flex items-center px-4 py-3">
                   <button onClick={() => navigate(-1)} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-600 transition-colors"><ArrowLeft size={24} /></button>
@@ -1332,7 +1521,7 @@ const App: React.FC = () => {
                     onShareToFeed={handleShareToFeed}
                     onUpdateDemographics={handleUpdateDemographics}
                     onGroupClick={navigateToGroup}
-                    sourceSurface="FEED" /* Or PROFILE if we track where they came from */
+                    sourceSurface={selectedSurveySurface as any}
                     onLike={handleLikePost}
                   />
                 ) : (
@@ -1340,6 +1529,24 @@ const App: React.FC = () => {
                 )}
               </div>
             </>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center bg-white px-8 text-center">
+                {isDetailLoading ? (
+                  <>
+                    <div className="w-full max-w-xs h-36 rounded-2xl bg-gray-100 animate-pulse mb-5" />
+                    <div className="w-48 h-4 rounded-full bg-gray-200 animate-pulse mb-3" />
+                    <div className="w-32 h-3 rounded-full bg-gray-100 animate-pulse" />
+                  </>
+                ) : (
+                  <>
+                    <FileText size={42} className="text-gray-300 mb-4" />
+                    <h2 className="text-lg font-black text-gray-900 mb-2">Post unavailable</h2>
+                    <p className="text-sm text-gray-500 mb-6">{detailError || 'This post could not be loaded.'}</p>
+                    <button onClick={() => navigate('/')} className="px-5 py-2 rounded-full bg-gray-900 text-white text-sm font-bold">Back home</button>
+                  </>
+                )}
+              </div>
+            )
           ) : (
             <>
               {activeTab !== 'search' && activeTab !== 'profile' && activeTab !== 'notifications' && activeTab !== 'messages' && (
@@ -1354,6 +1561,11 @@ const App: React.FC = () => {
 
               {activeTab === 'home' ? (
                 <PullToRefresh ref={pullToRefreshRef} onScroll={handleScroll} onRefresh={async () => { await fetchData(userProfile?.id || undefined, userProfile); }} onScrollChange={dir => setIsNavVisible(dir === 'up')} className="flex-1 mt-16 pb-[75px] bg-white no-scrollbar">
+                  {isFeedLoading && surveys.length > 0 && (
+                    <div className="sticky top-0 z-20 h-1 bg-gray-100 overflow-hidden">
+                      <div className="h-full w-1/2 bg-blue-500 rounded-r-full animate-pulse" />
+                    </div>
+                  )}
                   {renderContent()}
                 </PullToRefresh>
               ) : (
