@@ -144,10 +144,35 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   const [duration, setDuration] = useState<string>('none');
   const [customEndDate, setCustomEndDate] = useState<string>('');
 
-  const [selectedDemographics, setSelectedDemographics] = useState<string[]>([]);
+  const [selectedDemographics, setSelectedDemographics] = useState<string[]>(['gender', 'age_group']);
   const [selectedGroups, setSelectedGroups] = useState<string[]>(initialGroupId ? [initialGroupId] : []);
   const [errors, setErrors] = useState<{ [key: string]: boolean | string }>({});
   const [focusedOptionId, setFocusedOptionId] = useState<string | null>(null);
+  const [activePreset, setActivePreset] = useState<'recommended' | 'professional' | 'geographic' | 'custom'>('recommended');
+
+  useEffect(() => {
+    const isRecommended = selectedDemographics.length === 2 && selectedDemographics.includes('gender') && selectedDemographics.includes('age_group');
+    const isProfessional = selectedDemographics.length === 1 && selectedDemographics.includes('employment');
+    const isGeographic = selectedDemographics.length === 1 && selectedDemographics.includes('nationality');
+    
+    if (isRecommended) setActivePreset('recommended');
+    else if (isProfessional) setActivePreset('professional');
+    else if (isGeographic) setActivePreset('geographic');
+    else setActivePreset('custom');
+  }, [selectedDemographics]);
+
+  const handlePresetChange = (preset: 'recommended' | 'professional' | 'geographic' | 'custom') => {
+    setActivePreset(preset);
+    if (preset === 'recommended') {
+      setSelectedDemographics(['gender', 'age_group']);
+    } else if (preset === 'professional') {
+      setSelectedDemographics(['employment']);
+    } else if (preset === 'geographic') {
+      setSelectedDemographics(['nationality']);
+    } else if (preset === 'custom') {
+      setSelectedDemographics([]);
+    }
+  };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -516,27 +541,87 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                     <BarChart3 size={20} />
                   </div>
                   <div>
-                    <h2 className="text-xl font-black text-gray-900 leading-tight">Insight Filters</h2>
+                    <h2 className="text-xl font-black text-gray-900 leading-tight">Unlock Deeper Analytics</h2>
                     <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest mt-0.5">Demographics Setup</p>
                   </div>
                 </div>
                 <p className="text-sm text-gray-700 leading-relaxed bg-white/50 p-4 rounded-2xl border border-amber-100/50">
-                  See how different groups prefer your items. Choose which details you'd like participants to provide.
+                  Choose optional demographics to help understand voter breakdowns. Participants will be asked optionally to improve analysis.
                 </p>
               </div>
 
+              {/* Preset Packages */}
               <div className="space-y-3">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] px-1">Available Attributes</label>
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] px-1">Preset Packages</label>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { id: 'recommended', label: 'Recommended' },
+                    { id: 'professional', label: 'Professional' },
+                    { id: 'geographic', label: 'Geographic' },
+                    { id: 'custom', label: 'Custom' }
+                  ].map((preset) => {
+                    const isActive = activePreset === preset.id;
+                    return (
+                      <button
+                        key={preset.id}
+                        onClick={() => handlePresetChange(preset.id as any)}
+                        className={`px-4 py-2 rounded-full text-xs font-bold border transition-all active:scale-95 ${
+                          isActive 
+                            ? 'bg-amber-600 text-white border-amber-600 shadow-md shadow-amber-200' 
+                            : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Dynamic Value/Cost Indicator */}
+              <div className="p-3.5 bg-gray-50 rounded-2xl border border-gray-100 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-gray-700">
+                    Provides {selectedDemographics.length} analytical comparisons
+                  </span>
+                  <span className="text-[10px] font-extrabold text-amber-600">
+                    +{selectedDemographics.length} questions for participant
+                  </span>
+                </div>
+                <p className="text-[9px] text-gray-400 font-medium leading-normal">
+                  * Selected questions will be prompted as optional questions during participation.
+                </p>
+              </div>
+
+              {/* Collapsible Pills */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between px-1">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">
+                    Selected Attributes
+                  </label>
+                  {activePreset !== 'custom' && (
+                    <span className="text-[9px] text-gray-400 font-medium">
+                      (Read-only, select Custom to edit)
+                    </span>
+                  )}
+                </div>
                 <div className="flex flex-wrap gap-2">
                   {DEMOGRAPHIC_OPTIONS.map((opt) => {
                     const isSelected = selectedDemographics.includes(opt.id);
+                    const isCustomMode = activePreset === 'custom';
                     return (
-                      <button key={opt.id} onClick={() => setSelectedDemographics(prev => isSelected ? prev.filter(d => d !== opt.id) : [...prev, opt.id])} className={`px-4 py-3 rounded-2xl border text-left transition-all max-w-[calc(50%-4px)] flex-1 min-w-[160px] ${isSelected ? 'bg-amber-600 text-white border-amber-600 shadow-md shadow-amber-200' : 'bg-white text-gray-600 border-gray-100 hover:border-gray-200'}`}>
-                        <div className="flex items-center justify-between mb-1">
-                          <span className={`text-[12px] font-bold ${isSelected ? 'text-white' : 'text-gray-900'}`}>{opt.label}</span>
-                          {isSelected && <Check size={12} strokeWidth={4} />}
-                        </div>
-                        <p className={`text-[9px] leading-tight font-medium ${isSelected ? 'text-amber-50' : 'text-gray-400'}`}>{opt.desc}</p>
+                      <button
+                        key={opt.id}
+                        disabled={!isCustomMode}
+                        onClick={() => setSelectedDemographics(prev => isSelected ? prev.filter(d => d !== opt.id) : [...prev, opt.id])}
+                        className={`px-3 py-1.5 rounded-full text-[10px] font-bold border transition-all flex items-center gap-1 ${
+                          isSelected
+                            ? 'bg-amber-50 border-amber-200 text-amber-600 font-semibold'
+                            : 'bg-white border-gray-100 text-gray-400'
+                        } ${!isCustomMode ? 'cursor-default opacity-85' : 'active:scale-95'}`}
+                      >
+                        {isSelected && <Check size={10} strokeWidth={4} />}
+                        <span>{opt.label}</span>
                       </button>
                     );
                   })}

@@ -84,8 +84,33 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
   const [isQuestionSettingsSheetOpen, setIsQuestionSettingsSheetOpen] = useState(false);
   const [isSectionSettingsSheetOpen, setIsSectionSettingsSheetOpen] = useState(false);
 
-  const [selectedDemographics, setSelectedDemographics] = useState<string[]>([]);
+  const [selectedDemographics, setSelectedDemographics] = useState<string[]>(['gender', 'age_group', 'residence']);
   const [selectedGroups, setSelectedGroups] = useState<string[]>(initialGroupId ? [initialGroupId] : []);
+  const [activePreset, setActivePreset] = useState<'recommended' | 'professional' | 'geographic' | 'custom'>('recommended');
+
+  useEffect(() => {
+    const isRecommended = selectedDemographics.length === 3 && selectedDemographics.includes('gender') && selectedDemographics.includes('age_group') && selectedDemographics.includes('residence');
+    const isProfessional = selectedDemographics.length === 2 && selectedDemographics.includes('education') && selectedDemographics.includes('employment');
+    const isGeographic = selectedDemographics.length === 2 && selectedDemographics.includes('residence') && selectedDemographics.includes('nationality');
+    
+    if (isRecommended) setActivePreset('recommended');
+    else if (isProfessional) setActivePreset('professional');
+    else if (isGeographic) setActivePreset('geographic');
+    else setActivePreset('custom');
+  }, [selectedDemographics]);
+
+  const handlePresetChange = (preset: 'recommended' | 'professional' | 'geographic' | 'custom') => {
+    setActivePreset(preset);
+    if (preset === 'recommended') {
+      setSelectedDemographics(['gender', 'age_group', 'residence']);
+    } else if (preset === 'professional') {
+      setSelectedDemographics(['education', 'employment']);
+    } else if (preset === 'geographic') {
+      setSelectedDemographics(['residence', 'nationality']);
+    } else if (preset === 'custom') {
+      setSelectedDemographics([]);
+    }
+  };
 
   const [croppingImage, setCroppingImage] = useState<string | null>(null);
   const [activeCropTarget, setActiveCropTarget] = useState<{ type: 'cover' | 'question' | 'option', secId?: string, qId?: string, optId?: string } | null>(null);
@@ -707,10 +732,98 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
           {step === 3 && (
             <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
               <div className="bg-purple-50 rounded-[2.5rem] p-6 border border-purple-100 shadow-sm relative overflow-hidden">
-                <div className="flex items-center gap-3 mb-4"><div className="w-10 h-10 bg-purple-600 text-white rounded-2xl flex items-center justify-center shadow-md"><BarChart3 size={20} /></div><div><h2 className="text-xl font-black text-gray-900 leading-tight">Analytics Setup</h2><p className="text-[10px] font-black text-purple-600 uppercase tracking-widest mt-0.5">Demographics Filter</p></div></div>
-                <p className="text-sm text-gray-600 leading-relaxed bg-white/50 p-4 rounded-2xl border border-purple-100/50">Target specific demographics for your quiz data.</p>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 bg-purple-600 text-white rounded-2xl flex items-center justify-center shadow-md">
+                    <BarChart3 size={20} />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-black text-gray-900 leading-tight">Unlock Deeper Analytics</h2>
+                    <p className="text-[10px] font-black text-purple-600 uppercase tracking-widest mt-0.5">Demographics Setup</p>
+                  </div>
+                </div>
+                <p className="text-sm text-gray-600 leading-relaxed bg-white/50 p-4 rounded-2xl border border-purple-100/50">
+                  Choose optional demographics to help understand voter breakdowns. Participants will be asked optionally to improve analysis.
+                </p>
               </div>
-              <div className="space-y-3"><label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] px-1">Available Attributes</label><div className="flex flex-wrap gap-2">{DEMOGRAPHIC_OPTIONS.map((opt) => { const isSelected = selectedDemographics.includes(opt.id); return <button key={opt.id} onClick={() => handleDemographicToggle(opt.id)} className={`px-4 py-3 rounded-2xl border text-left transition-all max-w-[calc(50%-4px)] flex-1 min-w-[160px] ${isSelected ? 'bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-200' : 'bg-white text-gray-600 border-gray-100 hover:border-gray-200'}`}><div className="flex items-center justify-between mb-1"><span className={`text-[12px] font-bold ${isSelected ? 'text-white' : 'text-gray-900'}`}>{opt.label}</span>{isSelected && <Check size={12} strokeWidth={4} />}</div><p className={`text-[9px] leading-tight font-medium ${isSelected ? 'text-purple-50' : 'text-gray-400'}`}>{opt.desc}</p></button>; })}</div></div>
+
+              {/* Preset Packages */}
+              <div className="space-y-3">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] px-1">Preset Packages</label>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { id: 'recommended', label: 'Recommended' },
+                    { id: 'professional', label: 'Professional' },
+                    { id: 'geographic', label: 'Geographic' },
+                    { id: 'custom', label: 'Custom' }
+                  ].map((preset) => {
+                    const isActive = activePreset === preset.id;
+                    return (
+                      <button
+                        key={preset.id}
+                        onClick={() => handlePresetChange(preset.id as any)}
+                        className={`px-4 py-2 rounded-full text-xs font-bold border transition-all active:scale-95 ${
+                          isActive 
+                            ? 'bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-200' 
+                            : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Dynamic Value/Cost Indicator */}
+              <div className="p-3.5 bg-gray-50 rounded-2xl border border-gray-100 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-gray-700">
+                    Provides {selectedDemographics.length} analytical comparisons
+                  </span>
+                  <span className="text-[10px] font-extrabold text-purple-600">
+                    +{selectedDemographics.length} questions for participant
+                  </span>
+                </div>
+                <p className="text-[9px] text-gray-400 font-medium leading-normal">
+                  * Selected questions will be prompted as optional questions during participation.
+                </p>
+              </div>
+
+              {/* Collapsible Pills */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between px-1">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">
+                    Selected Attributes
+                  </label>
+                  {activePreset !== 'custom' && (
+                    <span className="text-[9px] text-gray-400 font-medium">
+                      (Read-only, select Custom to edit)
+                    </span>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {DEMOGRAPHIC_OPTIONS.map((opt) => {
+                    const isSelected = selectedDemographics.includes(opt.id);
+                    const isCustomMode = activePreset === 'custom';
+                    return (
+                      <button
+                        key={opt.id}
+                        disabled={!isCustomMode}
+                        onClick={() => handleDemographicToggle(opt.id)}
+                        className={`px-3 py-1.5 rounded-full text-[10px] font-bold border transition-all flex items-center gap-1 ${
+                          isSelected
+                            ? 'bg-purple-50 border-purple-200 text-purple-600 font-semibold'
+                            : 'bg-white border-gray-100 text-gray-400'
+                        } ${!isCustomMode ? 'cursor-default opacity-85' : 'active:scale-95'}`}
+                      >
+                        {isSelected && <Check size={10} strokeWidth={4} />}
+                        <span>{opt.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className="flex flex-col gap-3 pt-6"><button onClick={handlePost} className="w-full py-5 bg-purple-600 text-white rounded-[2rem] font-black uppercase tracking-[0.2em] text-xs shadow-xl shadow-purple-500/20 active:scale-95 transition-all flex items-center justify-center gap-2">Confirm & Publish <ChevronRight size={18} /></button><button onClick={() => setStep(2)} className="w-full py-4 bg-gray-50 text-gray-400 rounded-[2rem] font-black uppercase tracking-[0.2em] text-[10px] active:scale-95 transition-all">Back</button></div>
             </div>
           )}
