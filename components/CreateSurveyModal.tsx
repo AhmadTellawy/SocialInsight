@@ -702,8 +702,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                             <div className="flex gap-2">
                               {[
                                 { id: 'multiple', label: 'Multiple Choice' },
-                                { id: 'rating', label: 'Rating Scale' },
-                                { id: 'text', label: 'Free Text' }
+                                { id: 'rating', label: 'Rating Scale' }
                               ].map((type) => (
                                 <button
                                   key={type.id}

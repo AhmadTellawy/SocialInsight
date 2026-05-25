@@ -13,6 +13,8 @@ import { UserAvatar } from './UserAvatar';
 import { api } from '../services/api';
 import { useFollowState } from '../hooks/useFollowState';
 import { useTranslation } from 'react-i18next';
+import { SurveyActions } from './Survey/SurveyActions';
+import { SurveyQuestion } from './Survey/SurveyQuestion';
 
 interface SurveyCardProps {
   survey: Survey;
@@ -929,11 +931,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     setIsSaved(nextStatus);
     try {
       const res = await api.savePost(interactionTarget.id, userProfile.id);
-      setIsSaved(res.saved);
+      setIsSaved(res.isSaved !== undefined ? res.isSaved : res.saved);
       Analytics.track({
         event_type: 'SAVE_TOGGLE',
         post_id: interactionTarget.id,
-        new_state: res.saved,
+        new_state: res.isSaved !== undefined ? res.isSaved : res.saved,
         actor_user_id: userProfile.id,
         source_surface: sourceSurface,
         position_in_feed: positionInFeed
@@ -1042,8 +1044,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     }
   };
 
-  const getPercentage = (votes: number) => totalVotes === 0 ? 0 : Math.round((votes / totalVotes) * 100);
-  const formatCount = (num: number) => num >= 1000 ? (num / 1000).toFixed(1) + 'K' : num;
+
   const getTimeAgo = (dateStr: string) => {
     if (!dateStr) return t('Just now');
     const now = new Date();
@@ -1386,212 +1387,29 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     const firstQuestion = flatQuestions?.[0];
     const allowUserOptions = sourceSurvey.allowUserOptions || false;
 
-    const renderHorizontal = () => (
-      <div className="flex gap-3 overflow-x-scroll pb-4 pt-1 snap-x snap-mandatory -mx-4 px-4" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-        {(localOptions || []).map((option) => {
-          const isSelected = selectedOptions.includes(option.id);
-          const percentage = shouldShowResults ? getPercentage(option.votes) : 0;
-          const isPortrait = option.image && portraitImages.has(option.image);
-          const isQuiz = sourceSurvey.type === SurveyType.QUIZ;
-          const isCorrect = isQuiz && option.isCorrect;
-          const isWrongSelection = isQuiz && isSelected && !isCorrect;
-          return (
-            <div key={option.id} className={`flex-shrink-0 relative w-[65%] sm:w-[250px] rounded-xl border snap-center overflow-hidden flex flex-col transition-all duration-300 bg-white shadow-sm ${shouldShowResults && isCorrect ? 'border-green-500 ring-2 ring-green-500 bg-green-50' : shouldShowResults && isWrongSelection ? 'border-red-500 ring-2 ring-red-500 bg-red-50' : isSelected ? 'ring-2 ring-blue-500 border-blue-500' : 'border-gray-200'}`}>
-              <div className="w-full aspect-square bg-gray-100 relative group/opt-img">
-                {option.image ? (
-                  <>
-                    <img
-                      src={option.image}
-                      crossOrigin="anonymous"
-                      onLoad={(e) => handleDetectOrientation(option.image!, e)}
-                      alt={option.text}
-                      className="w-full h-full object-cover"
-                    />
-                    {isPortrait && (
-                      <div
-                        className="absolute inset-0 bg-black/10 opacity-0 group-hover/opt-img:opacity-100 flex items-center justify-center transition-opacity cursor-zoom-in"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setExpandedImageUrl(option.image!);
-                        }}
-                      >
-                        <Maximize2 size={24} className="text-white drop-shadow-md" />
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div className="flex items-center justify-center h-full text-gray-300">
-                    <ImageIcon size={38} />
-                  </div>
-                )}
-                {isSelected && !hasVoted && !isExpired && (
-                  <div className="absolute inset-0 bg-blue-500/10 flex items-center justify-center animate-in fade-in duration-200 pointer-events-none">
-                    <div className="bg-blue-500 text-white p-2 rounded-full shadow-lg"><CheckCircle2 size={24} /></div>
-                  </div>
-                )}
-                {shouldShowResults && isCorrect && (
-                  <div className="absolute inset-0 flex items-center justify-center animate-in fade-in duration-200 pointer-events-none bg-green-500/10">
-                    <div className="bg-green-500 text-white p-2 rounded-full shadow-lg"><CheckCircle2 size={24} /></div>
-                  </div>
-                )}
-                {shouldShowResults && isWrongSelection && (
-                  <div className="absolute inset-0 flex items-center justify-center animate-in fade-in duration-200 pointer-events-none bg-red-500/10">
-                    <div className="bg-red-500 text-white p-2 rounded-full shadow-lg"><X size={24} /></div>
-                  </div>
-                )}
-              </div>
-              <div className="bg-gray-50 p-4 border-t border-gray-100 flex-1 flex flex-col justify-center min-h-[80px]">
-                <div className="flex justify-between items-center gap-4">
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-bold text-gray-900 truncate text-base leading-snug">
-                      {option.isRating ? (
-                        <div className="flex text-yellow-500">
-                          {Array.from({ length: option.ratingValue || 0 }).map((_, i) => (
-                            <Star key={i} size={14} fill="currentColor" />
-                          ))}
-                        </div>
-                      ) : option.text}
-                    </h3>
-                    {shouldShowResults && <div className="text-[10px] text-gray-500 mt-1">{option.votes.toLocaleString()} {t('votes')}</div>}
-                  </div>
-                  <div className="shrink-0">
-                    {isCorrect && (hasVoted || isExpired) && (
-                      <CheckCircle2 size={18} className="text-green-600 shrink-0" />
-                    )}
-                    {isWrongSelection && (hasVoted || isExpired) && (
-                      <X size={18} className="text-red-600 shrink-0" />
-                    )}
-                    {!hasVoted && !isExpired ? (
-                      <button onClick={() => handlePollOptionClick(option.id)} className={`text-sm font-bold px-6 py-2 rounded-lg transition-colors border shadow-sm active:scale-95 ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-100'}`}>{isSelected && isMultiple ? t('Selected') : t('Vote')}</button>
-                    ) : (
-                      isSelected ? (
-                        <div className="flex items-center gap-2">
-                          <div className="flex items-center gap-1 text-blue-600 font-bold text-[11px] bg-blue-50 px-2 py-1 rounded-full whitespace-nowrap">
-                            <CheckCircle2 size={12} /> <span>{t('Voted')}</span>
-                          </div>
-                          {shouldShowResults && <span className="text-sm text-blue-700 font-extrabold">{percentage}%</span>}
-                        </div>
-                      ) : (
-                        <span className="text-sm text-gray-400 font-bold px-2">{percentage}%</span>
-                      )
-                    )}
-                  </div>
-                </div>
-                {shouldShowResults && <div className="mt-3 animate-in fade-in slide-in-from-bottom-1 duration-500"><div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-blue-500 rounded-full transition-all duration-700 ease-out" style={{ width: `${percentage}%` }} /></div></div>}
-              </div>
-
-              {/* Horizontal Clarification Question */}
-              {isSelected && !hasVoted && option.withFollowUp && (
-                <div className="p-4 pt-0 animate-in fade-in slide-in-from-top-1">
-                  <label className="text-[11px] font-black text-blue-600 uppercase tracking-widest mb-1.5 block">{option.followUpLabel || t('Please explain:')}</label>
-                  <textarea
-                    value={followUpAnswers[option.id] || ''}
-                    onChange={(e) => handleFollowUpChange(option.id, e.target.value)}
-                    placeholder={t('Your response...')}
-                    className="w-full p-3 text-sm bg-blue-50/50 border border-blue-100 rounded-xl focus:bg-white transition-all min-h-[60px] resize-none"
-                  />
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
-    );
-    const renderVertical = () => (
-      <div className="space-y-2">
-        {(localOptions || []).map((option) => {
-          const isSelected = selectedOptions.includes(option.id);
-          const percentage = shouldShowResults ? getPercentage(option.votes) : 0;
-          const isPortrait = option.image && portraitImages.has(option.image);
-          const isQuiz = sourceSurvey.type === SurveyType.QUIZ;
-          const isCorrect = isQuiz && option.isCorrect;
-          const isWrongSelection = isQuiz && isSelected && !isCorrect;
-          return (
-            <div key={option.id} className="flex flex-col gap-2">
-              <button onClick={() => handlePollOptionClick(option.id)} disabled={hasVoted || isExpired} className={`relative w-full text-left rounded-xl border transition-all duration-300 overflow-hidden group ${hasImages ? 'p-1 pr-3' : 'p-3'} ${hasVoted || isExpired ? (isCorrect ? 'border-green-500 bg-green-50' : isWrongSelection ? 'border-red-500 bg-red-50' : isSelected ? 'border-blue-500 bg-blue-50' : 'border-gray-100 bg-gray-50') : isSelected ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500/20' : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/30 active:scale-[0.99]'}`}>
-                {shouldShowResults && <div className={`absolute top-0 left-0 bottom-0 transition-all duration-1000 ease-out ${isCorrect ? 'bg-green-200/50' : isWrongSelection ? 'bg-red-200/50' : isSelected ? 'bg-blue-100/50' : 'bg-gray-200/50'}`} style={{ width: `${percentage}%` }} />}
-                <div className={`relative flex justify-between items-center z-10 ${hasImages ? 'min-h-[44px]' : ''}`}>
-                  <div className={`flex items-center overflow-hidden ${hasImages ? 'gap-3' : 'gap-3'}`}>
-                    {hasImages && (
-                      <div
-                        className="w-16 h-16 rounded-lg bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0 overflow-hidden relative group/opt-img"
-                        onClick={(e) => {
-                          if (isPortrait) {
-                            e.stopPropagation();
-                            setExpandedImageUrl(option.image!);
-                          }
-                        }}
-                      >
-                        {option.image ? (
-                          <>
-                            <img
-                              src={option.image}
-                              crossOrigin="anonymous"
-                              onLoad={(e) => handleDetectOrientation(option.image!, e)}
-                              alt=""
-                              className="w-full h-full object-cover transition-transform group-hover/opt-img:scale-110"
-                            />
-                            {isPortrait && (
-                              <div className="absolute inset-0 bg-black/10 opacity-0 group-hover/opt-img:opacity-100 flex items-center justify-center transition-opacity cursor-zoom-in">
-                                <Maximize2 size={14} className="text-white drop-shadow-sm" />
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <ImageIcon size={24} className="text-gray-300" />
-                        )}
-                      </div>
-                    )}
-
-                    {isRating ? (
-                      <div className="flex items-center gap-2">
-                        <div className="flex text-yellow-500">
-                          {Array.from({ length: option.ratingValue || 0 }).map((_, i) => (
-                            <Star key={i} size={18} fill="currentColor" />
-                          ))}
-                        </div>
-                      </div>
-                    ) : (
-                      <span className={`font-medium text-sm truncate ${isSelected ? 'text-blue-700' : 'text-gray-700'} ${hasImages ? 'py-1' : ''}`}>{option.text}</span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 pl-2 shrink-0">
-                    {hasVoted || isExpired ? (shouldShowResults ? <span className="text-xs font-bold text-gray-500">{percentage}%</span> : isSelected && <CheckCircle2 size={16} className="text-blue-600" />) : <div className={`w-4 h-4 rounded-full border-2 transition-colors flex items-center justify-center ${isSelected ? 'border-blue-500 bg-blue-500' : 'border-gray-300 group-hover:border-blue-400 group-hover:bg-blue-400/20'}`}>{isSelected && <div className="w-1.5 h-1.5 bg-white rounded-full" />}</div>}
-                  </div>
-                </div>
-              </button>
-
-              {/* Vertical Clarification Question */}
-              {isSelected && !hasVoted && option.withFollowUp && (
-                <div className="px-2 pb-3 pt-1 animate-in fade-in slide-in-from-top-1">
-                  <div className="p-4 bg-blue-50/50 border border-blue-100 rounded-2xl">
-                    <label className="text-[11px] font-black text-blue-600 uppercase tracking-widest mb-2 block">
-                      {option.followUpLabel || t('Please explain your choice:')}
-                    </label>
-                    <textarea
-                      value={followUpAnswers[option.id] || ''}
-                      onChange={(e) => handleFollowUpChange(option.id, e.target.value)}
-                      placeholder={t('Type your response...')}
-                      className="w-full p-3 text-sm bg-white border border-blue-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all min-h-[90px] resize-none shadow-sm"
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    );
     return (
       <div className="mb-4">
-        {isQuiz && firstQuestion?.image && (
-          <div className="w-full rounded-xl overflow-hidden mb-3 bg-gray-100">
-            <img src={firstQuestion.image} crossOrigin="anonymous" className="w-full max-h-[500px] object-cover block" alt="Question context" />
-          </div>
-        )}
-        {isHorizontal ? renderHorizontal() : renderVertical()}
+        <SurveyQuestion
+          sourceSurvey={sourceSurvey}
+          options={localOptions || []}
+          selectedOptions={selectedOptions}
+          shouldShowResults={shouldShowResults}
+          hasVoted={hasVoted}
+          isExpired={isExpired}
+          hasImages={hasImages || false}
+          isHorizontal={isHorizontal}
+          isRating={isRating}
+          isMultiple={isMultiple}
+          totalVotes={totalVotes}
+          portraitImages={portraitImages}
+          followUpAnswers={followUpAnswers}
+          onOptionClick={handlePollOptionClick}
+          onFollowUpChange={handleFollowUpChange}
+          onImageExpand={(url) => setExpandedImageUrl(url)}
+          onDetectOrientation={handleDetectOrientation}
+        />
 
-        {!hasVoted && !isExpired && allowUserOptions && !hasAddedCustomOption && !isRating && (
+        {false && !hasVoted && !isExpired && allowUserOptions && !hasAddedCustomOption && !isRating && (
           <div className="mt-3">
             {isAddingCustomOption ? (
               <div className="flex gap-2 animate-in slide-in-from-top-1 duration-200">
@@ -1972,96 +1790,28 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             </div>
           </div>
         </div>
-        <div className="border-t border-gray-100 mt-2 px-1 pt-1 pb-1">
-          <div className="flex items-center justify-between">
-            {/* Like Button */}
-            <div className="flex flex-col items-center justify-center min-w-[48px]">
-              <div className="flex items-center gap-0.5">
-                <button onClick={handleLike} className={`p-1.5 rounded-full transition-transform active:scale-95 group ${isLiked ? 'text-blue-600 bg-blue-50' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'}`}>
-                  <ThumbsUp size={16} fill={isLiked ? "currentColor" : "none"} strokeWidth={2} className={`transition-transform duration-300 ${isLiked ? 'scale-110' : 'group-hover:scale-110'}`} />
-                </button>
-                {likeCount > 0 && (
-                  <button onClick={(e) => { e.stopPropagation(); setIsLikersSheetOpen(true); }} className={`text-[11px] pr-1 font-bold ${isLiked ? 'text-blue-600' : 'text-gray-500'} hover:underline`}>
-                    {formatCount(likeCount)}
-                  </button>
-                )}
-              </div>
-              <span className={`text-[8px] uppercase tracking-widest font-bold mt-0.5 ${isLiked ? 'text-blue-600' : 'text-gray-400'}`}>{t('Like')}</span>
-            </div>
-
-            {/* Comment Button */}
-            {survey.allowComments !== false && (
-              <div className="flex flex-col items-center justify-center min-w-[48px]">
-                <div className="flex items-center gap-0.5">
-                  <button onClick={(e) => {
-                    e.stopPropagation();
-                    if (!userProfile?.id) {
-                      navigate('/signup');
-                      return;
-                    }
-                    setIsCommentsOpen(true);
-                  }} className="p-1.5 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-all active:scale-95 group">
-                    <MessageCircle size={16} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
-                  </button>
-                  {commentsCount > 0 && (
-                    <button onClick={(e) => {
-                      e.stopPropagation();
-                      if (!userProfile?.id) {
-                        navigate('/signup');
-                        return;
-                      }
-                      setIsCommentsOpen(true);
-                    }} className="text-[11px] pr-1 font-bold text-gray-500 hover:underline">
-                      {formatCount(commentsCount)}
-                    </button>
-                  )}
-                </div>
-                <span className="text-[8px] uppercase tracking-widest font-bold mt-0.5 text-gray-400">{t('COMMENT')}</span>
-              </div>
-            )}
-
-            {/* Repost Button */}
-            <div className="flex flex-col items-center justify-center min-w-[48px]">
-              <div className="flex items-center gap-0.5">
-                <button onClick={(e) => {
-                  e.stopPropagation();
-                  if (!userProfile?.id) {
-                    navigate('/signup');
-                    return;
-                  }
-                  setIsRepostMenuOpen(true);
-                }} className={`p-1.5 rounded-full transition-all active:scale-95 group ${survey.hasReposted ? 'text-green-600 bg-green-50' : 'text-gray-500 hover:bg-green-50 hover:text-green-600'}`}>
-                  <Repeat size={16} strokeWidth={2} className={`transition-transform ${survey.hasReposted ? 'scale-110' : 'group-hover:scale-110'}`} />
-                </button>
-                {(survey.repostCount || 0) > 0 && (
-                  <span className={`text-[11px] pr-1 font-bold ${survey.hasReposted ? 'text-green-600' : 'text-gray-500'}`}>{formatCount(survey.repostCount || 0)}</span>
-                )}
-              </div>
-              <span className={`text-[8px] uppercase tracking-widest font-bold mt-0.5 ${survey.hasReposted ? 'text-green-600' : 'text-gray-400 group-hover:text-green-600'}`}>{t('REPOST')}</span>
-            </div>
-
-            {/* Share Button */}
-            <div className="flex flex-col items-center justify-center min-w-[48px]">
-              <div className="flex items-center gap-0.5">
-                <button onClick={(e) => { e.stopPropagation(); setIsShareSheetOpen(true); }} className="p-1.5 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-all active:scale-95 group">
-                  <Share2 size={16} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
-                </button>
-              </div>
-              <span className="text-[8px] uppercase tracking-widest font-bold mt-0.5 text-gray-400">{t('SHARE')}</span>
-            </div>
-
-            {/* Analysis Button */}
-            <div className="flex flex-col items-center justify-center min-w-[48px]">
-              <div className="flex items-center gap-0.5">
-                <button onClick={(e) => { e.stopPropagation(); onAnalysisClick && onAnalysisClick(); }} className="p-1.5 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-all active:scale-95 group">
-                  <BarChart3 size={16} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
-                </button>
-              </div>
-              <span className="text-[8px] uppercase tracking-widest font-bold mt-0.5 text-gray-400">{t('ANALYSIS')}</span>
-            </div>
-
-          </div>
-        </div>
+        <SurveyActions
+          isLiked={isLiked}
+          likeCount={likeCount}
+          onLike={handleLike}
+          onLikersClick={(e) => { e.stopPropagation(); setIsLikersSheetOpen(true); }}
+          allowComments={survey.allowComments !== false}
+          commentsCount={commentsCount}
+          onCommentClick={(e) => {
+            e.stopPropagation();
+            if (!userProfile?.id) { navigate('/signup'); return; }
+            setIsCommentsOpen(true);
+          }}
+          hasReposted={survey.hasReposted || false}
+          repostCount={survey.repostCount || 0}
+          onRepostClick={(e) => {
+            e.stopPropagation();
+            if (!userProfile?.id) { navigate('/signup'); return; }
+            setIsRepostMenuOpen(true);
+          }}
+          onShareClick={(e) => { e.stopPropagation(); setIsShareSheetOpen(true); }}
+          onAnalysisClick={onAnalysisClick}
+        />
         {showShareToast && <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-4 py-2 rounded-full text-xs font-medium shadow-lg animate-in fade-in zoom-in duration-200 z-10">Link copied!</div>}
       </div >
 

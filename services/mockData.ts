@@ -75,7 +75,7 @@ const createBaseSurvey = (id: string, topic: any, lang: 'ar' | 'en'): Partial<Su
     description: topic.desc || (lang === 'ar' ? "استطلاع رأي واقعي ومفيد." : "A realistic and engaging survey topic."),
     category: topic.cat,
     type: topic.type,
-    author: { name: author.name, avatar: author.avatar, type: author.type },
+    author: { id: `usr-${id}`, name: author.name, avatar: author.avatar, type: author.type },
     createdAt: createdAtDate.toISOString(),
     expiresAt: expiresAtDate.toISOString(),
     likes: Math.floor(Math.random() * 4000),

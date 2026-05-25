@@ -1008,19 +1008,21 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
             </button>
           </div>
 
-          <div className="flex items-center justify-between">
-            <div className="flex flex-col">
-              <span className="text-sm font-bold text-gray-800">Voter-added options</span>
-              <span className="text-[10px] text-gray-400">Allow users to suggest their own answers</span>
+          {false && (
+            <div className="flex items-center justify-between">
+              <div className="flex flex-col">
+                <span className="text-sm font-bold text-gray-800">Voter-added options</span>
+                <span className="text-[10px] text-gray-400">Allow users to suggest their own answers</span>
+              </div>
+              <button
+                disabled={pollChoiceType === 'rating'}
+                onClick={() => setAllowUserOptions(!allowUserOptions)}
+                className={`w-10 h-5 rounded-full relative transition-colors ${allowUserOptions ? 'bg-blue-600' : 'bg-gray-200'} ${pollChoiceType === 'rating' ? 'opacity-30' : ''}`}
+              >
+                <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowUserOptions ? 'left-6' : 'left-1'}`} />
+              </button>
             </div>
-            <button
-              disabled={pollChoiceType === 'rating'}
-              onClick={() => setAllowUserOptions(!allowUserOptions)}
-              className={`w-10 h-5 rounded-full relative transition-colors ${allowUserOptions ? 'bg-blue-600' : 'bg-gray-200'} ${pollChoiceType === 'rating' ? 'opacity-30' : ''}`}
-            >
-              <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowUserOptions ? 'left-6' : 'left-1'}`} />
-            </button>
-          </div>
+          )}
 
           <div className="flex items-center justify-between">
             <div className="flex flex-col">

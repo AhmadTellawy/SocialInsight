@@ -1,9 +1,10 @@
 import React from 'react';
 
 export class ErrorBoundary extends React.Component<any, { hasError: boolean, error: any }> {
+  state = { hasError: false, error: null };
+
   constructor(props: any) {
     super(props);
-    this.state = { hasError: false, error: null };
   }
 
   static getDerivedStateFromError(error: any) {
@@ -24,6 +25,7 @@ export class ErrorBoundary extends React.Component<any, { hasError: boolean, err
         </div>
       );
     }
+    // @ts-ignore
     return this.props.children;
   }
 }
