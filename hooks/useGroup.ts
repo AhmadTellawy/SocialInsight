@@ -192,7 +192,7 @@ export function useGroupPosts(groupId: string, userId?: string) {
             if (isInitial) setIsLoading(false);
             else setIsFetchingNextPage(false);
         }
-    }, [groupId, userId]);
+    }, [groupId]);
 
     const updatePostLikeStatus = useCallback((postId: string, isLiked: boolean) => {
         setPosts(prev => prev.map(p => {

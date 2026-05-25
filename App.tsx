@@ -322,12 +322,12 @@ const App: React.FC = () => {
         const user = JSON.parse(savedUser);
         setUserProfile(user);
         setIsAuthenticated(true);
+        setAuthBootstrapped(true);
 
-        // Confirm the cached session before route-specific fetches use it.
+        // Refresh the cached profile in the background without blocking first paint.
         api.getUser(user.id).then(freshUser => {
           setUserProfile(freshUser);
           localStorage.setItem('si_user', JSON.stringify(freshUser));
-          setAuthBootstrapped(true);
         }).catch(err => {
           console.error("Failed to refresh user profile, invalidating session", err);
           localStorage.removeItem('si_user');
@@ -336,7 +336,6 @@ const App: React.FC = () => {
           setIsAuthenticated(false);
           setUserProfile(null);
           setSurveys([]);
-          setAuthBootstrapped(true);
         });
       } catch (err) {
         console.error("Failed to parse cached user, starting guest session", err);
@@ -477,17 +476,12 @@ const App: React.FC = () => {
         setProfileError(null);
         setSelectedProfile(null);
         setProfileSurveys([]);
-        Promise.all([
-          api.getUser(userProfile.id),
-          api.getSurveys(userProfile.id, undefined, 10, userProfile.id)
-        ]).then(([freshUser, res]) => {
+        api.getSurveys(userProfile.id, undefined, 10, userProfile.id).then(res => {
           if (profileRequestRef.current !== requestId) return;
           const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
-          setUserProfile(freshUser);
-          localStorage.setItem('si_user', JSON.stringify(freshUser));
           setProfileSurveys(newSurveys);
           setProfileNextCursor(res.nextCursor);
-          setSelectedProfile(freshUser);
+          setSelectedProfile(userProfile);
         }).catch(err => {
           if (profileRequestRef.current !== requestId) return;
           console.error(err);
@@ -617,13 +611,6 @@ const App: React.FC = () => {
       return;
     }
 
-    if (userGroups.find(g => g.id === selectedGroupId)) {
-      setExternalGroup(null);
-      setIsGroupLoading(false);
-      setGroupError(null);
-      return;
-    }
-
     const requestId = ++groupRequestRef.current;
     setIsGroupLoading(true);
     setGroupError(null);
@@ -641,7 +628,7 @@ const App: React.FC = () => {
       .finally(() => {
         if (groupRequestRef.current === requestId) setIsGroupLoading(false);
       });
-  }, [authBootstrapped, selectedGroupId, userGroups]);
+  }, [authBootstrapped, selectedGroupId]);
 
   React.useEffect(() => {
     if (!authBootstrapped) return;
@@ -1266,7 +1253,7 @@ const App: React.FC = () => {
 
   const unreadNotificationsCount = notifications.filter(n => !n.isRead).length;
 
-  const activeGroup = userGroups.find(g => g.id === selectedGroupId) || externalGroup;
+  const activeGroup = externalGroup || userGroups.find(g => g.id === selectedGroupId);
   const selectedSurveyFromFeed = useMemo(
     () => surveys.find(s => s.id === selectedSurveyId),
     [surveys, selectedSurveyId]
