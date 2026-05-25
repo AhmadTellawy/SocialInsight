@@ -202,9 +202,13 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
   };
 
   const handleDiscard = async () => {
+    if (!userProfile?.id) {
+      onClose();
+      return;
+    }
     if (draft && draft.id && draft.isDraft) {
       try {
-        await api.deletePost(draft.id, userProfile.id || "");
+        await api.deletePost(draft.id, userProfile.id);
       } catch (e) {
         console.error("Failed to delete draft", e);
       }
@@ -213,6 +217,10 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
   };
 
   const handleSaveDraft = () => {
+    if (!userProfile?.id) {
+      onClose();
+      return;
+    }
     if (onSaveDraft) {
       const draftData: Partial<Survey> = {
         id: draft?.id,
@@ -229,7 +237,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
         allowAnonymous: true,
         forceAnonymous: forceAnonymous,
         expiresAt: getExpiresAt(),
-        author: { id: userProfile.id || "", name: userProfile.name, avatar: userProfile.avatar },
+        author: { id: userProfile.id, name: userProfile.name, avatar: userProfile.avatar },
         createdAt: new Date().toISOString(),
         status: 'DRAFT',
         isDraft: true,
@@ -242,6 +250,9 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
 
   const validateStep1 = () => {
     const newErrors: { [key: string]: boolean | string } = {};
+    if (!userProfile?.id) {
+      newErrors.userProfile = "User profile not found. Please log in.";
+    }
     if (!title.trim()) newErrors.title = true;
     if (!category) newErrors.category = true;
     if (visibility === 'Groups' && selectedGroups.length === 0) newErrors.visibility = "Please select at least one group.";
@@ -251,6 +262,9 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
 
   const validateStep2 = () => {
     const newErrors: { [key: string]: boolean | string } = {};
+    if (!userProfile?.id) {
+      newErrors.userProfile = "User profile not found. Please log in.";
+    }
     let hasError = false;
     sections.forEach(s => {
       s.questions.forEach(q => {
@@ -454,6 +468,13 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
         <div className="max-w-md mx-auto p-5 pb-32">
           {step === 1 && (
             <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+              {errors.userProfile && (
+                <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2">
+                  <AlertCircle size={16} />
+                  <span>{errors.userProfile}</span>
+                </div>
+              )}
+
               <section className="p-2 space-y-6">
                 <div className="grid grid-cols-2 gap-4">
                   <div className={errors.visibility ? 'p-1 rounded-xl bg-red-50 ring-1 ring-red-100' : ''}>
@@ -464,6 +485,11 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                       <span className="truncate">{visibility === 'Groups' && selectedGroups.length > 0 ? `${selectedGroups.length} Groups` : visibility}</span>
                       <ChevronDown className="text-gray-400 shrink-0" size={14} />
                     </button>
+                    {typeof errors.visibility === 'string' && (
+                      <div className="text-[10px] font-bold text-red-500 flex items-center gap-1 mt-1">
+                        <AlertCircle size={10} /> {errors.visibility}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 flex items-center gap-1">
@@ -497,9 +523,14 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
 
               <div className="space-y-3 pt-2">
                 <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Category <span className="text-red-500">*</span></label>
-                <button onClick={() => setIsCategorySheetOpen(true)} className={`inline-flex px-4 py-2 rounded-full text-xs font-bold border transition-all active:scale-95 ${category ? 'bg-purple-50 border-purple-200 text-purple-600' : 'bg-white border-gray-200 text-gray-400 hover:bg-gray-50'}`}>
+                <button onClick={() => setIsCategorySheetOpen(true)} className={`inline-flex px-4 py-2 rounded-full text-xs font-bold border transition-all active:scale-95 ${category ? 'bg-purple-50 border-purple-200 text-purple-600' : 'bg-white border-gray-200 text-gray-400 hover:bg-gray-50'} ${errors.category ? 'border-red-300 bg-red-50 text-red-500' : ''}`}>
                   {category || 'Select Quiz Category'}
                 </button>
+                {errors.category && (
+                  <div className="text-[10px] font-bold text-red-500 flex items-center gap-1 mt-1 px-1">
+                    <AlertCircle size={10} /> Category is required.
+                  </div>
+                )}
               </div>
 
               <section className="p-2 space-y-3">
@@ -525,6 +556,12 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
 
           {step === 2 && (
             <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+              {errors.questions && (
+                <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2">
+                  <AlertCircle size={16} />
+                  <span>{errors.questions}</span>
+                </div>
+              )}
               <section className="space-y-6">
                 <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 px-1">
                   {sections.map((sec, idx) => (

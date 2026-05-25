@@ -142,9 +142,13 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
   }, [draft]);
 
   const handleDiscard = async () => {
+    if (!userProfile?.id) {
+      onClose();
+      return;
+    }
     if (draft && draft.id && draft.isDraft) {
       try {
-        await api.deletePost(draft.id, userProfile.id || "");
+        await api.deletePost(draft.id, userProfile.id);
       } catch (e) {
         console.error("Failed to delete draft", e);
       }
@@ -233,6 +237,9 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
 
   const validateStep1 = () => {
     const newErrors: { [key: string]: boolean | string } = {};
+    if (!userProfile?.id) {
+      newErrors.userProfile = "User profile not found. Please log in.";
+    }
     if (!title.trim()) newErrors.title = true;
     if (!category) newErrors.category = true;
     if (visibility === 'Groups' && selectedGroups.length === 0) newErrors.visibility = "Please select at least one group.";
@@ -242,6 +249,9 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
 
   const validateStep2 = () => {
     const newErrors: { [key: string]: boolean | string } = {};
+    if (!userProfile?.id) {
+      newErrors.userProfile = "User profile not found. Please log in.";
+    }
     let hasEmptyQuestion = false;
     sections.forEach(s => {
       s.questions.forEach(q => {
@@ -266,6 +276,10 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
   };
 
   const handlePost = (isDraft: boolean = false) => {
+    if (!userProfile?.id) {
+      onClose();
+      return;
+    }
     // For drafts, we only validate title
     if (isDraft) {
       if (!title.trim()) {
@@ -281,7 +295,6 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
       title,
       description,
       type: SurveyType.SURVEY,
-      // ... rest
       category,
       sections,
       coverImage: coverImage || undefined,
@@ -293,7 +306,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
       forceAnonymous: forceAnonymous,
       expiresAt: getExpiresAt(),
       demographics: selectedDemographics,
-      author: { id: userProfile.id || "", name: userProfile.name, avatar: userProfile.avatar },
+      author: { id: userProfile.id, name: userProfile.name, avatar: userProfile.avatar },
       createdAt: new Date().toISOString(),
       isDraft: isDraft,
       status: isDraft ? 'DRAFT' : 'PUBLISHED', // Explicitly set status to avoid ambiguity
@@ -529,6 +542,12 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
         <div className="max-w-md mx-auto p-5 pb-32">
           {step === 1 && (
             <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+              {errors.userProfile && (
+                <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2">
+                  <AlertCircle size={16} />
+                  <span>{errors.userProfile}</span>
+                </div>
+              )}
               <section className="p-2 space-y-6">
                 <div className="grid grid-cols-2 gap-4">
                   <div className={errors.visibility ? 'p-1 rounded-xl bg-red-50 ring-1 ring-red-100' : ''}>
@@ -616,6 +635,12 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
 
           {step === 2 && (
             <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+              {errors.questions && (
+                <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2">
+                  <AlertCircle size={16} />
+                  <span>{errors.questions}</span>
+                </div>
+              )}
               <section className="space-y-6">
                 <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 px-1">
                   {sections.map((sec, idx) => (

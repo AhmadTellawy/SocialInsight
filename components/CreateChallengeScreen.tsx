@@ -73,9 +73,13 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   };
 
   const handleDiscard = async () => {
+    if (!userProfile?.id) {
+      onClose();
+      return;
+    }
     if (draft && draft.id && draft.isDraft) {
       try {
-        await api.deletePost(draft.id, userProfile.id || "");
+        await api.deletePost(draft.id, userProfile.id);
       } catch (e) {
         console.error("Failed to delete draft", e);
       }
@@ -84,13 +88,17 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   };
 
   const handleSaveDraft = () => {
+    if (!userProfile?.id) {
+      onClose();
+      return;
+    }
     if (onSaveDraft) {
       const draftData: Partial<Survey> = {
         id: draft?.id,
         title,
         description,
         type: SurveyType.CHALLENGE,
-        author: { id: userProfile.id || "", name: userProfile.name, avatar: userProfile.avatar },
+        author: { id: userProfile.id, name: userProfile.name, avatar: userProfile.avatar },
         options: options.map(o => ({
           id: o.id,
           text: o.text,
@@ -240,6 +248,9 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
 
   const validateStep1 = () => {
     const newErrors: { [key: string]: boolean | string } = {};
+    if (!userProfile?.id) {
+      newErrors.userProfile = "User profile not found. Please log in.";
+    }
     if (!title.trim()) newErrors.title = true;
     if (!category) newErrors.category = true;
     if (visibility === 'Groups' && selectedGroups.length === 0) newErrors.visibility = "Please select at least one group.";
@@ -248,12 +259,18 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   };
 
   const validateStep2 = () => {
+    const newErrors: { [key: string]: boolean | string } = {};
+    if (!userProfile?.id) {
+      newErrors.userProfile = "User profile not found. Please log in.";
+    }
     const filledOptions = options.filter(o => o.text.trim() !== '');
     if (filledOptions.length < 2) {
-      setErrors(prev => ({ ...prev, options: "You need at least 2 items to compare." }));
+      newErrors.options = "You need at least 2 items to compare.";
+      setErrors(newErrors);
       return false;
     }
-    return true;
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
   };
 
   const getExpiresAt = () => {
@@ -266,12 +283,16 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   };
 
   const handleFinalPost = () => {
+    if (!userProfile?.id) {
+      onClose();
+      return;
+    }
     if (!validateStep1() || !validateStep2()) return;
     onSubmit({
       title,
       description,
       type: SurveyType.CHALLENGE,
-      author: { id: userProfile.id || "", name: userProfile.name, avatar: userProfile.avatar },
+      author: { id: userProfile.id, name: userProfile.name, avatar: userProfile.avatar },
       options: options.map(o => ({
         id: o.id,
         text: o.text,
@@ -324,13 +345,25 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
         <div className="max-w-md mx-auto p-5 pb-32">
           {step === 1 && (
             <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+              {errors.userProfile && (
+                <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2">
+                  <AlertCircle size={16} />
+                  <span>{errors.userProfile}</span>
+                </div>
+              )}
+
               <section className="grid grid-cols-2 gap-4 pb-4 border-b border-gray-50">
-                <div>
+                <div className={errors.visibility ? 'p-1 rounded-xl bg-red-50 ring-1 ring-red-100' : ''}>
                   <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Globe size={10} /> Visibility</label>
                   <button onClick={() => setIsVisibilitySheetOpen(true)} className="w-full flex items-center justify-between bg-gray-50 text-gray-900 text-[11px] font-bold rounded-xl px-3 py-2.5 transition-colors text-left border border-gray-100">
                     <span className="truncate">{visibility === 'Groups' && selectedGroups.length > 0 ? `${selectedGroups.length} Groups` : visibility}</span>
                     <ChevronDown className="text-amber-500 shrink-0" size={14} />
                   </button>
+                  {typeof errors.visibility === 'string' && (
+                    <div className="text-[10px] font-bold text-red-500 flex items-center gap-1 mt-1">
+                      <AlertCircle size={10} /> {errors.visibility}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Lock size={10} /> Results</label>
@@ -361,9 +394,14 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
 
               <div className="space-y-3 pt-2">
                 <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Category <span className="text-red-500">*</span></label>
-                <button onClick={() => setIsCategorySheetOpen(true)} className={`inline-flex px-4 py-2 rounded-full text-xs font-bold border transition-all active:scale-95 ${category ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-white border-gray-200 text-gray-400 hover:bg-gray-50'}`}>
+                <button onClick={() => setIsCategorySheetOpen(true)} className={`inline-flex px-4 py-2 rounded-full text-xs font-bold border transition-all active:scale-95 ${category ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-white border-gray-200 text-gray-400 hover:bg-gray-50'} ${errors.category ? 'border-red-300 bg-red-50 text-red-500' : ''}`}>
                   {category || 'Select Challenge Category'}
                 </button>
+                {errors.category && (
+                  <div className="text-[10px] font-bold text-red-500 flex items-center gap-1 mt-1 px-1">
+                    <AlertCircle size={10} /> Category is required.
+                  </div>
+                )}
               </div>
 
               <section className="p-2 space-y-3">
@@ -390,6 +428,12 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
 
           {step === 2 && (
             <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+              {errors.userProfile && (
+                <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2">
+                  <AlertCircle size={16} />
+                  <span>{errors.userProfile}</span>
+                </div>
+              )}
               <section className="space-y-4">
                 <div className="flex items-center justify-between px-1">
                   <h2 className="text-xl font-black text-gray-900 tracking-tight">Challenge Items</h2>

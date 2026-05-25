@@ -492,89 +492,94 @@ export const createPost = async (req: Request, res: Response) => {
             status: data.status === 'DRAFT' ? 'DRAFT' : 'PUBLISHED'
         };
 
-        const post = await prisma.post.create({
-            data: postData,
-            include: {
-                author: { select: SAFE_USER_SELECT },
-                targetedGroups: true
+        const { post, createdOptions, createdSections } = await prisma.$transaction(async (tx) => {
+            const newPost = await tx.post.create({
+                data: postData,
+                include: {
+                    author: { select: SAFE_USER_SELECT },
+                    targetedGroups: true
+                }
+            });
+
+            let optionsList: any[] = [];
+            let sectionsList: any[] = [];
+            const typeStr = normalizePostType(data.type) || '';
+
+            if (OPTION_POST_TYPES.includes(typeStr) && data.options) {
+                const question = await tx.question.create({
+                    data: { text: data.title || "Poll Question", type: 'SingleChoice', postId: newPost.id }
+                });
+                await tx.option.createMany({
+                    data: data.options.map((opt: any, index: number) => ({
+                        text: opt.text,
+                        image: opt.image,
+                        questionId: question.id,
+                        isRating: opt.isRating || false,
+                        ratingValue: opt.ratingValue || 0,
+                        withFollowUp: parseBoolean(opt.withFollowUp),
+                        followUpLabel: opt.followUpLabel || null,
+                        order: index
+                    }))
+                });
+                optionsList = await tx.option.findMany({ where: { questionId: question.id }, orderBy: { order: 'asc' } });
+            } else if (SECTION_POST_TYPES.includes(typeStr) && data.sections) {
+                for (const [sIdx, sec] of data.sections.entries()) {
+                    const section = await tx.section.create({
+                        data: {
+                            title: sec.title || `Section ${sIdx + 1}`,
+                            order: sec.order !== undefined ? sec.order : sIdx,
+                            postId: newPost.id
+                        }
+                    });
+
+                    for (const [qIdx, q] of (sec.questions || []).entries()) {
+                        const question = await tx.question.create({
+                            data: {
+                                text: q.text,
+                                type: q.type || 'multiple_choice',
+                                image: q.image,
+                                order: q.order !== undefined ? q.order : qIdx,
+                                isRequired: q.isRequired !== undefined ? q.isRequired : true,
+                                postId: newPost.id,
+                                sectionId: section.id
+                            }
+                        });
+
+                        if (q.options?.length) {
+                            await tx.option.createMany({
+                                data: q.options.map((opt: any, index: number) => ({
+                                    text: opt.text,
+                                    image: opt.image,
+                                    isCorrect: q.correctOptionId === opt.id,
+                                    isRating: opt.isRating || false,
+                                    ratingValue: opt.ratingValue || 0,
+                                    withFollowUp: parseBoolean(opt.withFollowUp),
+                                    followUpLabel: opt.followUpLabel || null,
+                                    questionId: question.id,
+                                    order: index
+                                }))
+                            });
+                        }
+                    }
+                }
+
+                const fullyPopulatedPost = await tx.post.findUnique({
+                    where: { id: newPost.id },
+                    include: { sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } } }
+                });
+                if (fullyPopulatedPost?.sections) {
+                    sectionsList = fullyPopulatedPost.sections;
+                }
             }
+
+            return { post: newPost, createdOptions: optionsList, createdSections: sectionsList };
         });
+
         console.log(`[CREATE POST] Saved to DB:`, JSON.stringify({ id: post.id, allowAnonymous: postData.allowAnonymous, forceAnonymous: postData.forceAnonymous }));
 
         if (postData.status === 'PUBLISHED') {
             const fullText = `${post.title} ${post.description}`;
             await extractAndNotifyMentions(fullText, authorId, 'survey', post.id);
-        }
-
-        let createdOptions: any[] = [];
-        let createdSections: any[] = [];
-        const typeStr = normalizePostType(data.type) || '';
-
-        if (OPTION_POST_TYPES.includes(typeStr) && data.options) {
-            const question = await prisma.question.create({
-                data: { text: data.title || "Poll Question", type: 'SingleChoice', postId: post.id }
-            });
-            await prisma.option.createMany({
-                data: data.options.map((opt: any, index: number) => ({
-                    text: opt.text,
-                    image: opt.image,
-                    questionId: question.id,
-                    isRating: opt.isRating || false,
-                    ratingValue: opt.ratingValue || 0,
-                    withFollowUp: parseBoolean(opt.withFollowUp),
-                    followUpLabel: opt.followUpLabel || null,
-                    order: index
-                }))
-            });
-            createdOptions = await prisma.option.findMany({ where: { questionId: question.id }, orderBy: { order: 'asc' } });
-        } else if (SECTION_POST_TYPES.includes(typeStr) && data.sections) {
-            for (const [sIdx, sec] of data.sections.entries()) {
-                const section = await prisma.section.create({
-                    data: {
-                        title: sec.title || `Section ${sIdx + 1}`,
-                        order: sec.order !== undefined ? sec.order : sIdx,
-                        postId: post.id
-                    }
-                });
-
-                for (const [qIdx, q] of (sec.questions || []).entries()) {
-                    const question = await prisma.question.create({
-                        data: {
-                            text: q.text,
-                            type: q.type || 'multiple_choice',
-                            image: q.image,
-                            order: q.order !== undefined ? q.order : qIdx,
-                            isRequired: q.isRequired !== undefined ? q.isRequired : true,
-                            postId: post.id,
-                            sectionId: section.id
-                        }
-                    });
-
-                    if (q.options?.length) {
-                        await prisma.option.createMany({
-                            data: q.options.map((opt: any, index: number) => ({
-                                text: opt.text,
-                                image: opt.image,
-                                isCorrect: q.correctOptionId === opt.id,
-                                isRating: opt.isRating || false,
-                                ratingValue: opt.ratingValue || 0,
-                                withFollowUp: parseBoolean(opt.withFollowUp),
-                                followUpLabel: opt.followUpLabel || null,
-                                questionId: question.id,
-                                order: index
-                            }))
-                        });
-                    }
-                }
-            }
-
-            const fullyPopulatedPost = await prisma.post.findUnique({
-                where: { id: post.id },
-                include: { sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } } }
-            });
-            if (fullyPopulatedPost?.sections) {
-                createdSections = fullyPopulatedPost.sections;
-            }
         }
 
         const mappedPost = {
@@ -1564,6 +1569,21 @@ export const createComment = async (req: Request, res: Response) => {
         if (!cleanText) {
             res.status(400).json({ error: 'Comment text is required' });
             return;
+        }
+
+        if (parentId) {
+            const parentComment = await prisma.comment.findUnique({
+                where: { id: parentId },
+                select: { postId: true }
+            });
+            if (!parentComment) {
+                res.status(400).json({ error: 'Parent comment not found' });
+                return;
+            }
+            if (parentComment.postId !== id) {
+                res.status(400).json({ error: 'Parent comment does not belong to the same post' });
+                return;
+            }
         }
 
         const commentTarget = await prisma.post.findUnique({

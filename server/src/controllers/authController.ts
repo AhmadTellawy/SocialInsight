@@ -3,6 +3,44 @@ import prisma from '../prisma';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '../middleware/authMiddleware';
+import { z } from 'zod';
+
+const registerSchema = z.object({
+    name: z.string().min(1, 'Name is required'),
+    handle: z.string().min(3, 'Handle must be at least 3 characters').regex(/^[a-z0-9_.]+$/, 'Invalid handle format'),
+    email: z.string().email('Invalid email address').optional().nullable(),
+    phone: z.string().optional().nullable(),
+    password: z.string().min(8, 'Password must be at least 8 characters')
+        .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
+        .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
+        .regex(/\d/, 'Password must contain at least one number')
+        .regex(/[!@#$%^&*]/, 'Password must contain at least one special character'),
+    birthday: z.string().optional().nullable(),
+    country: z.string().optional().nullable(),
+    avatar: z.string().optional().nullable(),
+    authProvider: z.string().optional().nullable()
+});
+
+const loginSchema = z.object({
+    identifier: z.string().min(1, 'Identifier is required'),
+    password: z.string().min(1, 'Password is required'),
+    authProvider: z.string().optional()
+});
+
+const initRegistrationSchema = z.object({
+    fullName: z.string().min(1, 'Full name is required'),
+    email: z.string().email('Invalid email address'),
+    dob: z.string()
+});
+
+const passwordValidationSchema = z.object({
+    password: z.string().min(8, 'Password must be at least 8 characters')
+        .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
+        .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
+        .regex(/\d/, 'Password must contain at least one number')
+        .regex(/[!@#$%^&*]/, 'Password must contain at least one special character'),
+});
+
 
 function calculateAgeGroup(dob: Date | null | undefined): string | undefined {
     if (!dob) return undefined;
@@ -39,6 +77,13 @@ const SAFE_USER_SELECT = {
 };
 
 export const register = async (req: Request, res: Response) => {
+    // Validate inputs using Zod
+    const validation = registerSchema.safeParse(req.body);
+    if (!validation.success) {
+        res.status(400).json({ error: validation.error.errors[0].message });
+        return;
+    }
+
     const { name, handle, email, phone, password, birthday, country, avatar, authProvider } = req.body;
 
     const lowerEmail = email?.toLowerCase();
@@ -61,13 +106,18 @@ export const register = async (req: Request, res: Response) => {
         }
 
         const parsedBirthday = birthday ? new Date(birthday) : null;
+        
+        // Hash password during registration - security fix
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
+
         const newUser = await prisma.user.create({
             data: {
                 name,
                 handle: lowerHandle,
                 email: lowerEmail,
                 phone,
-                password,
+                passwordHash: hashedPassword, // Store hashed password directly
                 birthday: parsedBirthday,
                 country,
                 avatar: avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(name || handle)}&background=6366f1&color=fff&bold=true&size=200`,
@@ -100,6 +150,13 @@ export const register = async (req: Request, res: Response) => {
 };
 
 export const login = async (req: Request, res: Response) => {
+    // Validate inputs using Zod
+    const validation = loginSchema.safeParse(req.body);
+    if (!validation.success) {
+        res.status(400).json({ error: validation.error.errors[0].message });
+        return;
+    }
+
     const { identifier, password, authProvider } = req.body;
 
     try {
@@ -168,6 +225,13 @@ export const login = async (req: Request, res: Response) => {
 };
 
 export const initiateRegistration = async (req: Request, res: Response) => {
+    // Validate inputs using Zod
+    const validation = initRegistrationSchema.safeParse(req.body);
+    if (!validation.success) {
+        res.status(400).json({ error: validation.error.errors[0].message });
+        return;
+    }
+
     const { fullName, email, dob } = req.body;
     const lowerEmail = email?.toLowerCase();
     try {
@@ -195,37 +259,56 @@ export const completeRegistration = async (req: Request, res: Response) => {
         const pending = await prisma.pendingRegistration.findUnique({ where });
         if (!pending) return res.status(404).json({ error: 'Session not found' });
 
-        // Use stored data from pendingRegistration
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(pending.password || 'temp123', salt);
-
-        const user = await prisma.user.create({
-            data: {
-                email: pending.email,
-                name: pending.fullName,
-                birthday: pending.dob,
-                handle: pending.handle || 'user_' + Date.now(),
-                passwordHash: hashedPassword,
-                // password: null, // Don't save plain text
-                authProvider: 'Email',
-                avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(pending.fullName)}&background=6366f1&color=fff&bold=true&size=200`,
-                demographics: { create: { ageGroup: calculateAgeGroup(pending.dob) } }
-            },
-            select: SAFE_USER_SELECT
-        });
-
-        await prisma.notificationSettings.create({
-            data: {
-                userId: user.id,
-                settings: JSON.stringify({
-                    myPosts: { likes: 'everyone', comments: 'everyone', shares: 'following' },
-                    sharedPosts: { likes: 'following', comments: 'following', shares: 'off' },
-                    toggles: { activityFollowed: true, invitations: true, commentInteractions: true, newFollowers: true, emailNotifications: false }
-                })
+        // 1. Verify OTP code if not bypassed in development mode
+        const skipOtp = otp === 'SKIP_OTP' && process.env.NODE_ENV === 'development';
+        if (!skipOtp) {
+            if (!pending.otpCode || !pending.otpExpiresAt) {
+                res.status(400).json({ error: 'No OTP code generated' });
+                return;
             }
+            if (new Date() > pending.otpExpiresAt) {
+                res.status(400).json({ error: 'OTP code has expired' });
+                return;
+            }
+            const isMatch = await bcrypt.compare(otp, pending.otpCode);
+            if (!isMatch) {
+                res.status(400).json({ error: 'Invalid OTP code' });
+                return;
+            }
+        }
+
+        // 2. Perform DB operations inside a single transaction (Prisma Transaction)
+        const user = await prisma.$transaction(async (tx) => {
+            const newUser = await tx.user.create({
+                data: {
+                    email: pending.email,
+                    name: pending.fullName,
+                    birthday: pending.dob,
+                    handle: pending.handle || 'user_' + Date.now(),
+                    passwordHash: pending.password, // Store hashed password from pendingRegistration
+                    authProvider: 'Email',
+                    avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(pending.fullName)}&background=6366f1&color=fff&bold=true&size=200`,
+                    demographics: { create: { ageGroup: calculateAgeGroup(pending.dob) } }
+                },
+                select: SAFE_USER_SELECT
+            });
+
+            await tx.notificationSettings.create({
+                data: {
+                    userId: newUser.id,
+                    settings: JSON.stringify({
+                        myPosts: { likes: 'everyone', comments: 'everyone', shares: 'following' },
+                        sharedPosts: { likes: 'following', comments: 'following', shares: 'off' },
+                        toggles: { activityFollowed: true, invitations: true, commentInteractions: true, newFollowers: true, emailNotifications: false }
+                    })
+                }
+            });
+
+            await tx.pendingRegistration.delete({ where });
+
+            return newUser;
         });
 
-        await prisma.pendingRegistration.delete({ where });
         const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '90d' });
         res.json({ user, token });
     } catch (error: any) {
@@ -245,14 +328,26 @@ export const completeRegistration = async (req: Request, res: Response) => {
 };
 
 export const setRegistrationPassword = async (req: Request, res: Response) => {
+    // Validate inputs using Zod
+    const validation = passwordValidationSchema.safeParse(req.body);
+    if (!validation.success) {
+        res.status(400).json({ error: validation.error.errors[0].message });
+        return;
+    }
+
     const { email, pendingId, password } = req.body;
     const lowerEmail = email?.toLowerCase();
     try {
         const where = pendingId ? { id: pendingId } : { email: lowerEmail };
+        
+        // Hash password before saving to pendingRegistration for security
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
+
         await prisma.pendingRegistration.update({
             where,
             data: {
-                password,
+                password: hashedPassword, // Store hash directly
                 currentStep: 3
             }
         });
@@ -295,11 +390,47 @@ export const reserveHandle = async (req: Request, res: Response) => {
 };
 
 export const sendRegistrationOTP = async (req: Request, res: Response) => {
-    const { email } = req.body;
+    const { pendingId } = req.body;
     try {
-        // In a real app, send OTP via email
-        res.json({ success: true, otp: '123456' });
+        const pending = await prisma.pendingRegistration.findUnique({
+            where: { id: pendingId }
+        });
+        if (!pending) {
+            res.status(404).json({ error: 'Session not found' });
+            return;
+        }
+
+        // Generate a random 6-digit OTP code or fallback to '123456' if flag set
+        let otp = '123456';
+        if (process.env.NODE_ENV === 'production' || process.env.USE_RANDOM_OTP === 'true') {
+            otp = Math.floor(100000 + Math.random() * 900000).toString();
+        }
+
+        const otpHash = await bcrypt.hash(otp, 10);
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+        await prisma.pendingRegistration.update({
+            where: { id: pendingId },
+            data: {
+                otpCode: otpHash,
+                otpExpiresAt: expiresAt,
+                currentStep: 5
+            }
+        });
+
+        // Mock delivery: log it to console
+        console.log(`\n🔐 REGISTRATION OTP CODE FOR ${pending.email}:`);
+        console.log(`📱 CODE: ${otp}`);
+        console.log(`⏰ Expires at: ${expiresAt.toLocaleString()}\n`);
+
+        res.json({
+            success: true,
+            message: 'OTP sent successfully',
+            // Return code in development/test environment only if allowed
+            ...(process.env.NODE_ENV === 'development' ? { devCode: otp } : {})
+        });
     } catch (error) {
+        console.error('sendRegistrationOTP error:', error);
         res.status(500).json({ error: 'Failed to send OTP' });
     }
 };

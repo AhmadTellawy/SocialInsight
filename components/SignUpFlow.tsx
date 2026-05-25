@@ -39,18 +39,9 @@ export const SignUpFlow: React.FC<SignUpFlowProps> = ({ onComplete, onCancel }) 
                     await api.reserveHandle(pendingId, stepData.handle);
                     setCollectedData({ ...collectedData, ...stepData });
 
-                    // BYPASS OTP: Directly complete registration
-                    // await api.sendRegistrationOTP(pendingId); // Skipped
-
-                    const res = await api.completeRegistration(pendingId, 'SKIP_OTP');
-                    setCollectedData({ ...collectedData, ...stepData, user: res.user, token: res.token });
-
-                    // Skip OTP UI Step (Step 5) and go directly to Notifications (Step 6)
-                    if ('Notification' in window && Notification.permission !== 'default') {
-                        onComplete(res.user);
-                    } else {
-                        setStep(6);
-                    }
+                    // Securely request OTP and transition to OTP verification screen (Step 5)
+                    await api.sendRegistrationOTP(pendingId);
+                    setStep(5);
                 }
             } else if (step === 5) {
                 if (pendingId) {

@@ -68,9 +68,13 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   };
 
   const handleDiscard = async () => {
+    if (!userProfile?.id) {
+      onClose();
+      return;
+    }
     if (draft && draft.id && draft.isDraft) {
       try {
-        await api.deletePost(draft.id, userProfile.id || "");
+        await api.deletePost(draft.id, userProfile.id);
       } catch (e) {
         console.error("Failed to delete draft", e);
       }
@@ -79,7 +83,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   };
 
   const handleSaveDraft = async () => {
-    if (!userProfile || !userProfile.id) {
+    if (!userProfile?.id) {
       alert('Please log in to save a draft');
       return;
     }
@@ -363,21 +367,32 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   const validate = () => {
     const newErrors: { [key: string]: boolean | string } = {};
     let isValid = true;
-    if (!title.trim()) newErrors.title = "Question text is required";
-
-    if (pollChoiceType === 'multiple') {
-      if (options.filter(o => o.text.trim() !== '').length < 2) newErrors.options = "At least 2 options are required";
+    if (!userProfile?.id) {
+      newErrors.userProfile = "User profile not found. Please log in.";
+      isValid = false;
     }
-
-    if (!category) newErrors.category = "Please select a category";
-    if (visibility === 'Groups' && selectedGroups.length === 0) newErrors.visibility = "Select at least one group.";
-    if (category === 'Other' && !otherCategoryText.trim()) {
-      newErrors.otherCategoryText = true;
+    if (!title.trim()) {
+      newErrors.title = "Question text is required";
       isValid = false;
     }
 
+    if (pollChoiceType === 'multiple') {
+      if (options.filter(o => o.text.trim() !== '').length < 2) {
+        newErrors.options = "At least 2 options are required";
+        isValid = false;
+      }
+    }
+
+    if (!category) {
+      newErrors.category = "Please select a category";
+      isValid = false;
+    }
     if (visibility === 'Groups' && selectedGroups.length === 0) {
-      newErrors.visibility = 'Please select at least one group.';
+      newErrors.visibility = "Please select at least one group.";
+      isValid = false;
+    }
+    if (category === 'Other' && !otherCategoryText.trim()) {
+      newErrors.otherCategoryText = true;
       isValid = false;
     }
 
@@ -395,12 +410,11 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   };
 
   const handleSubmit = () => {
-    if (!validate()) return;
-
-    if (!userProfile || !userProfile.id) {
+    if (!userProfile?.id) {
       alert('Please log in to create a post');
       return;
     }
+    if (!validate()) return;
 
     try {
       const finalCategory = category === 'Other' ? otherCategoryText.trim() : category;
@@ -462,6 +476,13 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto no-scrollbar bg-white">
         <div className="max-w-md mx-auto p-5 pb-32">
           <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+              {errors.userProfile && (
+                <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2">
+                  <AlertCircle size={16} />
+                  <span>{errors.userProfile}</span>
+                </div>
+              )}
+
               {/* 1. Top Settings Row */}
               <section className="grid grid-cols-3 gap-2.5 pb-4 border-b border-gray-50">
                 <div className={errors.visibility ? 'p-0.5 rounded-xl bg-red-50 ring-1 ring-red-100' : ''}>
@@ -475,6 +496,9 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                     <span className="truncate text-[10px] font-bold">{visibility === 'Groups' && selectedGroups.length > 0 ? `${selectedGroups.length} Groups` : visibility}</span>
                     <ChevronDown className="text-gray-400 shrink-0" size={12} />
                   </button>
+                  {typeof errors.visibility === 'string' && (
+                    <p className="text-[8px] text-red-500 font-bold mt-1 px-1">{errors.visibility}</p>
+                  )}
                 </div>
 
                 <div>

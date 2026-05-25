@@ -1,7 +1,6 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../prisma';
 
-const prisma = new PrismaClient();
 
 const VALID_EVENT_TYPES = [
     'POST_VIEW_START', 'POST_VIEW_END', 'LIKE', 'SAVE_TOGGLE',
