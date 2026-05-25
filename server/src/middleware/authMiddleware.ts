@@ -1,7 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 
-export const JWT_SECRET = process.env.JWT_SECRET || 'fallback_socialinsight_secret_2026';
+if (!process.env.JWT_SECRET) {
+    throw new Error('FATAL ERROR: JWT_SECRET environment variable is not set. This is a critical security vulnerability.');
+}
+export const JWT_SECRET = process.env.JWT_SECRET;
 
 // Extend Express Request type
 declare global {
