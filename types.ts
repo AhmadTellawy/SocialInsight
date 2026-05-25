@@ -152,6 +152,12 @@ export interface UserProgress {
   isAnonymous?: boolean;
 }
 
+export interface PostAnswerPayload {
+  questionId: string;
+  optionId?: string;
+  textValue?: string;
+}
+
 export interface Survey {
   id: string;
   title: string;

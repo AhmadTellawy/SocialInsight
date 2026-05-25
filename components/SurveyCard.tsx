@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Survey, SurveyType, Option, LogicRule, UserProfile } from '../types';
+import { PostAnswerPayload, Survey, SurveyType, Option, LogicRule, UserProfile } from '../types';
 import { Clock, Users, TrendingUp, MoreHorizontal, Share2, CheckCircle2, Flag, EyeOff, Bookmark, Link as LinkIcon, UserMinus, ThumbsUp, MessageCircle, FileText, PieChart, HelpCircle, Globe, Lock, Plus, AlertCircle, ImageIcon, ChevronLeft, ChevronRight, Check, ArrowRight, XCircle, Trophy, Target, X, ListChecks, Zap, Timer, Play, Repeat, UserPlus, PlusCircle, Shield, Shuffle, Heart, Search, Send, Star, Maximize2, BarChart3, Trash2, Edit3 } from 'lucide-react';
 import { Analytics } from '../utils/analytics';
 import { BottomSheet } from './BottomSheet';
@@ -21,7 +21,7 @@ interface SurveyCardProps {
   userProfile?: UserProfile;
   isDetailView?: boolean;
   onContentClick?: () => void;
-  onVote?: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: Option, followUpAnswers?: Record<string, string>) => void;
+  onVote?: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: Option, followUpAnswers?: Record<string, string>, answers?: PostAnswerPayload[]) => void;
   onSurveyProgress?: (surveyId: string, progress: { index: number, answers: Record<string, any>, followUpAnswers?: Record<string, string>, historyStack?: number[], isAnonymous?: boolean }) => void;
   onAuthorClick?: (author: { id: string; name: string; avatar: string; handle?: string }) => void;
   onShareToFeed?: (survey: Survey, caption: string) => void;
@@ -609,6 +609,27 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     });
   };
 
+  const buildAnswerPayload = (answers: Record<string, any>): PostAnswerPayload[] => {
+    return Object.entries(answers).flatMap(([questionId, rawAnswer]) => {
+      const question = flatQuestions.find(q => q.id === questionId);
+      if (!question) return [];
+
+      if (question.type === 'text') {
+        const textValue = typeof rawAnswer === 'string' ? rawAnswer.trim() : '';
+        return textValue ? [{ questionId, textValue } as PostAnswerPayload] : [];
+      }
+
+      const optionIds = (Array.isArray(rawAnswer) ? rawAnswer : [rawAnswer])
+        .filter((optionId): optionId is string => typeof optionId === 'string' && optionId.trim() !== '');
+
+      return optionIds.map<PostAnswerPayload>(optionId => ({
+        questionId,
+        optionId,
+        textValue: followUpAnswers[optionId]?.trim() || undefined
+      }));
+    });
+  };
+
   const handleSurveyAnswer = (optionId: string | string[]) => {
     if (!currentQuestion || isExpired) return;
 
@@ -674,8 +695,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         } else {
           // Finish Quiz
           if (onVote) {
-            const allSelectedOptionIds = Object.values(newAnswers).flat().filter(Boolean);
-            onVote(sourceSurvey.id, allSelectedOptionIds, isCurrentlyAnonymous);
+            const answerPayload = buildAnswerPayload(newAnswers);
+            const allSelectedOptionIds = answerPayload
+              .map(answer => answer.optionId)
+              .filter((optionId): optionId is string => !!optionId);
+            onVote(sourceSurvey.id, allSelectedOptionIds, isCurrentlyAnonymous, undefined, followUpAnswers, answerPayload);
           }
           setSurveyCompleted(true);
         }
@@ -788,8 +812,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     setSurveyCompleted(true);
 
     if (onVote) {
-      const allSelectedOptionIds = Object.values(finalAnswers).flat().filter(Boolean) as string[];
-      onVote(sourceSurvey.id, allSelectedOptionIds, isCurrentlyAnonymous);
+      const answerPayload = buildAnswerPayload(finalAnswers);
+      const allSelectedOptionIds = answerPayload
+        .map(answer => answer.optionId)
+        .filter((optionId): optionId is string => !!optionId);
+      onVote(sourceSurvey.id, allSelectedOptionIds, isCurrentlyAnonymous, undefined, followUpAnswers, answerPayload);
     }
 
     if (onSurveyProgress) {

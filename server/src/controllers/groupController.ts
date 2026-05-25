@@ -403,7 +403,7 @@ export const requestJoin = async (req: Request, res: Response) => {
     }
 };
 
-import { SAFE_USER_SELECT, normalizePostType, parseJsonArray } from './postController';
+import { SAFE_USER_SELECT, buildUserProgress, mapAnswerOptionIds, normalizePostType, parseJsonArray } from './postController';
 
 export const getGroupPosts = async (req: Request, res: Response) => {
     const id = req.params.id as string;
@@ -420,6 +420,8 @@ export const getGroupPosts = async (req: Request, res: Response) => {
 
         const whereClause = {
             targetedGroups: { some: { id: id as string } },
+            status: 'PUBLISHED',
+            isDeleted: false,
             ...(currentUserId ? { NOT: { hiddenBy: { some: { userId: currentUserId } } } } : {})
         };
 
@@ -442,6 +444,7 @@ export const getGroupPosts = async (req: Request, res: Response) => {
                 },
                 questions: { include: { options: { orderBy: { order: 'asc' } } } },
                 sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                targetedGroups: true,
                 responses: currentUserId ? { where: { userId: currentUserId }, take: 1, include: { answers: true } } : false,
                 likes: currentUserId ? { where: { userId: currentUserId }, take: 1 } : false,
                 shares: currentUserId ? { where: { authorId: currentUserId }, take: 1 } : false,
@@ -451,6 +454,7 @@ export const getGroupPosts = async (req: Request, res: Response) => {
                         author: { select: SAFE_USER_SELECT },
                         questions: { include: { options: { orderBy: { order: 'asc' } } } },
                         sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                        targetedGroups: true,
                         responses: currentUserId ? { where: { userId: currentUserId }, take: 1, include: { answers: true } } : false,
                         likes: currentUserId ? { where: { userId: currentUserId }, take: 1 } : false,
                         shares: currentUserId ? { where: { authorId: currentUserId }, take: 1 } : false,
@@ -482,6 +486,7 @@ export const getGroupPosts = async (req: Request, res: Response) => {
                     repostCount: s.sharedFrom.sharesCount || 0,
                     commentsCount: s.sharedFrom.commentsCount || 0,
                     participants: s.sharedFrom.responseCount || 0,
+                    targetGroups: Array.isArray(s.sharedFrom.targetedGroups) ? s.sharedFrom.targetedGroups.map((g: any) => g.id) : [],
                     hasParticipated: currentUserId ? (s.sharedFrom.responses && s.sharedFrom.responses.length > 0) : false,
                     isLiked: currentUserId ? (s.sharedFrom.likes && s.sharedFrom.likes.length > 0) : false,
                     isSaved: currentUserId ? (s.sharedFrom.savedBy && s.sharedFrom.savedBy.length > 0) : false,
@@ -502,10 +507,10 @@ export const getGroupPosts = async (req: Request, res: Response) => {
                     isFollowing: currentUserId ? (s.author.following && s.author.following.length > 0) : false
                 },
                 demographics: parseJsonArray(s.demographics),
-                targetGroups: parseJsonArray(s.targetGroups),
+                targetGroups: Array.isArray(s.targetedGroups) ? s.targetedGroups.map((g: any) => g.id) : [],
                 sharedFrom: mappedSharedFrom,
-                userProgress: actualResponse?.progressState || {},
-                userSelectedOptions: userAnswers.map((a: any) => a.optionId),
+                userProgress: buildUserProgress(userAnswers),
+                userSelectedOptions: mapAnswerOptionIds(userAnswers),
                 responses: actualResponse ? { answers: actualResponse.answers } : undefined,
                 allowAnonymous: s.allowAnonymous,
                 forceAnonymous: s.forceAnonymous,

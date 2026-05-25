@@ -41,6 +41,61 @@ export const normalizePostType = (type?: string): string | undefined => {
     return type.charAt(0).toUpperCase() + type.slice(1).toLowerCase();
 };
 
+const OPTION_POST_TYPES = ['Poll', 'Challenge', 'Prediction', 'Debate'];
+const SECTION_POST_TYPES = ['Quiz', 'Survey'];
+const EDIT_WINDOW_MS = 5 * 60 * 1000;
+
+const mapTargetGroups = (post: any): string[] => {
+    return Array.isArray(post?.targetedGroups) ? post.targetedGroups.map((g: any) => g.id) : [];
+};
+
+const normalizeDemographicFilters = (value: any): string | undefined => {
+    if (!value) return undefined;
+    const aliases: Record<string, string> = {
+        ageGroup: 'age_group',
+        maritalStatus: 'marital_status',
+        familyRole: 'family_role'
+    };
+    const filters = Array.isArray(value) ? value : parseJsonArray(value);
+    const normalized = Array.from(new Set(filters.map((filter: any) => aliases[String(filter)] || String(filter)).filter(Boolean)));
+    return normalized.length > 0 ? JSON.stringify(normalized) : undefined;
+};
+
+export const mapAnswerOptionIds = (answers: any[] = []): string[] => {
+    return answers.map((answer: any) => answer.optionId).filter((optionId: any): optionId is string => typeof optionId === 'string' && optionId.length > 0);
+};
+
+export const buildUserProgress = (answers: any[] = []) => {
+    const progressAnswers: Record<string, any> = {};
+    const followUpAnswers: Record<string, string> = {};
+
+    for (const answer of answers) {
+        if (!answer?.questionId) continue;
+
+        if (answer.optionId) {
+            const existing = progressAnswers[answer.questionId];
+            progressAnswers[answer.questionId] = Array.isArray(existing)
+                ? [...existing, answer.optionId]
+                : existing
+                    ? [existing, answer.optionId]
+                    : [answer.optionId];
+
+            if (answer.textValue) {
+                followUpAnswers[answer.optionId] = answer.textValue;
+            }
+        } else if (answer.textValue) {
+            progressAnswers[answer.questionId] = answer.textValue;
+        }
+    }
+
+    return {
+        currentQuestionIndex: 0,
+        answers: progressAnswers,
+        followUpAnswers,
+        historyStack: []
+    };
+};
+
 const resolveInteractionTarget = async (postId: string, type: 'like' | 'comment' | 'vote' | 'share'): Promise<string> => {
     const post = await prisma.post.findUnique({
         where: { id: postId },
@@ -73,6 +128,7 @@ export const getPosts = async (req: Request, res: Response) => {
             ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
             where: {
                 isDeleted: false,
+                status: 'PUBLISHED',
                 ...(authorId ? { authorId } : {}),
                 ...(authorHandle ? { author: { handle: authorHandle } } : {}),
                 ...(userId && !authorId && !authorHandle ? {
@@ -100,6 +156,7 @@ export const getPosts = async (req: Request, res: Response) => {
                 },
                 questions: { include: { options: { orderBy: { order: 'asc' } } } },
                 sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                targetedGroups: true,
                 responses: (userId || guestId) ? { 
                     where: userId ? { userId } : { guestId }, 
                     take: 1, 
@@ -113,6 +170,7 @@ export const getPosts = async (req: Request, res: Response) => {
                         author: { select: SAFE_USER_SELECT },
                         questions: { include: { options: { orderBy: { order: 'asc' } } } },
                         sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                        targetedGroups: true,
                         responses: (userId || guestId) ? { 
                             where: userId ? { userId } : { guestId }, 
                             take: 1, 
@@ -144,8 +202,9 @@ export const getPosts = async (req: Request, res: Response) => {
                     likes: s.sharedFrom.likesCount,
                     repostCount: s.sharedFrom.sharesCount || 0,
                     participants: s.sharedFrom.responseCount,
+                    targetGroups: mapTargetGroups(s.sharedFrom),
                     hasParticipated: (userId || guestId) ? !!(s.sharedFrom.responses && s.sharedFrom.responses.length > 0) : false,
-                    userSelectedOptions: (s.sharedFrom.responses && s.sharedFrom.responses.length > 0) ? (s.sharedFrom.responses[0].answers || []).map((a: any) => a.optionId) : [],
+                    userSelectedOptions: (s.sharedFrom.responses && s.sharedFrom.responses.length > 0) ? mapAnswerOptionIds(s.sharedFrom.responses[0].answers || []) : [],
                     isLiked: userId ? (s.sharedFrom.likes && s.sharedFrom.likes.length > 0) : false,
                     hasReposted: userId ? (s.sharedFrom.shares && s.sharedFrom.shares.length > 0) : false,
                     isSaved: userId ? (s.sharedFrom.savedBy && s.sharedFrom.savedBy.length > 0) : false
@@ -160,17 +219,13 @@ export const getPosts = async (req: Request, res: Response) => {
                 participants: s.responseCount,
                 coverImage: s.image,
                 hasParticipated: (userId || guestId) ? !!actualResponse : false,
-                userSelectedOptions: userAnswers.map((a: any) => a.optionId),
-                userProgress: {
-                    currentQuestionIndex: 0,
-                    answers: userAnswers.reduce((acc: any, ans: any) => ({ ...acc, [ans.questionId]: ans.optionId }), {}),
-                    followUpAnswers: userAnswers.reduce((acc: any, ans: any) => ans.optionId && ans.textValue ? ({ ...acc, [ans.optionId]: ans.textValue }) : acc, {}),
-                    historyStack: []
-                },
+                userSelectedOptions: mapAnswerOptionIds(userAnswers),
+                userProgress: buildUserProgress(userAnswers),
                 isLiked: userId ? (s.likes && s.likes.length > 0) : false,
                 hasReposted: userId ? (s.shares && s.shares.length > 0) : false,
                 isSaved: userId ? (s.savedBy && s.savedBy.length > 0) : false,
-                options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(s.type) || '') && s.questions.length > 0 ? s.questions[0].options : [],
+                options: OPTION_POST_TYPES.includes(normalizePostType(s.type) || '') && s.questions.length > 0 ? s.questions[0].options : [],
+                targetGroups: mapTargetGroups(s),
                 author: {
                     ...s.author,
                     isFollowing: userId ? (s.author.following && s.author.following.length > 0) : false
@@ -213,6 +268,7 @@ export const getPostById = async (req: Request, res: Response) => {
                 },
                 questions: { include: { options: { orderBy: { order: 'asc' } } } },
                 sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                targetedGroups: true,
                 responses: (userId || guestId) ? { 
                     where: userId ? { userId } : { guestId }, 
                     take: 1, 
@@ -232,6 +288,7 @@ export const getPostById = async (req: Request, res: Response) => {
                         author: { select: SAFE_USER_SELECT },
                         questions: { include: { options: { orderBy: { order: 'asc' } } } },
                         sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                        targetedGroups: true,
                         responses: (userId || guestId) ? { 
                             where: userId ? { userId } : { guestId }, 
                             take: 1, 
@@ -251,6 +308,41 @@ export const getPostById = async (req: Request, res: Response) => {
         }
 
         const p = post as any;
+        if (p.status === 'DRAFT' && (!userId || p.authorId !== userId)) {
+            res.status(404).json({ error: 'Post not found' });
+            return;
+        }
+
+        const targetGroupIds = mapTargetGroups(p);
+        const isAuthor = !!userId && p.authorId === userId;
+        if (!isAuthor && (p.targetAudience === 'Groups' || targetGroupIds.length > 0)) {
+            if (!userId) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+            const membership = await prisma.groupMember.findFirst({
+                where: { userId, groupId: { in: targetGroupIds }, status: 'JOINED' }
+            });
+            if (!membership) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+        }
+
+        if (!isAuthor && p.targetAudience === 'Followers') {
+            if (!userId) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+            const follow = await prisma.follow.findUnique({
+                where: { followerId_followingId: { followerId: userId, followingId: p.authorId } }
+            });
+            if (!follow) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+        }
+
         const actualResponse = p.sharedFrom ? p.sharedFrom.responses?.[0] : p.responses?.[0];
         const userAnswers = actualResponse?.answers || [];
         
@@ -267,8 +359,9 @@ export const getPostById = async (req: Request, res: Response) => {
                 likes: p.sharedFrom.likesCount,
                 repostCount: p.sharedFrom.sharesCount || 0,
                 participants: p.sharedFrom.responseCount,
+                targetGroups: mapTargetGroups(p.sharedFrom),
                 hasParticipated: (userId || guestId) ? !!(p.sharedFrom.responses && p.sharedFrom.responses.length > 0) : false,
-                userSelectedOptions: (p.sharedFrom.responses && p.sharedFrom.responses.length > 0) ? (p.sharedFrom.responses[0].answers || []).map((a: any) => a.optionId) : [],
+                userSelectedOptions: (p.sharedFrom.responses && p.sharedFrom.responses.length > 0) ? mapAnswerOptionIds(p.sharedFrom.responses[0].answers || []) : [],
                 isLiked: userId ? (p.sharedFrom.likes && p.sharedFrom.likes.length > 0) : false,
                 hasReposted: userId ? (p.sharedFrom.shares && p.sharedFrom.shares.length > 0) : false,
                 isSaved: userId ? (p.sharedFrom.savedBy && p.sharedFrom.savedBy.length > 0) : false
@@ -283,17 +376,13 @@ export const getPostById = async (req: Request, res: Response) => {
             participants: p.responseCount,
             coverImage: p.image,
             hasParticipated: (userId || guestId) ? !!actualResponse : false,
-            userSelectedOptions: userAnswers.map((a: any) => a.optionId),
-            userProgress: {
-                currentQuestionIndex: 0,
-                answers: userAnswers.reduce((acc: any, ans: any) => ({ ...acc, [ans.questionId]: ans.optionId }), {}),
-                    followUpAnswers: userAnswers.reduce((acc: any, ans: any) => ans.optionId && ans.textValue ? ({ ...acc, [ans.optionId]: ans.textValue }) : acc, {}),
-                historyStack: []
-            },
+            userSelectedOptions: mapAnswerOptionIds(userAnswers),
+            userProgress: buildUserProgress(userAnswers),
             isLiked: userId ? (p.likes && p.likes.length > 0) : false,
                 hasReposted: userId ? (p.shares && p.shares.length > 0) : false,
             isSaved: userId ? (p.savedBy && p.savedBy.length > 0) : false,
-            options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(p.type) || '') && p.questions.length > 0 ? p.questions[0].options : [],
+            options: OPTION_POST_TYPES.includes(normalizePostType(p.type) || '') && p.questions.length > 0 ? p.questions[0].options : [],
+            targetGroups: mapTargetGroups(p),
             author: {
                 ...p.author,
                 isFollowing: userId ? (p.author.following && p.author.following.length > 0) : false
@@ -314,7 +403,7 @@ export const createPost = async (req: Request, res: Response) => {
     console.log(`[CREATE POST] Received payload:`, JSON.stringify({ ...data, coverImage: undefined, image: undefined }, null, 2));
     console.log(`[CREATE POST] allowAnonymous received:`, data.allowAnonymous);
     try {
-        let authorId = data.author?.id || data.authorId;
+        let authorId = req.user?.userId || data.userId || data.authorId || data.author?.id;
         if (!authorId) {
             const defaultUser = await prisma.user.findFirst();
             authorId = defaultUser?.id;
@@ -396,7 +485,8 @@ export const createPost = async (req: Request, res: Response) => {
             allowComments: data.allowComments !== undefined ? parseBoolean(data.allowComments) : true,
             allowMultipleSelection: data.allowMultipleSelection !== undefined ? parseBoolean(data.allowMultipleSelection) : false,
             allowUserOptions: data.allowUserOptions !== undefined ? parseBoolean(data.allowUserOptions) : false,
-            demographics: data.demographics ? (Array.isArray(data.demographics) ? JSON.stringify(data.demographics) : data.demographics) : undefined,
+            randomPairing: data.randomPairing !== undefined ? parseBoolean(data.randomPairing) : true,
+            demographics: normalizeDemographicFilters(data.demographics),
             allowAnonymous: parseBoolean(data.allowAnonymous),
             forceAnonymous: data.forceAnonymous !== undefined ? parseBoolean(data.forceAnonymous) : false,
             status: data.status === 'DRAFT' ? 'DRAFT' : 'PUBLISHED'
@@ -405,7 +495,8 @@ export const createPost = async (req: Request, res: Response) => {
         const post = await prisma.post.create({
             data: postData,
             include: {
-                author: { select: SAFE_USER_SELECT }
+                author: { select: SAFE_USER_SELECT },
+                targetedGroups: true
             }
         });
         console.log(`[CREATE POST] Saved to DB:`, JSON.stringify({ id: post.id, allowAnonymous: postData.allowAnonymous, forceAnonymous: postData.forceAnonymous }));
@@ -419,7 +510,7 @@ export const createPost = async (req: Request, res: Response) => {
         let createdSections: any[] = [];
         const typeStr = normalizePostType(data.type) || '';
 
-        if (['Poll', 'Challenge', 'Prediction', 'Debate'].includes(typeStr) && data.options) {
+        if (OPTION_POST_TYPES.includes(typeStr) && data.options) {
             const question = await prisma.question.create({
                 data: { text: data.title || "Poll Question", type: 'SingleChoice', postId: post.id }
             });
@@ -436,7 +527,7 @@ export const createPost = async (req: Request, res: Response) => {
                 }))
             });
             createdOptions = await prisma.option.findMany({ where: { questionId: question.id }, orderBy: { order: 'asc' } });
-        } else if (['Quiz', 'Survey'].includes(typeStr) && data.sections) {
+        } else if (SECTION_POST_TYPES.includes(typeStr) && data.sections) {
             for (const [sIdx, sec] of data.sections.entries()) {
                 const section = await prisma.section.create({
                     data: {
@@ -467,6 +558,8 @@ export const createPost = async (req: Request, res: Response) => {
                                 isCorrect: q.correctOptionId === opt.id,
                                 isRating: opt.isRating || false,
                                 ratingValue: opt.ratingValue || 0,
+                                withFollowUp: parseBoolean(opt.withFollowUp),
+                                followUpLabel: opt.followUpLabel || null,
                                 questionId: question.id,
                                 order: index
                             }))
@@ -494,8 +587,9 @@ export const createPost = async (req: Request, res: Response) => {
             sections: createdSections.length > 0 ? createdSections : undefined,
             allowAnonymous: post.allowAnonymous,
             forceAnonymous: (post as any).forceAnonymous,
+            randomPairing: (post as any).randomPairing,
             demographics: parseJsonArray(post.demographics),
-            targetGroups: (post as any).targetedGroups ? (post as any).targetedGroups.map((g: any) => g.id) : []
+            targetGroups: mapTargetGroups(post)
         };
 
         res.json(mappedPost);
@@ -511,6 +605,32 @@ export const updatePost = async (req: Request, res: Response) => {
     console.log(`[UPDATE POST] ID: ${id} | Received payload:`, JSON.stringify({ ...data, coverImage: undefined, image: undefined }, null, 2));
     console.log(`[UPDATE POST] allowAnonymous received:`, data.allowAnonymous);
     try {
+        const trustedUserId = req.user?.userId || data.userId;
+        const existingPost = await prisma.post.findUnique({
+            where: { id },
+            select: { authorId: true, status: true, createdAt: true, isDeleted: true, responseCount: true }
+        });
+
+        if (!existingPost || existingPost.isDeleted) {
+            res.status(404).json({ error: 'Post not found' });
+            return;
+        }
+
+        if (!trustedUserId || existingPost.authorId !== trustedUserId) {
+            res.status(403).json({ error: 'Unauthorized to update this post' });
+            return;
+        }
+
+        if (existingPost.status === 'PUBLISHED' && Date.now() - existingPost.createdAt.getTime() > EDIT_WINDOW_MS) {
+            res.status(403).json({ error: 'Published posts can only be edited within 5 minutes.' });
+            return;
+        }
+
+        if (existingPost.responseCount > 0 && (data.options !== undefined || data.sections !== undefined)) {
+            res.status(409).json({ error: 'Posts with responses cannot have their questions or options changed.' });
+            return;
+        }
+
         // --- PRE-PROCESS IMAGES ---
         if (data.coverImage) data.coverImage = await processBase64Image(data.coverImage);
         if (data.image) data.image = await processBase64Image(data.image);
@@ -537,6 +657,35 @@ export const updatePost = async (req: Request, res: Response) => {
         }
         // --------------------------
 
+        if (data.targetGroups && Array.isArray(data.targetGroups) && data.targetGroups.length > 0) {
+            for (const groupId of data.targetGroups) {
+                const group = await prisma.group.findUnique({
+                    where: { id: groupId },
+                    select: { postingPermissions: true }
+                });
+                if (!group) continue;
+
+                const membership = await prisma.groupMember.findUnique({
+                    where: { userId_groupId: { userId: trustedUserId, groupId } }
+                });
+
+                if (!membership || membership.status !== 'JOINED') {
+                    res.status(403).json({ error: 'You must be a member of the group to post.' });
+                    return;
+                }
+
+                if (group.postingPermissions === 'AdminsOnly' && membership.role === 'Member') {
+                    res.status(403).json({ error: 'Only admins can post in this group.' });
+                    return;
+                }
+
+                if (group.postingPermissions === 'ApprovalNeeded' && membership.role === 'Member') {
+                    res.status(403).json({ error: 'Posts require admin approval in this group (feature pending).' });
+                    return;
+                }
+            }
+        }
+
         const updateData: any = {
             ...(data.title !== undefined && { title: data.title }),
             ...(data.description !== undefined && { description: data.description }),
@@ -552,6 +701,7 @@ export const updatePost = async (req: Request, res: Response) => {
             ...(data.resultsWho !== undefined && { resultsWho: data.resultsWho }),
             ...(data.resultsDetail !== undefined && { resultsDetail: data.resultsDetail }),
             ...(data.resultsTiming !== undefined && { resultsTiming: data.resultsTiming }),
+            ...(data.status !== undefined && { status: data.status === 'DRAFT' ? 'DRAFT' : 'PUBLISHED' }),
             ...(data.targetAudience !== undefined && { targetAudience: data.targetAudience }),
             ...(data.targetGroups !== undefined && { 
                 targetedGroups: { 
@@ -560,23 +710,30 @@ export const updatePost = async (req: Request, res: Response) => {
             }),
             ...(data.pollChoiceType !== undefined && { pollChoiceType: data.pollChoiceType }),
             ...(data.imageLayout !== undefined && { imageLayout: data.imageLayout }),
-            ...(data.demographics !== undefined && { demographics: Array.isArray(data.demographics) ? JSON.stringify(data.demographics) : data.demographics })
+            ...(data.randomPairing !== undefined && { randomPairing: parseBoolean(data.randomPairing) }),
+            ...(data.demographics !== undefined && { demographics: normalizeDemographicFilters(data.demographics) })
         };
 
         const post = await prisma.post.update({
             where: { id },
             data: updateData,
             include: {
-                author: { select: SAFE_USER_SELECT }
+                author: { select: SAFE_USER_SELECT },
+                targetedGroups: true
             }
         });
         console.log(`[UPDATE POST] Saved to DB:`, JSON.stringify({ id: post.id, allowAnonymous: updateData.allowAnonymous }));
+
+        if (existingPost.status !== 'PUBLISHED' && updateData.status === 'PUBLISHED') {
+            const fullText = `${post.title} ${post.description}`;
+            await extractAndNotifyMentions(fullText, trustedUserId, 'survey', post.id);
+        }
 
         let finalOptions: any[] = [];
         let finalSections: any[] = [];
         const typeStr = normalizePostType(post.type) || '';
 
-        if (['Poll', 'Challenge', 'Prediction', 'Debate'].includes(typeStr) && data.options) {
+        if (OPTION_POST_TYPES.includes(typeStr) && data.options) {
             let question = await prisma.question.findFirst({ where: { postId: id } });
             if (!question) {
                 question = await prisma.question.create({
@@ -625,12 +782,12 @@ export const updatePost = async (req: Request, res: Response) => {
                 }
             }
             finalOptions = await prisma.option.findMany({ where: { questionId: question.id }, orderBy: { order: 'asc' } });
-        } else if (['Poll', 'Challenge', 'Prediction', 'Debate'].includes(typeStr)) {
+        } else if (OPTION_POST_TYPES.includes(typeStr)) {
             const question = await prisma.question.findFirst({ where: { postId: id } });
             if (question) {
                 finalOptions = await prisma.option.findMany({ where: { questionId: question.id }, orderBy: { order: 'asc' } });
             }
-        } else if (['Quiz', 'Survey'].includes(typeStr) && data.sections) {
+        } else if (SECTION_POST_TYPES.includes(typeStr) && data.sections) {
             const oldSections = await prisma.section.findMany({ where: { postId: id }, include: { questions: true } });
             const oldSectionIds = oldSections.map(s => s.id);
             const oldQuestionIds = oldSections.flatMap(s => s.questions.map(q => q.id));
@@ -673,6 +830,8 @@ export const updatePost = async (req: Request, res: Response) => {
                                 isCorrect: q.correctOptionId === opt.id,
                                 isRating: opt.isRating || false,
                                 ratingValue: opt.ratingValue || 0,
+                                withFollowUp: parseBoolean(opt.withFollowUp),
+                                followUpLabel: opt.followUpLabel || null,
                                 questionId: question.id,
                                 order: index
                             }))
@@ -688,7 +847,7 @@ export const updatePost = async (req: Request, res: Response) => {
             if (fullyPopulatedPost?.sections) {
                 finalSections = fullyPopulatedPost.sections;
             }
-        } else if (['Quiz', 'Survey'].includes(typeStr)) {
+        } else if (SECTION_POST_TYPES.includes(typeStr)) {
             const fullyPopulatedPost = await prisma.post.findUnique({
                 where: { id: post.id },
                 include: { sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } } }
@@ -708,7 +867,9 @@ export const updatePost = async (req: Request, res: Response) => {
             sections: finalSections.length > 0 ? finalSections : undefined,
             allowAnonymous: post.allowAnonymous,
             forceAnonymous: (post as any).forceAnonymous,
-            demographics: parseJsonArray(post.demographics)
+            randomPairing: (post as any).randomPairing,
+            demographics: parseJsonArray(post.demographics),
+            targetGroups: mapTargetGroups(post)
         };
 
         res.json(mappedPost);
@@ -724,6 +885,8 @@ export const getDrafts = async (req: Request, res: Response) => {
             where: { authorId: userId, status: 'DRAFT', isDeleted: false },
             include: {
                 questions: { include: { options: { orderBy: { order: 'asc' } } } },
+                sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                targetedGroups: true,
                 author: { select: SAFE_USER_SELECT }
             },
             orderBy: { updatedAt: 'desc' }
@@ -734,11 +897,13 @@ export const getDrafts = async (req: Request, res: Response) => {
                 repostCount: d.sharesCount || 0,
             participants: d.responseCount,
             coverImage: d.image,
-            options: normalizePostType(d.type) === 'Poll' && d.questions.length > 0 ? d.questions[0].options : [],
+            options: OPTION_POST_TYPES.includes(normalizePostType(d.type) || '') && d.questions.length > 0 ? d.questions[0].options : [],
+            sections: d.sections,
             allowAnonymous: d.allowAnonymous,
             forceAnonymous: d.forceAnonymous,
+            randomPairing: d.randomPairing,
             demographics: parseJsonArray(d.demographics),
-            targetGroups: d.targetedGroups ? d.targetedGroups.map((g: any) => g.id) : []
+            targetGroups: mapTargetGroups(d)
         }));
         res.json(mappedDrafts);
     } catch (error) {
@@ -757,6 +922,7 @@ export const getSavedPosts = async (req: Request, res: Response) => {
                         author: { select: SAFE_USER_SELECT },
                         questions: { include: { options: { orderBy: { order: 'asc' } } } },
                         sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                        targetedGroups: true,
                         responses: userId ? { where: { userId }, take: 1, include: { answers: true } } : false,
                         likes: userId ? { where: { userId }, take: 1 } : false
                     }
@@ -775,21 +941,17 @@ export const getSavedPosts = async (req: Request, res: Response) => {
                 participants: p.responseCount,
                 coverImage: p.image,
                 hasParticipated: userId ? !!userResponse : false,
-                userSelectedOptions: userAnswers.map((a: any) => a.optionId),
-                userProgress: {
-                    currentQuestionIndex: 0,
-                    answers: userAnswers.reduce((acc: any, ans: any) => ({ ...acc, [ans.questionId]: ans.optionId }), {}),
-                followUpAnswers: userAnswers.reduce((acc: any, ans: any) => ans.optionId && ans.textValue ? ({ ...acc, [ans.optionId]: ans.textValue }) : acc, {}),
-                    historyStack: []
-                },
+                userSelectedOptions: mapAnswerOptionIds(userAnswers),
+                userProgress: buildUserProgress(userAnswers),
                 isLiked: userId ? (p.likes && p.likes.length > 0) : false,
                 hasReposted: userId ? (p.shares && p.shares.length > 0) : false,
                 isSaved: true,
-                options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(p.type) || '') && p.questions.length > 0 ? p.questions[0].options : [],
+                options: OPTION_POST_TYPES.includes(normalizePostType(p.type) || '') && p.questions.length > 0 ? p.questions[0].options : [],
                 allowAnonymous: p.allowAnonymous,
                 forceAnonymous: !!p.forceAnonymous,
+                randomPairing: p.randomPairing,
                 demographics: parseJsonArray(p.demographics),
-                targetGroups: p.targetedGroups ? p.targetedGroups.map((g: any) => g.id) : []
+                targetGroups: mapTargetGroups(p)
             };
         });
         res.json(posts);
@@ -800,23 +962,71 @@ export const getSavedPosts = async (req: Request, res: Response) => {
 
 export const votePost = async (req: Request, res: Response) => {
     const rawId = req.params.id as string;
-    const { userId, guestId, optionId, optionIds, isAnonymous, newOption, followUpAnswers = {} } = req.body;
+    const { guestId, optionId, optionIds, isAnonymous, newOption, followUpAnswers = {}, answers = [] } = req.body;
     try {
         const id = await resolveInteractionTarget(rawId, 'vote');
         const guestIp = req.ip || req.socket?.remoteAddress;
-        if (!userId && !guestId) {
+        const actorUserId = req.user?.userId || null;
+        if (!actorUserId && !guestId) {
             res.status(400).json({ error: 'Authentication or Guest ID is required' });
             return;
         }
 
         const post = await prisma.post.findUnique({
             where: { id },
-            select: { allowAnonymous: true, forceAnonymous: true, authorId: true, allowMultipleSelection: true, allowUserOptions: true }
+            select: {
+                allowAnonymous: true,
+                forceAnonymous: true,
+                authorId: true,
+                allowMultipleSelection: true,
+                allowUserOptions: true,
+                type: true,
+                targetAudience: true,
+                targetedGroups: { select: { id: true } },
+                status: true,
+                isDeleted: true,
+                expiresAt: true
+            }
         });
 
-        if (!post) {
+        if (!post || post.isDeleted || post.status !== 'PUBLISHED') {
             res.status(404).json({ error: 'Post not found' });
             return;
+        }
+
+        if (post.expiresAt && post.expiresAt.getTime() <= Date.now()) {
+            res.status(400).json({ error: 'This post has ended' });
+            return;
+        }
+
+        const isAuthor = !!actorUserId && post.authorId === actorUserId;
+        const targetGroupIds = mapTargetGroups(post);
+        if (!isAuthor && (post.targetAudience === 'Groups' || targetGroupIds.length > 0)) {
+            if (!actorUserId) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+            const membership = await prisma.groupMember.findFirst({
+                where: { userId: actorUserId, groupId: { in: targetGroupIds }, status: 'JOINED' }
+            });
+            if (!membership) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+        }
+
+        if (!isAuthor && post.targetAudience === 'Followers') {
+            if (!actorUserId) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+            const follow = await prisma.follow.findUnique({
+                where: { followerId_followingId: { followerId: actorUserId, followingId: post.authorId } }
+            });
+            if (!follow) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
         }
 
         let optionsToProcess: string[] = [];
@@ -826,16 +1036,15 @@ export const votePost = async (req: Request, res: Response) => {
             optionsToProcess.push(optionId);
         }
         optionsToProcess = Array.from(new Set(optionsToProcess.filter(Boolean)));
-
-        if (optionsToProcess.length === 0) {
-            res.status(400).json({ error: 'No options provided' });
-            return;
-        }
-
-        if (!post.allowMultipleSelection && optionsToProcess.length > 1) {
-            res.status(400).json({ error: 'This poll accepts one option only' });
-            return;
-        }
+        const structuredAnswers = Array.isArray(answers)
+            ? answers
+                .map((answer: any) => ({
+                    questionId: typeof answer?.questionId === 'string' ? answer.questionId : '',
+                    optionId: typeof answer?.optionId === 'string' && answer.optionId.trim() ? answer.optionId : null,
+                    textValue: typeof answer?.textValue === 'string' ? answer.textValue.trim() : null
+                }))
+                .filter((answer: any) => answer.questionId && (answer.optionId || answer.textValue))
+            : [];
 
         let finalIsAnonymous = false;
         if ((post as any).forceAnonymous === true) {
@@ -845,6 +1054,8 @@ export const votePost = async (req: Request, res: Response) => {
         }
 
         let createdCustomOption: any = null;
+        let shouldNotify = false;
+        let notificationOptionId = optionsToProcess[0];
 
         await prisma.$transaction(async (tx) => {
             const customClientId = typeof newOption?.id === 'string' ? newOption.id : undefined;
@@ -877,69 +1088,136 @@ export const votePost = async (req: Request, res: Response) => {
                         questionId: question.id,
                         order: (lastOption?.order ?? -1) + 1,
                         isUserAdded: true,
-                        addedByUserId: userId || null,
+                        addedByUserId: actorUserId || null,
                         addedByGuestId: guestId || null
                     }
                 });
 
                 resolvedOptionIds = resolvedOptionIds.map(optId => optId === customClientId ? createdCustomOption.id : optId);
+                notificationOptionId = createdCustomOption.id;
             }
 
-            const dbOptions = await tx.option.findMany({
-                where: { id: { in: resolvedOptionIds } },
-                include: { question: true }
-            });
-
-            if (dbOptions.length !== resolvedOptionIds.length || dbOptions.some((o: any) => o.question.postId !== id)) {
-                throw Object.assign(new Error('Invalid options for this post'), { statusCode: 400 });
+            if (structuredAnswers.length === 0 && resolvedOptionIds.length === 0) {
+                throw Object.assign(new Error('No answers provided'), { statusCode: 400 });
             }
 
             const whereClause: any = { postId: id };
-            if (userId) whereClause.userId = userId;
+            if (actorUserId) whereClause.userId = actorUserId;
             else if (guestId) whereClause.guestId = guestId;
 
-            const existingResponse = await tx.response.findFirst({
-                where: whereClause
+            const existingResponse = await tx.response.findFirst({ where: whereClause });
+
+            const response = existingResponse || await tx.response.create({
+                data: {
+                    postId: id,
+                    userId: actorUserId || null,
+                    guestId: guestId || null,
+                    ipAddress: guestIp || null,
+                    isAnonymous: finalIsAnonymous
+                }
             });
 
-            let response;
-            if (existingResponse) {
-                response = existingResponse;
-            } else {
-                response = await tx.response.create({
-                    data: { 
-                        postId: id, 
-                        userId: userId || null, 
-                        guestId: guestId || null, 
-                        ipAddress: guestIp || null, 
-                        isAnonymous: finalIsAnonymous 
-                    }
-                });
-            }
+            shouldNotify = !existingResponse;
 
-            for (const opt of dbOptions) {
-                if (!post.allowMultipleSelection) {
-                    const existingQuestionAnswer = await tx.answer.findFirst({
-                        where: { responseId: response.id, questionId: opt.question.id, optionId: { not: null } }
-                    });
-                    if (existingQuestionAnswer) continue;
+            if (structuredAnswers.length > 0) {
+                const questionIds = Array.from(new Set(structuredAnswers.map((answer: any) => answer.questionId)));
+                const questions = await tx.question.findMany({
+                    where: { id: { in: questionIds }, postId: id },
+                    select: { id: true }
+                });
+                const validQuestionIds = new Set(questions.map(q => q.id));
+
+                if (validQuestionIds.size !== questionIds.length) {
+                    throw Object.assign(new Error('Invalid questions for this post'), { statusCode: 400 });
                 }
 
-                const existingAnswer = await tx.answer.findFirst({
-                    where: { responseId: response.id, questionId: opt.question.id, optionId: opt.id }
-                });
-                if (!existingAnswer) {
-                    const followUpText = opt.withFollowUp && typeof followUpAnswers?.[opt.id] === 'string'
-                        ? followUpAnswers[opt.id].trim()
-                        : null;
+                const selectedOptionIds = Array.from(new Set(structuredAnswers.map((answer: any) => answer.optionId).filter(Boolean))) as string[];
+                const options = selectedOptionIds.length > 0
+                    ? await tx.option.findMany({ where: { id: { in: selectedOptionIds } }, include: { question: true } })
+                    : [];
+                const optionsById = new Map(options.map((option: any) => [option.id, option]));
+
+                if (options.length !== selectedOptionIds.length || options.some((option: any) => option.question.postId !== id)) {
+                    throw Object.assign(new Error('Invalid options for this post'), { statusCode: 400 });
+                }
+
+                const uniqueAnswers = new Map<string, any>();
+                for (const answer of structuredAnswers) {
+                    if (answer.optionId) {
+                        const option = optionsById.get(answer.optionId);
+                        if (!option || option.questionId !== answer.questionId) {
+                            throw Object.assign(new Error('Option does not belong to the submitted question'), { statusCode: 400 });
+                        }
+                    }
+                    uniqueAnswers.set(`${answer.questionId}:${answer.optionId || 'text'}`, answer);
+                }
+
+                for (const answer of uniqueAnswers.values()) {
+                    const existingAnswer = await tx.answer.findFirst({
+                        where: {
+                            responseId: response.id,
+                            questionId: answer.questionId,
+                            optionId: answer.optionId || null
+                        }
+                    });
+
+                    if (existingAnswer) continue;
 
                     await tx.answer.create({
-                        data: { responseId: response.id, questionId: opt.question.id, optionId: opt.id, textValue: followUpText || null }
+                        data: {
+                            responseId: response.id,
+                            questionId: answer.questionId,
+                            optionId: answer.optionId || null,
+                            textValue: answer.textValue || null
+                        }
                     });
-                    await tx.option.update({
-                        where: { id: opt.id },
-                        data: { votes: { increment: 1 } }
+
+                    if (answer.optionId) {
+                        notificationOptionId = notificationOptionId || answer.optionId;
+                        await tx.option.update({
+                            where: { id: answer.optionId },
+                            data: { votes: { increment: 1 } }
+                        });
+                    }
+                }
+            } else {
+                if (!post.allowMultipleSelection && resolvedOptionIds.length > 1) {
+                    throw Object.assign(new Error('This poll accepts one option only'), { statusCode: 400 });
+                }
+
+                const dbOptions = await tx.option.findMany({
+                    where: { id: { in: resolvedOptionIds } },
+                    include: { question: true }
+                });
+
+                if (dbOptions.length !== resolvedOptionIds.length || dbOptions.some((o: any) => o.question.postId !== id)) {
+                    throw Object.assign(new Error('Invalid options for this post'), { statusCode: 400 });
+                }
+
+                for (const opt of dbOptions) {
+                    if (!post.allowMultipleSelection) {
+                        const existingQuestionAnswer = await tx.answer.findFirst({
+                            where: { responseId: response.id, questionId: opt.question.id, optionId: { not: null } }
+                        });
+                        if (existingQuestionAnswer) continue;
+                    }
+
+                    const existingAnswer = await tx.answer.findFirst({
+                        where: { responseId: response.id, questionId: opt.question.id, optionId: opt.id }
                     });
+                    if (!existingAnswer) {
+                        const followUpText = opt.withFollowUp && typeof followUpAnswers?.[opt.id] === 'string'
+                            ? followUpAnswers[opt.id].trim()
+                            : null;
+
+                        await tx.answer.create({
+                            data: { responseId: response.id, questionId: opt.question.id, optionId: opt.id, textValue: followUpText || null }
+                        });
+                        await tx.option.update({
+                            where: { id: opt.id },
+                            data: { votes: { increment: 1 } }
+                        });
+                    }
                 }
             }
 
@@ -951,8 +1229,8 @@ export const votePost = async (req: Request, res: Response) => {
             }
         });
 
-        if (userId && !finalIsAnonymous && post.authorId) {
-            await notify(userId, post.authorId as string, 'vote', 'voted on your post', 'survey', id, { optionId: optionsToProcess[0] });
+        if (actorUserId && shouldNotify && !finalIsAnonymous && post.authorId) {
+            await notify(actorUserId, post.authorId as string, 'vote', 'voted on your post', 'survey', id, { optionId: notificationOptionId });
         }
 
         res.json({ success: true, newOption: createdCustomOption });
@@ -966,12 +1244,54 @@ export const getParticipants = async (req: Request, res: Response) => {
     const rawId = req.params.id as string;
     try {
         const id = await resolveInteractionTarget(rawId, 'vote');
+        const currentUserId = req.user?.userId || (req.query.userId as string | undefined);
         const post = await prisma.post.findUnique({
             where: { id },
-            select: { forceAnonymous: true } as any
+            select: {
+                authorId: true,
+                forceAnonymous: true,
+                targetAudience: true,
+                targetedGroups: { select: { id: true } },
+                status: true,
+                isDeleted: true
+            } as any
         });
+        if (!post || (post as any).isDeleted || (post as any).status !== 'PUBLISHED') {
+            res.status(404).json({ error: 'Post not found' });
+            return;
+        }
         if (post && (post as any).forceAnonymous === true) {
             return res.json([]);
+        }
+
+        const isAuthor = !!currentUserId && (post as any).authorId === currentUserId;
+        const targetGroupIds = mapTargetGroups(post);
+        if (!isAuthor && ((post as any).targetAudience === 'Groups' || targetGroupIds.length > 0)) {
+            if (!currentUserId) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+            const membership = await prisma.groupMember.findFirst({
+                where: { userId: currentUserId, groupId: { in: targetGroupIds }, status: 'JOINED' }
+            });
+            if (!membership) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+        }
+
+        if (!isAuthor && (post as any).targetAudience === 'Followers') {
+            if (!currentUserId) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+            const follow = await prisma.follow.findUnique({
+                where: { followerId_followingId: { followerId: currentUserId, followingId: (post as any).authorId } }
+            });
+            if (!follow) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
         }
 
         const responses = await prisma.response.findMany({
@@ -1020,6 +1340,97 @@ export const getPostResults = async (req: Request, res: Response) => {
     const rawId = req.params.id as string;
     try {
         const id = await resolveInteractionTarget(rawId, 'vote');
+        const currentUserId = req.user?.userId || (req.query.userId as string | undefined);
+        const guestId = req.query.guestId as string | undefined;
+        const post = await prisma.post.findUnique({
+            where: { id },
+            select: {
+                authorId: true,
+                resultsWho: true,
+                resultsTiming: true,
+                targetAudience: true,
+                targetedGroups: { select: { id: true } },
+                expiresAt: true,
+                status: true,
+                isDeleted: true
+            }
+        });
+
+        if (!post || post.isDeleted || post.status !== 'PUBLISHED') {
+            res.status(404).json({ error: 'Post not found' });
+            return;
+        }
+
+        const isAuthor = !!currentUserId && post.authorId === currentUserId;
+        const targetGroupIds = mapTargetGroups(post);
+        if (!isAuthor && (post.targetAudience === 'Groups' || targetGroupIds.length > 0)) {
+            if (!currentUserId) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+            const membership = await prisma.groupMember.findFirst({
+                where: { userId: currentUserId, groupId: { in: targetGroupIds }, status: 'JOINED' }
+            });
+            if (!membership) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+        }
+
+        if (!isAuthor && post.targetAudience === 'Followers' && currentUserId) {
+            const follow = await prisma.follow.findUnique({
+                where: { followerId_followingId: { followerId: currentUserId, followingId: post.authorId } }
+            });
+            if (!follow) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+        } else if (!isAuthor && post.targetAudience === 'Followers') {
+            res.status(403).json({ error: 'Forbidden' });
+            return;
+        }
+
+        let whoPasses = isAuthor || !post.resultsWho || post.resultsWho === 'Public';
+
+        if (!whoPasses && post.resultsWho === 'Followers' && currentUserId) {
+            const follow = await prisma.follow.findUnique({
+                where: { followerId_followingId: { followerId: currentUserId, followingId: post.authorId } }
+            });
+            whoPasses = !!follow;
+        }
+
+        if (!whoPasses && post.resultsWho === 'Participants' && (currentUserId || guestId)) {
+            const response = await prisma.response.findFirst({
+                where: {
+                    postId: id,
+                    ...(currentUserId ? { userId: currentUserId } : guestId ? { guestId } : {})
+                }
+            });
+            whoPasses = !!response;
+        }
+
+        if (!whoPasses) {
+            res.status(403).json({ error: 'You do not have access to these results' });
+            return;
+        }
+
+        const timing = post.resultsTiming || 'AnyTime';
+        const viewerResponse = (currentUserId || guestId) ? await prisma.response.findFirst({
+            where: {
+                postId: id,
+                ...(currentUserId ? { userId: currentUserId } : { guestId })
+            }
+        }) : null;
+        const timingPasses = isAuthor
+            || timing === 'AnyTime'
+            || (timing === 'AfterEnd' && post.expiresAt.getTime() <= Date.now())
+            || (timing === 'Immediately' && !!viewerResponse);
+
+        if (!timingPasses) {
+            res.status(403).json({ error: 'Results are not available yet' });
+            return;
+        }
+
         const responses = await prisma.response.findMany({
             where: { postId: id },
             include: {
@@ -1037,7 +1448,8 @@ export const getPostResults = async (req: Request, res: Response) => {
             isAnonymous: r.isAnonymous,
             answers: r.answers.map(a => ({
                 questionId: a.questionId,
-                optionId: a.optionId
+                optionId: a.optionId,
+                textValue: a.textValue
             })),
             demographics: {
                 age: r.user?.demographics?.ageGroup || 'Unknown',
@@ -1078,6 +1490,52 @@ export const getComments = async (req: Request, res: Response) => {
     const userId = req.query.userId as string | undefined;
     try {
         const id = await resolveInteractionTarget(rawId, 'comment');
+        const commentTarget = await prisma.post.findUnique({
+            where: { id },
+            select: {
+                authorId: true,
+                targetAudience: true,
+                targetedGroups: { select: { id: true } },
+                status: true,
+                isDeleted: true
+            }
+        });
+
+        if (!commentTarget || commentTarget.isDeleted || commentTarget.status !== 'PUBLISHED') {
+            res.status(404).json({ error: 'Post not found' });
+            return;
+        }
+
+        const isAuthor = !!userId && commentTarget.authorId === userId;
+        const targetGroupIds = mapTargetGroups(commentTarget);
+        if (!isAuthor && (commentTarget.targetAudience === 'Groups' || targetGroupIds.length > 0)) {
+            if (!userId) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+            const membership = await prisma.groupMember.findFirst({
+                where: { userId, groupId: { in: targetGroupIds }, status: 'JOINED' }
+            });
+            if (!membership) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+        }
+
+        if (!isAuthor && commentTarget.targetAudience === 'Followers') {
+            if (!userId) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+            const follow = await prisma.follow.findUnique({
+                where: { followerId_followingId: { followerId: userId, followingId: commentTarget.authorId } }
+            });
+            if (!follow) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+        }
+
         const comments = await prisma.comment.findMany({
             where: { postId: id, parentId: null },
             include: {
@@ -1098,12 +1556,63 @@ export const getComments = async (req: Request, res: Response) => {
 
 export const createComment = async (req: Request, res: Response) => {
     const rawId = req.params.id as string;
-    const { text, userId, parentId } = req.body;
+    const { text, parentId } = req.body;
     try {
         const id = await resolveInteractionTarget(rawId, 'comment');
+        const userId = req.user?.userId || req.body.userId;
+        const cleanText = typeof text === 'string' ? text.trim() : '';
+        if (!cleanText) {
+            res.status(400).json({ error: 'Comment text is required' });
+            return;
+        }
+
+        const commentTarget = await prisma.post.findUnique({
+            where: { id },
+            select: {
+                allowComments: true,
+                authorId: true,
+                targetAudience: true,
+                targetedGroups: { select: { id: true } },
+                status: true,
+                isDeleted: true
+            }
+        });
+
+        if (!commentTarget || commentTarget.isDeleted || commentTarget.status !== 'PUBLISHED') {
+            res.status(404).json({ error: 'Post not found' });
+            return;
+        }
+
+        if (commentTarget.allowComments === false) {
+            res.status(403).json({ error: 'Comments are disabled for this post' });
+            return;
+        }
+
+        const isAuthor = commentTarget.authorId === userId;
+        const targetGroupIds = mapTargetGroups(commentTarget);
+        if (!isAuthor && (commentTarget.targetAudience === 'Groups' || targetGroupIds.length > 0)) {
+            const membership = await prisma.groupMember.findFirst({
+                where: { userId, groupId: { in: targetGroupIds }, status: 'JOINED' }
+            });
+            if (!membership) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+        }
+
+        if (!isAuthor && commentTarget.targetAudience === 'Followers') {
+            const follow = await prisma.follow.findUnique({
+                where: { followerId_followingId: { followerId: userId, followingId: commentTarget.authorId } }
+            });
+            if (!follow) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+        }
+
         const [comment, targetPost] = await prisma.$transaction([
             prisma.comment.create({
-                data: { text, userId, postId: id, parentId },
+                data: { text: cleanText, userId, postId: id, parentId },
                 include: { user: { select: SAFE_USER_SELECT } }
             }),
             prisma.post.update({ where: { id }, data: { commentsCount: { increment: 1 } } })
@@ -1113,7 +1622,7 @@ export const createComment = async (req: Request, res: Response) => {
             await notify(userId, targetPost.authorId, 'response', 'commented on your post', 'survey', id, { commentId: comment.id });
         }
         
-        await extractAndNotifyMentions(text, userId, 'comment', comment.id, { postId: id });
+        await extractAndNotifyMentions(cleanText, userId, 'comment', comment.id, { postId: id });
 
         res.json(mapComment(comment, userId));
     } catch (error) {
@@ -1261,7 +1770,7 @@ export const sharePost = async (req: Request, res: Response) => {
             return;
         }
 
-        if (originalPost.targetAudience === 'Private' || originalPost.groupId) {
+        if (originalPost.targetAudience === 'Private' || originalPost.targetAudience === 'Groups' || originalPost.groupId || (originalPost as any).targetedGroups?.length > 0) {
             res.status(403).json({ error: 'Cannot share private or group content' });
             return;
         }
@@ -1314,6 +1823,7 @@ export const sharePost = async (req: Request, res: Response) => {
                 allowComments: originalPost.allowComments,
                 allowMultipleSelection: originalPost.allowMultipleSelection,
                 allowUserOptions: originalPost.allowUserOptions,
+                randomPairing: (originalPost as any).randomPairing,
                 resultsWho: originalPost.resultsWho,
                 resultsTiming: originalPost.resultsTiming,
                 targetedGroups: (originalPost as any).targetedGroups && (originalPost as any).targetedGroups.length > 0 ? {
@@ -1333,11 +1843,13 @@ export const sharePost = async (req: Request, res: Response) => {
                 author: { select: SAFE_USER_SELECT },
                 questions: { include: { options: { orderBy: { order: 'asc' } } } },
                 sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                targetedGroups: true,
                 sharedFrom: {
                     include: {
                         author: { select: SAFE_USER_SELECT },
                         questions: { include: { options: { orderBy: { order: 'asc' } } } },
                         sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                        targetedGroups: true,
                     }
                 }
             }
@@ -1363,8 +1875,10 @@ export const sharePost = async (req: Request, res: Response) => {
                 likes: p.sharedFrom.likesCount,
                 repostCount: p.sharedFrom.sharesCount || 0,
                 participants: p.sharedFrom.responseCount,
+                randomPairing: p.sharedFrom.randomPairing,
+                targetGroups: mapTargetGroups(p.sharedFrom),
                 hasParticipated: userId ? !!(p.sharedFrom.responses && p.sharedFrom.responses.length > 0) : false,
-                userSelectedOptions: (p.sharedFrom.responses && p.sharedFrom.responses.length > 0) ? (p.sharedFrom.responses[0].answers || []).map((a: any) => a.optionId) : [],
+                userSelectedOptions: (p.sharedFrom.responses && p.sharedFrom.responses.length > 0) ? mapAnswerOptionIds(p.sharedFrom.responses[0].answers || []) : [],
                 isLiked: userId ? (p.sharedFrom.likes && p.sharedFrom.likes.length > 0) : false,
                 hasReposted: userId ? (p.sharedFrom.shares && p.sharedFrom.shares.length > 0) : false,
                 isSaved: userId ? (p.sharedFrom.savedBy && p.sharedFrom.savedBy.length > 0) : false
@@ -1385,7 +1899,9 @@ export const sharePost = async (req: Request, res: Response) => {
             },
             allowAnonymous: p.allowAnonymous,
             forceAnonymous: p.forceAnonymous,
-            demographics: parseJsonArray(p.demographics)
+            randomPairing: p.randomPairing,
+            demographics: parseJsonArray(p.demographics),
+            targetGroups: mapTargetGroups(p)
         };
 
         res.json(mappedPost);

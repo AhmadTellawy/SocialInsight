@@ -31,16 +31,16 @@ const router = Router();
 
 // Optional Auth (Guests can view, Users get personalized views)
 router.get('/', optionalAuth, getPosts);
+router.get('/drafts', requireAuth, getDrafts);
+router.get('/saved', requireAuth, getSavedPosts);
+router.get('/comments/:id/likes', optionalAuth, getCommentLikers);
 router.get('/:id', optionalAuth, getPostById);
 router.get('/:id/participants', optionalAuth, getParticipants);
 router.get('/:id/results', optionalAuth, getPostResults);
 router.get('/:id/comments', optionalAuth, getComments);
 router.get('/:id/likes', optionalAuth, getPostLikers);
-router.get('/comments/:id/likes', optionalAuth, getCommentLikers);
 
 // Require Auth (Only logged in users can mutate data/view private lists)
-router.get('/drafts', requireAuth, getDrafts);
-router.get('/saved', requireAuth, getSavedPosts);
 router.post('/comments/:id/like', requireAuth, likeComment);
 router.put('/comments/:id', requireAuth, updateComment);
 router.delete('/comments/:id', requireAuth, deleteComment);

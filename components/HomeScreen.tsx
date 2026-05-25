@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Activity } from 'lucide-react';
-import { Survey, UserProfile } from '../types';
+import { PostAnswerPayload, Survey, UserProfile } from '../types';
 import { SurveyCard } from './SurveyCard';
 import { SuggestedUsersList } from './SuggestedUsersList';
 
@@ -11,7 +11,7 @@ interface HomeScreenProps {
   surveys: Survey[];
   userProfile: UserProfile;
   onSurveyClick: (id: string, sourceSurface?: 'FEED' | 'TRENDING', action?: 'analysis') => void;
-  onVote: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: any, followUpAnswers?: Record<string, string>) => void;
+  onVote: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: any, followUpAnswers?: Record<string, string>, answers?: PostAnswerPayload[]) => void;
   onSurveyProgress: (surveyId: string, progress: any) => void;
   onAuthorClick: (author: { id: string; name: string; avatar: string; handle?: string }) => void;
   onShareToFeed: (survey: Survey, caption: string) => void;

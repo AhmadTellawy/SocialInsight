@@ -27,7 +27,7 @@ import { PostAnalysis } from './components/PostAnalysis';
 import { AuthScreen } from './components/AuthScreen';
 import { UsersTableScreen } from './components/UsersTableScreen';
 import { PrivacyPolicyScreen } from './components/PrivacyPolicyScreen';
-import { Survey, Option, Notification, SurveyType, Group, UserProfile } from './types';
+import { PostAnswerPayload, Survey, Option, Notification, SurveyType, Group, UserProfile } from './types';
 import {
   BarChart3, PieChart, Activity, ArrowLeft, Users, MessageCircle,
   Share2, MoreVertical, Globe, ShieldCheck, ChevronRight, BarChart,
@@ -986,7 +986,8 @@ const App: React.FC = () => {
     optionIds: string[],
     isAnonymous?: boolean,
     newOption?: Option,
-    followUpAnswers?: Record<string, string>
+    followUpAnswers?: Record<string, string>,
+    answers?: PostAnswerPayload[]
   ) => {
     const previousSurveys = [...surveys];
     setSurveys(prev =>
@@ -1023,10 +1024,22 @@ const App: React.FC = () => {
                   : opt
               )
             }));
+            const updatedSections = target.sections?.map(section => ({
+              ...section,
+              questions: section.questions.map(q => ({
+                ...q,
+                options: q.options?.map(opt =>
+                  optionIds.includes(opt.id)
+                    ? { ...opt, votes: (opt.votes || 0) + 1 }
+                    : opt
+                )
+              }))
+            }));
 
             return {
               ...target,
               questions: updatedQuestions,
+              sections: updatedSections,
               hasParticipated: true,
               userSelectedOptions: optionIds,
               participants: target.hasParticipated ? target.participants : target.participants + 1,
@@ -1082,8 +1095,8 @@ const App: React.FC = () => {
 
 
     // Server Call with Rollback
-    if (optionIds.length > 0) {
-      api.vote(surveyId, optionIds, userProfile?.id, isAnonymous, newOption, followUpAnswers)
+    if (optionIds.length > 0 || (answers && answers.length > 0)) {
+      api.vote(surveyId, optionIds, userProfile?.id, isAnonymous, newOption, followUpAnswers, answers)
         .catch(error => {
           console.error("Failed to submit votes to server, rolling back:", error);
           setSurveys(previousSurveys);

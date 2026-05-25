@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ArrowLeft, Users, Settings, Plus, Globe, Share2, Info, Lock } from 'lucide-react';
-import { Group, Survey, UserProfile } from '../types';
+import { Group, PostAnswerPayload, Survey, UserProfile } from '../types';
 import { SurveyCard } from './SurveyCard';
 import { useGroupMembership, useGroupPosts, useGroupStats, useGroupMembers } from '../hooks/useGroup';
 
@@ -17,7 +17,7 @@ interface GroupScreenProps {
   userProfile: UserProfile;
   onBack: () => void;
   onPostClick: (id: string, surface?: string, tab?: 'post' | 'analysis') => void;
-  onVote: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: any, followUpAnswers?: Record<string, string>) => void;
+  onVote: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: any, followUpAnswers?: Record<string, string>, answers?: PostAnswerPayload[]) => void;
   onSurveyProgress?: (surveyId: string, progress: any) => void;
   onSettingsClick?: () => void;
   onCreatePost?: () => void;

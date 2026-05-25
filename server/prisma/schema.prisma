@@ -175,6 +175,7 @@ model Post {
   allowComments          Boolean      @default(true)
   allowMultipleSelection Boolean      @default(false)
   allowUserOptions       Boolean      @default(false)
+  randomPairing          Boolean      @default(true)
   resultsWho             String?
   resultsDetail          String?
   resultsTiming          String?

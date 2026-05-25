@@ -3,7 +3,7 @@ import { Settings, Users, Grid, CheckCircle2, MoreHorizontal, MapPin, Link as Li
 import { useTranslation } from 'react-i18next';
 
 import { Analytics } from '../utils/analytics';
-import { Survey, SurveyType, Group, UserProfile } from '../types';
+import { PostAnswerPayload, Survey, SurveyType, Group, UserProfile } from '../types';
 import { SurveyCard } from './SurveyCard';
 import { BottomSheet } from './BottomSheet';
 import { ProfileAnalysis } from './ProfileAnalysis';
@@ -16,7 +16,7 @@ interface ProfileScreenProps {
   userProfile: UserProfile;
   onSurveyClick: (id: string, surface?: string) => void;
   onGroupClick?: (id: string) => void;
-  onVote: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: any, followUpAnswers?: Record<string, string>) => void;
+  onVote: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: any, followUpAnswers?: Record<string, string>, answers?: PostAnswerPayload[]) => void;
   onSurveyProgress?: (surveyId: string, progress: { index: number, answers: Record<string, any>, followUpAnswers?: Record<string, string>, historyStack?: number[], isAnonymous?: boolean }) => void;
   user?: { id?: string; name: string; avatar: string };
   onBack?: () => void;

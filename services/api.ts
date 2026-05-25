@@ -1,4 +1,4 @@
-import { normalizeSurvey } from '../types';
+import { normalizeSurvey, PostAnswerPayload } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -152,14 +152,15 @@ export const api = {
         userId?: string,
         isAnonymous: boolean = false,
         newOption?: { id?: string; text?: string },
-        followUpAnswers?: Record<string, string>
+        followUpAnswers?: Record<string, string>,
+        answers?: PostAnswerPayload[]
     ) => {
         const payloadOptionIds = Array.isArray(optionIds) ? optionIds : [optionIds];
         const guestId = !userId ? getGuestId() : undefined;
         const response = await authFetch(`${API_BASE_URL}/posts/${postId}/vote`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ optionIds: payloadOptionIds, userId, guestId, isAnonymous, newOption, followUpAnswers })
+            body: JSON.stringify({ optionIds: payloadOptionIds, userId, guestId, isAnonymous, newOption, followUpAnswers, answers })
         });
         if (!response.ok) {
             const errorData = await response.json();
