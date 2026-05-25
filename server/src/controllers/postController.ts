@@ -164,7 +164,7 @@ export const getPosts = async (req: Request, res: Response) => {
                 userProgress: {
                     currentQuestionIndex: 0,
                     answers: userAnswers.reduce((acc: any, ans: any) => ({ ...acc, [ans.questionId]: ans.optionId }), {}),
-                    followUpAnswers: {},
+                    followUpAnswers: userAnswers.reduce((acc: any, ans: any) => ans.optionId && ans.textValue ? ({ ...acc, [ans.optionId]: ans.textValue }) : acc, {}),
                     historyStack: []
                 },
                 isLiked: userId ? (s.likes && s.likes.length > 0) : false,
@@ -287,7 +287,7 @@ export const getPostById = async (req: Request, res: Response) => {
             userProgress: {
                 currentQuestionIndex: 0,
                 answers: userAnswers.reduce((acc: any, ans: any) => ({ ...acc, [ans.questionId]: ans.optionId }), {}),
-                followUpAnswers: {},
+                    followUpAnswers: userAnswers.reduce((acc: any, ans: any) => ans.optionId && ans.textValue ? ({ ...acc, [ans.optionId]: ans.textValue }) : acc, {}),
                 historyStack: []
             },
             isLiked: userId ? (p.likes && p.likes.length > 0) : false,
@@ -430,6 +430,8 @@ export const createPost = async (req: Request, res: Response) => {
                     questionId: question.id,
                     isRating: opt.isRating || false,
                     ratingValue: opt.ratingValue || 0,
+                    withFollowUp: parseBoolean(opt.withFollowUp),
+                    followUpLabel: opt.followUpLabel || null,
                     order: index
                 }))
             });
@@ -602,6 +604,8 @@ export const updatePost = async (req: Request, res: Response) => {
                             image: opt.image,
                             isRating: opt.isRating || false,
                             ratingValue: opt.ratingValue || 0,
+                            withFollowUp: parseBoolean(opt.withFollowUp),
+                            followUpLabel: opt.followUpLabel || null,
                             order: i
                         }
                     });
@@ -613,6 +617,8 @@ export const updatePost = async (req: Request, res: Response) => {
                             questionId: question.id,
                             isRating: opt.isRating || false,
                             ratingValue: opt.ratingValue || 0,
+                            withFollowUp: parseBoolean(opt.withFollowUp),
+                            followUpLabel: opt.followUpLabel || null,
                             order: i
                         }
                     });
@@ -773,7 +779,7 @@ export const getSavedPosts = async (req: Request, res: Response) => {
                 userProgress: {
                     currentQuestionIndex: 0,
                     answers: userAnswers.reduce((acc: any, ans: any) => ({ ...acc, [ans.questionId]: ans.optionId }), {}),
-                    followUpAnswers: {},
+                followUpAnswers: userAnswers.reduce((acc: any, ans: any) => ans.optionId && ans.textValue ? ({ ...acc, [ans.optionId]: ans.textValue }) : acc, {}),
                     historyStack: []
                 },
                 isLiked: userId ? (p.likes && p.likes.length > 0) : false,
@@ -794,7 +800,7 @@ export const getSavedPosts = async (req: Request, res: Response) => {
 
 export const votePost = async (req: Request, res: Response) => {
     const rawId = req.params.id as string;
-    const { userId, guestId, optionId, optionIds, isAnonymous } = req.body;
+    const { userId, guestId, optionId, optionIds, isAnonymous, newOption, followUpAnswers = {} } = req.body;
     try {
         const id = await resolveInteractionTarget(rawId, 'vote');
         const guestIp = req.ip || req.socket?.remoteAddress;
@@ -805,7 +811,7 @@ export const votePost = async (req: Request, res: Response) => {
 
         const post = await prisma.post.findUnique({
             where: { id },
-            select: { allowAnonymous: true, forceAnonymous: true, authorId: true }
+            select: { allowAnonymous: true, forceAnonymous: true, authorId: true, allowMultipleSelection: true, allowUserOptions: true }
         });
 
         if (!post) {
@@ -813,25 +819,21 @@ export const votePost = async (req: Request, res: Response) => {
             return;
         }
 
-        const optionsToProcess: string[] = [];
+        let optionsToProcess: string[] = [];
         if (Array.isArray(optionIds) && optionIds.length > 0) {
             optionsToProcess.push(...optionIds);
         } else if (optionId) {
             optionsToProcess.push(optionId);
         }
+        optionsToProcess = Array.from(new Set(optionsToProcess.filter(Boolean)));
 
         if (optionsToProcess.length === 0) {
             res.status(400).json({ error: 'No options provided' });
             return;
         }
 
-        const dbOptions = await prisma.option.findMany({
-            where: { id: { in: optionsToProcess } },
-            include: { question: true }
-        });
-
-        if (dbOptions.length === 0 || dbOptions.some((o: any) => o.question.postId !== id)) {
-            res.status(400).json({ error: 'Invalid options for this post' });
+        if (!post.allowMultipleSelection && optionsToProcess.length > 1) {
+            res.status(400).json({ error: 'This poll accepts one option only' });
             return;
         }
 
@@ -842,7 +844,56 @@ export const votePost = async (req: Request, res: Response) => {
             finalIsAnonymous = parseBoolean(isAnonymous);
         }
 
+        let createdCustomOption: any = null;
+
         await prisma.$transaction(async (tx) => {
+            const customClientId = typeof newOption?.id === 'string' ? newOption.id : undefined;
+            const customText = typeof newOption?.text === 'string' ? newOption.text.trim() : '';
+            let resolvedOptionIds = [...optionsToProcess];
+
+            if (customClientId && customText && resolvedOptionIds.includes(customClientId)) {
+                if (!post.allowUserOptions) {
+                    throw Object.assign(new Error('This poll does not allow voter-added options'), { statusCode: 400 });
+                }
+
+                const question = await tx.question.findFirst({
+                    where: { postId: id },
+                    orderBy: { order: 'asc' }
+                });
+
+                if (!question) {
+                    throw Object.assign(new Error('Poll question not found'), { statusCode: 400 });
+                }
+
+                const lastOption = await tx.option.findFirst({
+                    where: { questionId: question.id },
+                    orderBy: { order: 'desc' },
+                    select: { order: true }
+                });
+
+                createdCustomOption = await tx.option.create({
+                    data: {
+                        text: customText,
+                        questionId: question.id,
+                        order: (lastOption?.order ?? -1) + 1,
+                        isUserAdded: true,
+                        addedByUserId: userId || null,
+                        addedByGuestId: guestId || null
+                    }
+                });
+
+                resolvedOptionIds = resolvedOptionIds.map(optId => optId === customClientId ? createdCustomOption.id : optId);
+            }
+
+            const dbOptions = await tx.option.findMany({
+                where: { id: { in: resolvedOptionIds } },
+                include: { question: true }
+            });
+
+            if (dbOptions.length !== resolvedOptionIds.length || dbOptions.some((o: any) => o.question.postId !== id)) {
+                throw Object.assign(new Error('Invalid options for this post'), { statusCode: 400 });
+            }
+
             const whereClause: any = { postId: id };
             if (userId) whereClause.userId = userId;
             else if (guestId) whereClause.guestId = guestId;
@@ -867,12 +918,23 @@ export const votePost = async (req: Request, res: Response) => {
             }
 
             for (const opt of dbOptions) {
-                const existingAnswer = await tx.answer.findUnique({
-                    where: { responseId_questionId: { responseId: response.id, questionId: opt.question.id } }
+                if (!post.allowMultipleSelection) {
+                    const existingQuestionAnswer = await tx.answer.findFirst({
+                        where: { responseId: response.id, questionId: opt.question.id, optionId: { not: null } }
+                    });
+                    if (existingQuestionAnswer) continue;
+                }
+
+                const existingAnswer = await tx.answer.findFirst({
+                    where: { responseId: response.id, questionId: opt.question.id, optionId: opt.id }
                 });
                 if (!existingAnswer) {
+                    const followUpText = opt.withFollowUp && typeof followUpAnswers?.[opt.id] === 'string'
+                        ? followUpAnswers[opt.id].trim()
+                        : null;
+
                     await tx.answer.create({
-                        data: { responseId: response.id, questionId: opt.question.id, optionId: opt.id }
+                        data: { responseId: response.id, questionId: opt.question.id, optionId: opt.id, textValue: followUpText || null }
                     });
                     await tx.option.update({
                         where: { id: opt.id },
@@ -889,14 +951,14 @@ export const votePost = async (req: Request, res: Response) => {
             }
         });
 
-        if (!finalIsAnonymous && post.authorId) {
+        if (userId && !finalIsAnonymous && post.authorId) {
             await notify(userId, post.authorId as string, 'vote', 'voted on your post', 'survey', id, { optionId: optionsToProcess[0] });
         }
 
-        res.json({ success: true });
+        res.json({ success: true, newOption: createdCustomOption });
     } catch (error: any) {
         console.error(error);
-        res.status(500).json({ error: 'Failed to vote' });
+        res.status(error?.statusCode || 500).json({ error: error?.statusCode ? error.message : 'Failed to vote' });
     }
 };
 

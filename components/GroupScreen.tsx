@@ -17,7 +17,7 @@ interface GroupScreenProps {
   userProfile: UserProfile;
   onBack: () => void;
   onPostClick: (id: string, surface?: string, tab?: 'post' | 'analysis') => void;
-  onVote: (surveyId: string, optionIds: string[]) => void;
+  onVote: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: any, followUpAnswers?: Record<string, string>) => void;
   onSurveyProgress?: (surveyId: string, progress: any) => void;
   onSettingsClick?: () => void;
   onCreatePost?: () => void;

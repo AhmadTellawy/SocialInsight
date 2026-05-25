@@ -225,6 +225,11 @@ model Option {
   isRating    Boolean  @default(false)
   ratingValue Int      @default(0)
   order       Int      @default(0)
+  withFollowUp Boolean @default(false)
+  followUpLabel String?
+  isUserAdded Boolean  @default(false)
+  addedByUserId String?
+  addedByGuestId String?
   question    Question @relation(fields: [questionId], references: [id])
   answers     Answer[]
 }
@@ -255,7 +260,8 @@ model Answer {
   question   Question @relation(fields: [questionId], references: [id])
   option     Option?  @relation(fields: [optionId], references: [id])
 
-  @@unique([responseId, questionId])
+  @@index([responseId, questionId])
+  @@unique([responseId, questionId, optionId])
 }
 
 model Comment {

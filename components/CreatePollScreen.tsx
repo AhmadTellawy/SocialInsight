@@ -10,7 +10,7 @@ import { api } from '../services/api';
 interface CreatePollScreenProps {
   onClose: () => void;
   onSubmit: (surveyData: Partial<Survey>) => void;
-  onSaveDraft?: (surveyData: Partial<Survey>) => void;
+  onSaveDraft?: (surveyData: Partial<Survey>) => void | Promise<void>;
   userProfile: UserProfile;
   draft?: Survey;
   userGroups?: Group[];
@@ -50,7 +50,6 @@ const DURATION_OPTIONS = [
 type VisibilityType = 'Public' | 'Followers' | 'Groups' | 'Custom Audience' | 'Custom Domain';
 
 export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onSubmit, onSaveDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
-  const [step, setStep] = useState<1 | 2>((draft?.currentStep as 1 | 2) || 1);
   const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
   const [selectedGroups, setSelectedGroups] = useState<string[]>(initialGroupId ? [initialGroupId] : []);
   const [isVisibilitySheetOpen, setIsVisibilitySheetOpen] = useState(false);
@@ -89,8 +88,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
       const finalCategory = category === 'Other' ? otherCategoryText.trim() : category;
       const draftData: Partial<Survey> = {
         id: draft?.id,
-        title,
-        description,
+        title: title.trim(),
+        description: '',
         type: SurveyType.POLL,
         pollChoiceType,
         author: { id: userProfile.id, name: userProfile.name, avatar: userProfile.avatar },
@@ -120,38 +119,15 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
         expiresAt: getExpiresAt(),
         status: 'DRAFT',
         isDraft: true,
-        currentStep: step
+        currentStep: 1
       };
 
       try {
-        let savedDraft;
-        if (draftData.id) {
-          savedDraft = await api.updatePost(draftData.id, draftData);
-        } else {
-          savedDraft = await api.createSurvey(draftData);
-        }
-
-        // Hydrate UI state with server ID mappings
-        if (savedDraft) {
-          if (savedDraft.options) {
-            setOptions(savedDraft.options.map((o: any) => ({
-              id: o.id,
-              text: o.text,
-              image: o.image || undefined,
-              isRating: o.isRating,
-              ratingValue: o.ratingValue,
-              withFollowUp: o.withFollowUp || false,
-              followUpLabel: o.followUpLabel || ''
-            })));
-          }
-          if (savedDraft.coverImage) setCoverImage(savedDraft.coverImage);
-        }
-
-        onSaveDraft(savedDraft || draftData);
+        await onSaveDraft(draftData);
       } catch (error) {
         console.error('Failed to save draft:', error);
         alert('Failed to save draft. Please try again.');
-        return; // do not close on error
+        return;
       }
     }
     onClose();
@@ -170,7 +146,6 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   const [activeCropId, setActiveCropId] = useState<string | null>(null);
 
   const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
   const [pollChoiceType, setPollChoiceType] = useState<'multiple' | 'rating'>('multiple');
 
   const [options, setOptions] = useState<DraftOption[]>([
@@ -196,8 +171,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
 
   useEffect(() => {
     if (draft) {
-      setTitle(draft.title || '');
-      setDescription(draft.description || '');
+      const combinedPrompt = [draft.title, draft.description].filter(Boolean).join('\n\n');
+      setTitle(combinedPrompt || '');
       setCategory(draft.category || '');
       setPollChoiceType(draft.pollChoiceType || 'multiple');
       setVisibility((draft.targetAudience as VisibilityType) || 'Public');
@@ -303,6 +278,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
         { id: 'rate-1', text: '1', image: null, isRating: true, ratingValue: 1, withFollowUp: false, followUpLabel: '' },
       ]);
       setAllowMultipleSelection(false);
+      setAllowUserOptions(false);
     } else {
       setOptions([
         { id: '1', text: '', image: null, withFollowUp: false, followUpLabel: '' },
@@ -429,8 +405,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
     try {
       const finalCategory = category === 'Other' ? otherCategoryText.trim() : category;
       onSubmit({
-        title,
-        description,
+        title: title.trim(),
+        description: '',
         type: SurveyType.POLL,
         pollChoiceType,
         author: { id: userProfile.id, name: userProfile.name, avatar: userProfile.avatar },
@@ -476,21 +452,16 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
         <button onClick={handleExit} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500"><X size={24} /></button>
         <div className="flex flex-col items-center flex-1 mx-2">
           <h1 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Poll Creation</h1>
-          <div className="flex gap-1">
-            {[1, 2].map(s => <div key={s} className={`h-1 w-8 rounded-full transition-all duration-300 ${step >= s ? 'bg-blue-600' : 'bg-gray-100'}`} />)}
-          </div>
+          <div className="h-1 w-16 rounded-full bg-blue-600" />
         </div>
-        {step === 1 ? (
-          <button onClick={() => validate() && setStep(2)} className="text-blue-600 font-black text-[10px] px-5 py-2 rounded-full bg-blue-50 hover:bg-blue-100 transition-all uppercase tracking-widest">Next</button>
-        ) : (
-          <button onClick={handleSubmit} className="text-white font-black text-[10px] px-5 py-2 rounded-full bg-blue-600 hover:bg-blue-700 transition-all uppercase tracking-widest shadow-lg shadow-blue-200">Post</button>
-        )}
+        <button onClick={handleSubmit} className="text-white font-black text-[10px] px-5 py-2 rounded-full bg-blue-600 hover:bg-blue-700 transition-all uppercase tracking-widest shadow-lg shadow-blue-200">
+          Post
+        </button>
       </div>
 
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto no-scrollbar bg-white">
         <div className="max-w-md mx-auto p-5 pb-32">
-          {step === 1 ? (
-            <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+          <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
               {/* 1. Top Settings Row */}
               <section className="grid grid-cols-3 gap-2.5 pb-4 border-b border-gray-50">
                 <div className={errors.visibility ? 'p-0.5 rounded-xl bg-red-50 ring-1 ring-red-100' : ''}>
@@ -537,7 +508,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               <section className="space-y-4 pb-4 border-b border-gray-50">
                 <div className="space-y-1">
                   <div className="flex items-center justify-between px-1">
-                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Your Question <span className="text-red-500">*</span></label>
+                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Question and details <span className="text-red-500">*</span></label>
                     <button
                       onClick={() => { setActiveCropId('cover'); fileInputRef.current?.click(); }}
                       className={`p-1.5 rounded-full transition-colors ${coverImage ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-50'}`}
@@ -548,24 +519,14 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   <RichMentionInput
                     value={title}
                     onChange={(val) => { setTitle(val); if (errors.title) setErrors({ ...errors, title: false }) }}
-                    placeholder="What's the question?"
-                    className={`text-xl font-bold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all p-0 pb-2 placeholder-gray-300 min-h-[60px] ${errors.title ? 'border-red-300' : ''}`}
+                    placeholder="Ask the question and add any context voters need..."
+                    className={`text-xl font-bold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all p-0 pb-2 placeholder-gray-300 min-h-[96px] ${errors.title ? 'border-red-300' : ''}`}
                     autoFocus
                   />
                   {errors.title && <p className="text-[10px] font-bold text-red-500 px-1">{errors.title}</p>}
                 </div>
 
-                <div className="space-y-1">
-                  <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Description (Optional)</label>
-                  <RichMentionInput
-                     value={description}
-                     onChange={(val) => setDescription(val)}
-                     placeholder="Provide more context..."
-                     className="text-sm text-gray-600 bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all p-0 pb-2 placeholder-gray-300 min-h-[40px]"
-                  />
-                </div>
-
-                {/* Cover Media Preview below description */}
+                {/* Cover Media Preview below prompt */}
                 {coverImage && (
                   <div className="pt-2 animate-in zoom-in-95 duration-200">
                     <div className="relative w-full rounded-2xl overflow-hidden group">
@@ -596,7 +557,20 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   >
                     {category || 'Select Poll Category'}
                   </button>
+                  {category === 'Other' && (
+                    <input
+                      type="text"
+                      value={otherCategoryText}
+                      onChange={(e) => {
+                        setOtherCategoryText(e.target.value);
+                        if (errors.otherCategoryText) setErrors({ ...errors, otherCategoryText: false });
+                      }}
+                      placeholder="Write the category"
+                      className={`w-full bg-gray-50 border rounded-xl px-4 py-3 text-sm font-semibold focus:outline-none focus:bg-white focus:border-blue-500 transition-all ${errors.otherCategoryText ? 'border-red-300' : 'border-gray-100'}`}
+                    />
+                  )}
                   {errors.category && <p className="text-[10px] font-bold text-red-500 px-1">Please select a category.</p>}
+                  {errors.otherCategoryText && <p className="text-[10px] font-bold text-red-500 px-1">Please write the category.</p>}
                 </div>
 
                 {/* Choice Type Selector */}
@@ -732,6 +706,31 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                 </div>
               </section>
 
+              <section className="space-y-3 pb-4 border-b border-gray-50">
+                <div className="flex items-center gap-2 px-1">
+                  <BarChart3 size={14} className="text-blue-600" />
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Analytics attributes</label>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {DEMOGRAPHIC_OPTIONS.map((opt) => {
+                    const isSelected = selectedDemographics.includes(opt.id);
+                    return (
+                      <button
+                        key={opt.id}
+                        onClick={() => handleDemographicToggle(opt.id)}
+                        className={`px-3 py-2.5 rounded-xl border text-left transition-all max-w-[calc(50%-4px)] flex-1 min-w-[150px] ${isSelected ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200' : 'bg-white text-gray-600 border-gray-100 hover:border-gray-200'}`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className={`text-[11px] font-bold leading-tight ${isSelected ? 'text-white' : 'text-gray-900'}`}>{opt.label}</span>
+                          {isSelected && <Check size={12} strokeWidth={4} />}
+                        </div>
+                        <p className={`text-[9px] leading-tight font-medium mt-1 ${isSelected ? 'text-blue-50' : 'text-gray-400'}`}>{opt.desc}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+
               <input
                 type="file"
                 ref={fileInputRef}
@@ -739,14 +738,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                 accept="image/*"
                 onChange={handleImageUpload}
               />
-            </div>
-          ) : (
-            <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
-              <div className="bg-blue-50 rounded-[2.5rem] p-6 border border-blue-100 shadow-sm"><div className="flex items-center gap-3 mb-4"><div className="w-10 h-10 bg-blue-600 text-white rounded-2xl flex items-center justify-center shadow-md"><BarChart3 size={20} /></div><div><h2 className="text-xl font-black text-gray-900 leading-tight">Analytics Setup</h2><p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mt-0.5">Demographics Filter</p></div></div><p className="text-sm text-gray-600 leading-relaxed bg-white/50 p-4 rounded-2xl border border-blue-100/50">Request demographic info to enhance analytics.</p></div>
-              <div className="space-y-3"><label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] px-1">Attributes</label><div className="flex flex-wrap gap-2">{DEMOGRAPHIC_OPTIONS.map((opt) => { const isSelected = selectedDemographics.includes(opt.id); return <button key={opt.id} onClick={() => handleDemographicToggle(opt.id)} className={`px-4 py-3 rounded-2xl border text-left transition-all max-w-[calc(50%-4px)] flex-1 min-w-[160px] ${isSelected ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200' : 'bg-white text-gray-600 border-gray-100 hover:border-gray-200'}`}><div className="flex items-center justify-between mb-1"><span className={`text-[12px] font-bold ${isSelected ? 'text-white' : 'text-gray-900'}`}>{opt.label}</span>{isSelected && <Check size={12} strokeWidth={4} />}</div><p className={`text-[9px] leading-tight font-medium ${isSelected ? 'text-blue-50' : 'text-gray-400'}`}>{opt.desc}</p></button> })}</div></div>
-              <button onClick={handleSubmit} className="w-full py-5 bg-blue-600 text-white rounded-[2rem] font-black uppercase tracking-[0.2em] text-xs shadow-xl shadow-blue-500/20 active:scale-95 transition-all">Confirm & Publish</button>
-            </div>
-          )}
+          </div>
         </div>
       </div>
 
@@ -1008,21 +1000,19 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
             </button>
           </div>
 
-          {false && (
-            <div className="flex items-center justify-between">
-              <div className="flex flex-col">
-                <span className="text-sm font-bold text-gray-800">Voter-added options</span>
-                <span className="text-[10px] text-gray-400">Allow users to suggest their own answers</span>
-              </div>
-              <button
-                disabled={pollChoiceType === 'rating'}
-                onClick={() => setAllowUserOptions(!allowUserOptions)}
-                className={`w-10 h-5 rounded-full relative transition-colors ${allowUserOptions ? 'bg-blue-600' : 'bg-gray-200'} ${pollChoiceType === 'rating' ? 'opacity-30' : ''}`}
-              >
-                <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowUserOptions ? 'left-6' : 'left-1'}`} />
-              </button>
+          <div className="flex items-center justify-between">
+            <div className="flex flex-col">
+              <span className="text-sm font-bold text-gray-800">Voter-added options</span>
+              <span className="text-[10px] text-gray-400">Allow users to suggest their own answers</span>
             </div>
-          )}
+            <button
+              disabled={pollChoiceType === 'rating'}
+              onClick={() => setAllowUserOptions(!allowUserOptions)}
+              className={`w-10 h-5 rounded-full relative transition-colors ${allowUserOptions ? 'bg-blue-600' : 'bg-gray-200'} ${pollChoiceType === 'rating' ? 'opacity-30' : ''}`}
+            >
+              <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowUserOptions ? 'left-6' : 'left-1'}`} />
+            </button>
+          </div>
 
           <div className="flex items-center justify-between">
             <div className="flex flex-col">

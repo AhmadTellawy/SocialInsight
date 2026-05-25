@@ -146,13 +146,20 @@ export const api = {
         return normalizeSurvey(resData);
     },
 
-    vote: async (postId: string, optionIds: string | string[], userId?: string, isAnonymous: boolean = false) => {
+    vote: async (
+        postId: string,
+        optionIds: string | string[],
+        userId?: string,
+        isAnonymous: boolean = false,
+        newOption?: { id?: string; text?: string },
+        followUpAnswers?: Record<string, string>
+    ) => {
         const payloadOptionIds = Array.isArray(optionIds) ? optionIds : [optionIds];
         const guestId = !userId ? getGuestId() : undefined;
         const response = await authFetch(`${API_BASE_URL}/posts/${postId}/vote`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ optionIds: payloadOptionIds, userId, guestId, isAnonymous })
+            body: JSON.stringify({ optionIds: payloadOptionIds, userId, guestId, isAnonymous, newOption, followUpAnswers })
         });
         if (!response.ok) {
             const errorData = await response.json();

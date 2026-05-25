@@ -85,6 +85,9 @@ export interface Option {
   isTerminal?: boolean; // Early Termination
   withFollowUp?: boolean; // Conditional Follow-up Input
   followUpLabel?: string; // Label for the input
+  isUserAdded?: boolean;
+  addedByUserId?: string;
+  addedByGuestId?: string;
 
   // Rating Specific
   isRating?: boolean;

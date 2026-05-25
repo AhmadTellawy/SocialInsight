@@ -21,7 +21,7 @@ interface SurveyCardProps {
   userProfile?: UserProfile;
   isDetailView?: boolean;
   onContentClick?: () => void;
-  onVote?: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: Option) => void;
+  onVote?: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: Option, followUpAnswers?: Record<string, string>) => void;
   onSurveyProgress?: (surveyId: string, progress: { index: number, answers: Record<string, any>, followUpAnswers?: Record<string, string>, historyStack?: number[], isAnonymous?: boolean }) => void;
   onAuthorClick?: (author: { id: string; name: string; avatar: string; handle?: string }) => void;
   onShareToFeed?: (survey: Survey, caption: string) => void;
@@ -1409,7 +1409,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           onDetectOrientation={handleDetectOrientation}
         />
 
-        {false && !hasVoted && !isExpired && allowUserOptions && !hasAddedCustomOption && !isRating && (
+        {!hasVoted && !isExpired && allowUserOptions && !hasAddedCustomOption && !isRating && (
           <div className="mt-3">
             {isAddingCustomOption ? (
               <div className="flex gap-2 animate-in slide-in-from-top-1 duration-200">
@@ -1453,7 +1453,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
               if (!hasVoted && onVote) {
                 // Identify the newly created custom option to pass to the parent
                 const customOpt = localOptions.find(o => o.id.startsWith('custom-') && selectedOptions.includes(o.id));
-                onVote(sourceSurvey.id, selectedOptions, isCurrentlyAnonymous, customOpt);
+                onVote(sourceSurvey.id, selectedOptions, isCurrentlyAnonymous, customOpt, followUpAnswers);
                 setHasVoted(true);
                 startDemographicFlow();
               }

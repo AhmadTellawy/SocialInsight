@@ -823,7 +823,7 @@ const App: React.FC = () => {
         }
       } catch (apiError) {
         // Rollback optimistic update on failure only if it's a new temporary post
-        if (!isEdit) {
+        if (!targetId) {
           setSurveys(prev => prev.filter(s => s.id !== tempId));
         }
         throw apiError;
@@ -985,7 +985,8 @@ const App: React.FC = () => {
     surveyId: string,
     optionIds: string[],
     isAnonymous?: boolean,
-    newOption?: Option
+    newOption?: Option,
+    followUpAnswers?: Record<string, string>
   ) => {
     const previousSurveys = [...surveys];
     setSurveys(prev =>
@@ -1005,7 +1006,7 @@ const App: React.FC = () => {
               userProgress: {
                 currentQuestionIndex: target.userProgress?.currentQuestionIndex || 0,
                 answers: target.userProgress?.answers || {},
-                followUpAnswers: target.userProgress?.followUpAnswers || {},
+                followUpAnswers: target.userProgress?.followUpAnswers || followUpAnswers || {},
                 historyStack: target.userProgress?.historyStack || [],
                 isAnonymous: !!isAnonymous
               }
@@ -1032,7 +1033,7 @@ const App: React.FC = () => {
               userProgress: {
                 currentQuestionIndex: target.userProgress?.currentQuestionIndex || 0,
                 answers: target.userProgress?.answers || {},
-                followUpAnswers: target.userProgress?.followUpAnswers || {},
+                followUpAnswers: target.userProgress?.followUpAnswers || followUpAnswers || {},
                 historyStack: target.userProgress?.historyStack || [],
                 isAnonymous: !!isAnonymous
               }
@@ -1061,7 +1062,7 @@ const App: React.FC = () => {
             userProgress: {
               currentQuestionIndex: target.userProgress?.currentQuestionIndex || 0,
               answers: target.userProgress?.answers || {},
-              followUpAnswers: target.userProgress?.followUpAnswers || {},
+              followUpAnswers: followUpAnswers || target.userProgress?.followUpAnswers || {},
               historyStack: target.userProgress?.historyStack || [],
               isAnonymous: !!isAnonymous
             }
@@ -1082,7 +1083,7 @@ const App: React.FC = () => {
 
     // Server Call with Rollback
     if (optionIds.length > 0) {
-      api.vote(surveyId, optionIds, userProfile?.id, isAnonymous)
+      api.vote(surveyId, optionIds, userProfile?.id, isAnonymous, newOption, followUpAnswers)
         .catch(error => {
           console.error("Failed to submit votes to server, rolling back:", error);
           setSurveys(previousSurveys);
