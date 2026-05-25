@@ -517,7 +517,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           <div className="space-y-1 animate-in fade-in duration-300">
             {publishedPosts.map(survey => (
               <SurveyCard
-                key={survey.id}
+                key={survey.clientKey || survey.id}
                 survey={survey}
                 userProfile={userProfile}
                 onContentClick={() => onSurveyClick(survey.id, 'PROFILE')}
@@ -547,7 +547,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           <div className="p-4 grid grid-cols-1 gap-4 animate-in fade-in duration-300">
             {draftPosts.map(survey => (
               <button
-                key={survey.id}
+                key={survey.clientKey || survey.id}
                 onClick={() => onEditDraft?.(survey)}
                 className="w-full flex items-center gap-4 p-4 rounded-3xl bg-white border border-gray-100 hover:border-blue-200 transition-all text-left shadow-sm active:scale-[0.98]"
               >
@@ -581,7 +581,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           <div className="space-y-1 animate-in fade-in duration-300">
             {savedPosts.map(survey => (
               <SurveyCard
-                key={survey.id}
+                key={survey.clientKey || survey.id}
                 survey={survey}
                 userProfile={userProfile}
                 onContentClick={() => onSurveyClick(survey.id, 'SAVED')}
@@ -610,7 +610,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           <div className="space-y-1 animate-in fade-in duration-300">
             {reposts.map(survey => (
               <SurveyCard
-                key={survey.id}
+                key={survey.clientKey || survey.id}
                 survey={survey}
                 userProfile={userProfile}
                 onContentClick={() => onSurveyClick(survey.id, 'PROFILE')}

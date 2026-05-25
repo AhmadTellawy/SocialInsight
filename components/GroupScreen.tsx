@@ -171,7 +171,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
               <>
                 {posts.map(post => (
                   <SurveyCard
-                    key={post.id}
+                    key={post.clientKey || post.id}
                     survey={post}
                     userProfile={userProfile}
                     onContentClick={() => onPostClick(post.id, 'GROUP')}

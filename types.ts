@@ -230,6 +230,7 @@ export interface Survey {
 
   // Challenge Specific
   randomPairing?: boolean;
+  clientKey?: string;
 }
 
 export interface Notification {
@@ -325,5 +326,6 @@ export const normalizeSurvey = (raw: any): Survey => {
     allowComments: raw.allowComments !== false && raw.allowComments !== 'false' && raw.allowComments !== '0',
     allowMultipleSelection: raw.allowMultipleSelection === true || raw.allowMultipleSelection === 'true' || raw.allowMultipleSelection === '1',
     allowUserOptions: raw.allowUserOptions === true || raw.allowUserOptions === 'true' || raw.allowUserOptions === '1',
+    clientKey: raw.clientKey || raw.id || `temp-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
   } as Survey;
 };

@@ -286,7 +286,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                     <div className="space-y-3">
                       {filteredSurveys.map(survey => (
                         <div
-                          key={survey.id}
+                          key={survey.clientKey || survey.id}
                           onClick={() => onSurveyClick(survey.id, 'SEARCH')}
                           className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col gap-3 active:scale-[0.99] transition-transform cursor-pointer"
                         >

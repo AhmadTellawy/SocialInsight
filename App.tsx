@@ -141,6 +141,7 @@ const App: React.FC = () => {
   const normalizeSurvey = (raw: Partial<Survey>, currentUser?: UserProfile | null): Survey => ({
     ...raw,
     id: raw.id || `temp-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    clientKey: raw.clientKey || raw.id || `temp-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
     title: raw.title || '',
     description: raw.description || '',
     type: raw.type || SurveyType.POLL,
@@ -772,6 +773,7 @@ const App: React.FC = () => {
         try {
           const optimisticSurvey = normalizeSurvey({
             id: tempId,
+            clientKey: tempId,
             createdAt: new Date().toISOString(),
             ...newSurveyData,
             status: 'PUBLISHED'
@@ -817,7 +819,8 @@ const App: React.FC = () => {
         // Replace optimistic entry or update feed
         if (resultSurvey && status === 'PUBLISHED') {
           const normalizedResult = normalizeSurvey(resultSurvey, userProfile);
-          setSurveys(prev => prev.map(s => s.id === tempId ? normalizedResult : s));
+          setSurveys(prev => prev.map(s => s.id === tempId ? { ...normalizedResult, clientKey: s.clientKey } : s));
+          setProfileSurveys(prev => prev.map(s => s.id === tempId ? { ...normalizedResult, clientKey: s.clientKey } : s));
         } else if (targetId && status === 'DRAFT') {
           setSurveys(prev => prev.filter(s => s.id !== targetId));
         }
@@ -1465,7 +1468,7 @@ const App: React.FC = () => {
           ) : selectedProfile ? (
             <ProfileScreen 
               surveys={profileSurveys} 
-              userGroups={[]} 
+              userGroups={userGroups} 
               userProfile={viewerProfile}
               onSurveyClick={handleSurveyClick} 
               onGroupClick={navigateToGroup} 
@@ -1481,6 +1484,9 @@ const App: React.FC = () => {
               isLoadingMore={isProfileLoadingMore}
               hasNextPage={!!profileNextCursor}
               onLoadMore={fetchMore}
+              onSettingsClick={() => navigate('/settings/profile')}
+              onEditDraft={(d) => { navigate(`/create/${d.type.toLowerCase()}`); setEditingDraft(d); }}
+              onLike={handleLikePost}
             />
           ) : selectedSurveyId ? (
             selectedSurvey ? (

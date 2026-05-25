@@ -206,7 +206,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         <div className="flex gap-4 overflow-x-auto px-4 pb-2 no-scrollbar">
           {trendingSurveys.map((survey, i) => (
             <button
-              key={survey.id}
+              key={survey.clientKey || survey.id}
               type="button"
               onClick={() => onSurveyClick(survey.id, 'TRENDING')}
               aria-label={`Open trending: ${survey.title}`}
@@ -278,7 +278,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* 3. Main Feed */}
       <div className="space-y-1">
         {regularSurveys.map((survey, index) => (
-          <React.Fragment key={survey.id}>
+          <React.Fragment key={survey.clientKey || survey.id}>
             <SurveyCard
               survey={survey}
               userProfile={userProfile}

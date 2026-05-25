@@ -151,6 +151,8 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const [isLikersSheetOpen, setIsLikersSheetOpen] = useState(false);
   const [likersTargetId, setLikersTargetId] = useState<string>('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = React.useRef(false);
 
   // Comment Actions State
   const [actionSheetComment, setActionSheetComment] = useState<{ comment: Comment, isReply: boolean, parentId?: string } | null>(null);
@@ -199,11 +201,14 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
 
 
   const handleSend = async () => {
-    if (!newComment.trim()) return;
+    if (isSubmittingRef.current || !newComment.trim()) return;
 
-    if (editingCommentId) {
-      // Handle Edit Update
-      try {
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
+
+    try {
+      if (editingCommentId) {
+        // Handle Edit Update
         const updatedRaw = await api.updateComment(editingCommentId, newComment, userProfile?.id || '');
         setComments(prev => {
           // It could be a reply or a top level comment
@@ -223,40 +228,38 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
         });
         setNewComment('');
         setEditingCommentId(null);
-      } catch (err) {
-        console.error("Failed to update comment", err);
-        alert("Failed to update comment.");
-      }
-      return;
-    }
-
-    try {
-      console.log("Sending comment:", newComment);
-      const createdComment = await api.createComment(surveyId, newComment, replyingTo || undefined, userProfile?.id);
-
-      if (replyingTo) {
-        setComments(prev => prev.map(c => {
-          if (c.id === replyingTo) {
-            return { ...c, replies: [...(c.replies || []), createdComment] };
-          }
-          return c;
-        }));
-        setReplyingTo(null);
       } else {
-        setComments(prev => [createdComment, ...prev]);
+        // Handle New Comment
+        console.log("Sending comment:", newComment);
+        const createdComment = await api.createComment(surveyId, newComment, replyingTo || undefined, userProfile?.id);
+
+        if (replyingTo) {
+          setComments(prev => prev.map(c => {
+            if (c.id === replyingTo) {
+              return { ...c, replies: [...(c.replies || []), createdComment] };
+            }
+            return c;
+          }));
+          setReplyingTo(null);
+        } else {
+          setComments(prev => [createdComment, ...prev]);
+        }
+        setNewComment('');
+        if (onCommentAdded) onCommentAdded();
+        Analytics.track({
+          event_type: 'COMMENT_CREATE',
+          post_id: surveyId,
+          comment_id: createdComment.id,
+          actor_user_id: userProfile?.id,
+          source_surface: sourceSurface
+        });
       }
-      setNewComment('');
-      if (onCommentAdded) onCommentAdded();
-      Analytics.track({
-        event_type: 'COMMENT_CREATE',
-        post_id: surveyId,
-        comment_id: createdComment.id,
-        actor_user_id: userProfile?.id,
-        source_surface: sourceSurface
-      });
     } catch (error) {
-      console.error("Failed to send comment", error);
-      alert("Failed to send the comment. Please try again.");
+      console.error("Failed to process comment", error);
+      alert(editingCommentId ? "Failed to update comment." : "Failed to send the comment. Please try again.");
+    } finally {
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
     }
   };
 
@@ -332,16 +335,18 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
               onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();
-                      handleSend();
+                      if (!isSubmitting) {
+                          handleSend();
+                      }
                   }
               }}
             />
             <button
               onClick={handleSend}
-              disabled={!newComment.trim()}
-              className={`ml-2 p-1.5 rounded-full transition-all ${newComment.trim() ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400'}`}
+              disabled={!newComment.trim() || isSubmitting}
+              className={`ml-2 p-1.5 rounded-full transition-all ${newComment.trim() && !isSubmitting ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400'}`}
             >
-              <Send size={14} className={newComment.trim() ? "translate-x-0.5" : ""} />
+              <Send size={14} className={newComment.trim() && !isSubmitting ? "translate-x-0.5" : ""} />
             </button>
           </div>
         </div>

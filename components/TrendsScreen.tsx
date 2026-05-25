@@ -194,7 +194,7 @@ export const TrendsScreen: React.FC<TrendsScreenProps> = ({ surveys, onSurveyCli
           <div className="divide-y divide-gray-100">
             {trendingItems.map((item, index) => (
               <div
-                key={item.id}
+                key={item.clientKey || item.id}
                 onClick={() => onSurveyClick(item.id, 'FEED')}
                 className="group relative flex items-center gap-4 p-5 bg-white hover:bg-gray-50 transition-all cursor-pointer border-b border-gray-50 last:border-0"
               >
