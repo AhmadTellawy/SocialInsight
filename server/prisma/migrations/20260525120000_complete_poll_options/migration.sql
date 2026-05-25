@@ -8,4 +8,3 @@ ALTER TABLE "Option" ADD COLUMN "addedByGuestId" TEXT;
 -- Allow one response to contain several selected options for the same question.
 DROP INDEX IF EXISTS "Answer_responseId_questionId_key";
 CREATE INDEX IF NOT EXISTS "Answer_responseId_questionId_idx" ON "Answer"("responseId", "questionId");
-CREATE UNIQUE INDEX IF NOT EXISTS "Answer_responseId_questionId_optionId_key" ON "Answer"("responseId", "questionId", "optionId");

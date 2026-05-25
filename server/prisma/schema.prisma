@@ -261,7 +261,6 @@ model Answer {
   option     Option?  @relation(fields: [optionId], references: [id])
 
   @@index([responseId, questionId])
-  @@unique([responseId, questionId, optionId])
 }
 
 model Comment {
