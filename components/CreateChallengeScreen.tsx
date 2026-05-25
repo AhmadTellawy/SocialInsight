@@ -147,6 +147,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   const [selectedDemographics, setSelectedDemographics] = useState<string[]>([]);
   const [selectedGroups, setSelectedGroups] = useState<string[]>(initialGroupId ? [initialGroupId] : []);
   const [errors, setErrors] = useState<{ [key: string]: boolean | string }>({});
+  const [focusedOptionId, setFocusedOptionId] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -189,7 +190,9 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   ];
 
   const handleAddOption = () => {
-    setOptions([...options, { id: Date.now().toString(), text: '', image: null }]);
+    const newOptId = Date.now().toString();
+    setOptions([...options, { id: newOptId, text: '', image: null }]);
+    setFocusedOptionId(newOptId);
   };
 
   const handleRemoveOption = (id: string) => {
@@ -328,8 +331,12 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
         <button onClick={handleExit} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500"><X size={24} /></button>
         <div className="flex flex-col items-center flex-1 mx-2">
           <h1 className="text-[10px] font-black text-amber-600 uppercase tracking-widest mb-0.5 flex items-center gap-1"><Zap size={10} fill="currentColor" /> Challenge Creation</h1>
-          <div className="flex gap-1">
-            {[1, 2, 3].map(s => <div key={s} className={`h-1 w-8 rounded-full transition-all duration-300 ${step >= s ? 'bg-amber-500' : 'bg-gray-100'}`} />)}
+          <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest mt-1 text-gray-400">
+            <span className={step === 1 ? 'text-amber-500' : 'text-gray-400'}>Details</span>
+            <ChevronRight size={10} className="text-gray-300" />
+            <span className={step === 2 ? 'text-amber-500' : 'text-gray-400'}>Questions</span>
+            <ChevronRight size={10} className="text-gray-300" />
+            <span className={step === 3 ? 'text-amber-500' : 'text-gray-400'}>Analytics</span>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -458,15 +465,27 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                           <input
                             type="text"
                             value={option.text}
+                            maxLength={80}
+                            autoFocus={focusedOptionId === option.id}
                             onChange={(e) => handleOptionChange(option.id, e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleAddOption();
+                              }
+                            }}
+                            onBlur={() => {
+                              if (focusedOptionId === option.id) setFocusedOptionId(null);
+                            }}
                             placeholder={`Item ${idx + 1} Name`}
                             className="flex-1 px-4 py-2 bg-transparent text-sm font-bold focus:outline-none text-gray-900 placeholder-gray-300"
                           />
+                          <span className="text-[9px] text-gray-400 mr-1.5 whitespace-nowrap">{option.text.length}/80</span>
                           <div className="flex items-center gap-1 shrink-0 px-1">
                             {option.image && (
-                              <button onClick={() => setOptions(options.map(o => o.id === option.id ? { ...o, image: null } : o))} className="p-1.5 text-gray-300 hover:text-red-500"><X size={14} strokeWidth={3} /></button>
+                              <button onClick={() => setOptions(options.map(o => o.id === option.id ? { ...o, image: null } : o))} className="p-3 text-gray-300 hover:text-red-500 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"><X size={14} strokeWidth={3} /></button>
                             )}
-                            <button onClick={() => setSettingsOptionId(option.id)} className="p-1.5 text-gray-400 hover:text-gray-600"><MoreHorizontal size={18} /></button>
+                            <button onClick={() => setSettingsOptionId(option.id)} className="p-3 text-gray-400 hover:text-gray-600 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"><MoreHorizontal size={18} /></button>
                           </div>
                         </div>
                         {option.withFollowUp && (
@@ -477,7 +496,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                         )}
                       </div>
                       {options.length > 2 && (
-                        <button onClick={() => handleRemoveOption(option.id)} className="text-gray-300 hover:text-red-500 p-2 mt-2 transition-colors"><Trash2 size={18} /></button>
+                        <button onClick={() => handleRemoveOption(option.id)} className="text-gray-300 hover:text-red-500 p-3 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] mt-2 transition-colors"><Trash2 size={18} /></button>
                       )}
                     </div>
                   ))}

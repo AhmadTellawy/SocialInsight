@@ -169,6 +169,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
 
   const [selectedDemographics, setSelectedDemographics] = useState<string[]>([]);
   const [errors, setErrors] = useState<{ [key: string]: boolean | string }>({});
+  const [focusedOptionId, setFocusedOptionId] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -259,7 +260,9 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   ];
 
   const handleAddOption = () => {
-    setOptions(prev => [...prev, { id: Date.now().toString(), text: '', image: undefined, withFollowUp: false, followUpLabel: '' }]);
+    const newOptId = Date.now().toString();
+    setOptions(prev => [...prev, { id: newOptId, text: '', image: undefined, withFollowUp: false, followUpLabel: '' }]);
+    setFocusedOptionId(newOptId);
   };
 
   const handleRemoveOption = (id: string) => {
@@ -683,24 +686,39 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                             <input
                               type="text"
                               value={option.text}
+                              maxLength={80}
+                              autoFocus={focusedOptionId === option.id}
                               onChange={(e) => handleOptionChange(option.id, e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  handleAddOption();
+                                }
+                              }}
+                              onBlur={() => {
+                                if (focusedOptionId === option.id) setFocusedOptionId(null);
+                              }}
                               placeholder={`Option ${idx + 1}`}
                               className="flex-1 px-3 py-2 bg-transparent text-sm font-semibold focus:outline-none text-gray-900"
                             />
                           )}
 
+                          {pollChoiceType !== 'rating' && (
+                            <span className="text-[9px] text-gray-400 mr-1.5 whitespace-nowrap">{option.text.length}/80</span>
+                          )}
+
                           <div className="flex items-center gap-1 shrink-0 px-1">
                             {pollChoiceType === 'multiple' && option.image && (
                               <button
-                                onClick={() => setOptions(options.map(o => o.id === option.id ? { ...o, image: null } : o))}
-                                className="p-1.5 text-gray-300 hover:text-red-500 transition-colors"
+                                onClick={() => setOptions(options.map(o => o.id === option.id ? { ...o, image: undefined } : o))}
+                                className="p-3 text-gray-300 hover:text-red-500 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"
                               >
                                 <X size={14} strokeWidth={3} />
                               </button>
                             )}
                             <button
                               onClick={() => setSettingsOptionId(option.id)}
-                              className="p-1.5 text-gray-400 hover:text-gray-600 transition-colors"
+                              className="p-3 text-gray-400 hover:text-gray-600 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"
                             >
                               <MoreHorizontal size={18} />
                             </button>
@@ -716,7 +734,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                       </div>
 
                       {pollChoiceType === 'multiple' && options.length > 2 && (
-                        <button onClick={() => handleRemoveOption(option.id)} className="text-gray-300 hover:text-red-500 p-1 shrink-0">
+                        <button onClick={() => handleRemoveOption(option.id)} className="text-gray-300 hover:text-red-500 p-3 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] shrink-0 transition-colors">
                           <Trash2 size={16} />
                         </button>
                       )}

@@ -98,6 +98,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
 
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [errors, setErrors] = useState<{ [key: string]: boolean | string }>({});
+  const [focusedOptionId, setFocusedOptionId] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -402,6 +403,17 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
     setActiveQuestionId(newQId);
   };
 
+  const handleAddSurveyOption = (secId: string, qId: string) => {
+    const newOptId = `o-${Date.now()}`;
+    const newOpt = { id: newOptId, text: '', votes: 0, withFollowUp: false, followUpLabel: '' };
+    const section = sections.find(s => s.id === secId);
+    const question = section?.questions.find(qu => qu.id === qId);
+    if (question) {
+      updateQuestion(secId, qId, { options: [...(question.options || []), newOpt] });
+      setFocusedOptionId(newOptId);
+    }
+  };
+
   const updateQuestion = (secId: string, qId: string, updates: Partial<SurveyQuestion>) => {
     setSections(sections.map(s => s.id === secId ? { ...s, questions: s.questions.map(q => q.id === qId ? { ...q, ...updates } : q) } : s));
   };
@@ -525,8 +537,12 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
         <button onClick={handleClose} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500"><X size={24} /></button>
         <div className="flex flex-col items-center flex-1 mx-2">
           <h1 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Survey Creation</h1>
-          <div className="flex gap-1">
-            {[1, 2, 3].map(s => <div key={s} className={`h-1 w-8 rounded-full transition-all duration-300 ${step >= s ? 'bg-blue-600' : 'bg-gray-100'}`} />)}
+          <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest mt-1 text-gray-400">
+            <span className={step === 1 ? 'text-blue-600' : 'text-gray-400'}>Details</span>
+            <ChevronRight size={10} className="text-gray-300" />
+            <span className={step === 2 ? 'text-blue-600' : 'text-gray-400'}>Questions</span>
+            <ChevronRight size={10} className="text-gray-300" />
+            <span className={step === 3 ? 'text-blue-600' : 'text-gray-400'}>Analytics</span>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -665,7 +681,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                       />
                       <button
                         onClick={() => setIsSectionSettingsSheetOpen(true)}
-                        className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-full transition-all shrink-0 mt-1"
+                        className="p-3 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-full transition-all shrink-0 mt-1 flex items-center justify-center min-w-[44px] min-h-[44px]"
                       >
                         <MoreHorizontal size={20} />
                       </button>
@@ -716,7 +732,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                             </div>
                             <button
                               onClick={() => setIsQuestionSettingsSheetOpen(true)}
-                              className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-full transition-all shrink-0 mt-1"
+                              className="p-3 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-full transition-all shrink-0 mt-1 flex items-center justify-center min-w-[44px] min-h-[44px]"
                             >
                               <MoreHorizontal size={20} />
                             </button>
@@ -795,26 +811,38 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                           <input
                                             type="text"
                                             value={opt.text}
+                                            maxLength={80}
+                                            autoFocus={focusedOptionId === opt.id}
                                             onChange={(e) => {
                                               const updated = q.options?.map(o => o.id === opt.id ? { ...o, text: e.target.value } : o);
                                               updateQuestion(activeSection.id, q.id, { options: updated });
                                             }}
+                                            onKeyDown={(e) => {
+                                              if (e.key === 'Enter') {
+                                                e.preventDefault();
+                                                handleAddSurveyOption(activeSection.id, q.id);
+                                              }
+                                            }}
+                                            onBlur={() => {
+                                              if (focusedOptionId === opt.id) setFocusedOptionId(null);
+                                            }}
                                             placeholder={`Option ${oIdx + 1}`}
                                             className="flex-1 text-xs font-semibold p-2 bg-transparent focus:outline-none"
                                           />
+                                          <span className="text-[9px] text-gray-400 mr-1.5 whitespace-nowrap">{opt.text.length}/80</span>
                                           {opt.image && (
                                             <button onClick={() => {
                                               const updated = q.options?.map(o => o.id === opt.id ? { ...o, image: undefined } : o);
                                               updateQuestion(activeSection.id, q.id, { options: updated });
-                                            }} className="p-1.5 text-gray-300 hover:text-red-500"><X size={12} /></button>
+                                            }} className="p-3 text-gray-300 hover:text-red-500 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]"><X size={12} /></button>
                                           )}
                                         </div>
                                       )}
                                       <button
                                         onClick={() => setSettingsOptionId({ secId: activeSection.id, qId: q.id, optId: opt.id })}
-                                        className="p-1.5 text-gray-400 hover:text-gray-600 transition-colors"
+                                        className="p-3 text-gray-400 hover:text-gray-600 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"
                                       >
-                                        <MoreHorizontal size={16} />
+                                        <MoreHorizontal size={18} />
                                       </button>
                                     </div>
                                     {q.options && q.options.length > 2 && q.type === 'multiple_choice' && !isRating && (
@@ -823,9 +851,9 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                           const updated = q.options?.filter(o => o.id !== opt.id);
                                           updateQuestion(activeSection.id, q.id, { options: updated });
                                         }}
-                                        className="text-gray-300 hover:text-red-500 p-1"
+                                        className="text-gray-300 hover:text-red-500 p-3 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"
                                       >
-                                        <Trash2 size={14} />
+                                        <Trash2 size={16} />
                                       </button>
                                     )}
                                   </div>
@@ -856,10 +884,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                               ))}
                               {q.type === 'multiple_choice' && !isRating && (
                                 <button
-                                  onClick={() => {
-                                    const newOpt = { id: `o-${Date.now()}`, text: '', votes: 0, withFollowUp: false, followUpLabel: '' };
-                                    updateQuestion(activeSection.id, q.id, { options: [...(q.options || []), newOpt] });
-                                  }}
+                                  onClick={() => handleAddSurveyOption(activeSection.id, q.id)}
                                   className="w-full py-2 border border-dashed border-gray-100 rounded-xl text-gray-400 font-bold text-[10px] uppercase tracking-widest hover:border-blue-300 hover:text-blue-600 transition-all flex items-center justify-center gap-1.5"
                                 >
                                   <Plus size={14} /> Add Option
