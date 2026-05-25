@@ -556,8 +556,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                 </div>
               </section>
 
-              {/* Main Content */}
-              <section className="space-y-4 pb-4 border-b border-gray-50">
+              {/* 1. Question Prompt & Media Section */}
+              <section className="space-y-2 pb-3 border-b border-gray-100">
                 <div className="space-y-1">
                   <div className="flex items-center justify-between px-1">
                     <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Question and details <span className="text-red-500">*</span></label>
@@ -571,8 +571,9 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   <RichMentionInput
                     value={title}
                     onChange={(val) => { setTitle(val); if (errors.title) setErrors({ ...errors, title: false }) }}
-                    placeholder="Ask the question and add any context voters need..."
-                    className={`text-xl font-bold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all p-0 pb-2 placeholder-gray-300 min-h-[96px] ${errors.title ? 'border-red-300' : ''}`}
+                    placeholder="Ask a question..."
+                    className={`text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] ${errors.title ? 'border-red-300' : ''}`}
+                    minRows={1}
                     autoFocus
                   />
                   {errors.title && <p className="text-[10px] font-bold text-red-500 px-1">{errors.title}</p>}
@@ -594,9 +595,12 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                     </div>
                   </div>
                 )}
+              </section>
 
+              {/* 2. Poll Configuration Section */}
+              <section className="space-y-4 pt-1 pb-5 border-b border-gray-100">
                 {/* Category Selection between Description and Choice Type */}
-                <div className="space-y-3 pt-2">
+                <div className="space-y-3">
                   <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">
                     Category <span className="text-red-500">*</span>
                   </label>
@@ -626,7 +630,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                 </div>
 
                 {/* Choice Type Selector */}
-                <div className="space-y-3 pt-2">
+                <div className="space-y-3">
                   <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Choice Type</label>
                   <div className="flex gap-2">
                     <button
@@ -643,9 +647,12 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                     </button>
                   </div>
                 </div>
+              </section>
 
+              {/* 3. Choices Setup Section */}
+              <section className="space-y-4 pt-1 pb-1">
                 {/* Layout and Choices Section */}
-                <div className="space-y-4 pt-4">
+                <div className="space-y-4">
                   {pollChoiceType === 'multiple' && (
                     <div className="space-y-2 px-1">
                       <div className="flex items-center justify-between">
@@ -677,96 +684,100 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                     <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Choices <span className="text-red-500">*</span></label>
                     {errors.options && <span className="text-[10px] font-bold text-red-500">{errors.options}</span>}
                   </div>
-                  {options.map((option, idx) => (
-                    <div key={option.id} className="flex items-center gap-3 animate-in fade-in slide-in-from-bottom-1 duration-200">
-                      <span className="text-xs font-black text-gray-300 w-4">{idx + 1}</span>
-                      <div className="flex-1 flex flex-col gap-2">
-                        <div className="flex items-center bg-gray-50 rounded-xl px-1 py-1 border border-transparent focus-within:border-blue-200 focus-within:bg-white transition-all shadow-sm">
-                          {pollChoiceType === 'multiple' && (
-                            <button
-                              onClick={() => {
-                                setActiveCropId(option.id);
-                                fileInputRef.current?.click();
-                              }}
-                              className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-dashed transition-all ${option.image ? 'border-blue-500' : 'border-gray-200 text-gray-400 hover:text-blue-500'
-                                }`}
-                            >
-                              {option.image ? (
-                                <img src={option.image} className="w-full h-full object-cover" alt="" />
-                              ) : (
-                                <Camera size={16} />
-                              )}
-                            </button>
-                          )}
-
-                          {pollChoiceType === 'rating' ? (
-                            <div className="flex-1 px-3 py-2 flex items-center gap-2">
-                              <div className="flex text-yellow-500">
-                                {Array.from({ length: option.ratingValue || 0 }).map((_, i) => (
-                                  <Star key={i} size={14} fill="currentColor" />
-                                ))}
-                              </div>
-                            </div>
-                          ) : (
-                            <input
-                              type="text"
-                              value={option.text}
-                              maxLength={80}
-                              autoFocus={focusedOptionId === option.id}
-                              onChange={(e) => handleOptionChange(option.id, e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  handleAddOption();
-                                }
-                              }}
-                              onBlur={() => {
-                                if (focusedOptionId === option.id) setFocusedOptionId(null);
-                              }}
-                              placeholder={`Option ${idx + 1}`}
-                              className="flex-1 px-3 py-2 bg-transparent text-sm font-semibold focus:outline-none text-gray-900"
-                            />
-                          )}
-
-                          {pollChoiceType !== 'rating' && (
-                            <span className="text-[9px] text-gray-400 mr-1.5 whitespace-nowrap">{option.text.length}/80</span>
-                          )}
-
-                          <div className="flex items-center gap-1 shrink-0 px-1">
-                            {pollChoiceType === 'multiple' && option.image && (
+                  
+                  <div className="space-y-4">
+                    {options.map((option, idx) => (
+                      <div key={option.id} className="flex items-center gap-3 animate-in fade-in slide-in-from-bottom-1 duration-200">
+                        <span className="text-xs font-black text-gray-300 w-4">{idx + 1}</span>
+                        <div className="flex-1 flex flex-col gap-2">
+                          <div className="flex items-center bg-gray-50 rounded-xl px-1 py-1 border border-transparent focus-within:border-blue-200 focus-within:bg-white transition-all shadow-sm">
+                            {pollChoiceType === 'multiple' && (
                               <button
-                                onClick={() => setOptions(options.map(o => o.id === option.id ? { ...o, image: undefined } : o))}
-                                className="p-3 text-gray-300 hover:text-red-500 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"
+                                onClick={() => {
+                                  setActiveCropId(option.id);
+                                  fileInputRef.current?.click();
+                                }}
+                                className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-dashed transition-all ${option.image ? 'border-blue-500' : 'border-gray-200 text-gray-400 hover:text-blue-500'
+                                  }`}
                               >
-                                <X size={14} strokeWidth={3} />
+                                {option.image ? (
+                                  <img src={option.image} className="w-full h-full object-cover" alt="" />
+                                ) : (
+                                  <Camera size={16} />
+                                )}
                               </button>
                             )}
-                            <button
-                              onClick={() => setSettingsOptionId(option.id)}
-                              className="p-3 text-gray-400 hover:text-gray-600 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"
-                            >
-                              <MoreHorizontal size={18} />
-                            </button>
+
+                            {pollChoiceType === 'rating' ? (
+                              <div className="flex-1 px-3 py-2 flex items-center gap-2">
+                                <div className="flex text-yellow-500">
+                                  {Array.from({ length: option.ratingValue || 0 }).map((_, i) => (
+                                    <Star key={i} size={14} fill="currentColor" />
+                                  ))}
+                                </div>
+                              </div>
+                            ) : (
+                              <input
+                                type="text"
+                                value={option.text}
+                                maxLength={80}
+                                autoFocus={focusedOptionId === option.id}
+                                onChange={(e) => handleOptionChange(option.id, e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    handleAddOption();
+                                  }
+                                }}
+                                onBlur={() => {
+                                  if (focusedOptionId === option.id) setFocusedOptionId(null);
+                                }}
+                                placeholder={`Option ${idx + 1}`}
+                                className="flex-1 px-3 py-2 bg-transparent text-sm font-semibold focus:outline-none text-gray-900"
+                              />
+                            )}
+
+                            {pollChoiceType !== 'rating' && (
+                              <span className="text-[9px] text-gray-400 mr-1.5 whitespace-nowrap">{option.text.length}/80</span>
+                            )}
+
+                            <div className="flex items-center gap-1 shrink-0 px-1">
+                              {pollChoiceType === 'multiple' && option.image && (
+                                <button
+                                  onClick={() => setOptions(options.map(o => o.id === option.id ? { ...o, image: null } : o))}
+                                  className="p-3 text-gray-300 hover:text-red-500 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"
+                                >
+                                  <X size={14} strokeWidth={3} />
+                                </button>
+                              )}
+                              <button
+                                onClick={() => setSettingsOptionId(option.id)}
+                                className="p-3 text-gray-400 hover:text-gray-600 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"
+                              >
+                                <MoreHorizontal size={18} />
+                              </button>
+                            </div>
                           </div>
+
+                          {option.withFollowUp && (
+                            <div className="px-2 py-1.5 bg-blue-50 border border-blue-100 rounded-lg text-[10px] flex items-center gap-2">
+                              <MessageSquare size={10} className="text-blue-500" />
+                              <span className="font-bold text-blue-700 truncate">Follow-up: {option.followUpLabel || "Please explain..."}</span>
+                            </div>
+                          )}
                         </div>
 
-                        {option.withFollowUp && (
-                          <div className="px-2 py-1.5 bg-blue-50 border border-blue-100 rounded-lg text-[10px] flex items-center gap-2">
-                            <MessageSquare size={10} className="text-blue-500" />
-                            <span className="font-bold text-blue-700 truncate">Follow-up: {option.followUpLabel || "Please explain..."}</span>
-                          </div>
+                        {pollChoiceType === 'multiple' && options.length > 2 && (
+                          <button onClick={() => handleRemoveOption(option.id)} className="text-gray-300 hover:text-red-500 p-3 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] shrink-0 transition-colors">
+                            <Trash2 size={16} />
+                          </button>
                         )}
                       </div>
+                    ))}
+                  </div>
 
-                      {pollChoiceType === 'multiple' && options.length > 2 && (
-                        <button onClick={() => handleRemoveOption(option.id)} className="text-gray-300 hover:text-red-500 p-3 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] shrink-0 transition-colors">
-                          <Trash2 size={16} />
-                        </button>
-                      )}
-                    </div>
-                  ))}
                   {pollChoiceType === 'multiple' && (
-                    <button onClick={handleAddOption} className="w-full py-3 border-2 border-dashed border-gray-100 rounded-xl text-gray-400 font-bold text-sm hover:border-blue-300 hover:text-blue-600 transition-all active:scale-[0.99]">
+                    <button onClick={handleAddOption} className="w-full py-3 border-2 border-dashed border-gray-100 rounded-xl text-gray-400 font-bold text-sm hover:border-blue-300 hover:text-blue-600 transition-all active:scale-[0.99] mt-2">
                       <Plus size={18} className="inline mr-1" /> Add Option
                     </button>
                   )}
