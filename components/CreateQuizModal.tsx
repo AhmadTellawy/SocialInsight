@@ -62,7 +62,6 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
   const [isResultVisibilitySheetOpen, setIsResultVisibilitySheetOpen] = useState(false);
   const [isCategorySheetOpen, setIsCategorySheetOpen] = useState(false);
   const [isDurationSheetOpen, setIsDurationSheetOpen] = useState(false);
-  const [isDemographicsSheetOpen, setIsDemographicsSheetOpen] = useState(false);
   const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
 
   // Results Visibility State
@@ -638,19 +637,6 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
               <span>Results: {resultsWho === 'OnlyMe' ? 'Me' : resultsWho}</span>
               <ChevronDown size={12} />
             </button>
-
-            {/* Analytics Chip */}
-            <button
-              onClick={() => setIsDemographicsSheetOpen(true)}
-              className={`shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all flex items-center gap-1 active:scale-95 ${
-                selectedDemographics.length > 0
-                  ? 'bg-purple-50 border-purple-200 text-purple-700 font-semibold'
-                  : 'bg-gray-50 border-gray-200 text-gray-600'
-              }`}
-            >
-              <span>Analytics: {selectedDemographics.length > 0 ? `${selectedDemographics.length} Attributes` : 'Off'}</span>
-              <ChevronDown size={12} />
-            </button>
           </div>
 
           {/* Question Builder Area */}
@@ -703,58 +689,56 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                 )}
 
                 {/* Questions Tab/Progress Row */}
-                {(totalQuestions > 1 || sections.length > 1) && (
-                  <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 px-1">
-                    {activeSection.questions.map((q, qIdx) => {
-                      const globalQNum = getQuestionCountBeforeSection(activeSectionIndex) + qIdx + 1;
-                      return (
-                        <button
-                          key={q.id}
-                          onClick={() => setActiveQuestionId(q.id)}
-                          className={`shrink-0 h-10 w-10 rounded-full text-xs font-black border transition-all flex items-center justify-center ${
-                            activeQuestionId === q.id
-                              ? 'bg-green-600 text-white border-green-600 shadow-md shadow-green-100'
-                              : 'bg-gray-50 text-gray-400 border-gray-100'
-                          }`}
-                        >
-                          Q{globalQNum}
-                        </button>
-                      );
-                    })}
-                    <button
-                      onClick={() => {
-                        const qId = `q-quiz-${Date.now()}`;
-                        setSections(sections.map(s => s.id === activeSection.id ? {
-                          ...s,
-                          questions: [...s.questions, {
-                            id: qId,
-                            text: '',
-                            type: 'multiple_choice',
-                            isRequired: true,
-                            weight: 10,
-                            imageLayout: 'vertical',
-                            options: [
-                              { id: `o1-${Date.now()}`, text: '', votes: 0 },
-                              { id: `o2-${Date.now()}`, text: '', votes: 0 }
-                            ]
-                          }]
-                        } : s));
-                        setActiveQuestionId(qId);
-                      }}
-                      className="shrink-0 px-4 py-2 rounded-full bg-white text-green-600 border border-dashed border-green-200 flex items-center justify-center gap-1.5 text-xs font-bold h-10 active:scale-95 transition-transform"
-                    >
-                      <Plus size={14} /> Add Question
-                    </button>
-                    {sections.length === 1 && (
+                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 px-1">
+                  {activeSection.questions.map((q, qIdx) => {
+                    const globalQNum = getQuestionCountBeforeSection(activeSectionIndex) + qIdx + 1;
+                    return (
                       <button
-                        onClick={addSection}
-                        className="shrink-0 px-4 py-2 bg-purple-50 text-purple-600 rounded-full border border-dashed border-purple-200 text-xs font-bold flex items-center justify-center gap-1.5 h-10 active:scale-95 transition-transform"
+                        key={q.id}
+                        onClick={() => setActiveQuestionId(q.id)}
+                        className={`shrink-0 h-10 w-10 rounded-full text-xs font-black border transition-all flex items-center justify-center ${
+                          activeQuestionId === q.id
+                            ? 'bg-green-600 text-white border-green-600 shadow-md shadow-green-100'
+                            : 'bg-gray-50 text-gray-400 border-gray-100'
+                        }`}
                       >
-                        <Plus size={14} /> Add Section
+                        Q{globalQNum}
                       </button>
-                    )}
-                  </div>
-                )}
+                    );
+                  })}
+                  <button
+                    onClick={() => {
+                      const qId = `q-quiz-${Date.now()}`;
+                      setSections(sections.map(s => s.id === activeSection.id ? {
+                        ...s,
+                        questions: [...s.questions, {
+                          id: qId,
+                          text: '',
+                          type: 'multiple_choice',
+                          isRequired: true,
+                          weight: 10,
+                          imageLayout: 'vertical',
+                          options: [
+                            { id: `o1-${Date.now()}`, text: '', votes: 0 },
+                            { id: `o2-${Date.now()}`, text: '', votes: 0 }
+                          ]
+                        }]
+                      } : s));
+                      setActiveQuestionId(qId);
+                    }}
+                    className="shrink-0 px-4 py-2 rounded-full bg-white text-green-600 border border-dashed border-green-200 flex items-center justify-center gap-1.5 text-xs font-bold h-10 active:scale-95 transition-transform"
+                  >
+                    <Plus size={14} /> Add Question
+                  </button>
+                  {sections.length === 1 && (
+                    <button
+                      onClick={addSection}
+                      className="shrink-0 px-4 py-2 bg-purple-50 text-purple-600 rounded-full border border-dashed border-purple-200 text-xs font-bold flex items-center justify-center gap-1.5 h-10 active:scale-95 transition-transform"
+                    >
+                      <Plus size={14} /> Add Section
+                    </button>
+                  )}
+                </div>
 
                 {/* Active Question Card */}
                 {activeQuestionId && (() => {
@@ -872,6 +856,101 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
             )}
           </div>
 
+          {/* Demographics Settings Section (Same style as Poll screen) */}
+          <section className="border-t border-gray-100 pt-4 mt-6 space-y-3">
+            <div className="flex items-center justify-between px-1">
+              <div className="flex items-center gap-1.5">
+                <BarChart3 size={14} className="text-purple-600" />
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                  Unlock Deeper Analytics
+                </label>
+              </div>
+            </div>
+            
+            <div className="bg-gray-50/20 p-4 rounded-3xl border border-gray-100 space-y-4">
+              <p className="text-[11px] text-gray-600 leading-normal">
+                Choose optional demographics to help understand participant breakdowns. Participants will respond optionally.
+              </p>
+
+              {/* Preset Packages */}
+              <div className="space-y-2">
+                <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">
+                  Preset Packages
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {(['recommended', 'professional', 'geographic', 'custom'] as const).map((preset) => {
+                    const isActive = activePreset === preset;
+                    return (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => handlePresetChange(preset)}
+                        className={`px-3 py-1.5 rounded-full text-[10px] font-bold border transition-all duration-200 active:scale-95 uppercase tracking-wider ${
+                          isActive 
+                            ? 'bg-purple-600 text-white border-purple-600 shadow-sm' 
+                            : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+                        }`}
+                      >
+                        {preset}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Dynamic Value/Cost Indicator */}
+              <div className="p-3 bg-white rounded-2xl border border-gray-100 space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-bold text-gray-700">
+                    Provides {selectedDemographics.length} analytical comparisons
+                  </span>
+                  <span className="text-[10px] font-extrabold text-purple-600 whitespace-nowrap">
+                    +{selectedDemographics.length} questions for participant
+                  </span>
+                </div>
+                <p className="text-[8px] text-gray-400 font-medium leading-normal">
+                  * Selected questions will be prompted as optional questions during participation.
+                </p>
+              </div>
+
+              {/* Attributes Selector Pills */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">
+                    Selected Attributes
+                  </span>
+                  {activePreset !== 'custom' && (
+                    <span className="text-[8px] text-gray-400 font-medium">
+                      (Preset-controlled, select Custom to edit)
+                    </span>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {DEMOGRAPHIC_OPTIONS.map((opt) => {
+                    const isSelected = selectedDemographics.includes(opt.id);
+                    const isCustomMode = activePreset === 'custom';
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        disabled={!isCustomMode}
+                        onClick={() => handleDemographicToggle(opt.id)}
+                        className={`px-3 py-1.5 rounded-full text-[10px] font-bold border transition-all flex items-center gap-1 ${
+                          isSelected
+                            ? 'bg-purple-50 border-purple-200 text-purple-600 font-semibold'
+                            : 'bg-white border-gray-100 text-gray-405'
+                        } ${!isCustomMode ? 'cursor-default opacity-85' : 'active:scale-95'}`}
+                      >
+                        {isSelected && <Check size={10} strokeWidth={4} />}
+                        <span>{opt.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </section>
+
           {/* Engagement Settings */}
           <div className="border-t border-gray-100 pt-4 mt-6 space-y-3">
             <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Engagement Settings</label>
@@ -973,94 +1052,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
         </div>
       </BottomSheet>
 
-      {/* Demographics Bottom Sheet */}
-      <BottomSheet isOpen={isDemographicsSheetOpen} onClose={() => setIsDemographicsSheetOpen(false)} title="Analytics & Demographics">
-        <div className="flex flex-col h-full bg-white px-1 py-2 space-y-6 overflow-y-auto no-scrollbar">
-          <div className="bg-purple-50 rounded-2xl p-4 border border-purple-100 shadow-sm shrink-0">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-8 h-8 bg-purple-600 text-white rounded-xl flex items-center justify-center shadow-md shrink-0">
-                <BarChart3 size={16} />
-              </div>
-              <div>
-                <h4 className="text-xs font-black text-gray-900 leading-tight">Unlock Deep Analytics</h4>
-                <p className="text-[9px] text-purple-600 font-bold mt-0.5">Demographics Breakdown</p>
-              </div>
-            </div>
-            <p className="text-[10px] text-gray-600 leading-relaxed">
-              Choose optional demographic questions to unlock deeper result breakdowns. Participants will respond optionally.
-            </p>
-          </div>
 
-          <div className="space-y-3 shrink-0">
-            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Presets</label>
-            <div className="grid grid-cols-2 gap-2">
-              {(['recommended', 'professional', 'geographic', 'custom'] as const).map(preset => (
-                <button
-                  key={preset}
-                  onClick={() => handlePresetChange(preset)}
-                  className={`py-2 rounded-xl text-[10px] font-bold border transition-all uppercase tracking-wider ${
-                    activePreset === preset
-                      ? 'bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-200'
-                      : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'
-                  }`}
-                >
-                  {preset}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-3 shrink-0">
-            <div className="flex items-center justify-between">
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                Selected Attributes
-              </label>
-              {activePreset !== 'custom' && (
-                <span className="text-[9px] text-gray-400 font-medium">
-                  (Preset-controlled, select Custom to edit)
-                </span>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {DEMOGRAPHIC_OPTIONS.map((opt) => {
-                const isSelected = selectedDemographics.includes(opt.id);
-                const isCustomMode = activePreset === 'custom';
-                return (
-                  <button
-                    key={opt.id}
-                    disabled={!isCustomMode}
-                    onClick={() => handleDemographicToggle(opt.id)}
-                    className={`px-3 py-1.5 rounded-full text-[10px] font-bold border transition-all flex items-center gap-1 ${
-                      isSelected
-                        ? 'bg-purple-50 border-purple-200 text-purple-600 font-semibold'
-                        : 'bg-white border-gray-100 text-gray-400'
-                    } ${!isCustomMode ? 'cursor-default opacity-85' : 'active:scale-95'}`}
-                  >
-                    {isSelected && <Check size={10} strokeWidth={4} />}
-                    <span>{opt.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="bg-gray-50 rounded-2xl p-4 border border-gray-100 space-y-2 shrink-0">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-gray-700">
-                Provides {selectedDemographics.length} analytical comparisons
-              </span>
-              <span className="text-[10px] font-extrabold text-purple-600">
-                +{selectedDemographics.length} questions for participant
-              </span>
-            </div>
-            <p className="text-[9px] text-gray-400 font-medium leading-normal">
-              * Selected questions will be prompted as optional questions during participation.
-            </p>
-          </div>
-
-          <button onClick={() => setIsDemographicsSheetOpen(false)} className="w-full py-4 bg-gray-900 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shrink-0">Done</button>
-        </div>
-      </BottomSheet>
 
       {/* Reused Bottom Sheets from Survey Builder */}
       <BottomSheet isOpen={isVisibilitySheetOpen} onClose={() => setIsVisibilitySheetOpen(false)} title="Post visibility">
