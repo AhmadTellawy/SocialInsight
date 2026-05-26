@@ -297,10 +297,10 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
       newErrors.questions = "Question validation failed.";
     }
 
-    setErrors(newErrors);
     return {
       isValid: errorList.length === 0,
-      errors: errorList
+      errors: errorList,
+      newErrors
     };
   };
 
@@ -350,7 +350,8 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
 
   const handlePost = () => {
     setHasAttemptedSubmit(true);
-    const { isValid } = validateQuiz();
+    const { isValid, newErrors } = validateQuiz();
+    setErrors(newErrors);
     if (!isValid) return;
 
     const firstQuestion = sections[0]?.questions[0];
@@ -536,10 +537,10 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
 
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto no-scrollbar bg-white">
         <div className="max-w-md mx-auto p-5 pb-32">
-          {errors.userProfile && (
+          {errorInfo.newErrors.userProfile && (
             <div className="p-3 mb-4 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2">
               <AlertCircle size={16} />
-              <span>{errors.userProfile}</span>
+              <span>{errorInfo.newErrors.userProfile}</span>
             </div>
           )}
 
@@ -567,7 +568,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
             {shouldShowTitleField && (
               <RichMentionInput
                 value={title}
-                onChange={(val) => { setTitle(val); setErrors(prev => ({ ...prev, title: false })); }}
+                onChange={(val) => setTitle(val)}
                 placeholder="Quiz Title"
                 className="text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-purple-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] text-gray-900"
                 minRows={1}
@@ -590,7 +591,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
               className={`shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all flex items-center gap-1 active:scale-95 ${
                 category
                   ? 'bg-purple-50 border-purple-200 text-purple-700 font-semibold'
-                  : errors.category && hasAttemptedSubmit
+                  : errorInfo.newErrors.category && hasAttemptedSubmit
                   ? 'bg-red-50 border-red-300 text-red-600'
                   : 'bg-gray-50 border-gray-200 text-gray-600'
               }`}
