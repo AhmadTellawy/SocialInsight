@@ -376,7 +376,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto no-scrollbar bg-white">
         <div className="max-w-md mx-auto p-5 pb-32">
           {step === 1 && (
-            <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+            <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
               {errors.userProfile && (
                 <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2">
                   <AlertCircle size={16} />
@@ -406,23 +406,25 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                 </div>
               </section>
 
-              <section className={`space-y-3 pb-4 border-b border-gray-50 relative transition-colors ${errors.title ? 'p-3 rounded-2xl bg-red-50' : ''}`}>
-                <div className="flex items-center justify-between"><label className="block text-xs font-bold text-gray-400 uppercase tracking-wide">The Challenge <span className="text-red-500">*</span></label><button onClick={() => { setActiveCropId('cover'); fileInputRef.current?.click(); }} className={`p-1.5 rounded-full transition-colors ${coverImage ? 'text-amber-600 bg-amber-50' : 'text-gray-400 hover:text-amber-500 hover:bg-gray-50'}`}><ImageIcon size={20} /></button></div>
-                {coverImage && <div className="mb-2"><div className="relative w-full aspect-video rounded-2xl overflow-hidden shadow-sm group animate-in zoom-in-95"><img src={coverImage} className="w-full h-full object-cover" alt="Cover" /><button onClick={() => setCoverImage(null)} className="absolute top-2 right-2 p-1.5 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={14} /></button></div></div>}
-                <RichMentionInput
-                  value={title}
-                  onChange={(val) => { setTitle(val); setErrors(prev => ({ ...prev, title: false })); }}
-                  placeholder="e.g. Which logo looks better?"
-                  className={`text-xl font-bold bg-transparent border-b border-gray-100 focus:outline-none focus:border-amber-500 transition-all p-0 pb-2 placeholder-gray-300 min-h-[60px] ${errors.title ? 'text-red-500 border-red-300' : 'text-gray-900'}`}
-                  autoFocus
-                />
-                <RichMentionInput
-                  value={description}
-                  onChange={(val) => setDescription(val)}
-                  placeholder="Describe the challenge rules or context..."
-                  className="mt-2 text-sm text-gray-600 bg-transparent border-b border-gray-100 focus:outline-none focus:border-amber-500 transition-all p-0 pb-2 placeholder-gray-300 min-h-[40px]"
-                />
-              </section>
+               <section className={`space-y-2 pb-3 border-b border-gray-100 relative transition-colors ${errors.title ? 'p-3 rounded-2xl bg-red-50' : ''}`}>
+                 <div className="flex items-center justify-between"><label className="block text-xs font-bold text-gray-400 uppercase tracking-wide">The Challenge <span className="text-red-500">*</span></label><button onClick={() => { setActiveCropId('cover'); fileInputRef.current?.click(); }} className={`p-1.5 rounded-full transition-colors ${coverImage ? 'text-amber-600 bg-amber-50' : 'text-gray-400 hover:text-amber-500 hover:bg-gray-50'}`}><ImageIcon size={20} /></button></div>
+                 {coverImage && <div className="mb-2"><div className="relative w-full aspect-video rounded-2xl overflow-hidden shadow-sm group animate-in zoom-in-95"><img src={coverImage} className="w-full h-full object-cover" alt="Cover" /><button onClick={() => setCoverImage(null)} className="absolute top-2 right-2 p-1.5 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={14} /></button></div></div>}
+                 <RichMentionInput
+                   value={title}
+                   onChange={(val) => { setTitle(val); setErrors(prev => ({ ...prev, title: false })); }}
+                   placeholder="e.g. Which logo looks better?"
+                   className={`text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-amber-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] ${errors.title ? 'text-red-500 border-red-300' : 'text-gray-900'}`}
+                   minRows={1}
+                   autoFocus
+                 />
+                 <RichMentionInput
+                   value={description}
+                   onChange={(val) => setDescription(val)}
+                   placeholder="Describe the challenge rules or context..."
+                   className="mt-1.5 text-[11px] text-gray-500 bg-transparent border-b border-gray-100 focus:outline-none focus:border-amber-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[32px]"
+                   minRows={1}
+                 />
+               </section>
 
               <div className="space-y-3 pt-2">
                 <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Category <span className="text-red-500">*</span></label>
@@ -520,14 +522,36 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                           </div>
                         )}
                       </div>
-                      {options.length > 2 && (
-                        <button onClick={() => handleRemoveOption(option.id)} className="text-gray-300 hover:text-red-500 p-3 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] mt-2 transition-colors"><Trash2 size={18} /></button>
-                      )}
                     </div>
                   ))}
-                  <button onClick={handleAddOption} className="w-full py-4 border-2 border-dashed border-gray-100 rounded-2xl text-gray-400 font-black text-xs uppercase tracking-widest hover:border-amber-300 hover:text-amber-600 transition-all flex items-center justify-center gap-2">
-                    <Plus size={18} strokeWidth={3} /> Add item to compare
-                  </button>
+
+                  {/* Interactive Placeholder / Auto-Add Option */}
+                  <div className="flex items-start gap-3 opacity-50 hover:opacity-80 focus-within:opacity-100 transition-opacity duration-200">
+                    <div className="flex flex-col items-center pt-3 gap-1">
+                      <span className="text-[10px] font-black text-gray-300 uppercase tracking-tighter">#{options.length + 1}</span>
+                    </div>
+                    <div className="flex-1 flex flex-col gap-2">
+                      <div className="flex items-center bg-gray-50/50 border border-dashed border-gray-200 rounded-2xl p-1.5 shadow-sm">
+                        <button
+                          disabled
+                          className="w-14 h-14 rounded-xl flex items-center justify-center shrink-0 border border-dashed border-gray-200 text-gray-300"
+                        >
+                          <Camera size={20} />
+                        </button>
+                        <input
+                          type="text"
+                          placeholder="Add item to compare..."
+                          className="flex-1 px-4 py-2 bg-transparent text-sm font-bold focus:outline-none text-gray-400 cursor-pointer placeholder-gray-300"
+                          onFocus={handleAddOption}
+                        />
+                        <div className="flex items-center gap-1 shrink-0 px-1">
+                          <button disabled className="p-3 text-gray-300 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]">
+                            <MoreHorizontal size={18} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </section>
             </div>
@@ -698,6 +722,16 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
               </button>
               <button disabled={options.indexOf(selectedOptionForSettings) === options.length - 1} onClick={() => { const idx = options.indexOf(selectedOptionForSettings); const newOpts = [...options];[newOpts[idx], newOpts[idx + 1]] = [newOpts[idx + 1], newOpts[idx]]; setOptions(newOpts); setSettingsOptionId(null); }} className="w-full flex items-center gap-4 p-4 rounded-2xl border transition-all hover:bg-gray-50 disabled:opacity-30">
                 <div className="p-2.5 rounded-xl bg-gray-100 text-gray-500"><ArrowDown size={20} /></div><span className="font-bold text-sm text-gray-900">Move Down</span>
+              </button>
+              
+              <button
+                disabled={options.length <= 2}
+                onClick={() => { handleRemoveOption(selectedOptionForSettings.id); setSettingsOptionId(null); }}
+                className={`w-full flex items-center gap-4 p-4 rounded-2xl border transition-all text-left ${options.length <= 2 ? 'opacity-30 grayscale cursor-not-allowed border-gray-100' : 'hover:bg-red-50 hover:border-red-200 hover:text-red-600 border-gray-100 text-red-600 active:scale-[0.98]'
+                  }`}
+              >
+                <div className={`p-2.5 rounded-xl ${options.length <= 2 ? 'bg-gray-100 text-gray-400' : 'bg-red-50 text-red-500'}`}><Trash2 size={20} /></div>
+                <span className="font-bold text-sm">Delete Option</span>
               </button>
             </div>
 

@@ -582,14 +582,14 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto no-scrollbar bg-white">
         <div className="max-w-md mx-auto p-5 pb-32">
           {step === 1 && (
-            <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+            <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
               {errors.userProfile && (
                 <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2">
                   <AlertCircle size={16} />
                   <span>{errors.userProfile}</span>
                 </div>
               )}
-              <section className="p-2 space-y-6">
+              <section className="p-2 space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div className={errors.visibility ? 'p-1 rounded-xl bg-red-50 ring-1 ring-red-100' : ''}>
                     <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 flex items-center gap-1">
@@ -619,23 +619,25 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                 </div>
               </section>
 
-              <section className={`space-y-3 pb-4 border-b border-gray-50 relative transition-colors ${errors.title ? 'p-3 rounded-2xl bg-red-50' : ''}`}>
-                <div className="flex items-center justify-between"><label className="block text-xs font-bold text-gray-400 uppercase tracking-wide">The Survey Header <span className="text-red-500">*</span></label><button onClick={() => { setActiveCropTarget({ type: 'cover' }); fileInputRef.current?.click(); }} className={`p-1.5 rounded-full transition-colors ${coverImage ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-50'}`}><ImageIcon size={20} /></button></div>
-                {coverImage && <div className="mb-2"><div className="relative w-20 h-20 rounded-xl overflow-hidden shadow-sm group animate-in zoom-in-95"><img src={coverImage} className="w-full h-full object-cover" alt="Cover" /><button onClick={() => setCoverImage(null)} className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={10} /></button></div></div>}
-                <RichMentionInput
-                  value={title}
-                  onChange={(val) => { setTitle(val); setErrors(prev => ({ ...prev, title: false })); }}
-                  placeholder="Survey Title"
-                  className={`text-xl font-bold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all p-0 pb-2 placeholder-gray-300 min-h-[60px] ${errors.title ? 'text-red-500 border-red-300' : 'text-gray-900'}`}
-                  autoFocus
-                />
-                <RichMentionInput
-                  value={description}
-                  onChange={(val) => setDescription(val)}
-                  placeholder="Describe what this survey is about..."
-                  className="mt-2 text-sm text-gray-600 bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all p-0 pb-2 placeholder-gray-300 min-h-[40px]"
-                />
-              </section>
+              <section className={`space-y-2 pb-3 border-b border-gray-100 relative transition-colors ${errors.title ? 'p-3 rounded-2xl bg-red-50' : ''}`}>
+                 <div className="flex items-center justify-between"><label className="block text-xs font-bold text-gray-400 uppercase tracking-wide">The Survey Header <span className="text-red-500">*</span></label><button onClick={() => { setActiveCropTarget({ type: 'cover' }); fileInputRef.current?.click(); }} className={`p-1.5 rounded-full transition-colors ${coverImage ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-50'}`}><ImageIcon size={20} /></button></div>
+                 {coverImage && <div className="mb-2"><div className="relative w-20 h-20 rounded-xl overflow-hidden shadow-sm group animate-in zoom-in-95"><img src={coverImage} className="w-full h-full object-cover" alt="Cover" /><button onClick={() => setCoverImage(null)} className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={10} /></button></div></div>}
+                 <RichMentionInput
+                   value={title}
+                   onChange={(val) => { setTitle(val); setErrors(prev => ({ ...prev, title: false })); }}
+                   placeholder="Survey Title"
+                   className={`text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] ${errors.title ? 'text-red-500 border-red-300' : 'text-gray-900'}`}
+                   minRows={1}
+                   autoFocus
+                 />
+                 <RichMentionInput
+                   value={description}
+                   onChange={(val) => setDescription(val)}
+                   placeholder="Describe what this survey is about..."
+                   className="mt-1.5 text-[11px] text-gray-500 bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[32px]"
+                   minRows={1}
+                 />
+               </section>
 
               <div className="space-y-3 pt-2">
                 <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">
@@ -751,7 +753,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                   value={q.text}
                                   onChange={(e) => updateQuestion(activeSection.id, q.id, { text: e.target.value })}
                                   placeholder="Question Text"
-                                  className="flex-1 text-xl font-bold text-gray-900 border-b border-gray-100 focus:outline-none focus:border-blue-500 p-0 pb-2 resize-none min-h-[60px] placeholder-gray-300 bg-transparent"
+                                  className="flex-1 text-sm font-semibold text-gray-900 border-b border-gray-100 focus:outline-none focus:border-blue-500 pt-0.5 pb-1.5 resize-none min-h-[44px] placeholder-gray-300 bg-transparent"
                                 />
                               </div>
                             </div>
@@ -870,17 +872,6 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                         <MoreHorizontal size={18} />
                                       </button>
                                     </div>
-                                    {q.options && q.options.length > 2 && q.type === 'multiple_choice' && !isRating && (
-                                      <button
-                                        onClick={() => {
-                                          const updated = q.options?.filter(o => o.id !== opt.id);
-                                          updateQuestion(activeSection.id, q.id, { options: updated });
-                                        }}
-                                        className="text-gray-300 hover:text-red-500 p-3 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"
-                                      >
-                                        <Trash2 size={16} />
-                                      </button>
-                                    )}
                                   </div>
                                   <div className="flex flex-wrap gap-2 ml-2">
                                     {opt.withFollowUp && (
@@ -907,13 +898,27 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                   </div>
                                 </div>
                               ))}
+
+                              {/* Interactive Placeholder / Auto-Add Option */}
                               {q.type === 'multiple_choice' && !isRating && (
-                                <button
-                                  onClick={() => handleAddSurveyOption(activeSection.id, q.id)}
-                                  className="w-full py-2 border border-dashed border-gray-100 rounded-xl text-gray-400 font-bold text-[10px] uppercase tracking-widest hover:border-blue-300 hover:text-blue-600 transition-all flex items-center justify-center gap-1.5"
-                                >
-                                  <Plus size={14} /> Add Option
-                                </button>
+                                <div className="flex items-center gap-2 opacity-50 hover:opacity-80 focus-within:opacity-100 transition-opacity duration-200">
+                                  <div className="flex-1 flex items-center bg-gray-50/50 border border-dashed border-gray-200 rounded-xl px-1 py-1">
+                                    {currentChoiceType === 'multiple' && (
+                                      <button disabled className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border border-dashed border-gray-200 text-gray-300 mr-1">
+                                        <Camera size={16} />
+                                      </button>
+                                    )}
+                                    <input
+                                      type="text"
+                                      placeholder="Add option..."
+                                      className="flex-1 text-xs font-semibold p-2 bg-transparent focus:outline-none text-gray-400 cursor-pointer"
+                                      onFocus={() => handleAddSurveyOption(activeSection.id, q.id)}
+                                    />
+                                    <button disabled className="p-3 text-gray-300 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]">
+                                      <MoreHorizontal size={18} />
+                                    </button>
+                                  </div>
+                                </div>
                               )}
                             </div>
                           ) : q.type === 'text' ? (
@@ -1284,6 +1289,25 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                       <div className="p-2.5 rounded-xl bg-gray-100 text-gray-500"><ArrowDown size={20} /></div>
                       <span className="font-bold text-sm text-gray-900">Move Down</span>
                     </button>
+
+                    {q?.type === 'multiple_choice' && !isRatingOpt && (
+                      <button
+                        disabled={optCount <= 2}
+                        onClick={() => {
+                          const updated = q?.options?.filter(o => o.id !== settingsOptionId.optId);
+                          updateQuestion(settingsOptionId.secId, settingsOptionId.qId, { options: updated });
+                          setSettingsOptionId(null);
+                        }}
+                        className={`w-full flex items-center gap-4 p-4 rounded-2xl border transition-all text-left ${
+                          optCount <= 2
+                            ? 'opacity-30 grayscale cursor-not-allowed border-gray-100'
+                            : 'hover:bg-red-50 hover:border-red-200 hover:text-red-600 border-gray-100 text-red-600 active:scale-[0.98]'
+                        }`}
+                      >
+                        <div className={`p-2.5 rounded-xl ${optCount <= 2 ? 'bg-gray-100 text-gray-400' : 'bg-red-50 text-red-500'}`}><Trash2 size={20} /></div>
+                        <span className="font-bold text-sm">Delete Option</span>
+                      </button>
+                    )}
                   </>
                 );
               })()}
