@@ -766,21 +766,37 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                             </div>
                           )}
                         </div>
-
-                        {pollChoiceType === 'multiple' && options.length > 2 && (
-                          <button onClick={() => handleRemoveOption(option.id)} className="text-gray-300 hover:text-red-500 p-3 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] shrink-0 transition-colors">
-                            <Trash2 size={16} />
-                          </button>
-                        )}
                       </div>
                     ))}
-                  </div>
 
-                  {pollChoiceType === 'multiple' && (
-                    <button onClick={handleAddOption} className="w-full py-3 border-2 border-dashed border-gray-100 rounded-xl text-gray-400 font-bold text-sm hover:border-blue-300 hover:text-blue-600 transition-all active:scale-[0.99] mt-2">
-                      <Plus size={18} className="inline mr-1" /> Add Option
-                    </button>
-                  )}
+                    {/* Interactive Placeholder / Auto-Add Option */}
+                    {pollChoiceType === 'multiple' && (
+                      <div className="flex items-center gap-3 opacity-50 hover:opacity-80 focus-within:opacity-100 transition-opacity duration-200">
+                        <span className="text-xs font-black text-gray-300 w-4">{options.length + 1}</span>
+                        <div className="flex-1 flex flex-col gap-2">
+                          <div className="flex items-center bg-gray-50/50 border border-dashed border-gray-200 rounded-xl px-1 py-1">
+                            <button
+                              disabled
+                              className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border border-dashed border-gray-200 text-gray-300"
+                            >
+                              <Camera size={16} />
+                            </button>
+                            <input
+                              type="text"
+                              placeholder="Add option..."
+                              className="flex-1 px-3 py-2 bg-transparent text-sm font-semibold focus:outline-none text-gray-400 cursor-pointer"
+                              onFocus={handleAddOption}
+                            />
+                            <div className="flex items-center gap-1 shrink-0 px-1">
+                              <button disabled className="p-3 text-gray-300 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]">
+                                <MoreHorizontal size={18} />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </section>
 
@@ -1229,6 +1245,18 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                 <div className="p-2.5 rounded-xl bg-gray-100 text-gray-500"><ArrowDown size={20} /></div>
                 <span className="font-bold text-sm text-gray-900">Move Down</span>
               </button>
+
+              {pollChoiceType === 'multiple' && (
+                <button
+                  disabled={options.length <= 2}
+                  onClick={() => { handleRemoveOption(selectedOptionForSettings.id); setSettingsOptionId(null); }}
+                  className={`w-full flex items-center gap-4 p-4 rounded-2xl border transition-all text-left ${options.length <= 2 ? 'opacity-30 grayscale cursor-not-allowed border-gray-100' : 'hover:bg-red-50 hover:border-red-200 hover:text-red-600 border-gray-100 text-red-600 active:scale-[0.98]'
+                    }`}
+                >
+                  <div className={`p-2.5 rounded-xl ${options.length <= 2 ? 'bg-gray-100 text-gray-400' : 'bg-red-50 text-red-500'}`}><Trash2 size={20} /></div>
+                  <span className="font-bold text-sm">Delete Option</span>
+                </button>
+              )}
             </div>
 
             <div className="h-px bg-gray-100 my-2" />
