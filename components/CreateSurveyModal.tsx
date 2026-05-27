@@ -63,12 +63,12 @@ const INITIAL_SECTIONS: SurveySection[] = [
 type VisibilityType = 'Public' | 'Followers' | 'Groups' | 'Custom Audience' | 'Custom Domain';
 
 export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, onClose, onSubmit, onSaveDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
-  const [step, setStep] = useState<1 | 2 | 3>((draft?.currentStep as 1 | 2 | 3) || 1);
-
   const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
   const [isVisibilitySheetOpen, setIsVisibilitySheetOpen] = useState(false);
   const [isResultVisibilitySheetOpen, setIsResultVisibilitySheetOpen] = useState(false);
   const [isCategorySheetOpen, setIsCategorySheetOpen] = useState(false);
+  const [isDurationSheetOpen, setIsDurationSheetOpen] = useState(false);
+  const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
 
   // New Detailed Visibility State
   const [resultsWho, setResultsWho] = useState<'Public' | 'Followers' | 'Participants' | 'OnlyMe'>('Public');
@@ -86,6 +86,11 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
   const [sections, setSections] = useState<SurveySection[]>(INITIAL_SECTIONS);
+
+  const totalQuestions = useMemo(() => {
+    return sections.reduce((sum, sec) => sum + (sec.questions?.length || 0), 0);
+  }, [sections]);
+
   const [settingsOptionId, setSettingsOptionId] = useState<{ secId: string, qId: string, optId: string } | null>(null);
   const [isQuestionSettingsSheetOpen, setIsQuestionSettingsSheetOpen] = useState(false);
   const [isSectionSettingsSheetOpen, setIsSectionSettingsSheetOpen] = useState(false);
@@ -214,7 +219,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollTo({ top: 0, behavior: 'instant' });
     }
-  }, [step]);
+  }, [activeQuestionId]);
 
   const hasChanges = useMemo(() => {
     // User requested explicit confirmation every time, so we check for content regardless of draft status
@@ -261,36 +266,79 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
     }
   };
 
-  const validateStep1 = () => {
+  const validateSurvey = (mode: 'publish' | 'draft' = 'publish') => {
     const newErrors: { [key: string]: boolean | string } = {};
-    if (!userProfile?.id) {
-      newErrors.userProfile = "User profile not found. Please log in.";
-    }
-    if (!title.trim()) newErrors.title = true;
-    if (!category) newErrors.category = true;
-    if (visibility === 'Groups' && selectedGroups.length === 0) newErrors.visibility = "Please select at least one group.";
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
+    const errorList: string[] = [];
 
-  const validateStep2 = () => {
-    const newErrors: { [key: string]: boolean | string } = {};
     if (!userProfile?.id) {
+      errorList.push("User profile not found. Please log in.");
       newErrors.userProfile = "User profile not found. Please log in.";
     }
-    let hasEmptyQuestion = false;
-    sections.forEach(s => {
-      s.questions.forEach(q => {
-        if (!q.text.trim()) hasEmptyQuestion = true;
-        if (q.type === 'multiple_choice' && (q.options?.filter(o => o.text.trim() !== '').length || 0) < 2) {
-          hasEmptyQuestion = true;
+
+    if (mode === 'draft') {
+      return {
+        isValid: errorList.length === 0,
+        errors: errorList,
+        newErrors
+      };
+    }
+
+    if (!title.trim()) {
+      errorList.push("Survey Title is required.");
+      newErrors.title = true;
+    }
+
+    if (!category) {
+      errorList.push("Survey Category is required.");
+      newErrors.category = true;
+    }
+
+    if (visibility === 'Groups' && selectedGroups.length === 0) {
+      errorList.push("Please select at least one group for Group visibility.");
+      newErrors.visibility = "Please select at least one group.";
+    }
+
+    if (totalQuestions < 2) {
+      errorList.push("Surveys are designed for multiple questions. Use Poll for a single-question post.");
+      newErrors.minQuestions = "Surveys require at least 2 questions.";
+    }
+
+    let hasQuestionError = false;
+    sections.forEach((s, sIdx) => {
+      s.questions.forEach((q, qIdx) => {
+        const qNum = getQuestionCountBeforeSection(sIdx) + qIdx + 1;
+        if (!q.text.trim()) {
+          errorList.push(`Question ${qNum}: Question text is required.`);
+          hasQuestionError = true;
+        }
+        if (q.type === 'multiple_choice') {
+          const filledOptions = q.options?.filter(o => o.text.trim() !== '');
+          if ((filledOptions?.length || 0) < 2) {
+            errorList.push(`Question ${qNum}: At least 2 options are required.`);
+            hasQuestionError = true;
+          }
+        }
+        if (q.type === 'text') {
+          errorList.push(`Question ${qNum}: Short Answer / Free Text is not allowed in Survey. Please change to Multiple Choice or Rating Scale.`);
+          hasQuestionError = true;
         }
       });
     });
-    if (hasEmptyQuestion) newErrors.questions = "All questions must have text and at least 2 options.";
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+
+    if (hasQuestionError) {
+      newErrors.questions = "Question validation failed.";
+    }
+
+    return {
+      isValid: errorList.length === 0,
+      errors: errorList,
+      newErrors
+    };
   };
+
+  const errorInfo = useMemo(() => {
+    return validateSurvey('publish');
+  }, [userProfile, title, category, visibility, selectedGroups, sections, totalQuestions]);
 
   const getExpiresAt = () => {
     const now = new Date();
@@ -306,19 +354,19 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
       onClose();
       return;
     }
-    // For drafts, we only validate title
-    if (isDraft) {
-      if (!title.trim()) {
-        setErrors({ title: true });
-        return;
-      }
-    } else {
-      if (!validateStep1() || !validateStep2()) return;
-    }
+    setHasAttemptedSubmit(true);
+
+    const mode = isDraft ? 'draft' : 'publish';
+    const { isValid, newErrors } = validateSurvey(mode);
+    setErrors(newErrors);
+
+    if (!isValid) return;
+
+    const computedTitle = title.trim() || 'Untitled Survey';
 
     const surveyData: Partial<Survey> = {
-      id: localDraftId || undefined, // Pass ID if it exists
-      title,
+      id: localDraftId || undefined,
+      title: computedTitle,
       description,
       type: SurveyType.SURVEY,
       category,
@@ -335,8 +383,8 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
       author: { id: userProfile.id, name: userProfile.name, avatar: userProfile.avatar },
       createdAt: new Date().toISOString(),
       isDraft: isDraft,
-      status: isDraft ? 'DRAFT' : 'PUBLISHED', // Explicitly set status to avoid ambiguity
-      currentStep: step
+      status: isDraft ? 'DRAFT' : 'PUBLISHED',
+      currentStep: 1
     };
 
     if (isDraft && onSaveDraft) {
@@ -421,7 +469,10 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
         maxSelection: 1,
         isRequired: true,
         imageLayout: 'vertical',
-        options: [{ id: `o1-${Date.now()}`, text: '', votes: 0, withFollowUp: false, followUpLabel: '' }, { id: `o2-${Date.now()}`, text: '', votes: 0, withFollowUp: false, followUpLabel: '' }]
+        options: [
+          { id: `o1-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0, withFollowUp: false, followUpLabel: '' },
+          { id: `o2-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0, withFollowUp: false, followUpLabel: '' }
+        ]
       }]
     }]);
     setActiveSectionId(newId);
@@ -429,7 +480,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
   };
 
   const handleAddSurveyOption = (secId: string, qId: string) => {
-    const newOptId = `o-${Date.now()}`;
+    const newOptId = `o-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const newOpt = { id: newOptId, text: '', votes: 0, withFollowUp: false, followUpLabel: '' };
     const section = sections.find(s => s.id === secId);
     const question = section?.questions.find(qu => qu.id === qId);
@@ -449,19 +500,19 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
 
     if (choiceType === 'rating') {
       newOptions = [
-        { id: 'rate-5', text: '5', votes: 0, isRating: true, ratingValue: 5 },
-        { id: 'rate-4', text: '4', votes: 0, isRating: true, ratingValue: 4 },
-        { id: 'rate-3', text: '3', votes: 0, isRating: true, ratingValue: 3 },
-        { id: 'rate-2', text: '2', votes: 0, isRating: true, ratingValue: 2 },
-        { id: 'rate-1', text: '1', votes: 0, isRating: true, ratingValue: 1 },
+        { id: `rate-5-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '5', votes: 0, isRating: true, ratingValue: 5 },
+        { id: `rate-4-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '4', votes: 0, isRating: true, ratingValue: 4 },
+        { id: `rate-3-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '3', votes: 0, isRating: true, ratingValue: 3 },
+        { id: `rate-2-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '2', votes: 0, isRating: true, ratingValue: 2 },
+        { id: `rate-1-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '1', votes: 0, isRating: true, ratingValue: 1 },
       ];
     } else if (choiceType === 'text') {
       newType = 'text';
       newOptions = [];
     } else {
       newOptions = [
-        { id: '1', text: '', votes: 0 },
-        { id: '2', text: '', votes: 0 }
+        { id: `o1-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0 },
+        { id: `o2-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0 }
       ];
     }
 
@@ -561,429 +612,452 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white/95 backdrop-blur-md sticky top-0 z-40 safe-top shrink-0">
         <button onClick={handleClose} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500"><X size={24} /></button>
         <div className="flex flex-col items-center flex-1 mx-2">
-          <h1 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Survey Creation</h1>
-          <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest mt-1 text-gray-400">
-            <span className={step === 1 ? 'text-blue-600' : 'text-gray-400'}>Details</span>
-            <ChevronRight size={10} className="text-gray-300" />
-            <span className={step === 2 ? 'text-blue-600' : 'text-gray-400'}>Questions</span>
-            <ChevronRight size={10} className="text-gray-300" />
-            <span className={step === 3 ? 'text-blue-600' : 'text-gray-400'}>Analytics</span>
-          </div>
+          <h1 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">New Survey</h1>
+          <span className="text-[9px] font-extrabold text-blue-600 uppercase tracking-wider">Survey Composer</span>
         </div>
-        <div className="flex items-center gap-2">
-          {step < 3 ? (
-            <button onClick={() => step === 1 ? validateStep1() && setStep(2) : validateStep2() && setStep(3)} className="text-blue-600 font-black text-[10px] px-5 py-2 rounded-full bg-blue-50 hover:bg-blue-100 transition-all uppercase tracking-widest">Next</button>
-          ) : (
-            <button onClick={() => handlePost(false)} className="text-white font-black text-[10px] px-5 py-2 rounded-full bg-blue-600 hover:bg-blue-700 transition-all uppercase tracking-widest shadow-lg shadow-blue-200">Publish</button>
-          )}
-        </div>
+        <div className="w-10 h-10 flex items-center justify-center shrink-0" />
       </div>
 
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto no-scrollbar bg-white">
-        <div className="max-w-md mx-auto p-5 pb-32">
-          {step === 1 && (
-            <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
-              {errors.userProfile && (
-                <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2">
-                  <AlertCircle size={16} />
-                  <span>{errors.userProfile}</span>
-                </div>
-              )}
-              <section className="p-2 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className={errors.visibility ? 'p-1 rounded-xl bg-red-50 ring-1 ring-red-100' : ''}>
-                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 flex items-center gap-1">
-                      <Globe size={10} /> Post visibility
-                    </label>
-                    <button
-                      onClick={() => setIsVisibilitySheetOpen(true)}
-                      className="w-full flex items-center justify-between bg-gray-50 text-gray-900 text-[11px] font-bold rounded-xl px-3 py-2.5 transition-colors text-left"
-                    >
-                      <span className="truncate">{visibility === 'Groups' && selectedGroups.length > 0 ? `${selectedGroups.length} Groups` : visibility}</span>
-                      <ChevronDown className="text-gray-400 shrink-0" size={14} />
-                    </button>
-                    {errors.visibility && typeof errors.visibility === 'string' && <p className="text-[9px] text-red-500 font-bold mt-1 px-1">{errors.visibility}</p>}
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 flex items-center gap-1">
-                      <Lock size={10} /> Results Access
-                    </label>
-                    <button
-                      onClick={() => setIsResultVisibilitySheetOpen(true)}
-                      className="w-full flex items-center justify-between bg-gray-50 text-gray-900 text-[11px] font-bold rounded-xl px-3 py-2.5 transition-colors text-left"
-                    >
-                      <span className="truncate">{resultsWho === 'OnlyMe' ? 'Only Me' : resultsWho}</span>
-                      <ChevronDown className="text-gray-400 shrink-0" size={14} />
-                    </button>
-                  </div>
-                </div>
-              </section>
-
-              <section className={`space-y-2 pb-3 border-b border-gray-100 relative transition-colors ${errors.title ? 'p-3 rounded-2xl bg-red-50' : ''}`}>
-                 <div className="flex items-center justify-between"><label className="block text-xs font-bold text-gray-400 uppercase tracking-wide">The Survey Header <span className="text-red-500">*</span></label><button onClick={() => { setActiveCropTarget({ type: 'cover' }); fileInputRef.current?.click(); }} className={`p-1.5 rounded-full transition-colors ${coverImage ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-50'}`}><ImageIcon size={20} /></button></div>
-                 {coverImage && <div className="mb-2"><div className="relative w-20 h-20 rounded-xl overflow-hidden shadow-sm group animate-in zoom-in-95"><img src={coverImage} className="w-full h-full object-cover" alt="Cover" /><button onClick={() => setCoverImage(null)} className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={10} /></button></div></div>}
-                 <RichMentionInput
-                   value={title}
-                   onChange={(val) => { setTitle(val); setErrors(prev => ({ ...prev, title: false })); }}
-                   placeholder="Survey Title"
-                   className={`text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] ${errors.title ? 'text-red-500 border-red-300' : 'text-gray-900'}`}
-                   minRows={1}
-                   autoFocus
-                 />
-                 <RichMentionInput
-                   value={description}
-                   onChange={(val) => setDescription(val)}
-                   placeholder="Describe what this survey is about..."
-                   className="mt-1.5 text-[11px] text-gray-500 bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[32px]"
-                   minRows={1}
-                 />
-               </section>
-
-              <div className="space-y-3 pt-2">
-                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">
-                  Category <span className="text-red-500">*</span>
-                </label>
-                <button
-                  onClick={() => setIsCategorySheetOpen(true)}
-                  className={`inline-flex px-4 py-2 rounded-full text-xs font-bold border transition-all active:scale-95 ${category
-                    ? 'bg-blue-50 border-blue-200 text-blue-600'
-                    : 'bg-white border-gray-200 text-gray-400 hover:bg-gray-50'
-                    } ${errors.category ? 'border-red-300 bg-red-50' : ''}`}
-                >
-                  {category || 'Select Survey Category'}
-                </button>
-                {errors.category && <p className="text-[10px] font-bold text-red-500 px-1">Please select a category.</p>}
-              </div>
-
-              <section className="p-2 space-y-3">
-                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1"><Clock size={12} /> Survey Duration</label>
-                <div className="flex flex-wrap gap-2">
-                  {durationOptions.map(opt => (
-                    <button key={opt.value} onClick={() => setDuration(opt.value)} className={`px-4 py-1.5 rounded-full text-xs font-bold border transition-all ${duration === opt.value ? 'bg-gray-900 text-white border-gray-900 shadow-md' : 'bg-white text-gray-500 border-gray-100 hover:border-gray-300'}`}>
-                      {opt.label}
-                    </button>
-                  ))}
-                  <button onClick={() => setDuration('custom')} className={`px-4 py-1.5 rounded-full text-xs font-bold border transition-all flex items-center gap-1 ${duration === 'custom' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-500 border-gray-100'}`}>
-                    <Calendar size={12} /> Custom
-                  </button>
-                </div>
-              </section>
-
-              <section className="space-y-4 pb-4 border-b border-gray-50">
-                <button onClick={() => setAllowComments(!allowComments)} className="w-full flex items-center justify-between py-1 group"><div className="flex flex-col text-left"><span className="text-sm font-bold text-gray-800">Allow comments</span><span className="text-[10px] text-gray-400">Enable users to leave comments</span></div><div className={`w-10 h-5 rounded-full transition-colors relative ${allowComments ? 'bg-blue-600' : 'bg-gray-200'}`}><div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowComments ? 'left-6' : 'left-1'}`} /></div></button>
-                <button onClick={() => setForceAnonymous(!forceAnonymous)} className="w-full flex items-center justify-between py-1 group"><div className="flex flex-col text-left"><span className="text-sm font-bold text-gray-800">Require Anonymous Responses</span><span className="text-[10px] text-gray-400">All participants will be forced to respond without identity</span></div><div className={`w-10 h-5 rounded-full transition-colors relative ${forceAnonymous ? 'bg-blue-600' : 'bg-gray-200'}`}><div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${forceAnonymous ? 'left-6' : 'left-1'}`} /></div></button>
-              </section>
+        <div className="max-w-md mx-auto p-5 pb-32 space-y-6">
+          {errors.userProfile && (
+            <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2 animate-in fade-in">
+              <AlertCircle size={16} />
+              <span>{errors.userProfile}</span>
             </div>
           )}
 
-          {step === 2 && (
-            <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
-              {errors.questions && (
-                <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2">
-                  <AlertCircle size={16} />
-                  <span>{errors.questions}</span>
-                </div>
-              )}
-              <section className="space-y-6">
-                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 px-1">
-                  {sections.map((sec, idx) => (
-                    <button key={sec.id} onClick={() => setActiveSectionId(sec.id)} className={`shrink-0 px-4 py-2 rounded-xl text-xs font-bold border transition-all flex items-center gap-2 ${activeSectionId === sec.id ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200' : 'bg-gray-50 text-gray-500 border-gray-100'}`}>
-                      <span className="opacity-40">{idx + 1}</span>
-                      <span className="truncate max-w-[100px]">{sec.title || `Section ${idx + 1}`}</span>
-                    </button>
-                  ))}
-                  <button onClick={addSection} className="shrink-0 px-4 py-2 bg-blue-50 text-blue-600 rounded-xl border border-dashed border-blue-200 text-xs font-bold flex items-center gap-1.5 whitespace-nowrap active:scale-95 transition-transform">
-                    <Plus size={14} /> Add Section
+          {/* Survey Header Section */}
+          <section className={`space-y-2 pb-3 border-b border-gray-100 relative transition-colors ${errors.title ? 'p-3 rounded-2xl bg-red-50' : ''}`}>
+             <div className="flex items-center justify-between">
+               <label className="block text-xs font-bold text-gray-400 uppercase tracking-wide">The Survey Header <span className="text-red-500">*</span></label>
+               <button onClick={() => { setActiveCropTarget({ type: 'cover' }); fileInputRef.current?.click(); }} className={`p-1.5 rounded-full transition-colors ${coverImage ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-50'}`}><ImageIcon size={20} /></button>
+             </div>
+             {coverImage && (
+               <div className="mb-2">
+                 <div className="relative w-20 h-20 rounded-xl overflow-hidden shadow-sm group animate-in zoom-in-95">
+                   <img src={coverImage} className="w-full h-full object-cover" alt="Cover" />
+                   <button onClick={() => setCoverImage(null)} className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={10} /></button>
+                 </div>
+               </div>
+             )}
+             <RichMentionInput
+               value={title}
+               onChange={(val) => { setTitle(val); setErrors(prev => ({ ...prev, title: false })); }}
+               placeholder="Survey Title"
+               className={`text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] ${errors.title ? 'text-red-500 border-red-300' : 'text-gray-900'}`}
+               minRows={1}
+               autoFocus
+             />
+             <RichMentionInput
+               value={description}
+               onChange={(val) => setDescription(val)}
+               placeholder="Describe what this survey is about..."
+               className="mt-1.5 text-[11px] text-gray-500 bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[32px]"
+               minRows={1}
+             />
+          </section>
+
+          {/* Compact Settings Chips Bar */}
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-3 border-b border-gray-50">
+            {/* Category Chip */}
+            <button
+              onClick={() => setIsCategorySheetOpen(true)}
+              className={`shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all flex items-center gap-1 active:scale-95 ${
+                category
+                  ? 'bg-blue-50 border-blue-200 text-blue-700 font-semibold'
+                  : errors.category
+                  ? 'bg-red-50 border-red-200 text-red-600'
+                  : 'bg-gray-50 border-gray-200 text-gray-600'
+              }`}
+            >
+              <span>Category: {category || 'Select'}</span>
+              <ChevronDown size={12} />
+            </button>
+
+            {/* Audience Chip */}
+            <button
+              onClick={() => setIsVisibilitySheetOpen(true)}
+              className={`shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all flex items-center gap-1 active:scale-95 ${
+                visibility === 'Groups' && selectedGroups.length === 0 && errors.visibility
+                  ? 'bg-red-50 border-red-200 text-red-600'
+                  : visibility !== 'Public'
+                  ? 'bg-blue-50 border-blue-200 text-blue-700 font-semibold'
+                  : 'bg-gray-50 border-gray-200 text-gray-600'
+              }`}
+            >
+              <span>Audience: {visibility === 'Groups' && selectedGroups.length > 0 ? `${selectedGroups.length} Groups` : visibility}</span>
+              <ChevronDown size={12} />
+            </button>
+
+            {/* Timer Chip */}
+            <button
+              onClick={() => setIsDurationSheetOpen(true)}
+              className={`shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all flex items-center gap-1 active:scale-95 ${
+                duration !== 'none'
+                  ? 'bg-blue-50 border-blue-200 text-blue-700 font-semibold'
+                  : 'bg-gray-50 border-gray-200 text-gray-600'
+              }`}
+            >
+              <span>Timer: {durationOptions.find(o => o.value === duration)?.label || 'None'}</span>
+              <ChevronDown size={12} />
+            </button>
+
+            {/* Results Chip */}
+            <button
+              onClick={() => setIsResultVisibilitySheetOpen(true)}
+              className={`shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all flex items-center gap-1 active:scale-95 ${
+                resultsWho !== 'Public' || resultsTiming !== 'AnyTime'
+                  ? 'bg-blue-50 border-blue-200 text-blue-700 font-semibold'
+                  : 'bg-gray-50 border-gray-200 text-gray-600'
+              }`}
+            >
+              <span>Results: {resultsWho === 'OnlyMe' ? 'Me' : resultsWho}</span>
+              <ChevronDown size={12} />
+            </button>
+          </div>
+
+          {/* Section & Question Builder */}
+          <div className="space-y-6">
+            {/* Sections tab bar - only show if there are multiple sections */}
+            {sections.length > 1 && (
+              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 px-1">
+                {sections.map((sec, idx) => (
+                  <button
+                    key={sec.id}
+                    onClick={() => setActiveSectionId(sec.id)}
+                    className={`shrink-0 px-4 py-2 rounded-xl text-xs font-bold border transition-all flex items-center gap-2 ${
+                      activeSectionId === sec.id
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200'
+                        : 'bg-gray-50 text-gray-505 border-gray-100'
+                    }`}
+                  >
+                    <span className="opacity-40">{idx + 1}</span>
+                    <span className="truncate max-w-[100px]">{sec.title || `Section ${idx + 1}`}</span>
                   </button>
-                </div>
-                {activeSection && (
-                  <div className="space-y-6 animate-in fade-in duration-300">
-                    <div className="px-1 flex items-start gap-2">
-                      <textarea
-                        rows={1}
-                        value={activeSection.title}
-                        onChange={(e) => setSections(sections.map(s => s.id === activeSection.id ? { ...s, title: e.target.value } : s))}
-                        placeholder={`Section ${activeSectionIndex + 1} Title`}
-                        className="flex-1 text-xl font-bold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all p-0 pb-2 placeholder-gray-300 resize-none min-h-[50px] overflow-hidden"
-                      />
-                      <button
-                        onClick={() => setIsSectionSettingsSheetOpen(true)}
-                        className="p-3 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-full transition-all shrink-0 mt-1 flex items-center justify-center min-w-[44px] min-h-[44px]"
-                      >
-                        <MoreHorizontal size={20} />
-                      </button>
-                    </div>
-                    <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 px-1">
-                      {activeSection.questions.map((q, qIdx) => {
-                        const globalQNum = getQuestionCountBeforeSection(activeSectionIndex) + qIdx + 1;
-                        return (
-                          <button key={q.id} onClick={() => setActiveQuestionId(q.id)} className={`shrink-0 h-10 w-10 rounded-full text-xs font-black border transition-all flex items-center justify-center ${activeQuestionId === q.id ? 'bg-green-600 text-white border-green-600' : 'bg-gray-50 text-gray-400 border-gray-100'}`}>
-                            Q{globalQNum}
-                          </button>
-                        );
-                      })}
-                      <button onClick={() => { const qId = `q-${Date.now()}`; setSections(sections.map(s => s.id === activeSection.id ? { ...s, questions: [...s.questions, { id: qId, text: '', type: 'multiple_choice', isRequired: true, imageLayout: 'vertical', options: [{ id: '1', text: '', votes: 0, withFollowUp: false, followUpLabel: '' }, { id: '2', text: '', votes: 0, withFollowUp: false, followUpLabel: '' }] }] } : s)); setActiveQuestionId(qId); }} className="shrink-0 px-4 py-2 rounded-full bg-white text-green-600 border border-dashed border-green-200 flex items-center justify-center gap-1.5 text-xs font-bold whitespace-nowrap active:scale-95 transition-transform h-10">
-                        <Plus size={14} /> Add Question
-                      </button>
-                    </div>
-                    {activeQuestionId && (() => {
-                      const q = activeSection.questions.find(qu => qu.id === activeQuestionId);
-                      if (!q) return null;
-                      const isRating = q.options?.some(o => o.isRating);
-                      const currentChoiceType = q.type === 'text' ? 'text' : isRating ? 'rating' : 'multiple';
+                ))}
+                <button
+                  onClick={addSection}
+                  className="shrink-0 px-4 py-2 bg-blue-50 text-blue-600 rounded-xl border border-dashed border-blue-200 text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-transform"
+                >
+                  <Plus size={14} /> Add Section
+                </button>
+              </div>
+            )}
 
-                      return (
-                        <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-4">
-                          <div className="flex items-start gap-2">
-                            <div className="flex-1 flex flex-col gap-2">
-                              {q.image && (
-                                <div className="relative w-24 h-24 rounded-xl overflow-hidden shadow-sm group animate-in zoom-in-95">
-                                  <img src={q.image} className="w-full h-full object-cover" alt="" />
-                                  <button onClick={() => updateQuestion(activeSection.id, q.id, { image: undefined })} className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={10} /></button>
-                                </div>
-                              )}
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => { setActiveCropTarget({ type: 'question', secId: activeSection.id, qId: q.id }); fileInputRef.current?.click(); }}
-                                  className={`p-1.5 rounded-full transition-colors ${q.image ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-50'}`}
-                                >
-                                  <Camera size={20} />
-                                </button>
-                                <textarea
-                                  value={q.text}
-                                  onChange={(e) => updateQuestion(activeSection.id, q.id, { text: e.target.value })}
-                                  placeholder="Question Text"
-                                  className="flex-1 text-sm font-semibold text-gray-900 border-b border-gray-100 focus:outline-none focus:border-blue-500 pt-0.5 pb-1.5 resize-none min-h-[44px] placeholder-gray-300 bg-transparent"
-                                />
-                              </div>
-                            </div>
-                            <button
-                              onClick={() => setIsQuestionSettingsSheetOpen(true)}
-                              className="p-3 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-full transition-all shrink-0 mt-1 flex items-center justify-center min-w-[44px] min-h-[44px]"
-                            >
-                              <MoreHorizontal size={20} />
-                            </button>
-                          </div>
-
-                          <div className="space-y-3 pt-2">
-                            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Choice Type</label>
-                            <div className="flex gap-2">
-                              {[
-                                { id: 'multiple', label: 'Multiple Choice' },
-                                { id: 'rating', label: 'Rating Scale' }
-                              ].map((type) => (
-                                <button
-                                  key={type.id}
-                                  onClick={() => handleChoiceTypeChange(activeSection.id, q.id, type.id as any)}
-                                  className={`flex-1 py-2.5 rounded-xl text-[10px] font-bold border transition-all ${currentChoiceType === type.id ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}
-                                >
-                                  {type.label}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-
-                          {q.type === 'multiple_choice' && !isRating && (
-                            <div className="space-y-2 px-1 pt-2">
-                              <div className="flex items-center justify-between">
-                                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Options layout</label>
-                                <div className="flex gap-1.5">
-                                  {[
-                                    { id: 'vertical', icon: List },
-                                    { id: 'horizontal', icon: GalleryHorizontalEnd }
-                                  ].map((layout) => (
-                                    <button
-                                      key={layout.id}
-                                      onClick={() => updateQuestion(activeSection.id, q.id, { imageLayout: layout.id as any })}
-                                      className={`p-1.5 rounded-lg border transition-all ${q.imageLayout === layout.id
-                                        ? 'bg-gray-900 text-white border-gray-900 shadow-sm'
-                                        : 'bg-white text-gray-400 border-gray-200 hover:bg-gray-50'
-                                        }`}
-                                      title={layout.id}
-                                    >
-                                      <layout.icon size={16} />
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                              <p className="text-[9px] text-gray-400 font-bold uppercase tracking-wide italic">Applies only if images are added to options.</p>
-                            </div>
-                          )}
-
-                          {q.type === 'multiple_choice' ? (
-                            <div className="space-y-3 pt-2 border-t border-gray-50">
-                              {q.options?.map((opt, oIdx) => (
-                                <div key={opt.id} className="flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-1 duration-200">
-                                  <div className="flex items-center gap-2">
-                                    <div className="flex-1 flex items-center bg-gray-50 rounded-xl px-1 py-1 border border-transparent focus-within:border-blue-200 focus-within:bg-white transition-all shadow-sm">
-                                      {currentChoiceType === 'multiple' && (
-                                        <button
-                                          onClick={() => { setActiveCropTarget({ type: 'option', secId: activeSection.id, qId: q.id, optId: opt.id }); fileInputRef.current?.click(); }}
-                                          className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-dashed transition-all mr-1 ${opt.image ? 'border-blue-500' : 'border-gray-200 text-gray-400 hover:text-blue-500'
-                                            }`}
-                                        >
-                                          {opt.image ? <img src={opt.image} className="w-full h-full object-cover" alt="" /> : <Camera size={16} />}
-                                        </button>
-                                      )}
-                                      {isRating ? (
-                                        <div className="flex-1 px-3 py-2 flex items-center gap-2">
-                                          <div className="flex text-yellow-500">
-                                            {Array.from({ length: opt.ratingValue || 0 }).map((_, i) => (
-                                              <Star key={i} size={14} fill="currentColor" />
-                                            ))}
-                                          </div>
-                                        </div>
-                                      ) : (
-                                        <div className="flex-1 flex items-center">
-                                          <input
-                                            type="text"
-                                            value={opt.text}
-                                            maxLength={80}
-                                            autoFocus={focusedOptionId === opt.id}
-                                            onChange={(e) => {
-                                              const updated = q.options?.map(o => o.id === opt.id ? { ...o, text: e.target.value } : o);
-                                              updateQuestion(activeSection.id, q.id, { options: updated });
-                                            }}
-                                            onKeyDown={(e) => {
-                                              if (e.key === 'Enter') {
-                                                e.preventDefault();
-                                                handleAddSurveyOption(activeSection.id, q.id);
-                                              }
-                                            }}
-                                            onBlur={() => {
-                                              if (focusedOptionId === opt.id) setFocusedOptionId(null);
-                                            }}
-                                            placeholder={`Option ${oIdx + 1}`}
-                                            className="flex-1 text-xs font-semibold p-2 bg-transparent focus:outline-none"
-                                          />
-                                          <span className="text-[9px] text-gray-400 mr-1.5 whitespace-nowrap">{opt.text.length}/80</span>
-                                          {opt.image && (
-                                            <button onClick={() => {
-                                              const updated = q.options?.map(o => o.id === opt.id ? { ...o, image: undefined } : o);
-                                              updateQuestion(activeSection.id, q.id, { options: updated });
-                                            }} className="p-3 text-gray-300 hover:text-red-500 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]"><X size={12} /></button>
-                                          )}
-                                        </div>
-                                      )}
-                                      <button
-                                        onClick={() => setSettingsOptionId({ secId: activeSection.id, qId: q.id, optId: opt.id })}
-                                        className="p-3 text-gray-400 hover:text-gray-600 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"
-                                      >
-                                        <MoreHorizontal size={18} />
-                                      </button>
-                                    </div>
-                                  </div>
-                                  <div className="flex flex-wrap gap-2 ml-2">
-                                    {opt.withFollowUp && (
-                                      <div className="px-2 py-1 bg-blue-50 border border-blue-100 rounded-lg text-[9px] flex items-center gap-2">
-                                        <MessageSquare size={10} className="text-blue-500" />
-                                        <span className="font-bold text-blue-700 truncate">Follow-up: {opt.followUpLabel || "Please explain..."}</span>
-                                      </div>
-                                    )}
-                                    {opt.jumpToQuestionId && (() => {
-                                      const targetQ = allQuestionsFlat.find(aq => aq.id === opt.jumpToQuestionId);
-                                      return (
-                                        <div className="px-2 py-1 bg-purple-50 border border-purple-100 rounded-lg text-[9px] flex items-center gap-2">
-                                          <CornerDownRight size={10} className="text-purple-500" />
-                                          <span className="font-bold text-purple-700 truncate">Jump to: {targetQ ? `Q${targetQ.globalIndex}: ${targetQ.text}` : "Question"}</span>
-                                        </div>
-                                      );
-                                    })()}
-                                    {opt.isTerminal && (
-                                      <div className="px-2 py-1 bg-red-50 border border-red-100 rounded-lg text-[9px] flex items-center gap-2">
-                                        <PowerOff size={10} className="text-red-500" />
-                                        <span className="font-bold text-red-700 uppercase tracking-widest">End Survey</span>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
-
-                              {/* Interactive Placeholder / Auto-Add Option */}
-                              {q.type === 'multiple_choice' && !isRating && (
-                                <div className="flex items-center gap-2 opacity-50 hover:opacity-80 focus-within:opacity-100 transition-opacity duration-200">
-                                  <div className="flex-1 flex items-center bg-gray-50/50 border border-dashed border-gray-200 rounded-xl px-1 py-1">
-                                    {currentChoiceType === 'multiple' && (
-                                      <button disabled className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border border-dashed border-gray-200 text-gray-300 mr-1">
-                                        <Camera size={16} />
-                                      </button>
-                                    )}
-                                    <input
-                                      type="text"
-                                      placeholder="Add option..."
-                                      className="flex-1 text-xs font-semibold p-2 bg-transparent focus:outline-none text-gray-400 cursor-pointer"
-                                      onFocus={() => handleAddSurveyOption(activeSection.id, q.id)}
-                                    />
-                                    <button disabled className="p-3 text-gray-300 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]">
-                                      <MoreHorizontal size={18} />
-                                    </button>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          ) : q.type === 'text' ? (
-                            <div className="p-4 bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center gap-2">
-                              <Type size={24} className="text-gray-300" />
-                              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Free Text Input Field</p>
-                              <p className="text-[9px] text-gray-400 text-center px-4">Participants will provide a written response instead of choosing from options.</p>
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })()}
+            {activeSection && (
+              <div className="space-y-4 animate-in fade-in duration-300">
+                {/* Section Title Input - only show if sections > 1 */}
+                {sections.length > 1 && (
+                  <div className="px-1 flex items-start gap-2">
+                    <textarea
+                      rows={1}
+                      value={activeSection.title}
+                      onChange={(e) => setSections(sections.map(s => s.id === activeSection.id ? { ...s, title: e.target.value } : s))}
+                      placeholder={`Section ${activeSectionIndex + 1} Title`}
+                      className="flex-1 text-base font-bold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all p-0 pb-2 placeholder-gray-300 resize-none min-h-[40px]"
+                    />
+                    <button
+                      onClick={() => setIsSectionSettingsSheetOpen(true)}
+                      className="p-3 text-gray-400 hover:text-gray-650 hover:bg-gray-50 rounded-full transition-all shrink-0 mt-1 flex items-center justify-center min-w-[44px] min-h-[44px]"
+                    >
+                      <MoreHorizontal size={20} />
+                    </button>
                   </div>
                 )}
-              </section>
 
-              <input
-                type="file"
-                ref={fileInputRef}
-                className="hidden"
-                accept="image/*"
-                onChange={handleImageUpload}
-              />
-            </div>
-          )}
-
-          {step === 3 && (
-            <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
-              <div className="bg-blue-50 rounded-[2.5rem] p-6 border border-blue-100 shadow-sm relative overflow-hidden">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-10 h-10 bg-blue-600 text-white rounded-2xl flex items-center justify-center shadow-md">
-                    <BarChart3 size={20} />
-                  </div>
-                  <div>
-                    <h2 className="text-xl font-black text-gray-900 leading-tight">Unlock Deeper Analytics</h2>
-                    <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mt-0.5">Demographics Setup</p>
-                  </div>
-                </div>
-                <p className="text-sm text-gray-600 leading-relaxed bg-white/50 p-4 rounded-2xl border border-blue-100/50">
-                  Choose optional demographics to help understand voter breakdowns. Participants will be asked optionally to improve analysis.
-                </p>
-              </div>
-
-              {/* Preset Packages */}
-              <div className="space-y-3">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] px-1">Preset Packages</label>
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    { id: 'recommended', label: 'Recommended' },
-                    { id: 'professional', label: 'Professional' },
-                    { id: 'geographic', label: 'Geographic' },
-                    { id: 'custom', label: 'Custom' }
-                  ].map((preset) => {
-                    const isActive = activePreset === preset.id;
+                {/* Questions Navigation Row (Always Visible) */}
+                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 px-1">
+                  {activeSection.questions.map((q, qIdx) => {
+                    const globalQNum = getQuestionCountBeforeSection(activeSectionIndex) + qIdx + 1;
                     return (
                       <button
-                        key={preset.id}
-                        onClick={() => handlePresetChange(preset.id as any)}
-                        className={`px-4 py-2 rounded-full text-xs font-bold border transition-all active:scale-95 ${
+                        key={q.id}
+                        onClick={() => setActiveQuestionId(q.id)}
+                        className={`shrink-0 h-10 w-10 rounded-full text-xs font-black border transition-all flex items-center justify-center ${
+                          activeQuestionId === q.id
+                            ? 'bg-green-600 text-white border-green-600 shadow-md shadow-green-100'
+                            : 'bg-gray-50 text-gray-400 border-gray-100'
+                        }`}
+                      >
+                        Q{globalQNum}
+                      </button>
+                    );
+                  })}
+                  <button
+                    onClick={() => {
+                      const qId = `q-${Date.now()}`;
+                      setSections(sections.map(s => s.id === activeSection.id ? {
+                        ...s,
+                        questions: [...s.questions, {
+                          id: qId,
+                          text: '',
+                          type: 'multiple_choice',
+                          isRequired: true,
+                          imageLayout: 'vertical',
+                          options: [
+                            { id: `o1-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0, withFollowUp: false, followUpLabel: '' },
+                            { id: `o2-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0, withFollowUp: false, followUpLabel: '' }
+                          ]
+                        }]
+                      } : s));
+                      setActiveQuestionId(qId);
+                    }}
+                    className="shrink-0 px-4 py-2 rounded-full bg-white text-green-600 border border-dashed border-green-200 flex items-center justify-center gap-1.5 text-xs font-bold whitespace-nowrap active:scale-95 transition-transform h-10"
+                  >
+                    <Plus size={14} /> Add Question
+                  </button>
+                  {sections.length === 1 && (
+                    <button
+                      onClick={addSection}
+                      className="shrink-0 px-4 py-2 bg-blue-50 text-blue-600 rounded-full border border-dashed border-blue-200 text-xs font-bold flex items-center gap-1.5 whitespace-nowrap active:scale-95 transition-transform h-10"
+                    >
+                      <Plus size={14} /> Add Section
+                    </button>
+                  )}
+                </div>
+
+                {/* Active Question Card */}
+                {activeQuestionId && (() => {
+                  const q = activeSection.questions.find(qu => qu.id === activeQuestionId);
+                  if (!q) return null;
+                  const isRating = q.options?.some(o => o.isRating);
+                  const currentChoiceType = q.type === 'text' ? 'text' : isRating ? 'rating' : 'multiple';
+
+                  return (
+                    <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-4 shadow-sm">
+                      <div className="flex items-start gap-2">
+                        <div className="flex-1 flex flex-col gap-2">
+                          {q.image && (
+                            <div className="relative w-24 h-24 rounded-xl overflow-hidden shadow-sm group animate-in zoom-in-95">
+                              <img src={q.image} className="w-full h-full object-cover" alt="" />
+                              <button onClick={() => updateQuestion(activeSection.id, q.id, { image: undefined })} className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={10} /></button>
+                            </div>
+                          )}
+                          <div className="flex items-center gap-2">
+                            <button onClick={() => { setActiveCropTarget({ type: 'question', secId: activeSection.id, qId: q.id }); fileInputRef.current?.click(); }} className={`p-1.5 rounded-full transition-colors ${q.image ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-50'}`}><Camera size={20} /></button>
+                            <textarea
+                              value={q.text}
+                              onChange={(e) => updateQuestion(activeSection.id, q.id, { text: e.target.value })}
+                              placeholder="Question Text"
+                              className="flex-1 text-sm font-semibold text-gray-900 border-b border-gray-100 focus:outline-none focus:border-blue-500 pt-0.5 pb-1.5 resize-none min-h-[44px] placeholder-gray-300 bg-transparent"
+                            />
+                          </div>
+                        </div>
+                        <button onClick={() => setIsQuestionSettingsSheetOpen(true)} className="p-3 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-full transition-all shrink-0 mt-1 flex items-center justify-center min-w-[44px] min-h-[44px]"><MoreHorizontal size={20} /></button>
+                      </div>
+
+                      {q.type === 'text' && (
+                        <div className="p-3 bg-orange-50 border border-orange-200 rounded-xl text-[10px] text-orange-700 font-semibold flex items-center gap-1.5 animate-in fade-in">
+                          <AlertCircle size={14} className="shrink-0" />
+                          <span>Free Text is legacy. Please select Multiple Choice or Rating Scale to publish.</span>
+                        </div>
+                      )}
+
+                      {/* Choice Type Selector */}
+                      <div className="space-y-3 pt-2">
+                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Choice Type</label>
+                        <div className="flex gap-2">
+                          {[
+                            { id: 'multiple', label: 'Multiple Choice' },
+                            { id: 'rating', label: 'Rating Scale' }
+                          ].map((type) => (
+                            <button
+                              key={type.id}
+                              onClick={() => handleChoiceTypeChange(activeSection.id, q.id, type.id as any)}
+                              className={`flex-1 py-2.5 rounded-xl text-[10px] font-bold border transition-all ${currentChoiceType === type.id ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}
+                            >
+                              {type.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {q.type === 'multiple_choice' && !isRating && (
+                        <div className="space-y-2 px-1 pt-2">
+                          <div className="flex items-center justify-between">
+                            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Options layout</label>
+                            <div className="flex gap-1.5">
+                              {[
+                                { id: 'vertical', icon: List },
+                                { id: 'horizontal', icon: GalleryHorizontalEnd }
+                              ].map((layout) => (
+                                <button
+                                  key={layout.id}
+                                  onClick={() => updateQuestion(activeSection.id, q.id, { imageLayout: layout.id as any })}
+                                  className={`p-1.5 rounded-lg border transition-all ${q.imageLayout === layout.id
+                                    ? 'bg-gray-900 text-white border-gray-900 shadow-sm'
+                                    : 'bg-white text-gray-400 border-gray-200 hover:bg-gray-50'
+                                    }`}
+                                  title={layout.id}
+                                >
+                                  <layout.icon size={16} />
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <p className="text-[9px] text-gray-400 font-bold uppercase tracking-wide italic">Applies only if images are added to options.</p>
+                        </div>
+                      )}
+
+                      {q.type === 'multiple_choice' ? (
+                        <div className="space-y-3 pt-2 border-t border-gray-50">
+                          {q.options?.map((opt, oIdx) => (
+                            <div key={opt.id} className="flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-1 duration-200">
+                              <div className="flex items-center gap-2">
+                                <div className="flex-1 flex items-center bg-gray-50 rounded-xl px-1 py-1 border border-transparent focus-within:border-blue-200 focus-within:bg-white transition-all shadow-sm">
+                                  {currentChoiceType === 'multiple' && (
+                                    <button
+                                      onClick={() => { setActiveCropTarget({ type: 'option', secId: activeSection.id, qId: q.id, optId: opt.id }); fileInputRef.current?.click(); }}
+                                      className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-dashed transition-all mr-1 ${opt.image ? 'border-blue-500' : 'border-gray-200 text-gray-400 hover:text-blue-500'
+                                        }`}
+                                    >
+                                      {opt.image ? <img src={opt.image} className="w-full h-full object-cover" alt="" /> : <Camera size={16} />}
+                                    </button>
+                                  )}
+                                  {isRating ? (
+                                    <div className="flex-1 px-3 py-2 flex items-center gap-2">
+                                      <div className="flex text-yellow-500">
+                                        {Array.from({ length: opt.ratingValue || 0 }).map((_, i) => (
+                                          <Star key={i} size={14} fill="currentColor" />
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="flex-1 flex items-center">
+                                      <input
+                                        type="text"
+                                        value={opt.text}
+                                        maxLength={80}
+                                        autoFocus={focusedOptionId === opt.id}
+                                        onChange={(e) => {
+                                          const updated = q.options?.map(o => o.id === opt.id ? { ...o, text: e.target.value } : o);
+                                          updateQuestion(activeSection.id, q.id, { options: updated });
+                                        }}
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            handleAddSurveyOption(activeSection.id, q.id);
+                                          }
+                                        }}
+                                        onBlur={() => {
+                                          if (focusedOptionId === opt.id) setFocusedOptionId(null);
+                                        }}
+                                        placeholder={`Option ${oIdx + 1}`}
+                                        className="flex-1 text-xs font-semibold p-2 bg-transparent focus:outline-none"
+                                      />
+                                      <span className="text-[9px] text-gray-400 mr-1.5 whitespace-nowrap">{opt.text.length}/80</span>
+                                      {opt.image && (
+                                        <button onClick={() => {
+                                          const updated = q.options?.map(o => o.id === opt.id ? { ...o, image: undefined } : o);
+                                          updateQuestion(activeSection.id, q.id, { options: updated });
+                                        }} className="p-3 text-gray-300 hover:text-red-500 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]"><X size={12} /></button>
+                                      )}
+                                    </div>
+                                  )}
+                                  <button
+                                    onClick={() => setSettingsOptionId({ secId: activeSection.id, qId: q.id, optId: opt.id })}
+                                    className="p-3 text-gray-400 hover:text-gray-605 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"
+                                  >
+                                    <MoreHorizontal size={18} />
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap gap-2 ml-2">
+                                {opt.withFollowUp && (
+                                  <div className="px-2 py-1 bg-blue-50 border border-blue-100 rounded-lg text-[9px] flex items-center gap-2 animate-in fade-in">
+                                    <MessageSquare size={10} className="text-blue-500" />
+                                    <span className="font-bold text-blue-700 truncate">Follow-up: {opt.followUpLabel || "Please explain..."}</span>
+                                  </div>
+                                )}
+                                {opt.jumpToQuestionId && (() => {
+                                  const targetQ = allQuestionsFlat.find(aq => aq.id === opt.jumpToQuestionId);
+                                  return (
+                                    <div className="px-2 py-1 bg-purple-50 border border-purple-100 rounded-lg text-[9px] flex items-center gap-2 animate-in fade-in">
+                                      <CornerDownRight size={10} className="text-purple-500" />
+                                      <span className="font-bold text-purple-700 truncate">Jump to: {targetQ ? `Q${targetQ.globalIndex}: ${targetQ.text}` : "Question"}</span>
+                                    </div>
+                                  );
+                                })()}
+                                {opt.isTerminal && (
+                                  <div className="px-2 py-1 bg-red-50 border border-red-100 rounded-lg text-[9px] flex items-center gap-2 animate-in fade-in">
+                                    <PowerOff size={10} className="text-red-500" />
+                                    <span className="font-bold text-red-700 uppercase tracking-widest">End Survey</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+
+                          {/* Interactive Placeholder / Auto-Add Option */}
+                          {q.type === 'multiple_choice' && !isRating && (
+                            <div className="flex items-center gap-2 opacity-50 hover:opacity-80 focus-within:opacity-100 transition-opacity duration-200">
+                              <div className="flex-1 flex items-center bg-gray-50/50 border border-dashed border-gray-200 rounded-xl px-1 py-1">
+                                {currentChoiceType === 'multiple' && (
+                                  <button disabled className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border border-dashed border-gray-200 text-gray-300 mr-1">
+                                    <Camera size={16} />
+                                  </button>
+                                )}
+                                <input
+                                  type="text"
+                                  placeholder="Add option..."
+                                  className="flex-1 text-xs font-semibold p-2 bg-transparent focus:outline-none text-gray-400 cursor-pointer"
+                                  onFocus={() => handleAddSurveyOption(activeSection.id, q.id)}
+                                />
+                                <button disabled className="p-3 text-gray-300 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]">
+                                  <MoreHorizontal size={18} />
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ) : q.type === 'text' ? (
+                        <div className="p-4 bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center gap-2">
+                          <Type size={24} className="text-gray-300" />
+                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Free Text Input Field</p>
+                          <p className="text-[9px] text-gray-400 text-center px-4">Participants will provide a written response instead of choosing from options.</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+
+          {/* Demographics Card Inline */}
+          <section className="border-t border-gray-100 pt-4 mt-6 space-y-3">
+            <div className="flex items-center gap-1.5 px-1">
+              <BarChart3 size={14} className="text-blue-600" />
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                Unlock Deeper Analytics
+              </label>
+            </div>
+            <div className="bg-gray-50/20 p-4 rounded-3xl border border-gray-100 space-y-4">
+              <p className="text-[11px] text-gray-605 leading-normal">
+                Choose optional demographics to help understand participant breakdowns. Participants will respond optionally.
+              </p>
+
+              {/* Preset Packages */}
+              <div className="space-y-2">
+                <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">
+                  Preset Packages
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {(['recommended', 'professional', 'geographic', 'custom'] as const).map((preset) => {
+                    const isActive = activePreset === preset;
+                    return (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => handlePresetChange(preset)}
+                        className={`px-3 py-1.5 rounded-full text-[10px] font-bold border transition-all duration-200 active:scale-95 uppercase tracking-wider ${
                           isActive 
-                            ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200' 
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm' 
                             : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
                         }`}
                       >
-                        {preset.label}
+                        {preset}
                       </button>
                     );
                   })}
@@ -991,45 +1065,46 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
               </div>
 
               {/* Dynamic Value/Cost Indicator */}
-              <div className="p-3.5 bg-gray-50 rounded-2xl border border-gray-100 space-y-1">
-                <div className="flex items-center justify-between">
+              <div className="p-3 bg-white rounded-2xl border border-gray-100 space-y-1">
+                <div className="flex items-center justify-between gap-2">
                   <span className="text-[10px] font-bold text-gray-700">
                     Provides {selectedDemographics.length} analytical comparisons
                   </span>
-                  <span className="text-[10px] font-extrabold text-blue-600">
+                  <span className="text-[10px] font-extrabold text-blue-600 whitespace-nowrap">
                     +{selectedDemographics.length} questions for participant
                   </span>
                 </div>
-                <p className="text-[9px] text-gray-400 font-medium leading-normal">
+                <p className="text-[8px] text-gray-400 font-medium leading-normal">
                   * Selected questions will be prompted as optional questions during participation.
                 </p>
               </div>
 
-              {/* Collapsible Pills */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between px-1">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">
+              {/* Attributes Selector Pills */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">
                     Selected Attributes
-                  </label>
+                  </span>
                   {activePreset !== 'custom' && (
-                    <span className="text-[9px] text-gray-400 font-medium">
-                      (Read-only, select Custom to edit)
+                    <span className="text-[8px] text-gray-400 font-medium">
+                      (Preset-controlled, select Custom to edit)
                     </span>
                   )}
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-1.5">
                   {DEMOGRAPHIC_OPTIONS.map((opt) => {
                     const isSelected = selectedDemographics.includes(opt.id);
                     const isCustomMode = activePreset === 'custom';
                     return (
                       <button
                         key={opt.id}
+                        type="button"
                         disabled={!isCustomMode}
                         onClick={() => handleDemographicToggle(opt.id)}
                         className={`px-3 py-1.5 rounded-full text-[10px] font-bold border transition-all flex items-center gap-1 ${
                           isSelected
                             ? 'bg-blue-50 border-blue-200 text-blue-600 font-semibold'
-                            : 'bg-white border-gray-100 text-gray-400'
+                            : 'bg-white border-gray-100 text-gray-405'
                         } ${!isCustomMode ? 'cursor-default opacity-85' : 'active:scale-95'}`}
                       >
                         {isSelected && <Check size={10} strokeWidth={4} />}
@@ -1039,11 +1114,73 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                   })}
                 </div>
               </div>
+            </div>
+          </section>
 
-              <div className="flex flex-col gap-3 pt-6"><button onClick={() => handlePost(false)} className="w-full py-5 bg-blue-600 text-white rounded-[2rem] font-black uppercase tracking-[0.2em] text-xs shadow-xl shadow-blue-500/20 active:scale-95 transition-all flex items-center justify-center gap-2">Confirm & Publish <ChevronRight size={18} /></button><button onClick={() => setStep(2)} className="w-full py-4 bg-gray-50 text-gray-400 rounded-[2rem] font-black uppercase tracking-[0.2em] text-[10px] active:scale-95 transition-all">Back</button></div>
+          {/* Engagement Settings */}
+          <div className="border-t border-gray-100 pt-4 mt-6 space-y-3">
+            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Engagement Settings</label>
+            <div className="bg-gray-50 rounded-2xl p-4 space-y-4 border border-gray-100">
+              <button onClick={() => setAllowComments(!allowComments)} className="w-full flex items-center justify-between py-1 group">
+                <div className="flex flex-col text-left">
+                  <span className="text-xs font-bold text-gray-800">Allow comments</span>
+                  <span className="text-[10px] text-gray-400">Enable users to leave comments</span>
+                </div>
+                <div className={`w-10 h-5 rounded-full transition-colors relative ${allowComments ? 'bg-blue-600' : 'bg-gray-200'}`}>
+                  <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowComments ? 'left-6' : 'left-1'}`} />
+                </div>
+              </button>
+              <button onClick={() => setForceAnonymous(!forceAnonymous)} className="w-full flex items-center justify-between py-1 group">
+                <div className="flex flex-col text-left">
+                  <span className="text-xs font-bold text-gray-800">Require Anonymous Responses</span>
+                  <span className="text-[10px] text-gray-400">All participants will be forced to respond without identity</span>
+                </div>
+                <div className={`w-10 h-5 rounded-full transition-colors relative ${forceAnonymous ? 'bg-blue-600' : 'bg-gray-200'}`}>
+                  <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${forceAnonymous ? 'left-6' : 'left-1'}`} />
+                </div>
+              </button>
+            </div>
+          </div>
+
+          {/* Unified Validation Error Display */}
+          {hasAttemptedSubmit && !errorInfo.isValid && (
+            <div className="p-4 bg-red-50 text-red-600 border border-red-200 rounded-2xl text-xs font-semibold flex flex-col gap-2 mt-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className="flex items-center gap-2 font-bold text-red-800">
+                <AlertCircle size={16} />
+                <span>Please correct the following errors to publish:</span>
+              </div>
+              <ul className="list-disc pl-5 space-y-1">
+                {errorInfo.errors.map((err, idx) => (
+                  <li key={idx}>{err}</li>
+                ))}
+              </ul>
             </div>
           )}
         </div>
+      </div>
+
+      <input
+        type="file"
+        ref={fileInputRef}
+        className="hidden"
+        accept="image/*"
+        onChange={handleImageUpload}
+      />
+
+      {/* Sticky Footer */}
+      <div className="border-t border-gray-100 bg-white/95 backdrop-blur-md px-4 py-3 sticky bottom-0 z-40 safe-bottom shrink-0 flex gap-3">
+        <button
+          onClick={() => handlePost(true)}
+          className="flex-1 py-3 bg-gray-100 text-gray-700 rounded-2xl font-black uppercase tracking-wider text-[11px] hover:bg-gray-200 transition-all active:scale-[0.98]"
+        >
+          Save Draft
+        </button>
+        <button
+          onClick={() => handlePost(false)}
+          className="flex-1 py-3 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-wider text-[11px] hover:bg-blue-700 transition-all active:scale-[0.98] shadow-lg shadow-blue-200"
+        >
+          Publish Survey
+        </button>
       </div>
 
       <BottomSheet
@@ -1243,6 +1380,79 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
               {cat}
             </button>
           ))}
+        </div>
+      </BottomSheet>
+
+      {/* Duration Bottom Sheet */}
+      <BottomSheet
+        isOpen={isDurationSheetOpen}
+        onClose={() => setIsDurationSheetOpen(false)}
+        title="Survey Duration"
+      >
+        <div className="space-y-4 py-2">
+          <p className="text-[11px] text-gray-500 font-medium leading-relaxed px-1">
+            Define how long your survey will accept responses. After this duration, it will automatically close.
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { label: 'No Limit', value: 'none', desc: 'Stays open indefinitely' },
+              { label: '1 Hour', value: '1h', desc: 'Quick flash survey' },
+              { label: '24 Hours', value: '24h', desc: 'Standard daily poll' },
+              { label: '3 Days', value: '3d', desc: 'Multi-day review' },
+              { label: '1 Week', value: '1w', desc: 'Weekly roundup' },
+              { label: '1 Month', value: '1m', desc: 'Long-term research' },
+              { label: 'Custom Date', value: 'custom', desc: 'Choose a specific date' }
+            ].map((opt) => {
+              const isSelected = duration === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  onClick={() => {
+                    setDuration(opt.value);
+                    if (opt.value !== 'custom') {
+                      setIsDurationSheetOpen(false);
+                    }
+                  }}
+                  className={`flex flex-col items-start p-3 rounded-2xl border text-left transition-all active:scale-95 ${
+                    isSelected
+                      ? 'bg-blue-50 border-blue-500 text-blue-700 shadow-sm ring-1 ring-blue-500/20'
+                      : 'bg-white border-gray-100 text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  <span className="text-xs font-bold">{opt.label}</span>
+                  <span className="text-[9px] text-gray-400 mt-0.5 leading-tight">{opt.desc}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {duration === 'custom' && (
+            <div className="pt-2 animate-in fade-in slide-in-from-top-2 duration-200">
+              <label className="block text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1.5 px-1">
+                Custom End Date & Time
+              </label>
+              <div className="relative">
+                <input
+                  type="datetime-local"
+                  value={customEndDate}
+                  min={new Date().toISOString().slice(0, 16)}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  className="w-full bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-xs font-bold focus:outline-none focus:bg-white focus:border-blue-500 transition-all text-blue-900"
+                />
+              </div>
+              <button
+                onClick={() => {
+                  if (customEndDate) {
+                    setIsDurationSheetOpen(false);
+                  }
+                }}
+                disabled={!customEndDate}
+                className="w-full mt-3 py-3 bg-blue-600 disabled:opacity-40 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-200 active:scale-95 transition-all"
+              >
+                Confirm Custom Date
+              </button>
+            </div>
+          )}
         </div>
       </BottomSheet>
 
