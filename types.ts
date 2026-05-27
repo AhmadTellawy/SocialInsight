@@ -80,6 +80,9 @@ export interface Option {
   votes: number;
   image?: string; // URL for the option image
 
+  // Quiz Specific
+  isCorrect?: boolean;
+
   // Logic
   jumpToQuestionId?: string; // Skip Logic
   isTerminal?: boolean; // Early Termination
@@ -222,6 +225,7 @@ export interface Survey {
 
   // Survey Specific Fields
   demographics?: string[];
+  questions?: SurveyQuestion[];
   sections?: SurveySection[];
   userProgress?: UserProgress;
 

@@ -138,48 +138,75 @@ const App: React.FC = () => {
 
 
 
-  const normalizeSurvey = (raw: Partial<Survey>, currentUser?: UserProfile | null): Survey => ({
-    ...raw,
-    id: raw.id || `temp-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-    clientKey: raw.clientKey || raw.id || `temp-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-    title: raw.title || '',
-    description: raw.description || '',
-    type: raw.type || SurveyType.POLL,
-    status: raw.status || (raw.isDraft ? 'DRAFT' : 'PUBLISHED'),
-    options: raw.options || [],
-    participants: raw.participants || 0,
-    isTrending: raw.isTrending || false,
-    likes: raw.likes || 0,
-    isLiked: raw.isLiked || false,
-    commentsCount: raw.commentsCount || 0,
-    sections: raw.sections || [],
-    author: raw.author?.id ? {
-      id: raw.author.id,
-      name: raw.author.name || 'Unknown',
-      avatar: raw.author.avatar || '',
-      type: raw.author.type || 'Personal',
-      isFollowing: raw.author.isFollowing || false
-    } : currentUser?.id ? {
-      id: currentUser.id,
-      name: currentUser.name || 'Unknown',
-      avatar: currentUser.avatar || '',
-      type: 'Personal',
-      isFollowing: false
-    } : {
-      id: 'unknown',
-      name: 'Unknown',
-      avatar: '',
-      type: 'Personal',
-      isFollowing: false
-    },
-    userProgress: raw.userProgress || {
-      currentQuestionIndex: 0,
-      answers: {},
-      followUpAnswers: {},
-      historyStack: [],
-      isAnonymous: false
-    }
-  });
+  const normalizeQuizQuestion = (question: any) => {
+    const options = Array.isArray(question?.options) ? question.options : [];
+    const correctOption = options.find((opt: any) => opt?.isCorrect === true || opt?.isCorrect === 'true' || opt?.isCorrect === 1);
+
+    return {
+      ...question,
+      options,
+      correctOptionId: question?.correctOptionId || correctOption?.id
+    };
+  };
+
+  const normalizeSurvey = (raw: Partial<Survey>, currentUser?: UserProfile | null): Survey => {
+    const questions = Array.isArray(raw.questions)
+      ? raw.questions.map(normalizeQuizQuestion)
+      : raw.questions;
+    const sections = Array.isArray(raw.sections)
+      ? raw.sections.map((section: any) => ({
+        ...section,
+        questions: Array.isArray(section.questions)
+          ? section.questions.map(normalizeQuizQuestion)
+          : []
+      }))
+      : [];
+
+    return {
+      ...raw,
+      id: raw.id || `temp-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      clientKey: raw.clientKey || raw.id || `temp-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      title: raw.title || '',
+      description: raw.description || '',
+      type: raw.type || SurveyType.POLL,
+      status: raw.status || (raw.isDraft ? 'DRAFT' : 'PUBLISHED'),
+      options: raw.options || [],
+      questions,
+      participants: raw.participants || 0,
+      isTrending: raw.isTrending || false,
+      likes: raw.likes || 0,
+      isLiked: raw.isLiked || false,
+      commentsCount: raw.commentsCount || 0,
+      sections,
+      sharedFrom: raw.sharedFrom ? normalizeSurvey(raw.sharedFrom as Partial<Survey>, currentUser) : undefined,
+      author: raw.author?.id ? {
+        id: raw.author.id,
+        name: raw.author.name || 'Unknown',
+        avatar: raw.author.avatar || '',
+        type: raw.author.type || 'Personal',
+        isFollowing: raw.author.isFollowing || false
+      } : currentUser?.id ? {
+        id: currentUser.id,
+        name: currentUser.name || 'Unknown',
+        avatar: currentUser.avatar || '',
+        type: 'Personal',
+        isFollowing: false
+      } : {
+        id: 'unknown',
+        name: 'Unknown',
+        avatar: '',
+        type: 'Personal',
+        isFollowing: false
+      },
+      userProgress: raw.userProgress || {
+        currentQuestionIndex: 0,
+        answers: {},
+        followUpAnswers: {},
+        historyStack: [],
+        isAnonymous: false
+      }
+    };
+  };
 
   const [surveys, setSurveys] = useState<Survey[]>(() => {
     try {
@@ -984,6 +1011,34 @@ const App: React.FC = () => {
     else navigate(-1);
   };
 
+  const buildProgressFromAnswerPayload = (payload?: PostAnswerPayload[]) => {
+    if (!payload || payload.length === 0) return null;
+
+    const progressAnswers: Record<string, any> = {};
+    const progressFollowUps: Record<string, string> = {};
+
+    payload.forEach(answer => {
+      if (!answer.questionId) return;
+
+      if (answer.optionId) {
+        const existing = progressAnswers[answer.questionId];
+        progressAnswers[answer.questionId] = Array.isArray(existing)
+          ? [...existing, answer.optionId]
+          : existing
+            ? [existing, answer.optionId]
+            : [answer.optionId];
+
+        if (answer.textValue) {
+          progressFollowUps[answer.optionId] = answer.textValue;
+        }
+      } else if (answer.textValue) {
+        progressAnswers[answer.questionId] = answer.textValue;
+      }
+    });
+
+    return { answers: progressAnswers, followUpAnswers: progressFollowUps };
+  };
+
   const handleVote = (
     surveyId: string,
     optionIds: string[],
@@ -993,6 +1048,7 @@ const App: React.FC = () => {
     answers?: PostAnswerPayload[]
   ) => {
     const previousSurveys = [...surveys];
+    const submittedProgress = buildProgressFromAnswerPayload(answers);
     setSurveys(prev =>
       prev.map(s => {
         const isDirect = s.id === surveyId;
@@ -1001,6 +1057,13 @@ const App: React.FC = () => {
         if (!isDirect && !isShared) return s;
 
         const applyVote = (target: Survey): Survey => {
+          const nextProgressAnswers = submittedProgress?.answers || target.userProgress?.answers || {};
+          const nextFollowUpAnswers = {
+            ...(target.userProgress?.followUpAnswers || {}),
+            ...(followUpAnswers || {}),
+            ...(submittedProgress?.followUpAnswers || {})
+          };
+
           // 1) Completion path (Survey without questions/options) => no option votes, only mark participated + store anon
           if (optionIds.length === 0) {
             return {
@@ -1009,8 +1072,8 @@ const App: React.FC = () => {
               participants: target.hasParticipated ? target.participants : target.participants + 1,
               userProgress: {
                 currentQuestionIndex: target.userProgress?.currentQuestionIndex || 0,
-                answers: target.userProgress?.answers || {},
-                followUpAnswers: target.userProgress?.followUpAnswers || followUpAnswers || {},
+                answers: nextProgressAnswers,
+                followUpAnswers: nextFollowUpAnswers,
                 historyStack: target.userProgress?.historyStack || [],
                 isAnonymous: !!isAnonymous
               }
@@ -1048,8 +1111,8 @@ const App: React.FC = () => {
               participants: target.hasParticipated ? target.participants : target.participants + 1,
               userProgress: {
                 currentQuestionIndex: target.userProgress?.currentQuestionIndex || 0,
-                answers: target.userProgress?.answers || {},
-                followUpAnswers: target.userProgress?.followUpAnswers || followUpAnswers || {},
+                answers: nextProgressAnswers,
+                followUpAnswers: nextFollowUpAnswers,
                 historyStack: target.userProgress?.historyStack || [],
                 isAnonymous: !!isAnonymous
               }
@@ -1077,8 +1140,8 @@ const App: React.FC = () => {
             participants: target.hasParticipated ? target.participants : target.participants + 1,
             userProgress: {
               currentQuestionIndex: target.userProgress?.currentQuestionIndex || 0,
-              answers: target.userProgress?.answers || {},
-              followUpAnswers: followUpAnswers || target.userProgress?.followUpAnswers || {},
+              answers: nextProgressAnswers,
+              followUpAnswers: nextFollowUpAnswers,
               historyStack: target.userProgress?.historyStack || [],
               isAnonymous: !!isAnonymous
             }

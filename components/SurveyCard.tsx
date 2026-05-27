@@ -565,14 +565,25 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     }, 400);
   };
 
+  const getCorrectOptionIds = (question: FlatQuestion): string[] => {
+    const ids = new Set<string>();
+    if (question.correctOptionId) ids.add(question.correctOptionId);
+    question.options?.forEach(option => {
+      if (option.isCorrect === true) ids.add(option.id);
+    });
+    return Array.from(ids);
+  };
+
   const calculateAndSetScore = (answers: Record<string, any>) => {
     let correctCount = 0;
     flatQuestions.forEach(q => {
       const userAns = answers[q.id];
-      const correctOptions = q.correctOptionId ? [q.correctOptionId] : [];
+      const correctOptions = getCorrectOptionIds(q);
       if (correctOptions.length > 0 && userAns) {
         const userAnsArray = Array.isArray(userAns) ? userAns : [userAns];
-        const isCorrect = userAnsArray.some(id => correctOptions.includes(id));
+        const isCorrect = correctOptions.length > 1
+          ? correctOptions.every(id => userAnsArray.includes(id)) && userAnsArray.every(id => correctOptions.includes(id))
+          : userAnsArray.some(id => correctOptions.includes(id));
         if (isCorrect) {
           correctCount++;
         }
@@ -694,6 +705,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           }
         } else {
           // Finish Quiz
+          calculateAndSetScore(newAnswers);
           if (onVote) {
             const answerPayload = buildAnswerPayload(newAnswers);
             const allSelectedOptionIds = answerPayload
@@ -702,6 +714,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             onVote(sourceSurvey.id, allSelectedOptionIds, isCurrentlyAnonymous, undefined, followUpAnswers, answerPayload);
           }
           setSurveyCompleted(true);
+          startDemographicFlow();
         }
       }, 400); // slight delay
     }
@@ -1252,6 +1265,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     const isTF = currentQuestion.type === 'true_false';
     const isHorizontal = currentQuestion.imageLayout === 'horizontal' || (!currentQuestion.imageLayout && sourceSurvey.imageLayout === 'horizontal');
     const isQuiz = survey.type === SurveyType.QUIZ;
+    const currentCorrectOptionIds = isQuiz ? getCorrectOptionIds(currentQuestion) : [];
 
     return (
       <div className="bg-white rounded-xl overflow-hidden border border-gray-100 shadow-sm mt-3">
@@ -1323,7 +1337,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                       const selectedIds = Array.isArray(answer) ? answer : (answer ? [answer] : []);
                       const isSelected = selectedIds.includes(opt.id);
                       const hasVotedCurrent = selectedIds.length > 0;
-                      const isCorrect = isQuiz && opt.id === currentQuestion.correctOptionId;
+                      const isCorrect = isQuiz && currentCorrectOptionIds.includes(opt.id);
                       const isWrongSelection = isQuiz && isSelected && !isCorrect;
                       const isMaxReached = !isTF && currentQuestion.maxSelection && (currentQuestion.maxSelection || 1) > 1 && selectedIds.length >= (currentQuestion.maxSelection || 1) && !isSelected;
                       const isPortrait = opt.image && portraitImages.has(opt.image);
