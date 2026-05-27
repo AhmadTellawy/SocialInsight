@@ -607,6 +607,43 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
     return allQuestionsFlat.slice(currentQIdx + 1);
   }, [settingsOptionId, allQuestionsFlat]);
 
+  const durationLabel = durationOptions.find(o => o.value === duration)?.label || 'None';
+  const audienceLabel = visibility === 'Groups' && selectedGroups.length > 0 ? `${selectedGroups.length} Groups` : visibility;
+  const resultsLabel = resultsWho === 'OnlyMe' ? 'Only Me' : resultsWho;
+
+  const renderSettingField = (
+    label: string,
+    value: string,
+    onClick: () => void,
+    options: { invalid?: boolean; active?: boolean } = {}
+  ) => (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`relative min-h-[58px] rounded-2xl border px-3.5 py-3 text-left transition-all active:scale-[0.98] bg-white ${
+        options.invalid
+          ? 'border-red-300 ring-2 ring-red-50'
+          : options.active
+          ? 'border-blue-200 ring-2 ring-blue-50'
+          : 'border-gray-200 hover:border-blue-200'
+      }`}
+    >
+      <span className={`absolute -top-2 left-3 bg-white px-1 text-[10px] font-bold ${
+        options.invalid ? 'text-red-500' : options.active ? 'text-blue-600' : 'text-gray-400'
+      }`}>
+        {label}
+      </span>
+      <span className={`block truncate pr-7 text-sm font-semibold ${
+        options.invalid ? 'text-red-600' : 'text-gray-900'
+      }`}>
+        {value}
+      </span>
+      <ChevronDown size={16} className={`absolute right-3 top-1/2 -translate-y-1/2 ${
+        options.invalid ? 'text-red-400' : options.active ? 'text-blue-500' : 'text-gray-400'
+      }`} />
+    </button>
+  );
+
   return (
     <div className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-bottom duration-300">
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white/95 backdrop-blur-md sticky top-0 z-40 safe-top shrink-0">
@@ -628,7 +665,9 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
           )}
 
           {/* Survey Header Section */}
-          <section className={`space-y-2 pb-3 border-b border-gray-100 relative transition-colors ${errors.title ? 'p-3 rounded-2xl bg-red-50' : ''}`}>
+          <section className={`space-y-4 rounded-[1.5rem] border p-4 relative transition-colors ${
+            errors.title ? 'border-red-200 bg-red-50/40' : 'border-gray-100 bg-white'
+          }`}>
              <div className="flex items-center justify-between">
                <label className="block text-xs font-bold text-gray-400 uppercase tracking-wide">The Survey Header <span className="text-red-500">*</span></label>
                <button onClick={() => { setActiveCropTarget({ type: 'cover' }); fileInputRef.current?.click(); }} className={`p-1.5 rounded-full transition-colors ${coverImage ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-50'}`}><ImageIcon size={20} /></button>
@@ -653,69 +692,26 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                value={description}
                onChange={(val) => setDescription(val)}
                placeholder="Describe what this survey is about..."
-               className="mt-1.5 text-[11px] text-gray-500 bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[32px]"
-               minRows={1}
-             />
-          </section>
-
-          {/* Compact Settings Chips Bar */}
-          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-3 border-b border-gray-50">
-            {/* Category Chip */}
-            <button
-              onClick={() => setIsCategorySheetOpen(true)}
-              className={`shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all flex items-center gap-1 active:scale-95 ${
-                category
-                  ? 'bg-blue-50 border-blue-200 text-blue-700 font-semibold'
-                  : errors.category
-                  ? 'bg-red-50 border-red-200 text-red-600'
-                  : 'bg-gray-50 border-gray-200 text-gray-600'
-              }`}
-            >
-              <span>Category: {category || 'Select'}</span>
-              <ChevronDown size={12} />
-            </button>
-
-            {/* Audience Chip */}
-            <button
-              onClick={() => setIsVisibilitySheetOpen(true)}
-              className={`shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all flex items-center gap-1 active:scale-95 ${
-                visibility === 'Groups' && selectedGroups.length === 0 && errors.visibility
-                  ? 'bg-red-50 border-red-200 text-red-600'
-                  : visibility !== 'Public'
-                  ? 'bg-blue-50 border-blue-200 text-blue-700 font-semibold'
-                  : 'bg-gray-50 border-gray-200 text-gray-600'
-              }`}
-            >
-              <span>Audience: {visibility === 'Groups' && selectedGroups.length > 0 ? `${selectedGroups.length} Groups` : visibility}</span>
-              <ChevronDown size={12} />
-            </button>
-
-            {/* Timer Chip */}
-            <button
-              onClick={() => setIsDurationSheetOpen(true)}
-              className={`shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all flex items-center gap-1 active:scale-95 ${
-                duration !== 'none'
-                  ? 'bg-blue-50 border-blue-200 text-blue-700 font-semibold'
-                  : 'bg-gray-50 border-gray-200 text-gray-600'
-              }`}
-            >
-              <span>Timer: {durationOptions.find(o => o.value === duration)?.label || 'None'}</span>
-              <ChevronDown size={12} />
-            </button>
-
-            {/* Results Chip */}
-            <button
-              onClick={() => setIsResultVisibilitySheetOpen(true)}
-              className={`shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all flex items-center gap-1 active:scale-95 ${
-                resultsWho !== 'Public' || resultsTiming !== 'AnyTime'
-                  ? 'bg-blue-50 border-blue-200 text-blue-700 font-semibold'
-                  : 'bg-gray-50 border-gray-200 text-gray-600'
-              }`}
-            >
-              <span>Results: {resultsWho === 'OnlyMe' ? 'Me' : resultsWho}</span>
-              <ChevronDown size={12} />
-            </button>
-          </div>
+                className="mt-1.5 text-[11px] text-gray-500 bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[32px]"
+                minRows={1}
+              />
+             <div className="grid grid-cols-2 gap-3 pt-2">
+               {renderSettingField('Category', category || 'Select', () => setIsCategorySheetOpen(true), {
+                 invalid: !!errors.category,
+                 active: !!category
+               })}
+               {renderSettingField('Audience', audienceLabel, () => setIsVisibilitySheetOpen(true), {
+                 invalid: !!errors.visibility,
+                 active: visibility !== 'Public' || selectedGroups.length > 0
+               })}
+               {renderSettingField('Results', resultsLabel, () => setIsResultVisibilitySheetOpen(true), {
+                 active: resultsWho !== 'Public' || resultsTiming !== 'AnyTime'
+               })}
+               {renderSettingField('Timer', durationLabel, () => setIsDurationSheetOpen(true), {
+                 active: duration !== 'none'
+               })}
+             </div>
+           </section>
 
           {/* Section & Question Builder */}
           <div className="space-y-6">
