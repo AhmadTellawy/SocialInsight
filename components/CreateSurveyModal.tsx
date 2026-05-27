@@ -620,25 +620,25 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
     <button
       type="button"
       onClick={onClick}
-      className={`relative min-h-[58px] rounded-2xl border px-3.5 py-3 text-left transition-all active:scale-[0.98] bg-white ${
+      className={`relative min-h-[46px] rounded-xl border px-2 py-2 text-left transition-all active:scale-[0.98] bg-white ${
         options.invalid
-          ? 'border-red-300 ring-2 ring-red-50'
+          ? 'border-red-300 ring-1 ring-red-50'
           : options.active
-          ? 'border-blue-200 ring-2 ring-blue-50'
+          ? 'border-blue-200 ring-1 ring-blue-50'
           : 'border-gray-200 hover:border-blue-200'
       }`}
     >
-      <span className={`absolute -top-2 left-3 bg-white px-1 text-[10px] font-bold ${
+      <span className={`block text-[8px] font-black uppercase leading-none ${
         options.invalid ? 'text-red-500' : options.active ? 'text-blue-600' : 'text-gray-400'
       }`}>
         {label}
       </span>
-      <span className={`block truncate pr-7 text-sm font-semibold ${
+      <span className={`mt-1.5 block truncate pr-4 text-[10px] font-semibold leading-none ${
         options.invalid ? 'text-red-600' : 'text-gray-900'
       }`}>
         {value}
       </span>
-      <ChevronDown size={16} className={`absolute right-3 top-1/2 -translate-y-1/2 ${
+      <ChevronDown size={12} className={`absolute right-2 top-1/2 -translate-y-1/2 ${
         options.invalid ? 'text-red-400' : options.active ? 'text-blue-500' : 'text-gray-400'
       }`} />
     </button>
@@ -665,7 +665,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
           )}
 
           {/* Survey Header Section */}
-          <section className={`space-y-4 rounded-[1.5rem] border p-4 relative transition-colors ${
+          <section className={`space-y-3 rounded-[1.5rem] border p-3.5 relative transition-colors ${
             errors.title ? 'border-red-200 bg-red-50/40' : 'border-gray-100 bg-white'
           }`}>
              <div className="flex items-center justify-between">
@@ -695,7 +695,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                 className="mt-1.5 text-[11px] text-gray-500 bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[32px]"
                 minRows={1}
               />
-             <div className="grid grid-cols-2 gap-3 pt-2">
+             <div className="grid grid-cols-4 gap-1.5 pt-1">
                {renderSettingField('Category', category || 'Select', () => setIsCategorySheetOpen(true), {
                  invalid: !!errors.category,
                  active: !!category
