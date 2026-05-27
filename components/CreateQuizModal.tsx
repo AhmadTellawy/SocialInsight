@@ -459,17 +459,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
     setSections(sections.map(s => s.id === secId ? { ...s, questions: s.questions.map(q => q.id === qId ? { ...q, ...updates } : q) } : s));
   };
 
-  const handleChoiceTypeChange = (secId: string, qId: string, choiceType: 'multiple' | 'text') => {
-    let newType: 'multiple_choice' | 'text' = 'multiple_choice';
-    let newOptions: Option[] = [];
-    if (choiceType === 'text') {
-      newType = 'text';
-      newOptions = [];
-    } else {
-      newOptions = [{ id: '1', text: '', votes: 0 }, { id: '2', text: '', votes: 0 }];
-    }
-    updateQuestion(secId, qId, { type: newType, options: newOptions, maxSelection: 1, correctOptionId: undefined });
-  };
+
 
   const moveOption = (secId: string, qId: string, optId: string, direction: 'up' | 'down') => {
     setSections(sections.map(s => s.id === secId ? {
@@ -744,7 +734,6 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                 {activeQuestionId && (() => {
                   const q = activeSection.questions.find(qu => qu.id === activeQuestionId);
                   if (!q) return null;
-                  const currentChoiceType = q.type === 'text' ? 'text' : 'multiple';
 
                   return (
                     <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-4 shadow-sm">
@@ -769,16 +758,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                         <button onClick={() => setIsQuestionSettingsSheetOpen(true)} className="p-3 text-gray-400 hover:text-gray-655 hover:bg-gray-50 rounded-full transition-all shrink-0 mt-1 flex items-center justify-center min-w-[44px] min-h-[44px]"><MoreHorizontalIcon size={20} /></button>
                       </div>
 
-                      <div className="space-y-3 pt-2">
-                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Choice Type</label>
-                        <div className="flex gap-2">
-                          {[{ id: 'multiple', label: 'Multiple Choice' }, { id: 'text', label: 'Short Answer' }].map((type) => (
-                            <button key={type.id} onClick={() => handleChoiceTypeChange(activeSection.id, q.id, type.id as any)} className={`flex-1 py-2.5 rounded-xl text-[10px] font-bold border transition-all ${currentChoiceType === type.id ? 'bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}>
-                              {type.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
+
 
                       {q.type === 'multiple_choice' && (
                         <div className="space-y-3 pt-2 border-t border-gray-50">

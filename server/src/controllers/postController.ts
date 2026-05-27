@@ -536,7 +536,7 @@ export const createPost = async (req: Request, res: Response) => {
                         const question = await tx.question.create({
                             data: {
                                 text: q.text,
-                                type: q.type || 'multiple_choice',
+                                type: typeStr === 'Quiz' ? 'multiple_choice' : (q.type || 'multiple_choice'),
                                 image: q.image,
                                 order: q.order !== undefined ? q.order : qIdx,
                                 isRequired: q.isRequired !== undefined ? q.isRequired : true,
@@ -818,7 +818,7 @@ export const updatePost = async (req: Request, res: Response) => {
                     const question = await prisma.question.create({
                         data: {
                             text: q.text,
-                            type: q.type || 'multiple_choice',
+                            type: typeStr === 'Quiz' ? 'multiple_choice' : (q.type || 'multiple_choice'),
                             image: q.image,
                             order: q.order !== undefined ? q.order : qIdx,
                             isRequired: q.isRequired !== undefined ? q.isRequired : true,
