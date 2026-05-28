@@ -1044,7 +1044,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   <button
                     type="button"
                     onClick={() => setAllowComments(!allowComments)}
-                    className={`w-10 h-5 rounded-full relative transition-colors ${allowComments ? 'bg-blue-600' : 'bg-gray-250'}`}
+                    className={`w-10 h-5 rounded-full relative transition-colors ${allowComments ? 'bg-blue-600' : 'bg-gray-200'}`}
                   >
                     <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowComments ? 'left-6' : 'left-1'}`} />
                   </button>
@@ -1060,7 +1060,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                       <button
                         type="button"
                         onClick={() => setAllowMultipleSelection(!allowMultipleSelection)}
-                        className={`w-10 h-5 rounded-full relative transition-colors ${allowMultipleSelection ? 'bg-blue-600' : 'bg-gray-250'}`}
+                        className={`w-10 h-5 rounded-full relative transition-colors ${allowMultipleSelection ? 'bg-blue-600' : 'bg-gray-200'}`}
                       >
                         <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowMultipleSelection ? 'left-6' : 'left-1'}`} />
                       </button>
@@ -1074,7 +1074,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                       <button
                         type="button"
                         onClick={() => setAllowUserOptions(!allowUserOptions)}
-                        className={`w-10 h-5 rounded-full relative transition-colors ${allowUserOptions ? 'bg-blue-600' : 'bg-gray-250'}`}
+                        className={`w-10 h-5 rounded-full relative transition-colors ${allowUserOptions ? 'bg-blue-600' : 'bg-gray-200'}`}
                       >
                         <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowUserOptions ? 'left-6' : 'left-1'}`} />
                       </button>
@@ -1090,7 +1090,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   <button
                     type="button"
                     onClick={() => setForceAnonymous(!forceAnonymous)}
-                    className={`w-10 h-5 rounded-full relative transition-colors ${forceAnonymous ? 'bg-blue-600' : 'bg-gray-250'}`}
+                    className={`w-10 h-5 rounded-full relative transition-colors ${forceAnonymous ? 'bg-blue-600' : 'bg-gray-200'}`}
                   >
                     <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${forceAnonymous ? 'left-6' : 'left-1'}`} />
                   </button>
