@@ -173,6 +173,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   const [focusedOptionId, setFocusedOptionId] = useState<string | null>(null);
   const [selectedInsightPreset, setSelectedInsightPreset] = useState<'basic' | 'professional' | 'social' | 'custom' | null>(null);
   const [showInsightInfo, setShowInsightInfo] = useState(false);
+  const [showLayoutInfo, setShowLayoutInfo] = useState(false);
 
   useEffect(() => {
     if (selectedDemographics.length === 0) {
@@ -581,7 +582,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                 <button
                   type="button"
                   onClick={() => setIsCategorySheetOpen(true)}
-                  className={`w-full flex items-center justify-between border rounded-xl px-3 py-2 text-xs font-semibold transition-all active:scale-[0.98] min-w-0 ${
+                  className={`w-full flex items-center justify-between border rounded-xl px-3 py-2 text-[8px] font-semibold transition-all active:scale-[0.98] min-w-0 ${
                     category
                       ? 'bg-blue-50 border-blue-200 text-blue-700 font-semibold'
                       : hasAttemptedSubmit && !category
@@ -607,7 +608,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   <button
                     type="button"
                     onClick={() => handleChoiceTypeChange('multiple')}
-                    className={`flex-1 h-full rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                    className={`flex-1 h-full rounded-lg text-[8px] font-black uppercase tracking-wider transition-all ${
                       pollChoiceType === 'multiple'
                         ? 'bg-white text-blue-600 border border-blue-500 shadow-xs'
                         : 'text-gray-400 hover:text-gray-650'
@@ -618,54 +619,70 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   <button
                     type="button"
                     onClick={() => handleChoiceTypeChange('rating')}
-                    className={`flex-1 h-full rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                    className={`flex-1 h-full rounded-lg text-[8px] font-black uppercase tracking-wider transition-all ${
                       pollChoiceType === 'rating'
                         ? 'bg-white text-blue-600 border border-blue-500 shadow-xs'
                         : 'text-gray-400 hover:text-gray-650'
                     }`}
                   >
-                    Rating Scale
+                    Rating
                   </button>
                 </div>
               </div>
             </div>
           </section>
 
-          {/* 3. Choices Section */}
+          {/* 3. Options Section */}
           <section className="space-y-4 pb-2.5 border-b border-gray-100">
             <div className="flex items-center justify-between px-1 border-b border-gray-55/40 pb-2">
               <div className="flex items-center gap-1.5 min-w-0">
-                <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Choices <span className="text-red-500">*</span></span>
+                <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Options <span className="text-red-500">*</span></span>
                 {errors.options && <span className="text-[10px] font-bold text-red-600 truncate">{errors.options}</span>}
               </div>
 
               {pollChoiceType === 'multiple' && (
-                <div className="flex gap-1 shrink-0">
-                  {[
-                    { id: 'vertical', icon: List },
-                    { id: 'horizontal', icon: LayoutGrid }
-                  ].map((layout) => {
-                    const Icon = layout.icon;
-                    const isActive = imageLayout === layout.id;
-                    return (
-                      <button
-                        key={layout.id}
-                        type="button"
-                        onClick={() => setImageLayout(layout.id as any)}
-                        className={`p-1.5 rounded-lg border transition-all active:scale-95 ${
-                          isActive
-                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm shadow-blue-100'
-                            : 'bg-white text-gray-400 border-gray-200 hover:bg-gray-50'
-                        }`}
-                        title={layout.id}
-                      >
-                        <Icon size={15} />
-                      </button>
-                    );
-                  })}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="text-[10px] font-bold text-gray-400">Option Layout</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowLayoutInfo(!showLayoutInfo)}
+                    className="text-gray-400 hover:text-blue-500 transition-colors mr-1"
+                  >
+                    <Info size={14} />
+                  </button>
+                  <div className="flex gap-1">
+                    {[
+                      { id: 'vertical', icon: List },
+                      { id: 'horizontal', icon: GalleryHorizontalEnd }
+                    ].map((layout) => {
+                      const Icon = layout.icon;
+                      const isActive = imageLayout === layout.id;
+                      return (
+                        <button
+                          key={layout.id}
+                          type="button"
+                          onClick={() => setImageLayout(layout.id as any)}
+                          className={`p-1.5 rounded-lg border transition-all active:scale-95 ${
+                            isActive
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-sm shadow-blue-100'
+                              : 'bg-white text-gray-400 border-gray-200 hover:bg-gray-50'
+                          }`}
+                          title={layout.id}
+                        >
+                          <Icon size={15} />
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>
+
+            {pollChoiceType === 'multiple' && showLayoutInfo && (
+              <div className="p-3 bg-blue-50 border border-blue-100 text-blue-800 text-[10px] font-semibold rounded-xl leading-relaxed animate-in fade-in slide-in-from-top-1 duration-200">
+                Choose how image-based poll options are displayed, such as a vertical list or side-by-side layout.
+              </div>
+            )}
 
             <div className="space-y-3">
               {options.map((option, idx) => (
@@ -799,11 +816,11 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
             <ChevronRight size={14} className="text-gray-400" />
           </button>
 
-          {/* 5. Optional Demographics Insights (Audience Insights Selector) */}
+          {/* 5. Optional Demographics Insights (Unlock Deeper Analytics Selector) */}
           <section className="space-y-3 pt-3 border-t border-gray-100">
             <div className="flex items-center justify-between px-1">
               <div className="flex items-center gap-1.5">
-                <span className="text-xs font-bold text-gray-700">Audience Insights</span>
+                <span className="text-xs font-bold text-gray-700">Unlock Deeper Analytics</span>
                 <button
                   type="button"
                   onClick={() => setShowInsightInfo(!showInsightInfo)}
@@ -816,7 +833,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
 
             {showInsightInfo && (
               <div className="p-3 bg-blue-50 border border-blue-100 text-blue-800 text-[10px] font-semibold rounded-xl leading-relaxed animate-in fade-in slide-in-from-top-1 duration-200">
-                Adds demographic participant questions to Unlocks demographic breakdowns
+                Choose optional demographic questions for participants to unlock deeper insights, audience trends, and response analysis.
               </div>
             )}
 
