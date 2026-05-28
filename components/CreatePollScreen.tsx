@@ -575,10 +575,15 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
             )}
 
             {/* Category and Poll Type Grid */}
-            <div className="grid grid-cols-2 gap-4 pt-3 mt-3 border-t border-gray-50">
+            <div className="grid grid-cols-2 gap-4 pt-3 mt-3 border-t border-gray-55/50">
               {/* Left Column: Category */}
               <div className="space-y-1.5 text-left min-w-0">
-                <span className="text-xs font-bold text-gray-800">Category</span>
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="p-1.5 bg-gray-50 rounded-lg text-gray-500 border border-gray-100 shrink-0">
+                    <Tag size={12} />
+                  </div>
+                  <span className="text-xs font-bold text-gray-800">Category</span>
+                </div>
                 <button
                   type="button"
                   onClick={() => setIsCategorySheetOpen(true)}
@@ -587,11 +592,10 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                       ? 'bg-blue-50 border-blue-200 text-blue-700 font-semibold'
                       : hasAttemptedSubmit && !category
                       ? 'bg-red-50 border-red-200 text-red-600 font-bold'
-                      : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
+                      : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-55'
                   }`}
                 >
                   <div className="flex items-center min-w-0 mr-1">
-                    <Tag size={14} className={`mr-2 shrink-0 ${category ? 'text-blue-500' : 'text-gray-400'}`} />
                     <span className="truncate">{category || 'Select category'}</span>
                   </div>
                   <ChevronDown size={14} className="text-gray-400 shrink-0" />
@@ -603,7 +607,12 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
 
               {/* Right Column: Poll Type */}
               <div className="space-y-1.5 text-left font-sans">
-                <span className="text-xs font-bold text-gray-800">Poll Type</span>
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="p-1.5 bg-gray-50 rounded-lg text-gray-500 border border-gray-100 shrink-0">
+                    <BarChart3 size={12} />
+                  </div>
+                  <span className="text-xs font-bold text-gray-800">Poll Type</span>
+                </div>
                 <div className="flex bg-gray-55/30 border border-gray-100 p-0.5 rounded-xl h-[38px] items-center">
                   <button
                     type="button"
@@ -635,8 +644,11 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
           {/* 3. Options Section */}
           <section className="space-y-4 pb-2.5 border-b border-gray-100">
             <div className="flex items-center justify-between px-1 border-b border-gray-55/40 pb-2">
-              <div className="flex items-center gap-1.5 min-w-0">
-                <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Options <span className="text-red-500">*</span></span>
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="p-1.5 bg-gray-55/30 rounded-lg text-gray-500 border border-gray-100 shrink-0">
+                  <List size={12} />
+                </div>
+                <span className="text-xs font-bold text-gray-800">Options <span className="text-red-500">*</span></span>
                 {errors.options && <span className="text-[10px] font-bold text-red-600 truncate">{errors.options}</span>}
               </div>
 
@@ -819,12 +831,15 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
           {/* 5. Optional Demographics Insights (Unlock Deeper Analytics Selector) */}
           <section className="space-y-3 pt-3 border-t border-gray-100">
             <div className="flex items-center justify-between px-1">
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs font-bold text-gray-700">Unlock Deeper Analytics</span>
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-gray-55/30 rounded-lg text-gray-500 border border-gray-100 shrink-0">
+                  <Users size={12} />
+                </div>
+                <span className="text-xs font-bold text-gray-800">Unlock Deeper Analytics</span>
                 <button
                   type="button"
                   onClick={() => setShowInsightInfo(!showInsightInfo)}
-                  className="text-gray-400 hover:text-blue-500 transition-colors"
+                  className="text-gray-400 hover:text-blue-500 transition-colors ml-0.5"
                 >
                   <Info size={14} />
                 </button>
@@ -872,6 +887,9 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   <span className="text-[10px] font-extrabold text-blue-600 whitespace-nowrap">
                     +{selectedDemographics.length} questions for participant
                   </span>
+                </div>
+                <div className="text-[9px] text-gray-550 font-medium mt-1 pb-1">
+                  Demographics requested: <span className="text-gray-800 font-bold">{selectedDemographics.map(id => DEMOGRAPHIC_OPTIONS.find(opt => opt.id === id)?.label).filter(Boolean).join(', ')}</span>
                 </div>
                 <p className="text-[8px] text-gray-400 font-medium leading-normal">
                   * Selected questions will be prompted as optional questions during participation.
@@ -1029,6 +1047,52 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                     className={`w-10 h-5 rounded-full relative transition-colors ${allowComments ? 'bg-blue-600' : 'bg-gray-250'}`}
                   >
                     <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowComments ? 'left-6' : 'left-1'}`} />
+                  </button>
+                </div>
+
+                {pollChoiceType !== 'rating' && (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <div className="flex flex-col text-left">
+                        <span className="text-xs font-bold text-gray-800">Multiple selection</span>
+                        <span className="text-[10px] text-gray-400">Allow participants to choose more than one option</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setAllowMultipleSelection(!allowMultipleSelection)}
+                        className={`w-10 h-5 rounded-full relative transition-colors ${allowMultipleSelection ? 'bg-blue-600' : 'bg-gray-250'}`}
+                      >
+                        <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowMultipleSelection ? 'left-6' : 'left-1'}`} />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="flex flex-col text-left">
+                        <span className="text-xs font-bold text-gray-800">Allow user options</span>
+                        <span className="text-[10px] text-gray-400">Allow participants to add new options</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setAllowUserOptions(!allowUserOptions)}
+                        className={`w-10 h-5 rounded-full relative transition-colors ${allowUserOptions ? 'bg-blue-600' : 'bg-gray-250'}`}
+                      >
+                        <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowUserOptions ? 'left-6' : 'left-1'}`} />
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col text-left">
+                    <span className="text-xs font-bold text-gray-800">Force anonymous</span>
+                    <span className="text-[10px] text-gray-400">Keep all participants identity completely anonymous</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setForceAnonymous(!forceAnonymous)}
+                    className={`w-10 h-5 rounded-full relative transition-colors ${forceAnonymous ? 'bg-blue-600' : 'bg-gray-250'}`}
+                  >
+                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${forceAnonymous ? 'left-6' : 'left-1'}`} />
                   </button>
                 </div>
               </div>
