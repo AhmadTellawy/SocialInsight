@@ -627,7 +627,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
           </div>
 
           {/* 3. Choices Section */}
-          <section className="space-y-4 pb-6 border-b border-gray-100">
+          <section className="space-y-4 pb-2.5 border-b border-gray-100">
             {pollChoiceType === 'multiple' && (
               <div className="space-y-2 px-1">
                 <div className="flex items-center justify-between">
@@ -779,7 +779,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               setAdvancedSheetView('main');
               setIsAdvancedSheetOpen(true);
             }}
-            className="w-full flex items-center justify-between py-3.5 px-1 border-t border-gray-100 text-left transition-all active:opacity-75"
+            className="w-full flex items-center justify-between py-2.5 px-1 text-left transition-all active:opacity-75"
           >
             <div className="flex items-center gap-3">
               <div className="p-2 bg-gray-50 rounded-xl text-gray-500 border border-gray-100">
@@ -794,7 +794,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
           </button>
 
           {/* 5. Optional Demographics Insights (Audience Insights Selector) */}
-          <section className="space-y-3 pt-4 border-t border-gray-100 mt-2">
+          <section className="space-y-3 pt-3 border-t border-gray-100">
             <div className="flex items-center justify-between px-1">
               <div className="flex items-center gap-1.5">
                 <span className="text-xs font-bold text-gray-700">Audience Insights</span>
