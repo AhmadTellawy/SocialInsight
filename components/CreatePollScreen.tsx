@@ -34,6 +34,7 @@ const DEMOGRAPHIC_OPTIONS = [
   { id: 'household', label: 'Household Size', desc: 'Understand patterns based on household size' },
   { id: 'familyRole', label: 'Family Role', desc: 'Explore insights based on family role' },
   { id: 'employment', label: 'Employment Type', desc: 'Analyze responses by employment type' },
+  { id: 'sector', label: 'Employment Sector', desc: 'Analyze responses by employment sector' },
   { id: 'industry', label: 'Industry / Field of Work', desc: 'Identify trends across different industries' },
   { id: 'occupation', label: 'Occupation', desc: 'Analyze response differences by occupation' },
 ];
@@ -52,11 +53,11 @@ type VisibilityType = 'Public' | 'Followers' | 'Groups' | 'Custom Audience' | 'C
 export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onSubmit, onSaveDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
   const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
   const [selectedGroups, setSelectedGroups] = useState<string[]>(initialGroupId ? [initialGroupId] : []);
-  const [isVisibilitySheetOpen, setIsVisibilitySheetOpen] = useState(false);
-  const [isResultVisibilitySheetOpen, setIsResultVisibilitySheetOpen] = useState(false);
   const [isCategorySheetOpen, setIsCategorySheetOpen] = useState(false);
   const [isAdvancedSheetOpen, setIsAdvancedSheetOpen] = useState(false);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
+  const [advancedSheetView, setAdvancedSheetView] = useState<'main' | 'visibility' | 'results'>('main');
 
   const handleExit = () => {
     // Check if there are any changes to prompt for save
@@ -167,30 +168,40 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   const [duration, setDuration] = useState<string>('none');
   const [customEndDate, setCustomEndDate] = useState<string>('');
 
-  const [selectedDemographics, setSelectedDemographics] = useState<string[]>(['gender', 'ageGroup', 'residence']);
+  const [selectedDemographics, setSelectedDemographics] = useState<string[]>([]);
   const [errors, setErrors] = useState<{ [key: string]: boolean | string }>({});
   const [focusedOptionId, setFocusedOptionId] = useState<string | null>(null);
-  const [activePreset, setActivePreset] = useState<'recommended' | 'professional' | 'geographic' | 'custom'>('recommended');
+  const [selectedInsightPreset, setSelectedInsightPreset] = useState<'basic' | 'professional' | 'social' | 'custom' | null>(null);
+  const [showInsightInfo, setShowInsightInfo] = useState(false);
 
   useEffect(() => {
-    const isRecommended = selectedDemographics.length === 3 && selectedDemographics.includes('gender') && selectedDemographics.includes('ageGroup') && selectedDemographics.includes('residence');
-    const isProfessional = selectedDemographics.length === 3 && selectedDemographics.includes('education') && selectedDemographics.includes('employment') && selectedDemographics.includes('industry');
-    const isGeographic = selectedDemographics.length === 2 && selectedDemographics.includes('residence') && selectedDemographics.includes('nationality');
+    if (selectedDemographics.length === 0) {
+      setSelectedInsightPreset(null);
+      return;
+    }
+    const isBasic = selectedDemographics.length === 3 && selectedDemographics.includes('gender') && selectedDemographics.includes('ageGroup') && selectedDemographics.includes('residence');
+    const isProfessional = selectedDemographics.length === 4 && selectedDemographics.includes('education') && selectedDemographics.includes('employment') && selectedDemographics.includes('industry') && selectedDemographics.includes('sector');
+    const isSocial = selectedDemographics.length === 1 && selectedDemographics.includes('maritalStatus');
     
-    if (isRecommended) setActivePreset('recommended');
-    else if (isProfessional) setActivePreset('professional');
-    else if (isGeographic) setActivePreset('geographic');
-    else setActivePreset('custom');
+    if (isBasic) setSelectedInsightPreset('basic');
+    else if (isProfessional) setSelectedInsightPreset('professional');
+    else if (isSocial) setSelectedInsightPreset('social');
+    else setSelectedInsightPreset('custom');
   }, [selectedDemographics]);
 
-  const handlePresetChange = (preset: 'recommended' | 'professional' | 'geographic' | 'custom') => {
-    setActivePreset(preset);
-    if (preset === 'recommended') {
+  const handlePresetChange = (preset: 'basic' | 'professional' | 'social' | 'custom') => {
+    if (selectedInsightPreset === preset) {
+      setSelectedInsightPreset(null);
+      setSelectedDemographics([]);
+      return;
+    }
+    setSelectedInsightPreset(preset);
+    if (preset === 'basic') {
       setSelectedDemographics(['gender', 'ageGroup', 'residence']);
     } else if (preset === 'professional') {
-      setSelectedDemographics(['education', 'employment', 'industry']);
-    } else if (preset === 'geographic') {
-      setSelectedDemographics(['residence', 'nationality']);
+      setSelectedDemographics(['education', 'employment', 'industry', 'sector']);
+    } else if (preset === 'social') {
+      setSelectedDemographics(['maritalStatus']);
     } else if (preset === 'custom') {
       setSelectedDemographics([]);
     }
@@ -264,6 +275,23 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
       setResultsTiming('Immediately');
     }
   }, [duration]);
+
+  const durationLabel = DURATION_OPTIONS.find(opt => opt.value === duration)?.label || (duration === 'custom' ? 'Custom' : 'None');
+  const audienceLabel = visibility === 'Groups' && selectedGroups.length > 0 ? `${selectedGroups.length} Groups` : visibility;
+  const resultsLabel = resultsWho === 'OnlyMe' ? 'Only Me' : resultsWho;
+  const advancedItems = [
+    duration !== 'none' ? durationLabel : null,
+    pollChoiceType !== 'rating' && allowMultipleSelection ? 'Multi' : null,
+    pollChoiceType !== 'rating' && allowUserOptions ? 'User opts' : null,
+    !allowComments ? 'Comments off' : null,
+    forceAnonymous ? 'Anon' : null,
+  ].filter(Boolean) as string[];
+  const advancedSummary = advancedItems.length === 0
+    ? 'Default'
+    : advancedItems.length === 1
+      ? advancedItems[0]
+      : `${advancedItems.length} on`;
+
 
   const isVerified = (userProfile?.stats?.followers || 0) > 1000;
   const isOrganization = false;
@@ -414,10 +442,13 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
     if (!category) {
       newErrors.category = "Please select a category";
       isValid = false;
+      setIsCategorySheetOpen(true);
     }
     if (visibility === 'Groups' && selectedGroups.length === 0) {
       newErrors.visibility = "Please select at least one group.";
       isValid = false;
+      setIsAdvancedSheetOpen(true);
+      setAdvancedSheetView('visibility');
     }
     if (category === 'Other' && !otherCategoryText.trim()) {
       newErrors.otherCategoryText = true;
@@ -442,6 +473,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
       alert('Please log in to create a post');
       return;
     }
+    setHasAttemptedSubmit(true);
     if (!validate()) return;
 
     try {
@@ -490,595 +522,729 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
 
   return (
     <div className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-bottom duration-300">
+      {/* Simplified Clean Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white/95 backdrop-blur-md sticky top-0 z-40 safe-top shrink-0">
-        <button onClick={handleExit} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500"><X size={24} /></button>
-        <div className="flex flex-col items-center flex-1 mx-2">
-          <h1 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Poll Creation</h1>
-          <div className="h-1 w-16 rounded-full bg-blue-600" />
-        </div>
-        <button onClick={handleSubmit} className="text-white font-black text-[10px] px-5 py-2 rounded-full bg-blue-600 hover:bg-blue-700 transition-all uppercase tracking-widest shadow-lg shadow-blue-200">
+        <button onClick={handleExit} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">
+          <X size={24} />
+        </button>
+        <h1 className="text-sm font-black text-gray-800">New Poll</h1>
+        <button onClick={handleSubmit} className="text-white font-black text-[11px] px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 transition-all uppercase tracking-widest shadow-md active:scale-95 shadow-blue-200/50">
           Post
         </button>
       </div>
 
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto no-scrollbar bg-white">
-        <div className="max-w-md mx-auto p-5 pb-32">
-          <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
-              {errors.userProfile && (
-                <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2">
-                  <AlertCircle size={16} />
-                  <span>{errors.userProfile}</span>
+        <div className="max-w-md mx-auto p-5 pb-32 space-y-6">
+          {errors.userProfile && (
+            <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2">
+              <AlertCircle size={16} />
+              <span>{errors.userProfile}</span>
+            </div>
+          )}
+
+          {/* 1. Question Card (Sleek Inline Category) */}
+          <section className="bg-white rounded-2xl border border-gray-100 p-4 space-y-4 shadow-sm">
+            <div className="flex items-start gap-2">
+              <div className="flex-1 flex flex-col gap-2">
+                <div className="flex items-center justify-between px-1">
+                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Question <span className="text-red-500">*</span></span>
+                  <button
+                    type="button"
+                    onClick={() => { setActiveCropId('cover'); fileInputRef.current?.click(); }}
+                    className={`p-1.5 rounded-full transition-colors ${coverImage ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-50'}`}
+                  >
+                    <Camera size={20} />
+                  </button>
+                </div>
+                <RichMentionInput
+                  value={title}
+                  onChange={(val) => { setTitle(val); if (errors.title) setErrors(prev => ({ ...prev, title: false })) }}
+                  placeholder="Ask a question..."
+                  className={`text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-300 min-h-[44px] ${errors.title ? 'border-red-300 text-red-500' : 'text-gray-900'}`}
+                  minRows={1}
+                  autoFocus
+                />
+                {errors.title && <p className="text-[10px] font-bold text-red-500 px-1">{errors.title}</p>}
+              </div>
+            </div>
+
+            {/* Cover Media Preview inside Card */}
+            {coverImage && (
+              <div className="relative w-24 h-24 rounded-xl overflow-hidden border border-gray-100 shadow-sm group animate-in zoom-in-95 mt-2">
+                <img src={coverImage} className="w-full h-full object-cover" alt="Cover" />
+                <button onClick={() => setCoverImage(null)} className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={10} /></button>
+              </div>
+            )}
+
+            {/* Inline Category Chip */}
+            <div className="flex flex-col gap-1 border-t border-gray-50 pt-3 mt-2">
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setIsCategorySheetOpen(true)}
+                  className={`px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all flex items-center gap-1 active:scale-95 ${
+                    category
+                      ? 'bg-blue-50 border-blue-200 text-blue-700 font-semibold'
+                      : hasAttemptedSubmit && !category
+                      ? 'bg-red-50 border-red-200 text-red-650 font-bold'
+                      : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  <span>Category: {category || 'Select'}</span>
+                  <ChevronDown size={12} />
+                </button>
+              </div>
+              {errors.category && !category && (
+                <p className="text-[10px] font-semibold text-red-500 px-1 mt-1">Please select a category.</p>
+              )}
+            </div>
+          </section>
+
+          {/* 2. Poll Type Segmented Inline Selector */}
+          <div className="flex items-center justify-between py-1 px-1">
+            <span className="text-xs font-bold text-gray-700">Poll Type</span>
+            <div className="flex bg-gray-100 p-0.5 rounded-xl">
+              <button
+                type="button"
+                onClick={() => handleChoiceTypeChange('multiple')}
+                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${
+                  pollChoiceType === 'multiple'
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                Multiple Choice
+              </button>
+              <button
+                type="button"
+                onClick={() => handleChoiceTypeChange('rating')}
+                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${
+                  pollChoiceType === 'rating'
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                Rating Scale
+              </button>
+            </div>
+          </div>
+
+          {/* 3. Choices Setup Card */}
+          <section className="bg-white rounded-2xl border border-gray-100 p-4 space-y-4 shadow-sm">
+            {pollChoiceType === 'multiple' && (
+              <div className="space-y-2 px-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Options layout</span>
+                  <div className="flex gap-1.5">
+                    {[
+                      { id: 'vertical', icon: List },
+                      { id: 'horizontal', icon: GalleryHorizontalEnd }
+                    ].map((layout) => (
+                      <button
+                        key={layout.id}
+                        type="button"
+                        onClick={() => setImageLayout(layout.id as any)}
+                        className={`p-1.5 rounded-lg border transition-all ${imageLayout === layout.id
+                          ? 'bg-gray-900 text-white border-gray-900 shadow-sm'
+                          : 'bg-white text-gray-400 border-gray-200 hover:bg-gray-50'
+                          }`}
+                        title={layout.id}
+                      >
+                        <layout.icon size={16} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-[9px] text-gray-400 font-medium leading-tight">Applies only if images are added to choices.</p>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between px-1 border-b border-gray-50 pb-2">
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Choices <span className="text-red-500">*</span></span>
+              {errors.options && <span className="text-[10px] font-bold text-red-500">{errors.options}</span>}
+            </div>
+
+            <div className="space-y-3">
+              {options.map((option, idx) => (
+                <div key={option.id} className="flex items-center gap-3 animate-in fade-in slide-in-from-bottom-1 duration-200">
+                  <span className="text-xs font-black text-gray-300 w-4">{idx + 1}</span>
+                  <div className="flex-1 flex flex-col gap-2">
+                    <div className="flex items-center bg-gray-50 rounded-xl px-1 py-1 border border-transparent focus-within:border-blue-200 focus-within:bg-white transition-all shadow-sm">
+                      {pollChoiceType === 'multiple' && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveCropId(option.id);
+                            fileInputRef.current?.click();
+                          }}
+                          className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-dashed transition-all ${option.image ? 'border-blue-500' : 'border-gray-200 text-gray-400 hover:text-blue-500'}`}
+                        >
+                          {option.image ? (
+                            <img src={option.image} className="w-full h-full object-cover" alt="" />
+                          ) : (
+                            <Camera size={16} />
+                          )}
+                        </button>
+                      )}
+
+                      {pollChoiceType === 'rating' ? (
+                        <div className="flex-1 px-3 py-2 flex items-center gap-2">
+                          <div className="flex text-yellow-500">
+                            {Array.from({ length: option.ratingValue || 0 }).map((_, i) => (
+                              <Star key={i} size={14} fill="currentColor" />
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <input
+                          type="text"
+                          value={option.text}
+                          maxLength={80}
+                          autoFocus={focusedOptionId === option.id}
+                          onChange={(e) => handleOptionChange(option.id, e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleAddOption();
+                            }
+                          }}
+                          onBlur={() => {
+                            if (focusedOptionId === option.id) setFocusedOptionId(null);
+                          }}
+                          placeholder={`Option ${idx + 1}`}
+                          className="flex-1 px-3 py-2 bg-transparent text-sm font-semibold focus:outline-none text-gray-900"
+                        />
+                      )}
+
+                      {pollChoiceType !== 'rating' && (
+                        <span className="text-[9px] text-gray-450 mr-1.5 whitespace-nowrap">{option.text.length}/80</span>
+                      )}
+
+                      <div className="flex items-center gap-1 shrink-0 px-1">
+                        {pollChoiceType === 'multiple' && option.image && (
+                          <button
+                            type="button"
+                            onClick={() => setOptions(options.map(o => o.id === option.id ? { ...o, image: null } : o))}
+                            className="p-3 text-gray-300 hover:text-red-500 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"
+                          >
+                            <X size={14} strokeWidth={3} />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setSettingsOptionId(option.id)}
+                          className="p-3 text-gray-400 hover:text-gray-600 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"
+                        >
+                          <MoreHorizontal size={18} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {option.withFollowUp && (
+                      <div className="px-2 py-1.5 bg-blue-50 border border-blue-100 rounded-lg text-[10px] flex items-center gap-2">
+                        <MessageSquare size={10} className="text-blue-500" />
+                        <span className="font-bold text-blue-700 truncate">Follow-up: {option.followUpLabel || "Please explain..."}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+
+              {/* Interactive Placeholder / Auto-Add Option */}
+              {pollChoiceType === 'multiple' && (
+                <div className="flex items-center gap-3 opacity-50 hover:opacity-80 focus-within:opacity-100 transition-opacity duration-200">
+                  <span className="text-xs font-black text-gray-300 w-4">{options.length + 1}</span>
+                  <div className="flex-1 flex flex-col gap-2">
+                    <div className="flex items-center bg-gray-50/50 border border-dashed border-gray-200 rounded-xl px-1 py-1">
+                      <button disabled className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border border-dashed border-gray-200 text-gray-300">
+                        <Camera size={16} />
+                      </button>
+                      <input
+                        type="text"
+                        placeholder="Add option..."
+                        className="flex-1 px-3 py-2 bg-transparent text-sm font-semibold focus:outline-none text-gray-400 cursor-pointer"
+                        onFocus={handleAddOption}
+                      />
+                      <div className="flex items-center gap-1 shrink-0 px-1">
+                        <button disabled className="p-3 text-gray-300 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]">
+                          <MoreHorizontal size={18} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
+            </div>
+          </section>
 
-              {/* 1. Top Settings Row */}
-              <section className="grid grid-cols-3 gap-2.5 pb-4 border-b border-gray-50">
-                <div className={errors.visibility ? 'p-0.5 rounded-xl bg-red-50 ring-1 ring-red-100' : ''}>
-                  <label className="block text-[10px] font-black text-gray-400 tracking-tight mb-1.5 truncate">
-                    <Globe size={10} className="inline mr-1" /> Post visibility
-                  </label>
-                  <button
-                    onClick={() => setIsVisibilitySheetOpen(true)}
-                    className="w-full flex items-center justify-between bg-gray-50 border border-gray-200 text-gray-900 rounded-xl px-2 py-2.5 transition-colors text-left"
-                  >
-                    <span className="truncate text-[10px] font-bold">{visibility === 'Groups' && selectedGroups.length > 0 ? `${selectedGroups.length} Groups` : visibility}</span>
-                    <ChevronDown className="text-gray-400 shrink-0" size={12} />
-                  </button>
-                  {typeof errors.visibility === 'string' && (
-                    <p className="text-[8px] text-red-500 font-bold mt-1 px-1">{errors.visibility}</p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-black text-gray-400 tracking-tight mb-1.5 truncate">
-                    <Lock size={10} className="inline mr-1" /> Result Visibility
-                  </label>
-                  <button
-                    onClick={() => setIsResultVisibilitySheetOpen(true)}
-                    className="w-full flex items-center justify-between bg-gray-50 border border-gray-200 text-gray-900 rounded-xl px-2 py-2.5 transition-colors text-left"
-                  >
-                    <span className="truncate text-[10px] font-bold">{resultsWho === 'OnlyMe' ? 'Only Me' : resultsWho}</span>
-                    <ChevronDown className="text-gray-400 shrink-0" size={12} />
-                  </button>
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-black text-gray-400 tracking-tight mb-1.5 truncate">
-                    <Settings2 size={10} className="inline mr-1" /> Advance Setting
-                  </label>
-                  <button
-                    onClick={() => setIsAdvancedSheetOpen(true)}
-                    className="w-full flex items-center justify-between bg-blue-50 border border-blue-100 text-blue-600 px-2 py-2.5 rounded-xl transition-all hover:bg-blue-100 active:scale-[0.98]"
-                  >
-                    <span className="text-[10px] font-black truncate">Settings</span>
-                    <ChevronRight size={12} className="opacity-40 shrink-0" />
-                  </button>
-                </div>
-              </section>
-
-              {/* 1. Question Prompt & Media Section */}
-              <section className="space-y-2 pb-3 border-b border-gray-100">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between px-1">
-                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Question and details <span className="text-red-500">*</span></label>
-                    <button
-                      onClick={() => { setActiveCropId('cover'); fileInputRef.current?.click(); }}
-                      className={`p-1.5 rounded-full transition-colors ${coverImage ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-50'}`}
-                    >
-                      <Camera size={20} />
-                    </button>
-                  </div>
-                  <RichMentionInput
-                    value={title}
-                    onChange={(val) => { setTitle(val); if (errors.title) setErrors({ ...errors, title: false }) }}
-                    placeholder="Ask a question..."
-                    className={`text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] ${errors.title ? 'border-red-300' : ''}`}
-                    minRows={1}
-                    autoFocus
-                  />
-                  {errors.title && <p className="text-[10px] font-bold text-red-500 px-1">{errors.title}</p>}
-                </div>
-
-                {/* Cover Media Preview below prompt */}
-                {coverImage && (
-                  <div className="pt-2 animate-in zoom-in-95 duration-200">
-                    <div className="relative w-full rounded-2xl overflow-hidden group">
-                      <img src={coverImage} className="w-full h-auto block" alt="Cover" />
-                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
-                        <button onClick={() => { setActiveCropId('cover'); fileInputRef.current?.click(); }} className="p-2.5 bg-white text-gray-900 rounded-full hover:bg-gray-100 transition-colors">
-                          <Camera size={20} />
-                        </button>
-                        <button onClick={() => setCoverImage(null)} className="p-2.5 bg-red-600 text-white rounded-full hover:bg-red-700 transition-colors">
-                          <Trash2 size={20} />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </section>
-
-              {/* 2. Poll Configuration Section */}
-              <section className="space-y-4 pt-1 pb-5 border-b border-gray-100">
-                {/* Category Selection between Description and Choice Type */}
-                <div className="space-y-3">
-                  <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">
-                    Category <span className="text-red-500">*</span>
-                  </label>
-                  <button
-                    onClick={() => setIsCategorySheetOpen(true)}
-                    className={`inline-flex px-4 py-2 rounded-full text-xs font-bold border transition-all active:scale-95 ${category
-                      ? 'bg-blue-50 border-blue-200 text-blue-600'
-                      : 'bg-white border-gray-200 text-gray-400 hover:bg-gray-50'
-                      } ${errors.category ? 'border-red-300 bg-red-50' : ''}`}
-                  >
-                    {category || 'Select Poll Category'}
-                  </button>
-                  {category === 'Other' && (
-                    <input
-                      type="text"
-                      value={otherCategoryText}
-                      onChange={(e) => {
-                        setOtherCategoryText(e.target.value);
-                        if (errors.otherCategoryText) setErrors({ ...errors, otherCategoryText: false });
-                      }}
-                      placeholder="Write the category"
-                      className={`w-full bg-gray-50 border rounded-xl px-4 py-3 text-sm font-semibold focus:outline-none focus:bg-white focus:border-blue-500 transition-all ${errors.otherCategoryText ? 'border-red-300' : 'border-gray-100'}`}
-                    />
-                  )}
-                  {errors.category && <p className="text-[10px] font-bold text-red-500 px-1">Please select a category.</p>}
-                  {errors.otherCategoryText && <p className="text-[10px] font-bold text-red-500 px-1">Please write the category.</p>}
-                </div>
-
-                {/* Choice Type Selector */}
-                <div className="space-y-3">
-                  <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Choice Type</label>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleChoiceTypeChange('multiple')}
-                      className={`flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all ${pollChoiceType === 'multiple' ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}
-                    >
-                      Multiple Choice
-                    </button>
-                    <button
-                      onClick={() => handleChoiceTypeChange('rating')}
-                      className={`flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all ${pollChoiceType === 'rating' ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}
-                    >
-                      Rating Scale
-                    </button>
-                  </div>
-                </div>
-              </section>
-
-              {/* 3. Choices Setup Section */}
-              <section className="space-y-4 pt-1 pb-1">
-                {/* Layout and Choices Section */}
-                <div className="space-y-4">
-                  {pollChoiceType === 'multiple' && (
-                    <div className="space-y-2 px-1">
-                      <div className="flex items-center justify-between">
-                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Options layout</label>
-                        <div className="flex gap-1.5">
-                          {[
-                            { id: 'vertical', icon: List },
-                            { id: 'horizontal', icon: GalleryHorizontalEnd }
-                          ].map((layout) => (
-                            <button
-                              key={layout.id}
-                              onClick={() => setImageLayout(layout.id as any)}
-                              className={`p-1.5 rounded-lg border transition-all ${imageLayout === layout.id
-                                ? 'bg-gray-900 text-white border-gray-900 shadow-sm'
-                                : 'bg-white text-gray-400 border-gray-200 hover:bg-gray-50'
-                                }`}
-                              title={layout.id}
-                            >
-                              <layout.icon size={16} />
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <p className="text-[9px] text-gray-400 font-bold uppercase tracking-wide italic">This setting applies only if images are added to options.</p>
-                    </div>
-                  )}
-
-                  <div className="flex items-center justify-between px-1">
-                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Choices <span className="text-red-500">*</span></label>
-                    {errors.options && <span className="text-[10px] font-bold text-red-500">{errors.options}</span>}
-                  </div>
-                  
-                  <div className="space-y-4">
-                    {options.map((option, idx) => (
-                      <div key={option.id} className="flex items-center gap-3 animate-in fade-in slide-in-from-bottom-1 duration-200">
-                        <span className="text-xs font-black text-gray-300 w-4">{idx + 1}</span>
-                        <div className="flex-1 flex flex-col gap-2">
-                          <div className="flex items-center bg-gray-50 rounded-xl px-1 py-1 border border-transparent focus-within:border-blue-200 focus-within:bg-white transition-all shadow-sm">
-                            {pollChoiceType === 'multiple' && (
-                              <button
-                                onClick={() => {
-                                  setActiveCropId(option.id);
-                                  fileInputRef.current?.click();
-                                }}
-                                className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-dashed transition-all ${option.image ? 'border-blue-500' : 'border-gray-200 text-gray-400 hover:text-blue-500'
-                                  }`}
-                              >
-                                {option.image ? (
-                                  <img src={option.image} className="w-full h-full object-cover" alt="" />
-                                ) : (
-                                  <Camera size={16} />
-                                )}
-                              </button>
-                            )}
-
-                            {pollChoiceType === 'rating' ? (
-                              <div className="flex-1 px-3 py-2 flex items-center gap-2">
-                                <div className="flex text-yellow-500">
-                                  {Array.from({ length: option.ratingValue || 0 }).map((_, i) => (
-                                    <Star key={i} size={14} fill="currentColor" />
-                                  ))}
-                                </div>
-                              </div>
-                            ) : (
-                              <input
-                                type="text"
-                                value={option.text}
-                                maxLength={80}
-                                autoFocus={focusedOptionId === option.id}
-                                onChange={(e) => handleOptionChange(option.id, e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') {
-                                    e.preventDefault();
-                                    handleAddOption();
-                                  }
-                                }}
-                                onBlur={() => {
-                                  if (focusedOptionId === option.id) setFocusedOptionId(null);
-                                }}
-                                placeholder={`Option ${idx + 1}`}
-                                className="flex-1 px-3 py-2 bg-transparent text-sm font-semibold focus:outline-none text-gray-900"
-                              />
-                            )}
-
-                            {pollChoiceType !== 'rating' && (
-                              <span className="text-[9px] text-gray-400 mr-1.5 whitespace-nowrap">{option.text.length}/80</span>
-                            )}
-
-                            <div className="flex items-center gap-1 shrink-0 px-1">
-                              {pollChoiceType === 'multiple' && option.image && (
-                                <button
-                                  onClick={() => setOptions(options.map(o => o.id === option.id ? { ...o, image: null } : o))}
-                                  className="p-3 text-gray-300 hover:text-red-500 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"
-                                >
-                                  <X size={14} strokeWidth={3} />
-                                </button>
-                              )}
-                              <button
-                                onClick={() => setSettingsOptionId(option.id)}
-                                className="p-3 text-gray-400 hover:text-gray-600 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"
-                              >
-                                <MoreHorizontal size={18} />
-                              </button>
-                            </div>
-                          </div>
-
-                          {option.withFollowUp && (
-                            <div className="px-2 py-1.5 bg-blue-50 border border-blue-100 rounded-lg text-[10px] flex items-center gap-2">
-                              <MessageSquare size={10} className="text-blue-500" />
-                              <span className="font-bold text-blue-700 truncate">Follow-up: {option.followUpLabel || "Please explain..."}</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-
-                    {/* Interactive Placeholder / Auto-Add Option */}
-                    {pollChoiceType === 'multiple' && (
-                      <div className="flex items-center gap-3 opacity-50 hover:opacity-80 focus-within:opacity-100 transition-opacity duration-200">
-                        <span className="text-xs font-black text-gray-300 w-4">{options.length + 1}</span>
-                        <div className="flex-1 flex flex-col gap-2">
-                          <div className="flex items-center bg-gray-50/50 border border-dashed border-gray-200 rounded-xl px-1 py-1">
-                            <button
-                              disabled
-                              className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border border-dashed border-gray-200 text-gray-300"
-                            >
-                              <Camera size={16} />
-                            </button>
-                            <input
-                              type="text"
-                              placeholder="Add option..."
-                              className="flex-1 px-3 py-2 bg-transparent text-sm font-semibold focus:outline-none text-gray-400 cursor-pointer"
-                              onFocus={handleAddOption}
-                            />
-                            <div className="flex items-center gap-1 shrink-0 px-1">
-                              <button disabled className="p-3 text-gray-300 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]">
-                                <MoreHorizontal size={18} />
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </section>
-
-              <section className="space-y-4 pb-4 border-b border-gray-50 bg-gray-50/20 p-4 rounded-3xl border border-gray-100">
-                <div className="flex items-center justify-between px-1">
-                  <div className="flex items-center gap-1.5">
-                    <BarChart3 size={14} className="text-blue-600" />
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                      Unlock Deeper Analytics
-                    </label>
-                  </div>
-                </div>
-                
-                <p className="text-[11px] text-gray-600 leading-normal px-1">
-                  Choose optional demographics to help understand voter breakdowns. Participants will be asked optionally to improve analysis.
-                </p>
-
-                {/* Preset Packages */}
-                <div className="space-y-2 px-1">
-                  <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">
-                    Preset Packages
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {[
-                      { id: 'recommended', label: 'Recommended' },
-                      { id: 'professional', label: 'Professional' },
-                      { id: 'geographic', label: 'Geographic' },
-                      { id: 'custom', label: 'Custom' }
-                    ].map((preset) => {
-                      const isActive = activePreset === preset.id;
-                      return (
-                        <button
-                          key={preset.id}
-                          type="button"
-                          onClick={() => handlePresetChange(preset.id as any)}
-                          className={`px-3 py-1.5 rounded-full text-[10px] font-bold border transition-all duration-200 active:scale-95 ${
-                            isActive 
-                              ? 'bg-blue-600 text-white border-blue-600 shadow-sm' 
-                              : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
-                          }`}
-                        >
-                          {preset.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Dynamic Value/Cost Indicator */}
-                <div className="p-3 bg-white rounded-2xl border border-gray-100 space-y-1 mx-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[10px] font-bold text-gray-700">
-                      Provides {selectedDemographics.length} analytical comparisons
-                    </span>
-                    <span className="text-[10px] font-extrabold text-blue-600 whitespace-nowrap">
-                      +{selectedDemographics.length} questions for participant
-                  </span>
-                  </div>
-                  <p className="text-[8px] text-gray-400 font-medium leading-normal">
-                    * Selected questions will be prompted as optional questions during participation.
-                  </p>
-                </div>
-
-                {/* Collapsible Pills */}
-                <div className="space-y-2 px-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">
-                      Selected Attributes
-                    </span>
-                    {activePreset !== 'custom' && (
-                      <span className="text-[8px] text-gray-400 font-medium">
-                        (Read-only, select Custom to edit)
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {DEMOGRAPHIC_OPTIONS.map((opt) => {
-                      const isSelected = selectedDemographics.includes(opt.id);
-                      const isCustomMode = activePreset === 'custom';
-                      return (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          disabled={!isCustomMode}
-                          onClick={() => handleDemographicToggle(opt.id)}
-                          className={`px-3 py-1.5 rounded-full text-[9px] font-bold border transition-all flex items-center gap-1 ${
-                            isSelected
-                              ? 'bg-blue-50 border-blue-200 text-blue-600 font-semibold'
-                              : 'bg-white border-gray-100 text-gray-400'
-                          } ${!isCustomMode ? 'cursor-default opacity-85' : 'active:scale-95'}`}
-                        >
-                          {isSelected && <Check size={10} strokeWidth={4} />}
-                          <span>{opt.label}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </section>
-
-              <input
-                type="file"
-                ref={fileInputRef}
-                className="hidden"
-                accept="image/*"
-                onChange={handleImageUpload}
-              />
-          </div>
-        </div>
-      </div>
-
-      {/* Visibility Bottom Sheet */}
-      <BottomSheet
-        isOpen={isVisibilitySheetOpen}
-        onClose={() => setIsVisibilitySheetOpen(false)}
-        title="Post visibility"
-      >
-        <div className="space-y-2 py-2">
-          {visibilityOptions.map((option) => {
-            const Icon = option.icon;
-            const isSelected = visibility === option.id;
-            return (
-              <button
-                key={option.id}
-                onClick={() => {
-                  if (option.allowed) {
-                    setVisibility(option.id as VisibilityType);
-                    if (option.id !== 'Groups') setIsVisibilitySheetOpen(false);
-                  }
-                }}
-                className={`w-full flex items-center gap-4 p-4 rounded-2xl border transition-all text-left group ${!option.allowed ? 'opacity-40 cursor-not-allowed grayscale' : 'hover:bg-gray-50'
-                  } ${isSelected ? 'border-blue-500 bg-blue-50/50 ring-1 ring-blue-500/20' : 'border-transparent'}`}
-              >
-                <div className={`p-2.5 rounded-xl transition-colors ${isSelected ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-100 text-gray-500 group-hover:bg-gray-200'}`}>
-                  <Icon size={20} />
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <h4 className={`font-bold text-sm ${isSelected ? 'text-blue-700' : 'text-gray-900'}`}>{option.label}</h4>
-                    {option.premium && (
-                      <span className="text-[8px] font-black bg-gradient-to-r from-amber-400 to-orange-500 text-white px-1.5 py-0.5 rounded-md uppercase tracking-wider">PRO</span>
-                    )}
-                  </div>
-                  <p className="text-[10px] text-gray-500 leading-tight mt-0.5">{option.desc}</p>
-                </div>
-                {isSelected && (
-                  <div className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-sm animate-in zoom-in">
-                    <Check size={14} strokeWidth={3} />
-                  </div>
-                )}
-              </button>
-            );
-          })}
-
-          {visibility === 'Groups' && (
-            <div className="mt-4 p-4 bg-gray-50 rounded-2xl animate-in slide-in-from-top-2">
-              <div className="flex items-center justify-between mb-3 px-1">
-                <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Select target groups</h5>
-                <span className="text-[9px] font-bold text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded uppercase">Postable</span>
+          {/* 4. Advanced Settings Summary Card */}
+          <button
+            type="button"
+            onClick={() => {
+              setAdvancedSheetView('main');
+              setIsAdvancedSheetOpen(true);
+            }}
+            className="w-full flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-200 cursor-pointer active:scale-[0.98] transition-all hover:bg-gray-100/70"
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-white rounded-xl text-gray-500 border border-gray-100 shadow-sm">
+                <Settings2 size={18} />
               </div>
+              <div className="text-left">
+                <h4 className="text-xs font-bold text-gray-800">Advanced Settings</h4>
+                <p className="text-[10px] text-gray-400 mt-0.5 leading-tight">Visibility, results, duration, anonymity & more</p>
+              </div>
+            </div>
+            <ChevronRight size={16} className="text-gray-400" />
+          </button>
 
-              {postableGroups.length > 0 ? (
-                <div className="space-y-2 max-h-[250px] overflow-y-auto no-scrollbar">
-                  {postableGroups.map(group => {
-                    const isGroupSelected = selectedGroups.includes(group.id);
+          {/* 5. Optional Demographics Insights (Audience Insights Selector) */}
+          <section className="space-y-3 pt-4 border-t border-gray-100 mt-2">
+            <div className="flex items-center justify-between px-1">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold text-gray-700">Audience Insights</span>
+                <button
+                  type="button"
+                  onClick={() => setShowInsightInfo(!showInsightInfo)}
+                  className="text-gray-400 hover:text-blue-500 transition-colors"
+                >
+                  <Info size={14} />
+                </button>
+              </div>
+            </div>
+
+            {showInsightInfo && (
+              <div className="p-3 bg-blue-50 border border-blue-100 text-blue-800 text-[10px] font-semibold rounded-xl leading-relaxed animate-in fade-in slide-in-from-top-1 duration-200">
+                Adds demographic participant questions to Unlocks demographic breakdowns
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              {(['basic', 'professional', 'social', 'custom'] as const).map((preset) => {
+                const isActive = selectedInsightPreset === preset;
+                const labels: Record<string, string> = {
+                  basic: 'Basic',
+                  professional: 'Professional',
+                  social: 'Social',
+                  custom: 'Custom'
+                };
+                return (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => handlePresetChange(preset)}
+                    className={`px-3 py-1.5 rounded-xl text-[10px] font-bold border uppercase tracking-wider transition-all duration-200 active:scale-95 ${
+                      isActive
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                        : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    {labels[preset]}
+                  </button>
+                );
+              })}
+            </div>
+
+            {selectedInsightPreset && selectedInsightPreset !== 'custom' && (
+              <div className="p-3 bg-white rounded-xl border border-gray-100 space-y-1 mx-0.5 animate-in fade-in duration-200">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-bold text-gray-700">
+                    Provides {selectedDemographics.length} analytical comparisons
+                  </span>
+                  <span className="text-[10px] font-extrabold text-blue-600 whitespace-nowrap">
+                    +{selectedDemographics.length} questions for participant
+                  </span>
+                </div>
+                <p className="text-[8px] text-gray-400 font-medium leading-normal">
+                  * Selected questions will be prompted as optional questions during participation.
+                </p>
+              </div>
+            )}
+
+            {selectedInsightPreset === 'custom' && (
+              <div className="space-y-2 p-3 bg-gray-50/30 border border-gray-100 rounded-2xl animate-in fade-in duration-200">
+                <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">
+                  Select Custom Attributes
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {DEMOGRAPHIC_OPTIONS.map((opt) => {
+                    const isSelected = selectedDemographics.includes(opt.id);
                     return (
                       <button
-                        key={group.id}
-                        onClick={() => handleGroupToggle(group.id)}
-                        className={`w-full flex items-center gap-3 p-2 rounded-xl transition-all border ${isGroupSelected
-                          ? 'bg-white border-blue-200 shadow-sm ring-1 ring-blue-500/5'
-                          : 'bg-transparent border-transparent hover:bg-white/50'
-                          }`}
+                        key={opt.id}
+                        type="button"
+                        onClick={() => handleDemographicToggle(opt.id)}
+                        className={`px-3 py-1.5 rounded-full text-[9px] font-bold border transition-all flex items-center gap-1 active:scale-95 ${
+                          isSelected
+                            ? 'bg-blue-50 border-blue-200 text-blue-600 font-semibold'
+                            : 'bg-white border-gray-200 text-gray-400'
+                        }`}
                       >
-                        <img src={group.image} className="w-10 h-10 rounded-lg object-cover border border-gray-200 shadow-xs" alt="" />
-                        <div className="flex-1 text-left min-w-0">
-                          <p className="text-xs font-bold text-gray-800 truncate">{group.name}</p>
-                          <p className="text-[10px] text-gray-400">{(group.memberCount || 0).toLocaleString()} members</p>
-                        </div>
-                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${isGroupSelected ? 'bg-blue-600 border-blue-600' : 'border-gray-200'
-                          }`}>
-                          {isGroupSelected && <Check size={12} className="text-white" strokeWidth={3} />}
-                        </div>
+                        {isSelected && <Check size={10} strokeWidth={4} />}
+                        <span>{opt.label}</span>
                       </button>
                     );
                   })}
+                </div>
+              </div>
+            )}
+          </section>
 
+          <input
+            type="file"
+            ref={fileInputRef}
+            className="hidden"
+            accept="image/*"
+            onChange={handleImageUpload}
+          />
+        </div>
+      </div>
+
+      {/* Advanced Settings Bottom Sheet with Sub-navigation Routing */}
+      <BottomSheet
+        isOpen={isAdvancedSheetOpen}
+        onClose={() => {
+          if (visibility === 'Groups' && selectedGroups.length === 0) {
+            setVisibility('Public');
+          }
+          setAdvancedSheetView('main');
+          setIsAdvancedSheetOpen(false);
+        }}
+        title={
+          advancedSheetView === 'visibility'
+            ? 'Post Visibility'
+            : advancedSheetView === 'results'
+            ? 'Result Visibility'
+            : 'Advanced Settings'
+        }
+      >
+        <div className="space-y-5 py-2 px-2 animate-in fade-in duration-200">
+          {advancedSheetView === 'main' && (
+            <div className="space-y-5">
+              <p className="text-[11px] text-gray-550 leading-relaxed px-1">
+                Control who can see, vote, and view results.
+              </p>
+
+              {/* Sub-routing rows */}
+              <div className="space-y-1.5">
+                {/* Visibility Sub-trigger */}
+                <button
+                  type="button"
+                  onClick={() => setAdvancedSheetView('visibility')}
+                  className="w-full flex items-center justify-between p-3.5 bg-gray-50 hover:bg-gray-100/70 rounded-xl transition-all border border-gray-100"
+                >
+                  <span className="text-xs font-bold text-gray-800">Post Visibility</span>
+                  <div className="flex items-center gap-1 text-xs text-blue-600 font-black">
+                    <span>{audienceLabel}</span>
+                    <ChevronRight size={14} />
+                  </div>
+                </button>
+
+                {/* Results Visibility Sub-trigger */}
+                <button
+                  type="button"
+                  onClick={() => setAdvancedSheetView('results')}
+                  className="w-full flex items-center justify-between p-3.5 bg-gray-50 hover:bg-gray-100/70 rounded-xl transition-all border border-gray-100"
+                >
+                  <span className="text-xs font-bold text-gray-800">Result Visibility</span>
+                  <div className="flex items-center gap-1 text-xs text-blue-600 font-black">
+                    <span>{resultsLabel}</span>
+                    <ChevronRight size={14} />
+                  </div>
+                </button>
+              </div>
+
+              {/* Duration section inline inside settings sheet */}
+              <div className="space-y-3 pb-4 border-b border-gray-100 pt-1">
+                <label className="flex items-center gap-2 text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                  <Calendar size={12} /> Poll Duration
+                </label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {DURATION_OPTIONS.map(opt => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setDuration(opt.value)}
+                      className={`py-2 rounded-xl text-xs font-bold border transition-all ${
+                        duration === opt.value
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-sm shadow-blue-100'
+                          : 'bg-gray-50 text-gray-500 border-transparent hover:bg-gray-100'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
                   <button
-                    onClick={() => {
-                      setIsVisibilitySheetOpen(false);
-                      setErrors(prev => ({ ...prev, visibility: false }));
-                    }}
-                    className="w-full mt-4 py-2.5 bg-blue-600 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-200 active:scale-95 transition-all"
+                    type="button"
+                    onClick={() => setDuration('custom')}
+                    className={`py-2 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1 ${
+                      duration === 'custom'
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm shadow-blue-100'
+                        : 'bg-gray-50 text-gray-500 border-transparent hover:bg-gray-100'
+                    }`}
                   >
-                    Confirm {selectedGroups.length > 0 ? `(${selectedGroups.length})` : ''}
+                    <Plus size={12} /> Custom
                   </button>
                 </div>
-              ) : (
-                <div className="py-6 text-center">
-                  <Users size={32} className="mx-auto text-gray-300 mb-2 opacity-30" />
-                  <p className="text-xs text-gray-500 font-medium leading-relaxed px-4">
-                    You don't have permission to post in any groups.
-                  </p>
+                {duration === 'custom' && (
+                  <div className="mt-2 animate-in fade-in slide-in-from-top-1">
+                    <input
+                      type="datetime-local"
+                      value={customEndDate}
+                      onChange={(e) => setCustomEndDate(e.target.value)}
+                      className="w-full bg-blue-50/50 border border-blue-100 rounded-xl px-4 py-2.5 text-xs font-bold focus:outline-none focus:bg-white focus:border-blue-500 transition-all text-blue-900"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Toggles List */}
+              <div className="space-y-4 pt-1">
+                {pollChoiceType !== 'rating' && (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <div className="flex flex-col text-left">
+                        <span className="text-xs font-bold text-gray-800">Multiple Selections</span>
+                        <span className="text-[10px] text-gray-400">Voters can pick more than one choice</span>
+                      </div>
+                      <button
+                        onClick={() => setAllowMultipleSelection(!allowMultipleSelection)}
+                        className={`w-10 h-5 rounded-full relative transition-colors ${allowMultipleSelection ? 'bg-blue-600' : 'bg-gray-250'}`}
+                      >
+                        <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowMultipleSelection ? 'left-6' : 'left-1'}`} />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="flex flex-col text-left">
+                        <span className="text-xs font-bold text-gray-800">Voter-Added Options</span>
+                        <span className="text-[10px] text-gray-400">Allow users to suggest their own answers</span>
+                      </div>
+                      <button
+                        onClick={() => setAllowUserOptions(!allowUserOptions)}
+                        className={`w-10 h-5 rounded-full relative transition-colors ${allowUserOptions ? 'bg-blue-600' : 'bg-gray-250'}`}
+                      >
+                        <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowUserOptions ? 'left-6' : 'left-1'}`} />
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col text-left">
+                    <span className="text-xs font-bold text-gray-800">Allow comments</span>
+                    <span className="text-[10px] text-gray-400">Enable user comments on the post</span>
+                  </div>
+                  <button
+                    onClick={() => setAllowComments(!allowComments)}
+                    className={`w-10 h-5 rounded-full relative transition-colors ${allowComments ? 'bg-blue-600' : 'bg-gray-250'}`}
+                  >
+                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowComments ? 'left-6' : 'left-1'}`} />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col text-left">
+                    <span className="text-xs font-bold text-gray-800">Anonymous voting</span>
+                    <span className="text-[10px] text-gray-400">Participants can hide their identity</span>
+                  </div>
+                  <button
+                    onClick={() => setForceAnonymous(!forceAnonymous)}
+                    className={`w-10 h-5 rounded-full relative transition-colors ${forceAnonymous ? 'bg-blue-600' : 'bg-gray-250'}`}
+                  >
+                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${forceAnonymous ? 'left-6' : 'left-1'}`} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="pt-4">
+                <button
+                  onClick={() => setIsAdvancedSheetOpen(false)}
+                  className="w-full bg-gray-900 text-white py-3.5 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg active:scale-95 transition-all"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Visibility View Sub-screen */}
+          {advancedSheetView === 'visibility' && (
+            <div className="space-y-4">
+              <button
+                type="button"
+                onClick={() => {
+                  if (visibility === 'Groups' && selectedGroups.length === 0) {
+                    setErrors(prev => ({ ...prev, visibility: "Please select at least one group." }));
+                    return;
+                  }
+                  setErrors(prev => ({ ...prev, visibility: false }));
+                  setAdvancedSheetView('main');
+                }}
+                className="flex items-center gap-1.5 text-xs text-blue-600 font-bold hover:opacity-80 transition-opacity pb-2"
+              >
+                <span>&larr; Back to Advanced Settings</span>
+              </button>
+
+              <div className="space-y-2">
+                {visibilityOptions.map((option) => {
+                  const Icon = option.icon;
+                  const isSelected = visibility === option.id;
+                  return (
+                    <button
+                      key={option.id}
+                      onClick={() => {
+                        if (option.allowed) {
+                          setVisibility(option.id as VisibilityType);
+                          if (option.id !== 'Groups') {
+                            setErrors(prev => ({ ...prev, visibility: false }));
+                          }
+                        }
+                      }}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl border transition-all text-left group ${!option.allowed ? 'opacity-40 cursor-not-allowed grayscale' : 'hover:bg-gray-50'
+                        } ${isSelected ? 'border-blue-500 bg-blue-50/50 ring-1 ring-blue-500/20' : 'border-transparent'}`}
+                    >
+                      <div className={`p-2.5 rounded-xl transition-colors ${isSelected ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-100 text-gray-500 group-hover:bg-gray-200'}`}>
+                        <Icon size={20} />
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <h4 className={`font-bold text-sm ${isSelected ? 'text-blue-700' : 'text-gray-900'}`}>{option.label}</h4>
+                          {option.premium && (
+                            <span className="text-[8px] font-black bg-gradient-to-r from-amber-400 to-orange-500 text-white px-1.5 py-0.5 rounded-md uppercase tracking-wider">PRO</span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-gray-500 leading-tight mt-0.5">{option.desc}</p>
+                      </div>
+                      {isSelected && (
+                        <div className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-sm">
+                          <Check size={14} strokeWidth={3} />
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {visibility === 'Groups' && (
+                <div className="mt-4 p-4 bg-gray-50 rounded-2xl animate-in slide-in-from-top-2 border border-gray-100">
+                  <div className="flex items-center justify-between mb-3 px-1">
+                    <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Select target groups</h5>
+                    <span className="text-[9px] font-bold text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded uppercase">Postable</span>
+                  </div>
+
+                  {postableGroups.length > 0 ? (
+                    <div className="space-y-2 max-h-[250px] overflow-y-auto no-scrollbar">
+                      {postableGroups.map(group => {
+                        const isGroupSelected = selectedGroups.includes(group.id);
+                        return (
+                          <button
+                            key={group.id}
+                            onClick={() => {
+                              handleGroupToggle(group.id);
+                              setErrors(prev => ({ ...prev, visibility: false }));
+                            }}
+                            className={`w-full flex items-center gap-3 p-2 rounded-xl transition-all border ${isGroupSelected
+                              ? 'bg-white border-blue-200 shadow-sm ring-1 ring-blue-500/5'
+                              : 'bg-transparent border-transparent hover:bg-white/50'
+                              }`}
+                          >
+                            <img src={group.image} className="w-10 h-10 rounded-lg object-cover border border-gray-200 shadow-xs" alt="" />
+                            <div className="flex-1 text-left min-w-0">
+                              <p className="text-xs font-bold text-gray-800 truncate">{group.name}</p>
+                              <p className="text-[10px] text-gray-400">{(group.memberCount || 0).toLocaleString()} members</p>
+                            </div>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${isGroupSelected ? 'bg-blue-600 border-blue-600' : 'border-gray-200'
+                              }`}>
+                              {isGroupSelected && <Check size={12} className="text-white" strokeWidth={3} />}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="py-6 text-center">
+                      <Users size={32} className="mx-auto text-gray-300 mb-2 opacity-30" />
+                      <p className="text-xs text-gray-500 font-medium leading-relaxed px-4">
+                        You don't have permission to post in any groups.
+                      </p>
+                    </div>
+                  )}
+
+                  {errors.visibility && selectedGroups.length === 0 && (
+                    <div className="p-3 bg-red-50 border border-red-155 rounded-xl text-[10px] text-red-650 font-bold flex items-center gap-1.5 mt-2 animate-in fade-in">
+                      <AlertCircle size={14} className="shrink-0" />
+                      <span>{errors.visibility}</span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           )}
-        </div>
-      </BottomSheet>
 
-      {/* Result Visibility Bottom Sheet */}
-      <BottomSheet
-        isOpen={isResultVisibilitySheetOpen}
-        onClose={() => setIsResultVisibilitySheetOpen(false)}
-        title="Result Visibility"
-        customLayout={true}
-      >
-        <div className="flex flex-col h-full bg-white">
-          <div className="flex-1 overflow-y-auto px-5 py-4 no-scrollbar space-y-8">
-            {/* Section 1: Who Can See */}
+          {/* Results View Sub-screen */}
+          {advancedSheetView === 'results' && (
             <div className="space-y-4">
-              <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Section 1: Who Can See the Results</h3>
+              <button
+                type="button"
+                onClick={() => setAdvancedSheetView('main')}
+                className="flex items-center gap-1.5 text-xs text-blue-600 font-bold hover:opacity-80 transition-opacity pb-2"
+              >
+                <span>&larr; Back to Advanced Settings</span>
+              </button>
+
               <div className="space-y-2">
                 {[
-                  { id: 'Public', label: 'Public' },
-                  { id: 'Followers', label: 'Followers' },
-                  { id: 'Participants', label: 'Participants Only' },
-                  { id: 'OnlyMe', label: 'Only Me' }
+                  { id: 'Public', label: 'Public', desc: 'Results are visible to everyone.' },
+                  { id: 'Participants', label: 'Participants Only', desc: 'Only participants can see results after voting.' },
+                  { id: 'OnlyMe', label: 'Private (Only Me)', desc: 'Only you can see the results.' }
                 ].map((opt) => (
                   <button
                     key={opt.id}
                     onClick={() => setResultsWho(opt.id as any)}
-                    className="w-full flex items-center justify-between p-4 rounded-2xl border transition-all"
+                    className="w-full flex items-center justify-between p-4 rounded-2xl border transition-all text-left"
                     style={{ borderColor: resultsWho === opt.id ? '#3b82f6' : '#f3f4f6', backgroundColor: resultsWho === opt.id ? '#eff6ff' : 'white' }}
                   >
-                    <span className={`text-sm font-bold ${resultsWho === opt.id ? 'text-blue-700' : 'text-gray-700'}`}>{opt.label}</span>
-                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${resultsWho === opt.id ? 'border-blue-600 bg-blue-600' : 'border-gray-200'}`}>
+                    <div>
+                      <span className={`text-sm font-bold block ${resultsWho === opt.id ? 'text-blue-700' : 'text-gray-700'}`}>{opt.label}</span>
+                      <span className="text-[10px] text-gray-505 leading-tight mt-0.5 block">{opt.desc}</span>
+                    </div>
+                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${resultsWho === opt.id ? 'border-blue-600 bg-blue-600' : 'border-gray-200'}`}>
                       {resultsWho === opt.id && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
                     </div>
                   </button>
                 ))}
               </div>
-            </div>
 
-            <div className="h-px bg-gray-100" />
-
-            {/* Section 3: When Results Are Visible */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between px-1">
-                <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Section 3: When Results Are Visible</h3>
-                {!canShowResultsAfterEnd && <span className="text-[9px] font-bold text-gray-400 flex items-center gap-1"><Info size={10} /> Set duration to enable timing</span>}
-              </div>
-              <div className="space-y-2">
-                {[
-                  { id: 'AnyTime', label: 'Any time', enabled: true },
-                  { id: 'Immediately', label: 'Immediately after participation', enabled: true },
-                  { id: 'AfterEnd', label: 'After post ends', enabled: canShowResultsAfterEnd }
-                ].map((opt) => (
-                  <button
-                    key={opt.id}
-                    disabled={!opt.enabled}
-                    onClick={() => setResultsTiming(opt.id as any)}
-                    className={`w-full flex items-center justify-between p-4 rounded-2xl border transition-all ${!opt.enabled ? 'opacity-40 cursor-not-allowed bg-gray-50 grayscale' : ''}`}
-                    style={{ borderColor: resultsTiming === opt.id ? '#3b82f6' : '#f3f4f6', backgroundColor: resultsTiming === opt.id ? '#eff6ff' : 'white' }}
-                  >
-                    <span className={`text-sm font-bold ${resultsTiming === opt.id ? 'text-blue-700' : 'text-gray-700'}`}>{opt.label}</span>
-                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${resultsTiming === opt.id ? 'border-blue-600 bg-blue-600' : 'border-gray-200'}`}>
-                      {resultsTiming === opt.id && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
-                    </div>
-                  </button>
-                ))}
+              {/* Result timing selector sub-section */}
+              <div className="space-y-3 pt-2">
+                <div className="flex items-center justify-between px-1">
+                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">When Results Are Visible</span>
+                  {!canShowResultsAfterEnd && <span className="text-[9px] font-bold text-gray-450 flex items-center gap-1"><Info size={10} /> Set duration to enable timing</span>}
+                </div>
+                <div className="space-y-2">
+                  {[
+                    { id: 'AnyTime', label: 'Any time', enabled: true },
+                    { id: 'Immediately', label: 'Immediately after participation', enabled: true },
+                    { id: 'AfterEnd', label: 'After post ends', enabled: canShowResultsAfterEnd }
+                  ].map((opt) => (
+                    <button
+                      key={opt.id}
+                      disabled={!opt.enabled}
+                      onClick={() => setResultsTiming(opt.id as any)}
+                      className={`w-full flex items-center justify-between p-4 rounded-2xl border transition-all text-left ${!opt.enabled ? 'opacity-40 cursor-not-allowed bg-gray-50 grayscale' : ''}`}
+                      style={{ borderColor: resultsTiming === opt.id ? '#3b82f6' : '#f3f4f6', backgroundColor: resultsTiming === opt.id ? '#eff6ff' : 'white' }}
+                    >
+                      <span className={`text-sm font-bold ${resultsTiming === opt.id ? 'text-blue-700' : 'text-gray-700'}`}>{opt.label}</span>
+                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${resultsTiming === opt.id ? 'border-blue-600 bg-blue-600' : 'border-gray-200'}`}>
+                        {resultsTiming === opt.id && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
+                      </div>
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
-          <div className="p-5 border-t border-gray-50 bg-gray-50/50 pb-safe">
-            <button
-              onClick={() => setIsResultVisibilitySheetOpen(false)}
-              className="w-full py-4 bg-gray-900 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl"
-            >
-              Done
-            </button>
-          </div>
+          )}
         </div>
       </BottomSheet>
 
@@ -1088,7 +1254,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
         onClose={() => setIsCategorySheetOpen(false)}
         title="Select Category"
       >
-        <div className="flex flex-wrap gap-2 py-2">
+        <div className="flex flex-wrap gap-2 py-2 animate-in fade-in duration-200">
           {POLL_CATEGORIES.map(cat => (
             <button
               key={cat}
@@ -1099,121 +1265,12 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               }}
               className={`px-4 py-2 rounded-full text-xs font-bold border transition-all active:scale-95 ${category === cat
                 ? 'bg-blue-600 text-white border-blue-600 shadow-md'
-                : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                : 'bg-white text-gray-650 border-gray-200 hover:bg-gray-50'
                 }`}
             >
               {cat}
             </button>
           ))}
-        </div>
-      </BottomSheet>
-
-      <BottomSheet
-        isOpen={isAdvancedSheetOpen}
-        onClose={() => setIsAdvancedSheetOpen(false)}
-        title="Advanced Settings"
-      >
-        <div className="space-y-6 py-2 px-2">
-          {/* Poll Duration Section */}
-          <div className="space-y-3 pb-4 border-b border-gray-50">
-            <label className="flex items-center gap-2 text-[10px] font-black text-gray-400 uppercase tracking-widest">
-              <Calendar size={12} /> Poll Duration
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {DURATION_OPTIONS.map(opt => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => setDuration(opt.value)}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all ${duration === opt.value ? 'bg-gray-900 text-white border-gray-900 shadow-md' : 'bg-gray-50 text-gray-400 border-transparent hover:bg-gray-100'
-                    }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => setDuration('custom')}
-                className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all flex items-center gap-1 ${duration === 'custom' ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-gray-50 text-gray-400 border-transparent hover:bg-gray-100'
-                  }`}
-              >
-                <Plus size={12} /> Custom
-              </button>
-            </div>
-            {duration === 'custom' && (
-              <div className="mt-2 animate-in fade-in slide-in-from-top-1">
-                <input
-                  type="datetime-local"
-                  value={customEndDate}
-                  onChange={(e) => setCustomEndDate(e.target.value)}
-                  className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500 shadow-sm"
-                />
-              </div>
-            )}
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div className="flex flex-col">
-              <span className="text-sm font-bold text-gray-800">Allow multiple selections</span>
-              <span className="text-[10px] text-gray-400">Voters can pick more than one choice</span>
-            </div>
-            <button
-              disabled={pollChoiceType === 'rating'}
-              onClick={() => setAllowMultipleSelection(!allowMultipleSelection)}
-              className={`w-10 h-5 rounded-full relative transition-colors ${allowMultipleSelection ? 'bg-blue-600' : 'bg-gray-200'} ${pollChoiceType === 'rating' ? 'opacity-30' : ''}`}
-            >
-              <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowMultipleSelection ? 'left-6' : 'left-1'}`} />
-            </button>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div className="flex flex-col">
-              <span className="text-sm font-bold text-gray-800">Voter-added options</span>
-              <span className="text-[10px] text-gray-400">Allow users to suggest their own answers</span>
-            </div>
-            <button
-              disabled={pollChoiceType === 'rating'}
-              onClick={() => setAllowUserOptions(!allowUserOptions)}
-              className={`w-10 h-5 rounded-full relative transition-colors ${allowUserOptions ? 'bg-blue-600' : 'bg-gray-200'} ${pollChoiceType === 'rating' ? 'opacity-30' : ''}`}
-            >
-              <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowUserOptions ? 'left-6' : 'left-1'}`} />
-            </button>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div className="flex flex-col">
-              <span className="text-sm font-bold text-gray-800">Allow comments</span>
-              <span className="text-[10px] text-gray-400">Enable users to leave comments</span>
-            </div>
-            <button
-              onClick={() => setAllowComments(!allowComments)}
-              className={`w-10 h-5 rounded-full relative transition-colors ${allowComments ? 'bg-blue-600' : 'bg-gray-200'}`}
-            >
-              <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowComments ? 'left-6' : 'left-1'}`} />
-            </button>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div className="flex flex-col">
-              <span className="text-sm font-bold text-gray-800">Anonymous voting</span>
-              <span className="text-[10px] text-gray-400">Participants can hide their identity</span>
-            </div>
-            <button
-              onClick={() => setForceAnonymous(!forceAnonymous)}
-              className={`w-10 h-5 rounded-full relative transition-colors ${forceAnonymous ? 'bg-blue-600' : 'bg-gray-200'}`}
-            >
-              <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${forceAnonymous ? 'left-6' : 'left-1'}`} />
-            </button>
-          </div>
-
-          <div className="pt-4">
-            <button
-              onClick={() => setIsAdvancedSheetOpen(false)}
-              className="w-full bg-gray-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg shadow-gray-200 active:scale-95 transition-all"
-            >
-              Done
-            </button>
-          </div>
         </div>
       </BottomSheet>
 
