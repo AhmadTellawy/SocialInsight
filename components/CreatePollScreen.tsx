@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { X, Image as ImageIcon, Plus, Trash2, Globe, Users, AlertCircle, Clock, Calendar, ChevronDown, List, GalleryHorizontalEnd, Info, Lock, Camera, Save, BarChart3, Check, ChevronRight, UserCircle, Target, Link2, LayoutGrid, Settings2, Star, MoreHorizontal, ArrowUp, ArrowDown, MessageSquare } from 'lucide-react';
+import { X, Image as ImageIcon, Plus, Trash2, Globe, Users, AlertCircle, Clock, Calendar, ChevronDown, List, GalleryHorizontalEnd, Info, Lock, Camera, Save, BarChart3, Check, ChevronRight, UserCircle, Target, Link2, LayoutGrid, Settings2, Star, MoreHorizontal, ArrowUp, ArrowDown, MessageSquare, ArrowLeft } from 'lucide-react';
 import { Survey, SurveyType, UserProfile, Option, Group, DraftOption } from '../types';
 import { ImageCropper } from './ImageCropper';
 import { BottomSheet } from './BottomSheet';
@@ -521,11 +521,11 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   const selectedOptionForSettings = options.find(o => o.id === settingsOptionId);
 
   return (
-    <div className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-bottom duration-300">
+    <div className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-right duration-350">
       {/* Simplified Clean Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white/95 backdrop-blur-md sticky top-0 z-40 safe-top shrink-0">
         <button onClick={handleExit} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">
-          <X size={24} />
+          <ArrowLeft size={24} />
         </button>
         <h1 className="text-sm font-black text-gray-800">New Poll</h1>
         <button onClick={handleSubmit} className="text-white font-black text-[11px] px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 transition-all uppercase tracking-widest shadow-md active:scale-95 shadow-blue-200/50">
@@ -534,7 +534,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
       </div>
 
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto no-scrollbar bg-white">
-        <div className="max-w-md mx-auto p-5 pb-32 space-y-6">
+        <div className="max-w-md mx-auto px-4 py-6 pb-32 space-y-6">
           {errors.userProfile && (
             <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2">
               <AlertCircle size={16} />
@@ -542,8 +542,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
             </div>
           )}
 
-          {/* 1. Question Card (Sleek Inline Category) */}
-          <section className="bg-white rounded-2xl border border-gray-100 p-4 space-y-4 shadow-sm">
+          {/* 1. Question Section */}
+          <section className="space-y-4 pb-6 border-b border-gray-100">
             <div className="flex items-start gap-2">
               <div className="flex-1 flex flex-col gap-2">
                 <div className="flex items-center justify-between px-1">
@@ -568,7 +568,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               </div>
             </div>
 
-            {/* Cover Media Preview inside Card */}
+            {/* Cover Media Preview */}
             {coverImage && (
               <div className="relative w-24 h-24 rounded-xl overflow-hidden border border-gray-100 shadow-sm group animate-in zoom-in-95 mt-2">
                 <img src={coverImage} className="w-full h-full object-cover" alt="Cover" />
@@ -577,7 +577,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
             )}
 
             {/* Inline Category Chip */}
-            <div className="flex flex-col gap-1 border-t border-gray-50 pt-3 mt-2">
+            <div className="flex flex-col gap-1 pt-1 mt-1">
               <div className="flex items-center justify-between">
                 <button
                   type="button"
@@ -629,8 +629,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
             </div>
           </div>
 
-          {/* 3. Choices Setup Card */}
-          <section className="bg-white rounded-2xl border border-gray-100 p-4 space-y-4 shadow-sm">
+          {/* 3. Choices Section */}
+          <section className="space-y-4 pb-6 border-b border-gray-100">
             {pollChoiceType === 'multiple' && (
               <div className="space-y-2 px-1">
                 <div className="flex items-center justify-between">
@@ -669,7 +669,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                 <div key={option.id} className="flex items-center gap-3 animate-in fade-in slide-in-from-bottom-1 duration-200">
                   <span className="text-xs font-black text-gray-300 w-4">{idx + 1}</span>
                   <div className="flex-1 flex flex-col gap-2">
-                    <div className="flex items-center bg-gray-50 rounded-xl px-1 py-1 border border-transparent focus-within:border-blue-200 focus-within:bg-white transition-all shadow-sm">
+                    <div className="flex items-center w-full bg-gray-50 border border-gray-200 rounded-xl px-2 py-1.5 focus-within:border-blue-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100 transition-all shadow-xs">
                       {pollChoiceType === 'multiple' && (
                         <button
                           type="button"
@@ -755,7 +755,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                 <div className="flex items-center gap-3 opacity-50 hover:opacity-80 focus-within:opacity-100 transition-opacity duration-200">
                   <span className="text-xs font-black text-gray-300 w-4">{options.length + 1}</span>
                   <div className="flex-1 flex flex-col gap-2">
-                    <div className="flex items-center bg-gray-50/50 border border-dashed border-gray-200 rounded-xl px-1 py-1">
+                    <div className="flex items-center w-full bg-gray-55/30 border border-dashed border-gray-200 rounded-xl px-2 py-1.5">
                       <button disabled className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border border-dashed border-gray-200 text-gray-300">
                         <Camera size={16} />
                       </button>
@@ -777,25 +777,96 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
             </div>
           </section>
 
-          {/* 4. Advanced Settings Summary Card */}
+          {/* 4. Poll Settings (Inline Toggles) */}
+          <section className="space-y-4 pt-2">
+            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block px-1">Settings</span>
+            
+            <div className="space-y-4">
+              {pollChoiceType === 'multiple' && (
+                <>
+                  <div className="flex items-center justify-between py-1 px-1">
+                    <div className="flex flex-col text-left">
+                      <span className="text-xs font-bold text-gray-800">Multiple Selections</span>
+                      <span className="text-[10px] text-gray-400">Voters can pick more than one choice</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setAllowMultipleSelection(!allowMultipleSelection)}
+                      className={`w-10 h-5 rounded-full relative transition-colors duration-200 shrink-0 ${
+                        allowMultipleSelection ? 'bg-blue-600' : 'bg-gray-200'
+                      }`}
+                    >
+                      <div
+                        className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all duration-200 shadow-sm ${
+                          allowMultipleSelection ? 'left-[22px]' : 'left-[2px]'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between py-1 px-1">
+                    <div className="flex flex-col text-left">
+                      <span className="text-xs font-bold text-gray-800">Voter-Added Options</span>
+                      <span className="text-[10px] text-gray-400">Allow users to suggest their own answers</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setAllowUserOptions(!allowUserOptions)}
+                      className={`w-10 h-5 rounded-full relative transition-colors duration-200 shrink-0 ${
+                        allowUserOptions ? 'bg-blue-600' : 'bg-gray-200'
+                      }`}
+                    >
+                      <div
+                        className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all duration-200 shadow-sm ${
+                          allowUserOptions ? 'left-[22px]' : 'left-[2px]'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </>
+              )}
+
+              <div className="flex items-center justify-between py-1 px-1">
+                <div className="flex flex-col text-left">
+                  <span className="text-xs font-bold text-gray-800">Anonymous Voting</span>
+                  <span className="text-[10px] text-gray-400">Hide voter identities in results</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setForceAnonymous(!forceAnonymous)}
+                  className={`w-10 h-5 rounded-full relative transition-colors duration-200 shrink-0 ${
+                    forceAnonymous ? 'bg-blue-600' : 'bg-gray-200'
+                  }`}
+                >
+                  <div
+                    className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all duration-200 shadow-sm ${
+                      forceAnonymous ? 'left-[22px]' : 'left-[2px]'
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+          </section>
+
+          {/* 5. Advanced Settings Row */}
           <button
             type="button"
             onClick={() => {
               setAdvancedSheetView('main');
               setIsAdvancedSheetOpen(true);
             }}
-            className="w-full flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-200 cursor-pointer active:scale-[0.98] transition-all hover:bg-gray-100/70"
+            className="w-full flex items-center justify-between py-3.5 px-1 border-t border-gray-100 text-left transition-all active:opacity-75"
           >
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-white rounded-xl text-gray-500 border border-gray-100 shadow-sm">
-                <Settings2 size={18} />
+              <div className="p-2 bg-gray-50 rounded-xl text-gray-500 border border-gray-100">
+                <Settings2 size={16} />
               </div>
-              <div className="text-left">
-                <h4 className="text-xs font-bold text-gray-800">Advanced Settings</h4>
-                <p className="text-[10px] text-gray-400 mt-0.5 leading-tight">Visibility, results, duration, anonymity & more</p>
+              <div>
+                <h4 className="text-xs font-bold text-gray-805">Advanced Settings</h4>
+                <p className="text-[9px] text-gray-400 mt-0.5 leading-tight">Visibility, results, duration & comments</p>
               </div>
             </div>
-            <ChevronRight size={16} className="text-gray-400" />
+            <ChevronRight size={14} className="text-gray-400" />
           </button>
 
           {/* 5. Optional Demographics Insights (Audience Insights Selector) */}
@@ -1000,59 +1071,17 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
 
               {/* Toggles List */}
               <div className="space-y-4 pt-1">
-                {pollChoiceType !== 'rating' && (
-                  <>
-                    <div className="flex items-center justify-between">
-                      <div className="flex flex-col text-left">
-                        <span className="text-xs font-bold text-gray-800">Multiple Selections</span>
-                        <span className="text-[10px] text-gray-400">Voters can pick more than one choice</span>
-                      </div>
-                      <button
-                        onClick={() => setAllowMultipleSelection(!allowMultipleSelection)}
-                        className={`w-10 h-5 rounded-full relative transition-colors ${allowMultipleSelection ? 'bg-blue-600' : 'bg-gray-250'}`}
-                      >
-                        <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowMultipleSelection ? 'left-6' : 'left-1'}`} />
-                      </button>
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <div className="flex flex-col text-left">
-                        <span className="text-xs font-bold text-gray-800">Voter-Added Options</span>
-                        <span className="text-[10px] text-gray-400">Allow users to suggest their own answers</span>
-                      </div>
-                      <button
-                        onClick={() => setAllowUserOptions(!allowUserOptions)}
-                        className={`w-10 h-5 rounded-full relative transition-colors ${allowUserOptions ? 'bg-blue-600' : 'bg-gray-250'}`}
-                      >
-                        <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowUserOptions ? 'left-6' : 'left-1'}`} />
-                      </button>
-                    </div>
-                  </>
-                )}
-
                 <div className="flex items-center justify-between">
                   <div className="flex flex-col text-left">
                     <span className="text-xs font-bold text-gray-800">Allow comments</span>
                     <span className="text-[10px] text-gray-400">Enable user comments on the post</span>
                   </div>
                   <button
+                    type="button"
                     onClick={() => setAllowComments(!allowComments)}
                     className={`w-10 h-5 rounded-full relative transition-colors ${allowComments ? 'bg-blue-600' : 'bg-gray-250'}`}
                   >
                     <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowComments ? 'left-6' : 'left-1'}`} />
-                  </button>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <div className="flex flex-col text-left">
-                    <span className="text-xs font-bold text-gray-800">Anonymous voting</span>
-                    <span className="text-[10px] text-gray-400">Participants can hide their identity</span>
-                  </div>
-                  <button
-                    onClick={() => setForceAnonymous(!forceAnonymous)}
-                    className={`w-10 h-5 rounded-full relative transition-colors ${forceAnonymous ? 'bg-blue-600' : 'bg-gray-250'}`}
-                  >
-                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${forceAnonymous ? 'left-6' : 'left-1'}`} />
                   </button>
                 </div>
               </div>
