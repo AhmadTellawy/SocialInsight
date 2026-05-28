@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { X, Image as ImageIcon, Plus, Trash2, Globe, Users, AlertCircle, Clock, Calendar, ChevronDown, List, GalleryHorizontalEnd, Info, Lock, Camera, Save, BarChart3, Check, ChevronRight, UserCircle, Target, Link2, LayoutGrid, Settings2, Star, MoreHorizontal, ArrowUp, ArrowDown, MessageSquare, ArrowLeft } from 'lucide-react';
+import { X, Image as ImageIcon, Plus, Trash2, Globe, Users, AlertCircle, Clock, Calendar, ChevronDown, List, GalleryHorizontalEnd, Info, Lock, Camera, Save, BarChart3, Check, ChevronRight, UserCircle, Target, Link2, LayoutGrid, Settings2, Star, MoreHorizontal, ArrowUp, ArrowDown, MessageSquare, ArrowLeft, Tag } from 'lucide-react';
 import { Survey, SurveyType, UserProfile, Option, Group, DraftOption } from '../types';
 import { ImageCropper } from './ImageCropper';
 import { BottomSheet } from './BottomSheet';
@@ -573,92 +573,98 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               </div>
             )}
 
-            {/* Inline Category Chip */}
-            <div className="flex flex-col gap-1 pt-1 mt-1">
-              <div className="flex items-center justify-between">
+            {/* Category and Poll Type Grid */}
+            <div className="grid grid-cols-2 gap-4 pt-3 mt-3 border-t border-gray-50">
+              {/* Left Column: Category */}
+              <div className="space-y-1.5 text-left min-w-0">
+                <span className="text-xs font-bold text-gray-800">Category</span>
                 <button
                   type="button"
                   onClick={() => setIsCategorySheetOpen(true)}
-                  className={`px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all flex items-center gap-1 active:scale-95 ${
+                  className={`w-full flex items-center justify-between border rounded-xl px-3 py-2 text-xs font-semibold transition-all active:scale-[0.98] min-w-0 ${
                     category
                       ? 'bg-blue-50 border-blue-200 text-blue-700 font-semibold'
                       : hasAttemptedSubmit && !category
-                      ? 'bg-red-50 border-red-200 text-red-650 font-bold'
-                      : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                      ? 'bg-red-50 border-red-200 text-red-600 font-bold'
+                      : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
                   }`}
                 >
-                  <span>Category: {category || 'Select'}</span>
-                  <ChevronDown size={12} />
+                  <div className="flex items-center min-w-0 mr-1">
+                    <Tag size={14} className={`mr-2 shrink-0 ${category ? 'text-blue-500' : 'text-gray-400'}`} />
+                    <span className="truncate">{category || 'Select category'}</span>
+                  </div>
+                  <ChevronDown size={14} className="text-gray-400 shrink-0" />
                 </button>
+                {errors.category && !category && (
+                  <p className="text-[10px] font-semibold text-red-600 px-1 mt-1">Please select a category.</p>
+                )}
               </div>
-              {errors.category && !category && (
-                <p className="text-[10px] font-semibold text-red-500 px-1 mt-1">Please select a category.</p>
-              )}
+
+              {/* Right Column: Poll Type */}
+              <div className="space-y-1.5 text-left font-sans">
+                <span className="text-xs font-bold text-gray-800">Poll Type</span>
+                <div className="flex bg-gray-55/30 border border-gray-100 p-0.5 rounded-xl h-[38px] items-center">
+                  <button
+                    type="button"
+                    onClick={() => handleChoiceTypeChange('multiple')}
+                    className={`flex-1 h-full rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                      pollChoiceType === 'multiple'
+                        ? 'bg-white text-blue-600 border border-blue-500 shadow-xs'
+                        : 'text-gray-400 hover:text-gray-650'
+                    }`}
+                  >
+                    Multiple Choice
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleChoiceTypeChange('rating')}
+                    className={`flex-1 h-full rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                      pollChoiceType === 'rating'
+                        ? 'bg-white text-blue-600 border border-blue-500 shadow-xs'
+                        : 'text-gray-400 hover:text-gray-650'
+                    }`}
+                  >
+                    Rating Scale
+                  </button>
+                </div>
+              </div>
             </div>
           </section>
 
-          {/* 2. Poll Type Segmented Inline Selector */}
-          <div className="flex items-center justify-between py-1 px-1">
-            <span className="text-xs font-bold text-gray-700">Poll Type</span>
-            <div className="flex bg-gray-100 p-0.5 rounded-xl">
-              <button
-                type="button"
-                onClick={() => handleChoiceTypeChange('multiple')}
-                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${
-                  pollChoiceType === 'multiple'
-                    ? 'bg-white text-blue-600 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                Multiple Choice
-              </button>
-              <button
-                type="button"
-                onClick={() => handleChoiceTypeChange('rating')}
-                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${
-                  pollChoiceType === 'rating'
-                    ? 'bg-white text-blue-600 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                Rating Scale
-              </button>
-            </div>
-          </div>
-
           {/* 3. Choices Section */}
           <section className="space-y-4 pb-2.5 border-b border-gray-100">
-            {pollChoiceType === 'multiple' && (
-              <div className="space-y-2 px-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Options layout</span>
-                  <div className="flex gap-1.5">
-                    {[
-                      { id: 'vertical', icon: List },
-                      { id: 'horizontal', icon: GalleryHorizontalEnd }
-                    ].map((layout) => (
+            <div className="flex items-center justify-between px-1 border-b border-gray-55/40 pb-2">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Choices <span className="text-red-500">*</span></span>
+                {errors.options && <span className="text-[10px] font-bold text-red-600 truncate">{errors.options}</span>}
+              </div>
+
+              {pollChoiceType === 'multiple' && (
+                <div className="flex gap-1 shrink-0">
+                  {[
+                    { id: 'vertical', icon: List },
+                    { id: 'horizontal', icon: LayoutGrid }
+                  ].map((layout) => {
+                    const Icon = layout.icon;
+                    const isActive = imageLayout === layout.id;
+                    return (
                       <button
                         key={layout.id}
                         type="button"
                         onClick={() => setImageLayout(layout.id as any)}
-                        className={`p-1.5 rounded-lg border transition-all ${imageLayout === layout.id
-                          ? 'bg-gray-900 text-white border-gray-900 shadow-sm'
-                          : 'bg-white text-gray-400 border-gray-200 hover:bg-gray-50'
-                          }`}
+                        className={`p-1.5 rounded-lg border transition-all active:scale-95 ${
+                          isActive
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm shadow-blue-100'
+                            : 'bg-white text-gray-400 border-gray-200 hover:bg-gray-50'
+                        }`}
                         title={layout.id}
                       >
-                        <layout.icon size={16} />
+                        <Icon size={15} />
                       </button>
-                    ))}
-                  </div>
+                    );
+                  })}
                 </div>
-                <p className="text-[9px] text-gray-400 font-medium leading-tight">Applies only if images are added to choices.</p>
-              </div>
-            )}
-
-            <div className="flex items-center justify-between px-1 border-b border-gray-50 pb-2">
-              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Choices <span className="text-red-500">*</span></span>
-              {errors.options && <span className="text-[10px] font-bold text-red-500">{errors.options}</span>}
+              )}
             </div>
 
             <div className="space-y-3">
@@ -1125,7 +1131,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   )}
 
                   {errors.visibility && selectedGroups.length === 0 && (
-                    <div className="p-3 bg-red-50 border border-red-155 rounded-xl text-[10px] text-red-650 font-bold flex items-center gap-1.5 mt-2 animate-in fade-in">
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-[10px] text-red-600 font-bold flex items-center gap-1.5 mt-2 animate-in fade-in">
                       <AlertCircle size={14} className="shrink-0" />
                       <span>{errors.visibility}</span>
                     </div>
