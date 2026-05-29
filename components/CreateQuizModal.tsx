@@ -25,12 +25,17 @@ const QUIZ_CATEGORIES = [
 
 const DEMOGRAPHIC_OPTIONS = [
   { id: 'gender', label: 'Gender', desc: 'Understand response patterns by gender' },
-  { id: 'marital_status', label: 'Marital Status', desc: 'Identify trends based on marital status' },
+  { id: 'maritalStatus', label: 'Marital Status', desc: 'Identify trends based on marital status' },
   { id: 'residence', label: 'Country of Residence', desc: 'Analyze responses by participants country of residence' },
   { id: 'nationality', label: 'Nationality', desc: 'Analyze by responses by Nationality' },
-  { id: 'age_group', label: 'Age Group', desc: 'Compare responses across age groups' },
+  { id: 'ageGroup', label: 'Age Group', desc: 'Compare responses across age groups' },
   { id: 'education', label: 'Education Level', desc: 'Analyze responses by education level' },
+  { id: 'household', label: 'Household Size', desc: 'Understand patterns based on household size' },
+  { id: 'familyRole', label: 'Family Role', desc: 'Explore insights based on family role' },
   { id: 'employment', label: 'Employment Type', desc: 'Analyze responses by employment type' },
+  { id: 'sector', label: 'Employment Sector', desc: 'Analyze responses by employment sector' },
+  { id: 'industry', label: 'Industry / Field of Work', desc: 'Identify trends across different industries' },
+  { id: 'occupation', label: 'Occupation', desc: 'Analyze response differences by occupation' },
 ];
 
 const INITIAL_SECTIONS: SurveySection[] = [
@@ -93,32 +98,41 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
   const [isQuestionSettingsSheetOpen, setIsQuestionSettingsSheetOpen] = useState(false);
   const [isSectionSettingsSheetOpen, setIsSectionSettingsSheetOpen] = useState(false);
 
-  const [selectedDemographics, setSelectedDemographics] = useState<string[]>(['gender', 'age_group', 'residence']);
+  const [selectedDemographics, setSelectedDemographics] = useState<string[]>([]);
   const [selectedGroups, setSelectedGroups] = useState<string[]>(initialGroupId ? [initialGroupId] : []);
-  const [activePreset, setActivePreset] = useState<'recommended' | 'professional' | 'geographic' | 'custom'>('recommended');
+  const [selectedInsightPreset, setSelectedInsightPreset] = useState<'basic' | 'professional' | 'social' | 'custom' | null>(null);
   const [showInsightInfo, setShowInsightInfo] = useState(false);
   const [isAdvancedSheetOpen, setIsAdvancedSheetOpen] = useState(false);
   const [advancedSheetView, setAdvancedSheetView] = useState<'main' | 'visibility' | 'results'>('main');
 
   useEffect(() => {
-    const isRecommended = selectedDemographics.length === 3 && selectedDemographics.includes('gender') && selectedDemographics.includes('age_group') && selectedDemographics.includes('residence');
-    const isProfessional = selectedDemographics.length === 2 && selectedDemographics.includes('education') && selectedDemographics.includes('employment');
-    const isGeographic = selectedDemographics.length === 2 && selectedDemographics.includes('residence') && selectedDemographics.includes('nationality');
+    if (selectedDemographics.length === 0) {
+      setSelectedInsightPreset(null);
+      return;
+    }
+    const isBasic = selectedDemographics.length === 3 && selectedDemographics.includes('gender') && selectedDemographics.includes('ageGroup') && selectedDemographics.includes('residence');
+    const isProfessional = selectedDemographics.length === 4 && selectedDemographics.includes('education') && selectedDemographics.includes('employment') && selectedDemographics.includes('industry') && selectedDemographics.includes('sector');
+    const isSocial = selectedDemographics.length === 1 && selectedDemographics.includes('maritalStatus');
     
-    if (isRecommended) setActivePreset('recommended');
-    else if (isProfessional) setActivePreset('professional');
-    else if (isGeographic) setActivePreset('geographic');
-    else setActivePreset('custom');
+    if (isBasic) setSelectedInsightPreset('basic');
+    else if (isProfessional) setSelectedInsightPreset('professional');
+    else if (isSocial) setSelectedInsightPreset('social');
+    else setSelectedInsightPreset('custom');
   }, [selectedDemographics]);
 
-  const handlePresetChange = (preset: 'recommended' | 'professional' | 'geographic' | 'custom') => {
-    setActivePreset(preset);
-    if (preset === 'recommended') {
-      setSelectedDemographics(['gender', 'age_group', 'residence']);
+  const handlePresetChange = (preset: 'basic' | 'professional' | 'social' | 'custom') => {
+    if (selectedInsightPreset === preset) {
+      setSelectedInsightPreset(null);
+      setSelectedDemographics([]);
+      return;
+    }
+    setSelectedInsightPreset(preset);
+    if (preset === 'basic') {
+      setSelectedDemographics(['gender', 'ageGroup', 'residence']);
     } else if (preset === 'professional') {
-      setSelectedDemographics(['education', 'employment']);
-    } else if (preset === 'geographic') {
-      setSelectedDemographics(['residence', 'nationality']);
+      setSelectedDemographics(['education', 'employment', 'industry', 'sector']);
+    } else if (preset === 'social') {
+      setSelectedDemographics(['maritalStatus']);
     } else if (preset === 'custom') {
       setSelectedDemographics([]);
     }
@@ -584,33 +598,39 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
               </div>
             )}
 
-            {/* Category */}
-            <div className="space-y-1.5 text-left min-w-0 pt-3 border-t border-gray-100">
-              <div className="flex items-center gap-2 mb-1">
-                <div className="p-1.5 bg-gray-50 rounded-lg text-gray-500 border border-gray-100 shrink-0">
-                  <Tag size={12} />
+            {/* Category and Poll Type Grid (To match Create Poll size, we use a 2-column grid and leave the right side empty) */}
+            <div className="grid grid-cols-2 gap-4 pt-3 mt-3 border-t border-gray-100">
+              {/* Category */}
+              <div className="space-y-1.5 text-left min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="p-1.5 bg-gray-55/30 rounded-lg text-gray-500 border border-gray-100 shrink-0">
+                    <Tag size={12} />
+                  </div>
+                  <span className="text-xs font-bold text-gray-800">Category</span>
                 </div>
-                <span className="text-xs font-bold text-gray-800">Category</span>
+                <button
+                  type="button"
+                  onClick={() => setIsCategorySheetOpen(true)}
+                  className={`w-full flex items-center justify-between border rounded-xl px-3 py-2 text-[8px] font-semibold transition-all active:scale-[0.98] min-w-0 ${
+                    category
+                      ? 'bg-purple-50 border-purple-200 text-purple-700 font-semibold'
+                      : errorInfo.newErrors.category && hasAttemptedSubmit
+                      ? 'bg-red-50 border-red-300 text-red-600'
+                      : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-55'
+                  }`}
+                >
+                  <div className="flex items-center min-w-0 mr-1">
+                    <span className="truncate">{category || 'Select category'}</span>
+                  </div>
+                  <ChevronDown size={14} className="text-gray-400 shrink-0" />
+                </button>
+                {errorInfo.newErrors.category && hasAttemptedSubmit && (
+                  <p className="text-[10px] font-semibold text-red-600 px-1 mt-1">Please select a category.</p>
+                )}
               </div>
-              <button
-                type="button"
-                onClick={() => setIsCategorySheetOpen(true)}
-                className={`w-full flex items-center justify-between border rounded-xl px-3 py-2 text-[8px] font-semibold transition-all active:scale-[0.98] min-w-0 ${
-                  category
-                    ? 'bg-purple-50 border-purple-200 text-purple-700 font-semibold'
-                    : errorInfo.newErrors.category && hasAttemptedSubmit
-                    ? 'bg-red-50 border-red-300 text-red-600'
-                    : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                <div className="flex items-center min-w-0 mr-1">
-                  <span className="truncate">{category || 'Select category'}</span>
-                </div>
-                <ChevronDown size={14} className="text-gray-400 shrink-0" />
-              </button>
-              {errorInfo.newErrors.category && hasAttemptedSubmit && (
-                <p className="text-[10px] font-semibold text-red-600 px-1 mt-1">Please select a category.</p>
-              )}
+              
+              {/* Right column empty to preserve size parity */}
+              <div></div>
             </div>
 
             {/* Advanced Settings Row */}
@@ -847,10 +867,11 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
           </div>
 
           {/* Demographics Settings Section (Unlock Deeper Analytics) */}
-          <section className="space-y-3 pt-4 border-t border-gray-100">
+          {/* Demographics Settings Section (Unlock Deeper Analytics) */}
+          <section className="space-y-3 pt-3 border-t border-gray-100">
             <div className="flex items-center justify-between px-1">
               <div className="flex items-center gap-2">
-                <div className="p-1.5 bg-gray-50 rounded-lg text-gray-500 border border-gray-100 shrink-0">
+                <div className="p-1.5 bg-gray-55/30 rounded-lg text-gray-500 border border-gray-100 shrink-0">
                   <Users size={12} />
                 </div>
                 <span className="text-xs font-bold text-gray-800">Unlock Deeper Analytics</span>
@@ -871,12 +892,12 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
             )}
 
             <div className="flex flex-wrap gap-2">
-              {(['recommended', 'professional', 'geographic', 'custom'] as const).map((preset) => {
-                const isActive = activePreset === preset;
+              {(['basic', 'professional', 'social', 'custom'] as const).map((preset) => {
+                const isActive = selectedInsightPreset === preset;
                 const labels: Record<string, string> = {
-                  recommended: 'Recommended',
+                  basic: 'Basic',
                   professional: 'Professional',
-                  geographic: 'Geographic',
+                  social: 'Social',
                   custom: 'Custom'
                 };
                 return (
@@ -887,7 +908,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                     className={`px-3 py-1.5 rounded-xl text-[10px] font-bold border uppercase tracking-wider transition-all duration-200 active:scale-95 ${
                       isActive
                         ? 'bg-purple-600 text-white border-purple-600 shadow-sm'
-                        : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+                        : 'bg-white text-gray-550 border-gray-200 hover:bg-gray-55'
                     }`}
                   >
                     {labels[preset]}
@@ -896,7 +917,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
               })}
             </div>
 
-            {activePreset && activePreset !== 'custom' && (
+            {selectedInsightPreset && selectedInsightPreset !== 'custom' && (
               <div className="p-3 bg-white rounded-xl border border-gray-100 space-y-1 mx-0.5 animate-in fade-in duration-200">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[10px] font-bold text-gray-700">
@@ -906,7 +927,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                     +{selectedDemographics.length} questions for participant
                   </span>
                 </div>
-                <div className="text-[9px] text-gray-500 font-medium mt-1 pb-1">
+                <div className="text-[9px] text-gray-550 font-medium mt-1 pb-1">
                   Demographics requested: <span className="text-gray-800 font-bold">{selectedDemographics.map(id => DEMOGRAPHIC_OPTIONS.find(opt => opt.id === id)?.label).filter(Boolean).join(', ')}</span>
                 </div>
                 <p className="text-[8px] text-gray-400 font-medium leading-normal">
@@ -915,8 +936,8 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
               </div>
             )}
 
-            {activePreset === 'custom' && (
-              <div className="space-y-2 p-3 bg-gray-50/30 border border-gray-100 rounded-2xl animate-in fade-in duration-200">
+            {selectedInsightPreset === 'custom' && (
+              <div className="space-y-2 p-3 bg-gray-55/35 border border-gray-100 rounded-2xl animate-in fade-in duration-200">
                 <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">
                   Select Custom Attributes
                 </span>
@@ -931,7 +952,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                         className={`px-3 py-1.5 rounded-full text-[9px] font-bold border transition-all flex items-center gap-1 active:scale-95 ${
                           isSelected
                             ? 'bg-purple-50 border-purple-200 text-purple-600 font-semibold'
-                            : 'bg-white border-gray-200 text-gray-405'
+                            : 'bg-white border-gray-200 text-gray-400'
                         }`}
                       >
                         {isSelected && <Check size={10} strokeWidth={4} />}
