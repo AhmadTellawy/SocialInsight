@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { X, Plus, Trash2, Globe, Users, ChevronDown, Clock, Calendar, Type, ListChecks, ImageIcon, Settings, Info, ArrowRight, Camera, Lock, AlertCircle, ChevronRight, ChevronLeft, MoreHorizontal, Layout, Terminal, Navigation, Sparkles, GripVertical, Save, FileText, BarChart3, UserCircle, Heart, Fingerprint, MapPin, Briefcase, Check, GraduationCap, Home, Smile, Building2, User, MessageSquare, ShieldCheck, Link2, Target, MoreHorizontal as MoreHorizontalIcon, ArrowUp, ArrowDown, Star, List, GalleryHorizontalEnd, CornerDownRight, PowerOff, CheckCircle2 } from 'lucide-react';
+import { X, Plus, Trash2, Globe, Users, ChevronDown, Clock, Calendar, Type, ListChecks, ImageIcon, Settings, Info, ArrowRight, Camera, Lock, AlertCircle, ChevronRight, ChevronLeft, MoreHorizontal, Layout, Terminal, Navigation, Sparkles, GripVertical, Save, FileText, BarChart3, UserCircle, Heart, Fingerprint, MapPin, Briefcase, Check, GraduationCap, Home, Smile, Building2, User, MessageSquare, ShieldCheck, Link2, Target, MoreHorizontal as MoreHorizontalIcon, ArrowUp, ArrowDown, Star, List, GalleryHorizontalEnd, CornerDownRight, PowerOff, CheckCircle2, ArrowLeft } from 'lucide-react';
 import { Survey, SurveyType, SurveySection, SurveyQuestion, Option, UserProfile, Group } from '../types';
 import { ImageCropper } from './ImageCropper';
 import { BottomSheet } from './BottomSheet';
@@ -96,6 +96,9 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
   const [selectedDemographics, setSelectedDemographics] = useState<string[]>(['gender', 'age_group', 'residence']);
   const [selectedGroups, setSelectedGroups] = useState<string[]>(initialGroupId ? [initialGroupId] : []);
   const [activePreset, setActivePreset] = useState<'recommended' | 'professional' | 'geographic' | 'custom'>('recommended');
+  const [showInsightInfo, setShowInsightInfo] = useState(false);
+  const [isAdvancedSheetOpen, setIsAdvancedSheetOpen] = useState(false);
+  const [advancedSheetView, setAdvancedSheetView] = useState<'main' | 'visibility' | 'results'>('main');
 
   useEffect(() => {
     const isRecommended = selectedDemographics.length === 3 && selectedDemographics.includes('gender') && selectedDemographics.includes('age_group') && selectedDemographics.includes('residence');
@@ -516,12 +519,24 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
     <div className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-bottom duration-300">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white/95 backdrop-blur-md sticky top-0 z-40 safe-top shrink-0">
-        <button onClick={handleClose} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500"><X size={24} /></button>
-        <div className="flex flex-col items-center flex-1 mx-2">
-          <h1 className="text-sm font-black text-gray-900 uppercase tracking-wider">Quiz Composer</h1>
-          <span className="text-[9px] text-gray-400 font-bold uppercase tracking-widest mt-0.5">Content-First Creation</span>
+        <button onClick={handleClose} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">
+          <ArrowLeft size={24} />
+        </button>
+        <h1 className="text-sm font-black text-gray-800">New Quiz</h1>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleSaveDraft}
+            className="text-purple-600 border border-purple-200 font-black text-[9px] px-3.5 py-2 rounded-full bg-purple-50 hover:bg-purple-100 transition-all uppercase tracking-widest active:scale-95"
+          >
+            Save Draft
+          </button>
+          <button
+            onClick={handlePost}
+            className="text-white font-black text-[9px] px-4 py-2 rounded-full bg-purple-600 hover:bg-purple-700 transition-all uppercase tracking-widest shadow-md active:scale-95 shadow-purple-200/50"
+          >
+            Publish
+          </button>
         </div>
-        <div className="w-10" />
       </div>
 
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto no-scrollbar bg-white">
@@ -534,105 +549,114 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
           )}
 
           {/* Details Section */}
-          <section className="space-y-2 pb-3 border-b border-gray-100 relative transition-all">
-            <div className="flex items-center justify-between">
-              <label className="block text-xs font-bold text-gray-400 uppercase tracking-wide">Quiz Header</label>
+          <section className="space-y-4 pb-4 border-b border-gray-100 relative transition-all">
+            <div className="flex items-start gap-3">
+              <div className="flex-1">
+                {shouldShowTitleField && (
+                  <RichMentionInput
+                    value={title}
+                    onChange={(val) => setTitle(val)}
+                    placeholder="Quiz Title"
+                    className="text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-purple-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] text-gray-900"
+                    minRows={1}
+                  />
+                )}
+                <RichMentionInput
+                  value={description}
+                  onChange={(val) => setDescription(val)}
+                  placeholder="Describe what this quiz is about (optional)..."
+                  className="mt-1.5 text-[11px] text-gray-500 bg-transparent border-b border-gray-100 focus:outline-none focus:border-purple-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[32px]"
+                  minRows={1}
+                />
+              </div>
               <button
+                type="button"
                 onClick={() => { setActiveCropTarget({ type: 'cover' }); fileInputRef.current?.click(); }}
-                className={`p-1.5 rounded-full transition-colors ${coverImage ? 'text-purple-600 bg-purple-50' : 'text-gray-400 hover:text-purple-500 hover:bg-gray-50'}`}
+                className={`p-1.5 rounded-full transition-colors shrink-0 mt-1 ${coverImage ? 'text-purple-600 bg-purple-50' : 'text-gray-400 hover:text-purple-500 hover:bg-gray-50'}`}
               >
-                <ImageIcon size={20} />
+                <Camera size={20} />
               </button>
             </div>
             {coverImage && (
-              <div className="mb-2 animate-in zoom-in-95">
-                <div className="relative w-20 h-20 rounded-xl overflow-hidden shadow-sm group">
-                  <img src={coverImage} className="w-full h-full object-cover" alt="Cover" />
-                  <button onClick={() => setCoverImage(null)} className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
-                    <X size={10} />
-                  </button>
-                </div>
+              <div className="relative w-24 h-24 rounded-xl overflow-hidden border border-gray-100 shadow-sm group animate-in zoom-in-95 mt-2">
+                <img src={coverImage} className="w-full h-full object-cover" alt="Cover" />
+                <button onClick={() => setCoverImage(null)} className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={10} /></button>
               </div>
             )}
-            {shouldShowTitleField && (
-              <RichMentionInput
-                value={title}
-                onChange={(val) => setTitle(val)}
-                placeholder="Quiz Title"
-                className="text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-purple-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] text-gray-900"
-                minRows={1}
-              />
-            )}
-            <RichMentionInput
-              value={description}
-              onChange={(val) => setDescription(val)}
-              placeholder="Describe what this quiz is about (optional)..."
-              className="mt-1.5 text-[11px] text-gray-500 bg-transparent border-b border-gray-100 focus:outline-none focus:border-purple-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[32px]"
-              minRows={1}
-            />
+
+            {/* Category */}
+            <div className="space-y-1.5 text-left min-w-0 pt-3 border-t border-gray-100">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="p-1.5 bg-gray-50 rounded-lg text-gray-500 border border-gray-100 shrink-0">
+                  <Tag size={12} />
+                </div>
+                <span className="text-xs font-bold text-gray-800">Category</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCategorySheetOpen(true)}
+                className={`w-full flex items-center justify-between border rounded-xl px-3 py-2 text-[8px] font-semibold transition-all active:scale-[0.98] min-w-0 ${
+                  category
+                    ? 'bg-purple-50 border-purple-200 text-purple-700 font-semibold'
+                    : errorInfo.newErrors.category && hasAttemptedSubmit
+                    ? 'bg-red-50 border-red-300 text-red-600'
+                    : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                <div className="flex items-center min-w-0 mr-1">
+                  <span className="truncate">{category || 'Select category'}</span>
+                </div>
+                <ChevronDown size={14} className="text-gray-400 shrink-0" />
+              </button>
+              {errorInfo.newErrors.category && hasAttemptedSubmit && (
+                <p className="text-[10px] font-semibold text-red-600 px-1 mt-1">Please select a category.</p>
+              )}
+            </div>
+
+            {/* Advanced Settings Row */}
+            <button
+              type="button"
+              onClick={() => {
+                setAdvancedSheetView('main');
+                setIsAdvancedSheetOpen(true);
+              }}
+              className="w-full flex items-center justify-between py-2.5 px-1 text-left transition-all active:opacity-75 pt-3 border-t border-gray-100"
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-gray-55/30 rounded-xl text-gray-500 border border-gray-100">
+                  <Settings size={16} />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-gray-805">Advanced Settings</h4>
+                  <p className="text-[9px] text-gray-400 mt-0.5 leading-tight">Visibility, results, duration & comments</p>
+                </div>
+              </div>
+              <ChevronRight size={14} className="text-gray-400" />
+            </button>
           </section>
-
-          {/* Compact Settings Bar */}
-          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-3 px-1 border-b border-gray-100 bg-white sticky top-0 z-30">
-            {/* Category Chip */}
-            <button
-              onClick={() => setIsCategorySheetOpen(true)}
-              className={`shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all flex items-center gap-1 active:scale-95 ${
-                category
-                  ? 'bg-purple-50 border-purple-200 text-purple-700 font-semibold'
-                  : errorInfo.newErrors.category && hasAttemptedSubmit
-                  ? 'bg-red-50 border-red-300 text-red-600'
-                  : 'bg-gray-50 border-gray-200 text-gray-600'
-              }`}
-            >
-              <span>Category: {category || 'Select'}</span>
-              <ChevronDown size={12} />
-            </button>
-
-            {/* Visibility Chip */}
-            <button
-              onClick={() => setIsVisibilitySheetOpen(true)}
-              className={`shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all flex items-center gap-1 active:scale-95 ${
-                visibility !== 'Public'
-                  ? 'bg-purple-50 border-purple-200 text-purple-700 font-semibold'
-                  : 'bg-gray-50 border-gray-200 text-gray-600'
-              }`}
-            >
-              <span>Audience: {visibility === 'Groups' && selectedGroups.length > 0 ? `${selectedGroups.length} Groups` : visibility}</span>
-              <ChevronDown size={12} />
-            </button>
-
-            {/* Timer Chip */}
-            <button
-              onClick={() => setIsDurationSheetOpen(true)}
-              className={`shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all flex items-center gap-1 active:scale-95 ${
-                duration !== 'none'
-                  ? 'bg-purple-50 border-purple-200 text-purple-700 font-semibold'
-                  : 'bg-gray-50 border-gray-200 text-gray-600'
-              }`}
-            >
-              <span>Timer: {duration === 'custom' ? 'Custom' : durationOptions.find(o => o.value === duration)?.label || 'None'}</span>
-              <ChevronDown size={12} />
-            </button>
-
-            {/* Results Chip */}
-            <button
-              onClick={() => setIsResultVisibilitySheetOpen(true)}
-              className={`shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all flex items-center gap-1 active:scale-95 ${
-                resultsWho !== 'Public' || resultsTiming !== 'AnyTime'
-                  ? 'bg-purple-50 border-purple-200 text-purple-700 font-semibold'
-                  : 'bg-gray-50 border-gray-200 text-gray-600'
-              }`}
-            >
-              <span>Results: {resultsWho === 'OnlyMe' ? 'Me' : resultsWho}</span>
-              <ChevronDown size={12} />
-            </button>
-          </div>
 
           {/* Question Builder Area */}
           <div className="space-y-6 mt-4">
-            {/* Sections tab bar - only show if there are multiple sections */}
-            {(sections.length > 1) && (
+            {/* Sections header row */}
+            <div className="flex items-center justify-between px-1 mb-2">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-gray-50 rounded-lg text-gray-500 border border-gray-100 shrink-0">
+                  <Layout size={12} />
+                </div>
+                <span className="text-xs font-bold text-gray-800">
+                  Sections ({sections.length})
+                </span>
+              </div>
+              <button
+                onClick={addSection}
+                className="px-3.5 py-1.5 bg-purple-50 text-purple-600 rounded-xl border border-dashed border-purple-200 text-[10px] font-bold flex items-center gap-1 active:scale-95 transition-all"
+              >
+                <Plus size={12} /> Add Section
+              </button>
+            </div>
+
+            {/* If there are multiple sections, show the section tab bar here */}
+            {sections.length > 1 && (
               <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 px-1">
                 {sections.map((sec, idx) => (
                   <button
@@ -641,19 +665,13 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                     className={`shrink-0 px-4 py-2 rounded-xl text-xs font-bold border transition-all flex items-center gap-2 ${
                       activeSectionId === sec.id
                         ? 'bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-200'
-                        : 'bg-gray-50 text-gray-500 border-gray-100'
+                        : 'bg-gray-55 text-gray-500 border-gray-100'
                     }`}
                   >
                     <span className="opacity-40">{idx + 1}</span>
                     <span className="truncate max-w-[100px]">{sec.title || `Section ${idx + 1}`}</span>
                   </button>
                 ))}
-                <button
-                  onClick={addSection}
-                  className="shrink-0 px-4 py-2 bg-purple-50 text-purple-600 rounded-xl border border-dashed border-purple-200 text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-transform"
-                >
-                  <Plus size={14} /> Add Section
-                </button>
               </div>
             )}
 
@@ -720,14 +738,6 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                   >
                     <Plus size={14} /> Add Question
                   </button>
-                  {sections.length === 1 && (
-                    <button
-                      onClick={addSection}
-                      className="shrink-0 px-4 py-2 bg-purple-50 text-purple-600 rounded-full border border-dashed border-purple-200 text-xs font-bold flex items-center justify-center gap-1.5 h-10 active:scale-95 transition-transform"
-                    >
-                      <Plus size={14} /> Add Section
-                    </button>
-                  )}
                 </div>
 
                 {/* Active Question Card */}
@@ -750,7 +760,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                             <textarea
                               value={q.text}
                               onChange={(e) => updateQuestion(activeSection.id, q.id, { text: e.target.value })}
-                              placeholder={totalQuestions <= 1 ? "Ask a trivia question..." : "Question Text"}
+                              placeholder={totalQuestions <= 1 ? "Ask a question..." : "Question Text"}
                               className="flex-1 text-sm font-semibold text-gray-900 border-b border-gray-100 focus:outline-none focus:border-purple-500 pt-0.5 pb-1.5 resize-none min-h-[44px] bg-transparent"
                             />
                           </div>
@@ -836,50 +846,58 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
             )}
           </div>
 
-          {/* Demographics Settings Section (Same style as Poll screen) */}
-          <section className="border-t border-gray-100 pt-4 mt-6 space-y-3">
+          {/* Demographics Settings Section (Unlock Deeper Analytics) */}
+          <section className="space-y-3 pt-4 border-t border-gray-100">
             <div className="flex items-center justify-between px-1">
-              <div className="flex items-center gap-1.5">
-                <BarChart3 size={14} className="text-purple-600" />
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                  Unlock Deeper Analytics
-                </label>
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-gray-50 rounded-lg text-gray-500 border border-gray-100 shrink-0">
+                  <Users size={12} />
+                </div>
+                <span className="text-xs font-bold text-gray-800">Unlock Deeper Analytics</span>
+                <button
+                  type="button"
+                  onClick={() => setShowInsightInfo(!showInsightInfo)}
+                  className="text-gray-400 hover:text-purple-500 transition-colors ml-0.5"
+                >
+                  <Info size={14} />
+                </button>
               </div>
             </div>
-            
-            <div className="bg-gray-50/20 p-4 rounded-3xl border border-gray-100 space-y-4">
-              <p className="text-[11px] text-gray-600 leading-normal">
-                Choose optional demographics to help understand participant breakdowns. Participants will respond optionally.
-              </p>
 
-              {/* Preset Packages */}
-              <div className="space-y-2">
-                <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">
-                  Preset Packages
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {(['recommended', 'professional', 'geographic', 'custom'] as const).map((preset) => {
-                    const isActive = activePreset === preset;
-                    return (
-                      <button
-                        key={preset}
-                        type="button"
-                        onClick={() => handlePresetChange(preset)}
-                        className={`px-3 py-1.5 rounded-full text-[10px] font-bold border transition-all duration-200 active:scale-95 uppercase tracking-wider ${
-                          isActive 
-                            ? 'bg-purple-600 text-white border-purple-600 shadow-sm' 
-                            : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
-                        }`}
-                      >
-                        {preset}
-                      </button>
-                    );
-                  })}
-                </div>
+            {showInsightInfo && (
+              <div className="p-3 bg-purple-50 border border-purple-100 text-purple-800 text-[10px] font-semibold rounded-xl leading-relaxed animate-in fade-in slide-in-from-top-1 duration-200">
+                Choose optional demographic questions for participants to unlock deeper insights, audience trends, and response analysis.
               </div>
+            )}
 
-              {/* Dynamic Value/Cost Indicator */}
-              <div className="p-3 bg-white rounded-2xl border border-gray-100 space-y-1">
+            <div className="flex flex-wrap gap-2">
+              {(['recommended', 'professional', 'geographic', 'custom'] as const).map((preset) => {
+                const isActive = activePreset === preset;
+                const labels: Record<string, string> = {
+                  recommended: 'Recommended',
+                  professional: 'Professional',
+                  geographic: 'Geographic',
+                  custom: 'Custom'
+                };
+                return (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => handlePresetChange(preset)}
+                    className={`px-3 py-1.5 rounded-xl text-[10px] font-bold border uppercase tracking-wider transition-all duration-200 active:scale-95 ${
+                      isActive
+                        ? 'bg-purple-600 text-white border-purple-600 shadow-sm'
+                        : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    {labels[preset]}
+                  </button>
+                );
+              })}
+            </div>
+
+            {activePreset && activePreset !== 'custom' && (
+              <div className="p-3 bg-white rounded-xl border border-gray-100 space-y-1 mx-0.5 animate-in fade-in duration-200">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[10px] font-bold text-gray-700">
                     Provides {selectedDemographics.length} analytical comparisons
@@ -888,38 +906,33 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                     +{selectedDemographics.length} questions for participant
                   </span>
                 </div>
+                <div className="text-[9px] text-gray-500 font-medium mt-1 pb-1">
+                  Demographics requested: <span className="text-gray-800 font-bold">{selectedDemographics.map(id => DEMOGRAPHIC_OPTIONS.find(opt => opt.id === id)?.label).filter(Boolean).join(', ')}</span>
+                </div>
                 <p className="text-[8px] text-gray-400 font-medium leading-normal">
                   * Selected questions will be prompted as optional questions during participation.
                 </p>
               </div>
+            )}
 
-              {/* Attributes Selector Pills */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">
-                    Selected Attributes
-                  </span>
-                  {activePreset !== 'custom' && (
-                    <span className="text-[8px] text-gray-400 font-medium">
-                      (Preset-controlled, select Custom to edit)
-                    </span>
-                  )}
-                </div>
+            {activePreset === 'custom' && (
+              <div className="space-y-2 p-3 bg-gray-50/30 border border-gray-100 rounded-2xl animate-in fade-in duration-200">
+                <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">
+                  Select Custom Attributes
+                </span>
                 <div className="flex flex-wrap gap-1.5">
                   {DEMOGRAPHIC_OPTIONS.map((opt) => {
                     const isSelected = selectedDemographics.includes(opt.id);
-                    const isCustomMode = activePreset === 'custom';
                     return (
                       <button
                         key={opt.id}
                         type="button"
-                        disabled={!isCustomMode}
                         onClick={() => handleDemographicToggle(opt.id)}
-                        className={`px-3 py-1.5 rounded-full text-[10px] font-bold border transition-all flex items-center gap-1 ${
+                        className={`px-3 py-1.5 rounded-full text-[9px] font-bold border transition-all flex items-center gap-1 active:scale-95 ${
                           isSelected
                             ? 'bg-purple-50 border-purple-200 text-purple-600 font-semibold'
-                            : 'bg-white border-gray-100 text-gray-405'
-                        } ${!isCustomMode ? 'cursor-default opacity-85' : 'active:scale-95'}`}
+                            : 'bg-white border-gray-200 text-gray-405'
+                        }`}
                       >
                         {isSelected && <Check size={10} strokeWidth={4} />}
                         <span>{opt.label}</span>
@@ -928,33 +941,8 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                   })}
                 </div>
               </div>
-            </div>
+            )}
           </section>
-
-          {/* Engagement Settings */}
-          <div className="border-t border-gray-100 pt-4 mt-6 space-y-3">
-            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Engagement Settings</label>
-            <div className="bg-gray-50 rounded-2xl p-4 space-y-4 border border-gray-100">
-              <button onClick={() => setAllowComments(!allowComments)} className="w-full flex items-center justify-between py-1 group">
-                <div className="flex flex-col text-left">
-                  <span className="text-xs font-bold text-gray-800">Allow comments</span>
-                  <span className="text-[10px] text-gray-400">Enable users to leave comments</span>
-                </div>
-                <div className={`w-10 h-5 rounded-full transition-colors relative ${allowComments ? 'bg-purple-600' : 'bg-gray-200'}`}>
-                  <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowComments ? 'left-6' : 'left-1'}`} />
-                </div>
-              </button>
-              <button onClick={() => setForceAnonymous(!forceAnonymous)} className="w-full flex items-center justify-between py-1 group">
-                <div className="flex flex-col text-left">
-                  <span className="text-xs font-bold text-gray-800">Require Anonymous Responses</span>
-                  <span className="text-[10px] text-gray-400">All participants will be forced to respond without identity</span>
-                </div>
-                <div className={`w-10 h-5 rounded-full transition-colors relative ${forceAnonymous ? 'bg-purple-600' : 'bg-gray-200'}`}>
-                  <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${forceAnonymous ? 'left-6' : 'left-1'}`} />
-                </div>
-              </button>
-            </div>
-          </div>
 
           {/* Unified Validation Error Display */}
           {hasAttemptedSubmit && !errorInfo.isValid && (
@@ -973,108 +961,323 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
         </div>
       </div>
 
-      {/* Sticky Footer */}
-      <div className="border-t border-gray-100 bg-white/95 backdrop-blur-md px-4 py-3 sticky bottom-0 z-40 safe-bottom shrink-0 flex gap-3">
-        <button
-          onClick={handleSaveDraft}
-          className="flex-1 py-3 bg-gray-100 text-gray-700 rounded-2xl font-black uppercase tracking-wider text-[11px] hover:bg-gray-200 transition-all active:scale-[0.98]"
-        >
-          Save Draft
-        </button>
-        <button
-          onClick={handlePost}
-          className="flex-1 py-3 bg-purple-600 text-white rounded-2xl font-black uppercase tracking-wider text-[11px] hover:bg-purple-700 transition-all active:scale-[0.98] shadow-lg shadow-purple-200"
-        >
-          Publish Quiz
-        </button>
-      </div>
+      {/* Advanced Settings Bottom Sheet with Sub-navigation Routing */}
+      <BottomSheet
+        isOpen={isAdvancedSheetOpen}
+        onClose={() => {
+          if (visibility === 'Groups' && selectedGroups.length === 0) {
+            setVisibility('Public');
+          }
+          setAdvancedSheetView('main');
+          setIsAdvancedSheetOpen(false);
+        }}
+        title={
+          advancedSheetView === 'visibility'
+            ? 'Post Visibility'
+            : advancedSheetView === 'results'
+            ? 'Result Visibility'
+            : 'Advanced Settings'
+        }
+      >
+        <div className="space-y-5 py-2 px-2 animate-in fade-in duration-200">
+          {advancedSheetView === 'main' && (
+            <div className="space-y-5">
+              <p className="text-[11px] text-gray-500 leading-relaxed px-1">
+                Control who can see, vote, and view results.
+              </p>
 
-      {/* Duration Bottom Sheet */}
-      <BottomSheet isOpen={isDurationSheetOpen} onClose={() => setIsDurationSheetOpen(false)} title="Quiz Duration">
-        <div className="space-y-4 py-2 px-1">
-          <p className="text-xs text-gray-500 mb-2">Select how long this quiz will accept responses.</p>
-          <div className="flex flex-wrap gap-2">
-            {durationOptions.map(opt => (
-              <button
-                key={opt.value}
-                onClick={() => { setDuration(opt.value); setIsDurationSheetOpen(false); }}
-                className={`px-4 py-2 rounded-full text-xs font-bold border transition-all ${
-                  duration === opt.value
-                    ? 'bg-purple-600 text-white border-purple-600 shadow-md'
-                    : 'bg-white text-gray-650 border-gray-200 hover:bg-gray-50'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-          <div className="pt-2 border-t border-gray-100 space-y-2">
-            <button
-              onClick={() => setDuration('custom')}
-              className={`w-full py-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-2 ${
-                duration === 'custom'
-                  ? 'bg-purple-600 text-white border-purple-600'
-                  : 'bg-white text-gray-650 border-gray-200 hover:bg-gray-50'
-              }`}
-            >
-              <Calendar size={14} /> Custom End Date
-            </button>
-            {duration === 'custom' && (
-              <input
-                type="datetime-local"
-                value={customEndDate}
-                onChange={(e) => setCustomEndDate(e.target.value)}
-                className="w-full p-3 rounded-xl border border-gray-200 text-xs font-semibold focus:outline-none focus:border-purple-500 transition-all text-gray-900"
-              />
-            )}
-          </div>
-          <button onClick={() => setIsDurationSheetOpen(false)} className="w-full py-4 bg-gray-900 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] mt-4">Done</button>
-        </div>
-      </BottomSheet>
-
-
-
-      {/* Reused Bottom Sheets from Survey Builder */}
-      <BottomSheet isOpen={isVisibilitySheetOpen} onClose={() => setIsVisibilitySheetOpen(false)} title="Post visibility">
-        <div className="space-y-2 py-2">
-          {visibilityOptions.map((option) => {
-            const Icon = option.icon;
-            const isSelected = visibility === option.id;
-            return (
-              <button key={option.id} disabled={!option.allowed} onClick={() => { setVisibility(option.id as VisibilityType); if (option.id !== 'Groups') setIsVisibilitySheetOpen(false); }} className={`w-full flex items-center gap-4 p-4 rounded-2xl border transition-all text-left ${!option.allowed ? 'opacity-40 grayscale cursor-not-allowed' : isSelected ? 'border-purple-500 bg-purple-50/50' : 'border-transparent hover:bg-gray-50'}`}>
-                <div className={`p-2.5 rounded-xl ${isSelected ? 'bg-purple-600 text-white shadow-md' : 'bg-gray-100 text-gray-500'}`}><Icon size={20} /></div>
-                <div className="flex-1"><h4 className={`font-bold text-sm ${isSelected ? 'text-purple-700' : 'text-gray-900'}`}>{option.label}</h4><p className="text-[10px] text-gray-500 mt-0.5">{option.desc}</p></div>
-                {isSelected && <div className="w-6 h-6 bg-purple-600 text-white rounded-full flex items-center justify-center"><Check size={14} strokeWidth={3} /></div>}
-              </button>
-            );
-          })}
-        </div>
-      </BottomSheet>
-
-      {/* Result Visibility Bottom Sheet */}
-      <BottomSheet isOpen={isResultVisibilitySheetOpen} onClose={() => setIsResultVisibilitySheetOpen(false)} title="Result Visibility" customLayout={true}>
-        <div className="flex flex-col h-full bg-white px-5 py-4 space-y-8 overflow-y-auto no-scrollbar">
-          <div className="space-y-4">
-            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Section 1: Who Can See the Results</h3>
-            <div className="space-y-2">
-              {['Public', 'Followers', 'Participants', 'OnlyMe'].map((opt) => (
-                <button key={opt} onClick={() => setResultsWho(opt as any)} className="w-full flex items-center justify-between p-4 rounded-2xl border" style={{ borderColor: resultsWho === opt ? '#9333ea' : '#f3f4f6', backgroundColor: resultsWho === opt ? '#faf5ff' : 'white' }}>
-                  <span className="text-sm font-bold text-gray-700">{opt === 'Participants' ? 'Participants Only' : opt === 'OnlyMe' ? 'Only Me' : opt}</span>
-                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${resultsWho === opt ? 'border-purple-600 bg-purple-600' : 'border-gray-200'}`}>{resultsWho === opt && <div className="w-1.5 h-1.5 bg-white rounded-full" />}</div>
+              {/* Sub-routing rows */}
+              <div className="space-y-1.5">
+                {/* Visibility Sub-trigger */}
+                <button
+                  type="button"
+                  onClick={() => setAdvancedSheetView('visibility')}
+                  className="w-full flex items-center justify-between p-3.5 bg-gray-50 hover:bg-gray-100/70 rounded-xl transition-all border border-gray-100"
+                >
+                  <span className="text-xs font-bold text-gray-805">Post Visibility</span>
+                  <div className="flex items-center gap-1 text-xs text-purple-600 font-black">
+                    <span>{visibility === 'Groups' && selectedGroups.length > 0 ? `${selectedGroups.length} Groups` : visibility}</span>
+                    <ChevronRight size={14} />
+                  </div>
                 </button>
-              ))}
-            </div>
-          </div>
 
-          <div className="space-y-4">
-            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Section 3: When Results Are Visible</h3>
-            <div className="space-y-2">
-              <button onClick={() => setResultsTiming('AnyTime')} className="w-full flex items-center justify-between p-4 rounded-2xl border" style={{ borderColor: resultsTiming === 'AnyTime' ? '#9333ea' : '#f3f4f6', backgroundColor: resultsTiming === 'AnyTime' ? '#faf5ff' : 'white' }}><span className="text-sm font-bold text-gray-700">Any time</span></button>
-              <button onClick={() => setResultsTiming('Immediately')} className="w-full flex items-center justify-between p-4 rounded-2xl border" style={{ borderColor: resultsTiming === 'Immediately' ? '#9333ea' : '#f3f4f6', backgroundColor: resultsTiming === 'Immediately' ? '#faf5ff' : 'white' }}><span className="text-sm font-bold text-gray-700">Immediately</span></button>
-              <button disabled={!canShowResultsAfterEnd} onClick={() => setResultsTiming('AfterEnd')} className="w-full flex items-center justify-between p-4 rounded-2xl border disabled:opacity-40" style={{ borderColor: resultsTiming === 'AfterEnd' ? '#9333ea' : '#f3f4f6', backgroundColor: resultsTiming === 'AfterEnd' ? '#faf5ff' : 'white' }}><span className="text-sm font-bold text-gray-700">After post ends</span></button>
+                {/* Results Visibility Sub-trigger */}
+                <button
+                  type="button"
+                  onClick={() => setAdvancedSheetView('results')}
+                  className="w-full flex items-center justify-between p-3.5 bg-gray-50 hover:bg-gray-100/70 rounded-xl transition-all border border-gray-100"
+                >
+                  <span className="text-xs font-bold text-gray-805">Result Visibility</span>
+                  <div className="flex items-center gap-1 text-xs text-purple-600 font-black">
+                    <span>{resultsWho === 'OnlyMe' ? 'Only Me' : resultsWho}</span>
+                    <ChevronRight size={14} />
+                  </div>
+                </button>
+              </div>
+
+              {/* Duration section inline inside settings sheet */}
+              <div className="space-y-3 pb-4 border-b border-gray-100 pt-1">
+                <label className="flex items-center gap-2 text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                  <Calendar size={12} /> Quiz Duration
+                </label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {durationOptions.map(opt => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setDuration(opt.value)}
+                      className={`py-2 rounded-xl text-xs font-bold border transition-all ${
+                        duration === opt.value
+                          ? 'bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-100'
+                          : 'bg-gray-50 text-gray-500 border-transparent hover:bg-gray-100'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setDuration('custom')}
+                    className={`py-2 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1 ${
+                      duration === 'custom'
+                        ? 'bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-100'
+                        : 'bg-gray-50 text-gray-500 border-transparent hover:bg-gray-100'
+                    }`}
+                  >
+                    <Plus size={12} /> Custom
+                  </button>
+                </div>
+                {duration === 'custom' && (
+                  <div className="mt-2 animate-in fade-in slide-in-from-top-1">
+                    <input
+                      type="datetime-local"
+                      value={customEndDate}
+                      onChange={(e) => setCustomEndDate(e.target.value)}
+                      className="w-full bg-purple-50/50 border border-purple-100 rounded-xl px-4 py-2.5 text-xs font-bold focus:outline-none focus:bg-white focus:border-purple-500 transition-all text-purple-900"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Toggles List */}
+              <div className="space-y-4 pt-1">
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col text-left">
+                    <span className="text-xs font-bold text-gray-800">Allow comments</span>
+                    <span className="text-[10px] text-gray-400">Enable user comments on the post</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAllowComments(!allowComments)}
+                    className={`w-10 h-5 rounded-full relative transition-colors ${allowComments ? 'bg-purple-600' : 'bg-gray-200'}`}
+                  >
+                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowComments ? 'left-6' : 'left-1'}`} />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col text-left">
+                    <span className="text-xs font-bold text-gray-800">Force anonymous</span>
+                    <span className="text-[10px] text-gray-400">Keep all participants identity completely anonymous</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setForceAnonymous(!forceAnonymous)}
+                    className={`w-10 h-5 rounded-full relative transition-colors ${forceAnonymous ? 'bg-purple-600' : 'bg-gray-200'}`}
+                  >
+                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${forceAnonymous ? 'left-6' : 'left-1'}`} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="pt-4">
+                <button
+                  onClick={() => setIsAdvancedSheetOpen(false)}
+                  className="w-full bg-gray-900 text-white py-3.5 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg active:scale-95 transition-all"
+                >
+                  Done
+                </button>
+              </div>
             </div>
-          </div>
-          <button onClick={() => setIsResultVisibilitySheetOpen(false)} className="w-full py-4 bg-gray-900 text-white rounded-2xl font-black uppercase tracking-widest text-[10px]">Done</button>
+          )}
+
+          {/* Visibility View Sub-screen */}
+          {advancedSheetView === 'visibility' && (
+            <div className="space-y-4">
+              <button
+                type="button"
+                onClick={() => {
+                  if (visibility === 'Groups' && selectedGroups.length === 0) {
+                    setErrors(prev => ({ ...prev, visibility: "Please select at least one group." }));
+                    return;
+                  }
+                  setErrors(prev => ({ ...prev, visibility: false }));
+                  setAdvancedSheetView('main');
+                }}
+                className="flex items-center gap-1.5 text-xs text-purple-600 font-bold hover:opacity-80 transition-opacity pb-2"
+              >
+                <span>&larr; Back to Advanced Settings</span>
+              </button>
+
+              <div className="space-y-2">
+                {visibilityOptions.map((option) => {
+                  const Icon = option.icon;
+                  const isSelected = visibility === option.id;
+                  return (
+                    <button
+                      key={option.id}
+                      onClick={() => {
+                        if (option.allowed) {
+                          setVisibility(option.id as VisibilityType);
+                          if (option.id !== 'Groups') {
+                            setErrors(prev => ({ ...prev, visibility: false }));
+                          }
+                        }
+                      }}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl border transition-all text-left group ${!option.allowed ? 'opacity-40 cursor-not-allowed grayscale' : 'hover:bg-gray-50'
+                        } ${isSelected ? 'border-purple-500 bg-purple-50/50 ring-1 ring-purple-500/20' : 'border-transparent'}`}
+                    >
+                      <div className={`p-2.5 rounded-xl transition-colors ${isSelected ? 'bg-purple-600 text-white shadow-md' : 'bg-gray-100 text-gray-500 group-hover:bg-gray-200'}`}>
+                        <Icon size={20} />
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <h4 className={`font-bold text-sm ${isSelected ? 'text-purple-700' : 'text-gray-900'}`}>{option.label}</h4>
+                          {option.premium && (
+                            <span className="text-[8px] font-black bg-gradient-to-r from-amber-400 to-orange-505 text-white px-1.5 py-0.5 rounded-md uppercase tracking-wider">PRO</span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-gray-500 leading-tight mt-0.5">{option.desc}</p>
+                      </div>
+                      {isSelected && (
+                        <div className="w-6 h-6 bg-purple-600 text-white rounded-full flex items-center justify-center shadow-sm">
+                          <Check size={14} strokeWidth={3} />
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {visibility === 'Groups' && (
+                <div className="mt-4 p-4 bg-gray-50 rounded-2xl animate-in slide-in-from-top-2 border border-gray-100">
+                  <div className="flex items-center justify-between mb-3 px-1">
+                    <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Select target groups</h5>
+                    <span className="text-[9px] font-bold text-purple-600 bg-purple-100 px-1.5 py-0.5 rounded uppercase">Postable</span>
+                  </div>
+
+                  {postableGroups.length > 0 ? (
+                    <div className="space-y-2 max-h-[250px] overflow-y-auto no-scrollbar">
+                      {postableGroups.map(group => {
+                        const isGroupSelected = selectedGroups.includes(group.id);
+                        return (
+                          <button
+                            key={group.id}
+                            onClick={() => {
+                              handleGroupToggle(group.id);
+                              setErrors(prev => ({ ...prev, visibility: false }));
+                            }}
+                            className={`w-full flex items-center gap-3 p-2 rounded-xl transition-all border ${isGroupSelected
+                              ? 'bg-white border-purple-200 shadow-sm ring-1 ring-purple-500/5'
+                              : 'bg-transparent border-transparent hover:bg-white/50'
+                              }`}
+                          >
+                            <img src={group.image} className="w-10 h-10 rounded-lg object-cover border border-gray-200 shadow-xs" alt="" />
+                            <div className="flex-1 text-left min-w-0">
+                              <p className="text-xs font-bold text-gray-800 truncate">{group.name}</p>
+                              <p className="text-[10px] text-gray-400">{(group.memberCount || 0).toLocaleString()} members</p>
+                            </div>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${isGroupSelected ? 'bg-purple-600 border-purple-600' : 'border-gray-200'
+                              }`}>
+                              {isGroupSelected && <Check size={12} className="text-white" strokeWidth={3} />}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="py-6 text-center">
+                      <Users size={32} className="mx-auto text-gray-300 mb-2 opacity-30" />
+                      <p className="text-xs text-gray-500 font-medium leading-relaxed px-4">
+                        You don't have permission to post in any groups.
+                      </p>
+                    </div>
+                  )}
+
+                  {errors.visibility && selectedGroups.length === 0 && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-[10px] text-red-600 font-bold flex items-center gap-1.5 mt-2 animate-in fade-in">
+                      <AlertCircle size={14} className="shrink-0" />
+                      <span>{errors.visibility}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Results View Sub-screen */}
+          {advancedSheetView === 'results' && (
+            <div className="space-y-4">
+              <button
+                type="button"
+                onClick={() => setAdvancedSheetView('main')}
+                className="flex items-center gap-1.5 text-xs text-purple-600 font-bold hover:opacity-80 transition-opacity pb-2"
+              >
+                <span>&larr; Back to Advanced Settings</span>
+              </button>
+
+              <div className="space-y-2">
+                {[
+                  { id: 'Public', label: 'Public', desc: 'Results are visible to everyone.' },
+                  { id: 'Participants', label: 'Participants Only', desc: 'Only participants can see results after voting.' },
+                  { id: 'OnlyMe', label: 'Private (Only Me)', desc: 'Only you can see the results.' }
+                ].map((opt) => (
+                  <button
+                    key={opt.id}
+                    onClick={() => setResultsWho(opt as any)}
+                    className="w-full flex items-center justify-between p-4 rounded-2xl border transition-all text-left"
+                    style={{ borderColor: resultsWho === opt ? '#9333ea' : '#f3f4f6', backgroundColor: resultsWho === opt ? '#faf5ff' : 'white' }}
+                  >
+                    <div>
+                      <span className={`text-sm font-bold block ${resultsWho === opt ? 'text-purple-700' : 'text-gray-700'}`}>{opt.label}</span>
+                      <span className="text-[10px] text-gray-550 leading-tight mt-0.5 block">{opt.desc}</span>
+                    </div>
+                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${resultsWho === opt ? 'border-purple-600 bg-purple-600' : 'border-gray-200'}`}>
+                      {resultsWho === opt && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              {/* Result timing selector sub-section */}
+              <div className="space-y-3 pt-2">
+                <div className="flex items-center justify-between px-1">
+                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">When Results Are Visible</span>
+                  {!canShowResultsAfterEnd && <span className="text-[9px] font-bold text-gray-450 flex items-center gap-1"><Info size={10} /> Set duration to enable timing</span>}
+                </div>
+                <div className="space-y-2">
+                  {[
+                    { id: 'AnyTime', label: 'Any time', enabled: true },
+                    { id: 'Immediately', label: 'Immediately after participation', enabled: true },
+                    { id: 'AfterEnd', label: 'After post ends', enabled: canShowResultsAfterEnd }
+                  ].map((opt) => (
+                    <button
+                      key={opt.id}
+                      disabled={!opt.enabled}
+                      onClick={() => setResultsTiming(opt as any)}
+                      className={`w-full flex items-center justify-between p-4 rounded-2xl border transition-all text-left ${!opt.enabled ? 'opacity-40 cursor-not-allowed bg-gray-55 grayscale' : ''}`}
+                      style={{ borderColor: resultsTiming === opt ? '#9333ea' : '#f3f4f6', backgroundColor: resultsTiming === opt ? '#faf5ff' : 'white' }}
+                    >
+                      <span className={`text-sm font-bold ${resultsTiming === opt ? 'text-purple-700' : 'text-gray-700'}`}>{opt.label}</span>
+                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${resultsTiming === opt ? 'border-purple-600 bg-purple-600' : 'border-gray-200'}`}>
+                        {resultsTiming === opt && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </BottomSheet>
 
@@ -1082,7 +1285,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
       <BottomSheet isOpen={isCategorySheetOpen} onClose={() => setIsCategorySheetOpen(false)} title="Select Category">
         <div className="flex flex-wrap gap-2 py-2">
           {QUIZ_CATEGORIES.map(cat => (
-            <button key={cat} onClick={() => { setCategory(cat); setIsCategorySheetOpen(false); }} className={`px-4 py-2 rounded-full text-xs font-bold border transition-all ${category === cat ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>{cat}</button>
+            <button key={cat} onClick={() => { setCategory(cat); setIsCategorySheetOpen(false); }} className={`px-4 py-2 rounded-full text-xs font-bold border transition-all ${category === cat ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-650 border-gray-200 hover:bg-gray-50'}`}>{cat}</button>
           ))}
         </div>
       </BottomSheet>
