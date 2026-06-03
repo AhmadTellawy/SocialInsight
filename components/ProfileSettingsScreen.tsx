@@ -12,6 +12,7 @@ import { ImageCropper } from './ImageCropper';
 import { BottomSheet } from './BottomSheet';
 import { UserProfile } from '../types';
 import { NotificationSettingsScreen } from './NotificationSettingsScreen';
+import { FollowRequestsSheet } from './FollowRequestsSheet';
 import { api } from '../services/api';
 import { useTranslation } from 'react-i18next';
 
@@ -72,6 +73,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   const [nationalitySearch, setNationalitySearch] = useState('');
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
+  const [showFollowRequests, setShowFollowRequests] = useState(false);
 
   // Image Flow State
   const [croppingImage, setCroppingImage] = useState<string | null>(null);
@@ -177,6 +179,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
         email: profileForm.email,
         phone: profileForm.phone,
         groupPrivacy: profileForm.groupPrivacy,
+        isPrivate: profileForm.isPrivate,
         demographics: {
           ...(userProfile.demographics || {}),
           ...(profileForm.demographics || {})
@@ -708,6 +711,35 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
         <SectionHeader title={t('Privacy & Social')} />
         <div className="bg-white border-y border-gray-100 shadow-sm">
           <SettingItem
+            icon={Lock}
+            label={t('Private Account')}
+            type="toggle"
+            active={profileForm.isPrivate || false}
+            onClick={() => {
+              const updatedProfile = { ...profileForm, isPrivate: !profileForm.isPrivate };
+              setProfileForm(updatedProfile);
+              
+              if (updatedProfile.isPrivate === false) {
+                // Warning modal before switching to Public
+                const confirmPublic = window.confirm(t('Switching to Public will automatically accept all pending follow requests. Do you want to continue?'));
+                if (!confirmPublic) {
+                   setProfileForm({ ...profileForm, isPrivate: true });
+                   return;
+                }
+              }
+              
+              // We should trigger a save for this specific setting immediately or let the user click save. 
+              // Wait, the page has a general "Save" button in the header? No, for toggle items like these, wait, settings state is separate?
+              // The other settings are in `settings` state and aren't saved to backend in this code!
+              // I will update the profile form so it gets saved.
+            }}
+          />
+          <SettingItem
+            icon={UserPlus}
+            label={t('Follow Requests')}
+            onClick={() => setShowFollowRequests(true)}
+          />
+          <SettingItem
             icon={Search}
             label={t('Show my profile in search')}
             type="toggle"
@@ -842,6 +874,14 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {showFollowRequests && userProfile.id && (
+         <FollowRequestsSheet
+           isOpen={showFollowRequests}
+           onClose={() => setShowFollowRequests(false)}
+           userId={userProfile.id}
+         />
       )}
     </div>
   );

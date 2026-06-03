@@ -72,6 +72,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
   const viewUserId = (!user?.id || user.id === userProfile.id) ? userProfile.id : (user as any)?.id;
   const [isFollowing, setLocalFollowingState] = useFollowState(viewUserId, (user as any)?.isFollowing || false);
+  const [followStatus, setFollowStatus] = useState<string>((user as any)?.followStatus || 'NONE');
 
   const [drafts, setDrafts] = useState<Survey[]>([]);
   const [savedPosts, setSavedPosts] = useState<Survey[]>([]);
@@ -144,6 +145,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             setTargetUser(fullUser);
             if (fullUser && fullUser.isFollowing !== undefined) {
               setLocalFollowingState(fullUser.isFollowing);
+            }
+            if (fullUser && fullUser.followStatus) {
+              setFollowStatus(fullUser.followStatus);
             }
           }
 
@@ -261,6 +265,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     try {
       const response = await api.followUser(userId, userProfile.id);
       setLocalFollowingState(response.isFollowing);
+      setFollowStatus(response.followStatus || 'NONE');
 
       if (response.targetUserFollowers !== undefined) {
         setTargetUser(prev => prev ? ({ ...prev, stats: { ...prev.stats, followers: response.targetUserFollowers } }) : null);
@@ -799,12 +804,15 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               <button
                 onClick={handleFollow}
                 disabled={isFollowLoading}
-                className={`flex-1 py-4 rounded-2xl font-black uppercase tracking-widest text-[11px] transition-all active:scale-95 shadow-xl ${isFollowing
-                  ? 'bg-gray-100 text-gray-600 shadow-gray-200/50'
-                  : 'bg-blue-600 text-white shadow-blue-500/20'
+                className={`flex-1 py-4 rounded-2xl font-black uppercase tracking-widest text-[11px] transition-all active:scale-95 shadow-xl ${
+                  followStatus === 'PENDING'
+                    ? 'bg-gray-50 text-gray-400 border border-gray-200'
+                    : isFollowing
+                      ? 'bg-gray-100 text-gray-600 shadow-gray-200/50'
+                      : 'bg-blue-600 text-white shadow-blue-500/20'
                   } ${isFollowLoading ? 'opacity-50' : ''}`}
               >
-                {isFollowing ? t('Following') : t('Follow')}
+                {followStatus === 'PENDING' ? t('Requested') : isFollowing ? t('Following') : t('Follow')}
               </button>
             </div>
           )}

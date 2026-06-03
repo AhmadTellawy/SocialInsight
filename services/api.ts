@@ -353,6 +353,30 @@ export const api = {
         return response.json();
     },
 
+    getFollowRequests: async (userId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/users/${userId}/follow-requests`);
+        if (!response.ok) throw new Error('Failed to fetch follow requests');
+        return response.json();
+    },
+
+    acceptFollowRequest: async (followerId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/users/${followerId}/accept-follow`, { method: 'POST' });
+        if (!response.ok) throw new Error('Failed to accept follow request');
+        return response.json();
+    },
+
+    rejectFollowRequest: async (followerId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/users/${followerId}/reject-follow`, { method: 'POST' });
+        if (!response.ok) throw new Error('Failed to reject follow request');
+        return response.json();
+    },
+
+    removeFollower: async (followerId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/users/${followerId}/remove-follower`, { method: 'POST' });
+        if (!response.ok) throw new Error('Failed to remove follower');
+        return response.json();
+    },
+
     register: async (data: any) => {
         const response = await authFetch(`${API_BASE_URL}/auth/register`, {
             method: 'POST',

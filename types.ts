@@ -26,6 +26,7 @@ export interface UserProfile {
   country?: string;
   isPrivate?: boolean;
   groupPrivacy?: 'Public' | 'Followers' | 'Off';
+  followStatus?: 'ACTIVE' | 'PENDING' | 'REJECTED' | 'NONE';
   demographics?: {
     gender?: string;
     ageGroup?: string;

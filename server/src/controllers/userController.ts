@@ -1,6 +1,7 @@
-
 import { Request, Response } from 'express';
 import prisma from '../prisma';
+import { PrivacyService } from '../services/privacyService';
+import { notify } from '../services/notificationService';
 import { processBase64Image } from '../utils/imageProcessor';
 
 const SAFE_USER_SELECT = {
@@ -38,6 +39,8 @@ export const getUsers = async (req: Request, res: Response) => {
 export const searchUsers = async (req: Request, res: Response) => {
     try {
         const query = String(req.query.q || '').trim();
+        const userId = req.query.userId as string | undefined;
+
         if (!query) {
             return res.json([]);
         }
@@ -45,10 +48,16 @@ export const searchUsers = async (req: Request, res: Response) => {
         const users = await prisma.user.findMany({
             where: {
                 OR: [
-                    { handle: { contains: query } },
-                    { name: { contains: query } }
+                    { handle: { contains: query, mode: 'insensitive' } },
+                    { name: { contains: query, mode: 'insensitive' } }
                 ],
-                status: 'ACTIVE'
+                status: 'ACTIVE',
+                ...(userId ? {
+                    NOT: [
+                        { blockedBy: { some: { blockerId: userId } } },
+                        { blocking: { some: { blockedId: userId } } }
+                    ]
+                } : {})
             },
             take: 10,
             select: SAFE_USER_SELECT
@@ -79,12 +88,27 @@ export const getUser = async (req: Request, res: Response) => {
             where: { userId: user.id }
         });
 
-                let isFollowing = false;
+        let followStatus = 'NONE';
         if (req.user?.userId && req.user.userId !== user.id) {
+            const blockRecord = await prisma.userBlock.findFirst({
+                where: {
+                    OR: [
+                        { blockerId: req.user.userId, blockedId: user.id },
+                        { blockerId: user.id, blockedId: req.user.userId }
+                    ]
+                }
+            });
+            if (blockRecord) {
+                res.status(404).json({ error: 'User not found' });
+                return;
+            }
+
             const follow = await prisma.follow.findUnique({
                 where: { followerId_followingId: { followerId: req.user.userId, followingId: user.id } }
             });
-            isFollowing = !!follow;
+            if (follow) {
+                followStatus = follow.status;
+            }
         }
 
         const [postsCount, responsesCount] = await Promise.all([
@@ -98,7 +122,7 @@ export const getUser = async (req: Request, res: Response) => {
 
         res.json({
             ...safeUser,
-            isFollowing,
+            followStatus,
             demographics: demographics || {},
             stats: {
                 followers: user.followersCount,
@@ -136,12 +160,27 @@ export const getUserByHandle = async (req: Request, res: Response) => {
             where: { userId: user.id }
         });
 
-                let isFollowing = false;
+        let followStatus = 'NONE';
         if (req.user?.userId && req.user.userId !== user.id) {
+            const blockRecord = await prisma.userBlock.findFirst({
+                where: {
+                    OR: [
+                        { blockerId: req.user.userId, blockedId: user.id },
+                        { blockerId: user.id, blockedId: req.user.userId }
+                    ]
+                }
+            });
+            if (blockRecord) {
+                res.status(404).json({ error: 'User not found' });
+                return;
+            }
+
             const follow = await prisma.follow.findUnique({
                 where: { followerId_followingId: { followerId: req.user.userId, followingId: user.id } }
             });
-            isFollowing = !!follow;
+            if (follow) {
+                followStatus = follow.status;
+            }
         }
 
         const [postsCount, responsesCount] = await Promise.all([
@@ -155,7 +194,7 @@ export const getUserByHandle = async (req: Request, res: Response) => {
 
         res.json({
             ...safeUser,
-            isFollowing,
+            followStatus,
             demographics: demographics || {},
             stats: {
                 followers: user.followersCount,
@@ -195,6 +234,33 @@ export const updateUser = async (req: Request, res: Response) => {
             data: updateData,
             select: SAFE_USER_SELECT
         });
+
+        // Auto-accept pending requests when switching to Public
+        if (data.isPrivate === false) {
+            const pendingRequests = await prisma.follow.findMany({
+                where: { followingId: id as string, status: 'PENDING' }
+            });
+
+            if (pendingRequests.length > 0) {
+                await prisma.follow.updateMany({
+                    where: { followingId: id as string, status: 'PENDING' },
+                    data: { status: 'ACTIVE', approvedAt: new Date() }
+                });
+
+                await prisma.user.update({
+                    where: { id: id as string },
+                    data: { followersCount: { increment: pendingRequests.length } }
+                });
+
+                for (const req of pendingRequests) {
+                    await prisma.user.update({
+                        where: { id: req.followerId },
+                        data: { followingCount: { increment: 1 } }
+                    });
+                    await notify(id as string, req.followerId, 'follow_accept', 'Automatically accepted your follow request', 'user', id as string);
+                }
+            }
+        }
 
         let demographics = null;
         if (data.demographics) {
@@ -330,15 +396,21 @@ export const getUserFollowers = async (req: Request, res: Response) => {
     const { id } = req.params;
     const { currentUserId } = req.query;
     try {
+        const canView = await PrivacyService.canViewUserContent(currentUserId as string, id as string);
+        if (!canView) {
+            res.status(403).json({ error: 'Forbidden' });
+            return;
+        }
+
         const followers = await prisma.follow.findMany({
-            where: { followingId: id as string },
+            where: { followingId: id as string, status: 'ACTIVE' },
             include: {
                 follower: {
                     select: {
                         ...SAFE_USER_SELECT,
                         following: currentUserId ? {
                             where: { followerId: currentUserId as string },
-                            select: { followerId: true } // Just check existence
+                            select: { status: true }
                         } : false
                     }
                 }
@@ -350,7 +422,7 @@ export const getUserFollowers = async (req: Request, res: Response) => {
             name: f.follower.name,
             handle: f.follower.handle,
             avatar: f.follower.avatar,
-            isFollowing: currentUserId ? (f.follower.following && f.follower.following.length > 0) : false
+            followStatus: currentUserId ? (f.follower.following && f.follower.following.length > 0 ? f.follower.following[0].status : 'NONE') : 'NONE'
         }));
 
         res.json(mapped);
@@ -364,15 +436,21 @@ export const getUserFollowing = async (req: Request, res: Response) => {
     const { id } = req.params;
     const { currentUserId } = req.query;
     try {
+        const canView = await PrivacyService.canViewUserContent(currentUserId as string, id as string);
+        if (!canView) {
+            res.status(403).json({ error: 'Forbidden' });
+            return;
+        }
+
         const following = await prisma.follow.findMany({
-            where: { followerId: id as string },
+            where: { followerId: id as string, status: 'ACTIVE' },
             include: {
                 following: {
                     select: {
                         ...SAFE_USER_SELECT,
                         following: currentUserId ? {
                             where: { followerId: currentUserId as string },
-                            select: { followerId: true }
+                            select: { status: true }
                         } : false
                     }
                 }
@@ -384,7 +462,7 @@ export const getUserFollowing = async (req: Request, res: Response) => {
             name: f.following.name,
             handle: f.following.handle,
             avatar: f.following.avatar,
-            isFollowing: currentUserId ? (f.following.following && f.following.following.length > 0) : false
+            followStatus: currentUserId ? (f.following.following && f.following.following.length > 0 ? f.following.following[0].status : 'NONE') : 'NONE'
         }));
 
         res.json(mapped);

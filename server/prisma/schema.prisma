@@ -60,6 +60,8 @@ model User {
   likes             UserLike[]
   commentLikes      CommentLike[]
   pushSubscriptions PushSubscription[]
+  blocking          UserBlock[]        @relation("UserBlocks")
+  blockedBy         UserBlock[]        @relation("UserBlocked")
 
   @@map("users")
 }
@@ -92,31 +94,40 @@ model PushSubscription {
 }
 
 model Follow {
-  followerId  String   @map("follower_id")
-  followingId String   @map("following_id")
-  createdAt   DateTime @default(now()) @map("created_at")
-  following   User     @relation("UserFollowed", fields: [followingId], references: [id])
-  follower    User     @relation("UserFollows", fields: [followerId], references: [id])
+  id          String    @id @default(uuid())
+  followerId  String    @map("follower_id")
+  followingId String    @map("following_id")
+  status      String    @default("ACTIVE") // ACTIVE, PENDING, REJECTED, CANCELLED, REMOVED, UNFOLLOWED
+  requestedAt DateTime? @map("requested_at")
+  approvedAt  DateTime? @map("approved_at")
+  rejectedAt  DateTime? @map("rejected_at")
+  cancelledAt DateTime? @map("cancelled_at")
+  removedAt   DateTime? @map("removed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
 
-  @@id([followerId, followingId])
+  following User @relation("UserFollowed", fields: [followingId], references: [id])
+  follower  User @relation("UserFollows", fields: [followerId], references: [id])
+
+  @@unique([followerId, followingId])
   @@map("follows")
 }
 
 model Group {
-  id            String        @id @default(uuid())
-  name          String
-  description   String
-  category      String
-  image         String?
-  isPublic      Boolean       @default(true)
-  joinPolicy    String        @default("OPEN")
-  postingPermissions String   @default("AllMembers")
-  memberCount   Int           @default(0)
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  members       GroupMember[]
-  posts         Post[]        @relation("PrimaryGroup")
-  targetedPosts Post[]        @relation("PostTargetGroups")
+  id                 String        @id @default(uuid())
+  name               String
+  description        String
+  category           String
+  image              String?
+  isPublic           Boolean       @default(true)
+  joinPolicy         String        @default("OPEN")
+  postingPermissions String        @default("AllMembers")
+  memberCount        Int           @default(0)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  members            GroupMember[]
+  posts              Post[]        @relation("PrimaryGroup")
+  targetedPosts      Post[]        @relation("PostTargetGroups")
 }
 
 model GroupMember {
@@ -217,22 +228,22 @@ model Question {
 }
 
 model Option {
-  id          String   @id @default(uuid())
-  text        String
-  image       String?
-  votes       Int      @default(0)
-  questionId  String
-  isCorrect   Boolean?
-  isRating    Boolean  @default(false)
-  ratingValue Int      @default(0)
-  order       Int      @default(0)
-  withFollowUp Boolean @default(false)
-  followUpLabel String?
-  isUserAdded Boolean  @default(false)
-  addedByUserId String?
+  id             String   @id @default(uuid())
+  text           String
+  image          String?
+  votes          Int      @default(0)
+  questionId     String
+  isCorrect      Boolean?
+  isRating       Boolean  @default(false)
+  ratingValue    Int      @default(0)
+  order          Int      @default(0)
+  withFollowUp   Boolean  @default(false)
+  followUpLabel  String?
+  isUserAdded    Boolean  @default(false)
+  addedByUserId  String?
   addedByGuestId String?
-  question    Question @relation(fields: [questionId], references: [id])
-  answers     Answer[]
+  question       Question @relation(fields: [questionId], references: [id])
+  answers        Answer[]
 }
 
 model Response {
@@ -419,4 +430,16 @@ model CommentLike {
   comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
 
   @@unique([userId, commentId])
+}
+
+model UserBlock {
+  id        String   @id @default(uuid())
+  blockerId String   @map("blocker_id")
+  blockedId String   @map("blocked_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  blocker   User     @relation("UserBlocks", fields: [blockerId], references: [id])
+  blocked   User     @relation("UserBlocked", fields: [blockedId], references: [id])
+
+  @@unique([blockerId, blockedId])
+  @@map("user_blocks")
 }

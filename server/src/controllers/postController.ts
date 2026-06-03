@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import prisma from '../prisma';
 import { notify, extractAndNotifyMentions } from '../services/notificationService';
 import { processBase64Image } from '../utils/imageProcessor';
+import { PrivacyService } from '../services/privacyService';
 
 export const SAFE_USER_SELECT = {
     id: true,
@@ -134,13 +135,14 @@ export const getPosts = async (req: Request, res: Response) => {
                 ...(userId && !authorId && !authorHandle ? {
                     NOT: { hiddenBy: { some: { userId } } }
                 } : {}),
+                ...PrivacyService.getPostPrivacyWhereClause(userId),
                 OR: [
                     { targetAudience: 'Public' },
                     { targetAudience: 'PUBLIC' },
                     { targetAudience: null },
                     ...(userId ? [
                         { authorId: userId },
-                        { author: { following: { some: { followerId: userId } } } }
+                        { author: { following: { some: { followerId: userId, status: 'ACTIVE' } } } }
                     ] : [])
                 ]
             },
@@ -313,6 +315,12 @@ export const getPostById = async (req: Request, res: Response) => {
             return;
         }
 
+        const canView = await PrivacyService.canViewUserContent(userId, p.authorId);
+        if (!canView) {
+            res.status(403).json({ error: 'Forbidden' });
+            return;
+        }
+
         const targetGroupIds = mapTargetGroups(p);
         const isAuthor = !!userId && p.authorId === userId;
         if (!isAuthor && (p.targetAudience === 'Groups' || targetGroupIds.length > 0)) {
@@ -324,20 +332,6 @@ export const getPostById = async (req: Request, res: Response) => {
                 where: { userId, groupId: { in: targetGroupIds }, status: 'JOINED' }
             });
             if (!membership) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-        }
-
-        if (!isAuthor && p.targetAudience === 'Followers') {
-            if (!userId) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-            const follow = await prisma.follow.findUnique({
-                where: { followerId_followingId: { followerId: userId, followingId: p.authorId } }
-            });
-            if (!follow) {
                 res.status(403).json({ error: 'Forbidden' });
                 return;
             }
@@ -920,7 +914,13 @@ export const getSavedPosts = async (req: Request, res: Response) => {
     const userId = req.query.userId as any;
     try {
         const saved = await prisma.savedPost.findMany({
-            where: { userId, post: { isDeleted: false } },
+            where: { 
+                userId, 
+                post: { 
+                    isDeleted: false,
+                    ...PrivacyService.getPostPrivacyWhereClause(userId)
+                } 
+            },
             include: {
                 post: {
                     include: {
