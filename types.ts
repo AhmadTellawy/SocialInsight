@@ -25,6 +25,7 @@ export interface UserProfile {
   birthday?: string;
   country?: string;
   isPrivate?: boolean;
+  isFollowing?: boolean;
   groupPrivacy?: 'Public' | 'Followers' | 'Off';
   followStatus?: 'ACTIVE' | 'PENDING' | 'REJECTED' | 'NONE';
   demographics?: {
@@ -183,6 +184,7 @@ export interface Survey {
     avatar: string;
     type?: AccountType;
     isFollowing?: boolean; // Added isFollowing
+    isPrivate?: boolean;
   };
   hasParticipated?: boolean;
   userSelectedOptions?: string[];
@@ -250,7 +252,7 @@ export interface Notification {
   timestamp: string;
   isRead: boolean;
   targetId?: string;
-  targetType?: 'survey' | 'profile' | 'group';
+  targetType?: 'survey' | 'profile' | 'group' | 'user';
 }
 
 export interface TabItem {
@@ -271,7 +273,8 @@ export const normalizeSurvey = (raw: any): Survey => {
     handle: raw.author.handle,
     avatar: raw.author.avatar ?? '',
     type: raw.author.type,
-    isFollowing: raw.author.isFollowing
+    isFollowing: raw.author.isFollowing,
+    isPrivate: raw.author.isPrivate
   } : {
     id: raw.authorId ?? '',
     name: 'Unknown',

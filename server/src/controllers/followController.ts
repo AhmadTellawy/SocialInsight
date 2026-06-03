@@ -89,10 +89,10 @@ export const followUser = async (req: Request, res: Response) => {
                     prisma.user.update({ where: { id: userId }, data: { followersCount: { increment: 1 } } }),
                     prisma.user.update({ where: { id: currentUserId }, data: { followingCount: { increment: 1 } } })
                 ]);
-                await notify(currentUserId, userId, 'follow', 'Started following you', 'user', currentUserId);
+                await notify(currentUserId, userId, 'follow', 'Started following you', 'profile', currentUserId);
             } else {
                 // Send PENDING request notification
-                await notify(currentUserId, userId, 'follow_request', 'Requested to follow you', 'user', currentUserId);
+                await notify(currentUserId, userId, 'follow_request', 'Requested to follow you', 'profile', currentUserId);
             }
 
             res.json({
@@ -161,7 +161,7 @@ export const acceptFollowRequest = async (req: Request, res: Response) => {
             prisma.user.update({ where: { id: followerId }, data: { followingCount: { increment: 1 } } })
         ]);
 
-        await notify(currentUserId, followerId, 'follow_accept', 'Accepted your follow request', 'user', currentUserId);
+        await notify(currentUserId, followerId, 'follow_accept', 'Accepted your follow request', 'profile', currentUserId);
 
         res.json({ message: 'Request accepted' });
     } catch (error) {

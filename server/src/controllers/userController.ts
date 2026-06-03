@@ -123,6 +123,7 @@ export const getUser = async (req: Request, res: Response) => {
         res.json({
             ...safeUser,
             followStatus,
+            isFollowing: followStatus === 'ACTIVE',
             demographics: demographics || {},
             stats: {
                 followers: user.followersCount,
@@ -195,6 +196,7 @@ export const getUserByHandle = async (req: Request, res: Response) => {
         res.json({
             ...safeUser,
             followStatus,
+            isFollowing: followStatus === 'ACTIVE',
             demographics: demographics || {},
             stats: {
                 followers: user.followersCount,
@@ -257,7 +259,7 @@ export const updateUser = async (req: Request, res: Response) => {
                         where: { id: req.followerId },
                         data: { followingCount: { increment: 1 } }
                     });
-                    await notify(id as string, req.followerId, 'follow_accept', 'Automatically accepted your follow request', 'user', id as string);
+                    await notify(id as string, req.followerId, 'follow_accept', 'Automatically accepted your follow request', 'profile', id as string);
                 }
             }
         }
@@ -512,7 +514,7 @@ export const getNotifications = async (req: Request, res: Response) => {
             type: n.type,
             message: n.message,
             targetId: n.targetId,
-            targetType: n.targetType,
+            targetType: n.targetType === 'user' ? 'profile' : n.targetType,
             isRead: n.isRead,
             timestamp: n.createdAt.toISOString(),
             createdAt: n.createdAt.getTime(),

@@ -182,15 +182,19 @@ const App: React.FC = () => {
       author: raw.author?.id ? {
         id: raw.author.id,
         name: raw.author.name || 'Unknown',
+        handle: raw.author.handle,
         avatar: raw.author.avatar || '',
         type: raw.author.type || 'Personal',
-        isFollowing: raw.author.isFollowing || false
+        isFollowing: raw.author.isFollowing || false,
+        isPrivate: raw.author.isPrivate
       } : currentUser?.id ? {
         id: currentUser.id,
         name: currentUser.name || 'Unknown',
+        handle: currentUser.handle,
         avatar: currentUser.avatar || '',
         type: 'Personal',
-        isFollowing: false
+        isFollowing: false,
+        isPrivate: currentUser.isPrivate
       } : {
         id: 'unknown',
         name: 'Unknown',
@@ -1302,7 +1306,7 @@ const App: React.FC = () => {
             }
           }
           setNotifications(newNotifs);
-        }} onBack={() => window.history.length > 2 ? navigate(-1) : navigate('/', { replace: true })} onItemClick={(tid, ttype, actor) => ttype === 'profile' ? navigateToProfile({ id: actor?.id || '', name: actor?.name || '', avatar: actor?.avatar || '' }) : handleSurveyClick(tid)} />;
+        }} onBack={() => window.history.length > 2 ? navigate(-1) : navigate('/', { replace: true })} onItemClick={(tid, ttype, actor) => (ttype === 'profile' || ttype === 'user') ? navigateToProfile({ id: tid || actor?.id || '', name: actor?.name || '', avatar: actor?.avatar || '' }) : handleSurveyClick(tid)} />;
       case 'messages':
         return <MessagesScreen onBack={() => window.history.length > 2 ? navigate(-1) : navigate('/', { replace: true })} />;
       default:
@@ -1344,19 +1348,24 @@ const App: React.FC = () => {
   const canSeeAnalysis = useMemo(() => {
     if (!selectedSurvey) return false;
 
-    const isAuthor = !!userProfile?.id && String(selectedSurvey.author.id) === String(userProfile.id);
+    const analysisSurvey = selectedSurvey.sharedFrom || selectedSurvey;
+    const isAuthor = !!userProfile?.id && String(analysisSurvey.author.id) === String(userProfile.id);
     if (isAuthor) return true; // Author bypasses all limits
 
-    const who = selectedSurvey.resultsWho || 'Public';
-    const timing = selectedSurvey.resultsTiming || 'AnyTime';
+    if (analysisSurvey.author.isPrivate && !analysisSurvey.author.isFollowing) {
+      return false;
+    }
+
+    const who = analysisSurvey.resultsWho || 'Public';
+    const timing = analysisSurvey.resultsTiming || 'AnyTime';
 
     let whoPasses = false;
     if (who === 'Public') {
       whoPasses = true;
     } else if (who === 'Followers') {
-      whoPasses = !!selectedSurvey.author.isFollowing;
+      whoPasses = !!analysisSurvey.author.isFollowing;
     } else if (who === 'Participants') {
-      whoPasses = !!selectedSurvey.hasParticipated;
+      whoPasses = !!(analysisSurvey.hasParticipated ?? selectedSurvey.hasParticipated);
     } else if (who === 'OnlyMe') {
       whoPasses = false;
     }
@@ -1367,14 +1376,20 @@ const App: React.FC = () => {
     if (timing === 'AnyTime') {
       whenPasses = true;
     } else if (timing === 'Immediately') {
-      whenPasses = !!selectedSurvey.hasParticipated;
+      whenPasses = !!(analysisSurvey.hasParticipated ?? selectedSurvey.hasParticipated);
     } else if (timing === 'AfterEnd') {
-      const isExpired = selectedSurvey.expiresAt ? new Date(selectedSurvey.expiresAt).getTime() <= Date.now() : false;
+      const isExpired = analysisSurvey.expiresAt ? new Date(analysisSurvey.expiresAt).getTime() <= Date.now() : false;
       whenPasses = isExpired;
     }
 
     return whenPasses;
   }, [selectedSurvey, userProfile]);
+
+  React.useEffect(() => {
+    if (detailTab === 'analysis' && selectedSurvey && !canSeeAnalysis) {
+      setDetailTab('post');
+    }
+  }, [detailTab, selectedSurvey, canSeeAnalysis]);
 
   React.useEffect(() => {
     let startX: number | null = null;
@@ -1569,8 +1584,9 @@ const App: React.FC = () => {
                     {detailTab === 'post' && <div className="absolute bottom-0 left-1/4 right-1/4 h-1 bg-blue-600 rounded-full" />}
                   </button>
                   <button
-                    onClick={() => setDetailTab('analysis')}
-                    className={`flex-1 py-3 text-sm font-black uppercase tracking-widest transition-all relative ${detailTab === 'analysis' ? 'text-blue-600' : 'text-gray-400'}`}
+                    onClick={() => { if (canSeeAnalysis) setDetailTab('analysis'); }}
+                    disabled={!canSeeAnalysis}
+                    className={`flex-1 py-3 text-sm font-black uppercase tracking-widest transition-all relative ${detailTab === 'analysis' ? 'text-blue-600' : 'text-gray-400'} ${!canSeeAnalysis ? 'opacity-40 cursor-not-allowed' : ''}`}
                   >
                     Analysis
                     {detailTab === 'analysis' && <div className="absolute bottom-0 left-1/4 right-1/4 h-1 bg-blue-600 rounded-full" />}

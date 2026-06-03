@@ -9,7 +9,8 @@ export const SAFE_USER_SELECT = {
     name: true,
     handle: true,
     avatar: true,
-    verifiedBadge: true
+    verifiedBadge: true,
+    isPrivate: true
 };
 
 const parseBoolean = (value: any): boolean => {
@@ -151,7 +152,7 @@ export const getPosts = async (req: Request, res: Response) => {
                     select: {
                         ...SAFE_USER_SELECT,
                         following: userId ? {
-                            where: { followerId: userId },
+                            where: { followerId: userId, status: 'ACTIVE' },
                             select: { followerId: true }
                         } : false
                     }
@@ -169,7 +170,15 @@ export const getPosts = async (req: Request, res: Response) => {
                 savedBy: userId ? { where: { userId }, take: 1 } : false,
                 sharedFrom: {
                     include: {
-                        author: { select: SAFE_USER_SELECT },
+                        author: {
+                            select: {
+                                ...SAFE_USER_SELECT,
+                                following: userId ? {
+                                    where: { followerId: userId, status: 'ACTIVE' },
+                                    select: { followerId: true }
+                                } : false
+                            }
+                        },
                         questions: { include: { options: { orderBy: { order: 'asc' } } } },
                         sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
                         targetedGroups: true,
@@ -263,7 +272,7 @@ export const getPostById = async (req: Request, res: Response) => {
                     select: {
                         ...SAFE_USER_SELECT,
                         following: userId ? {
-                            where: { followerId: userId },
+                            where: { followerId: userId, status: 'ACTIVE' },
                             select: { followerId: true }
                         } : false
                     }
@@ -287,7 +296,15 @@ export const getPostById = async (req: Request, res: Response) => {
                 },
                 sharedFrom: {
                     include: {
-                        author: { select: SAFE_USER_SELECT },
+                        author: {
+                            select: {
+                                ...SAFE_USER_SELECT,
+                                following: userId ? {
+                                    where: { followerId: userId, status: 'ACTIVE' },
+                                    select: { followerId: true }
+                                } : false
+                            }
+                        },
                         questions: { include: { options: { orderBy: { order: 'asc' } } } },
                         sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
                         targetedGroups: true,
@@ -1265,11 +1282,17 @@ export const getParticipants = async (req: Request, res: Response) => {
             res.status(404).json({ error: 'Post not found' });
             return;
         }
+        const isAuthor = !!currentUserId && (post as any).authorId === currentUserId;
+        const canViewAuthorContent = await PrivacyService.canViewUserContent(currentUserId, (post as any).authorId);
+        if (!canViewAuthorContent) {
+            res.status(403).json({ error: 'You do not have access to this post' });
+            return;
+        }
+
         if (post && (post as any).forceAnonymous === true) {
             return res.json([]);
         }
 
-        const isAuthor = !!currentUserId && (post as any).authorId === currentUserId;
         const targetGroupIds = mapTargetGroups(post);
         if (!isAuthor && ((post as any).targetAudience === 'Groups' || targetGroupIds.length > 0)) {
             if (!currentUserId) {
@@ -1293,7 +1316,7 @@ export const getParticipants = async (req: Request, res: Response) => {
             const follow = await prisma.follow.findUnique({
                 where: { followerId_followingId: { followerId: currentUserId, followingId: (post as any).authorId } }
             });
-            if (!follow) {
+            if (!follow || follow.status !== 'ACTIVE') {
                 res.status(403).json({ error: 'Forbidden' });
                 return;
             }
@@ -1367,6 +1390,12 @@ export const getPostResults = async (req: Request, res: Response) => {
         }
 
         const isAuthor = !!currentUserId && post.authorId === currentUserId;
+        const canViewAuthorContent = await PrivacyService.canViewUserContent(currentUserId, post.authorId);
+        if (!canViewAuthorContent) {
+            res.status(403).json({ error: 'You do not have access to these results' });
+            return;
+        }
+
         const targetGroupIds = mapTargetGroups(post);
         if (!isAuthor && (post.targetAudience === 'Groups' || targetGroupIds.length > 0)) {
             if (!currentUserId) {
@@ -1386,7 +1415,7 @@ export const getPostResults = async (req: Request, res: Response) => {
             const follow = await prisma.follow.findUnique({
                 where: { followerId_followingId: { followerId: currentUserId, followingId: post.authorId } }
             });
-            if (!follow) {
+            if (!follow || follow.status !== 'ACTIVE') {
                 res.status(403).json({ error: 'Forbidden' });
                 return;
             }
@@ -1401,7 +1430,7 @@ export const getPostResults = async (req: Request, res: Response) => {
             const follow = await prisma.follow.findUnique({
                 where: { followerId_followingId: { followerId: currentUserId, followingId: post.authorId } }
             });
-            whoPasses = !!follow;
+            whoPasses = follow?.status === 'ACTIVE';
         }
 
         if (!whoPasses && post.resultsWho === 'Participants' && (currentUserId || guestId)) {
@@ -1899,7 +1928,15 @@ export const sharePost = async (req: Request, res: Response) => {
                 targetedGroups: true,
                 sharedFrom: {
                     include: {
-                        author: { select: SAFE_USER_SELECT },
+                        author: {
+                            select: {
+                                ...SAFE_USER_SELECT,
+                                following: userId ? {
+                                    where: { followerId: userId, status: 'ACTIVE' },
+                                    select: { followerId: true }
+                                } : false
+                            }
+                        },
                         questions: { include: { options: { orderBy: { order: 'asc' } } } },
                         sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
                         targetedGroups: true,
@@ -2107,8 +2144,31 @@ export const deletePost = async (req: Request, res: Response) => {
 };
 
 export const getPostAnalytics = async (req: Request, res: Response) => {
-    const id = req.params.id as string;
+    const rawId = req.params.id as string;
     try {
+        const id = await resolveInteractionTarget(rawId, 'vote');
+        const currentUserId = req.user?.userId;
+        const originalPost = await prisma.post.findUnique({
+            where: { id },
+            select: {
+                authorId: true,
+                sharesCount: true,
+                status: true,
+                isDeleted: true
+            }
+        });
+
+        if (!originalPost || originalPost.isDeleted || originalPost.status !== 'PUBLISHED') {
+            res.status(404).json({ error: 'Post not found' });
+            return;
+        }
+
+        const canViewAuthorContent = await PrivacyService.canViewUserContent(currentUserId, originalPost.authorId);
+        if (!canViewAuthorContent) {
+            res.status(403).json({ error: 'You do not have access to this analytics data' });
+            return;
+        }
+
         const aggregateMetrics = await prisma.post.aggregate({
             where: {
                 OR: [
@@ -2123,16 +2183,11 @@ export const getPostAnalytics = async (req: Request, res: Response) => {
                 responseCount: true
             }
         });
-        
-        const originalPost = await prisma.post.findUnique({
-            where: { id },
-            select: { sharesCount: true }
-        });
 
         res.json({
             totalGlobalLikes: aggregateMetrics._sum?.likesCount || 0,
             totalGlobalComments: aggregateMetrics._sum?.commentsCount || 0,
-            totalSharesCount: (originalPost as any)?.sharesCount || 0,
+            totalSharesCount: originalPost.sharesCount || 0,
             totalParticipants: aggregateMetrics._sum?.responseCount || 0
         });
     } catch (error) {

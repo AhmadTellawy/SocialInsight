@@ -128,6 +128,12 @@ export const PostAnalysis: React.FC<PostAnalysisProps> = ({ survey, isAccessDeni
 
   // Fetch real data on mount
   useEffect(() => {
+    if (isAccessDenied) {
+      setResultsData([]);
+      setIsLoadingAnalysis(false);
+      return;
+    }
+
     const loadData = async () => {
       try {
         setIsLoadingAnalysis(true);
@@ -140,7 +146,7 @@ export const PostAnalysis: React.FC<PostAnalysisProps> = ({ survey, isAccessDeni
       }
     };
     loadData();
-  }, [sourceSurvey.id]);
+  }, [sourceSurvey.id, isAccessDenied]);
 
   const activeFilterCount = useMemo(() => 
     Object.values(activeFilters).reduce((acc: number, val: any) => acc + (val.length > 0 ? 1 : 0), 0)

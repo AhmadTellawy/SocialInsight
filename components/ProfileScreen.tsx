@@ -18,7 +18,7 @@ interface ProfileScreenProps {
   onGroupClick?: (id: string) => void;
   onVote: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: any, followUpAnswers?: Record<string, string>, answers?: PostAnswerPayload[]) => void;
   onSurveyProgress?: (surveyId: string, progress: { index: number, answers: Record<string, any>, followUpAnswers?: Record<string, string>, historyStack?: number[], isAnonymous?: boolean }) => void;
-  user?: { id?: string; name: string; avatar: string };
+  user?: { id?: string; name: string; avatar: string; handle?: string; isFollowing?: boolean; followStatus?: string; isPrivate?: boolean };
   onBack?: () => void;
   onAuthorClick?: (author: { id: string; name: string; avatar: string; handle?: string }) => void;
   onShareToFeed?: (survey: Survey, caption: string) => void;
@@ -143,9 +143,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           if (userId) {
             const fullUser = await api.getUser(userId);
             setTargetUser(fullUser);
-            if (fullUser && fullUser.isFollowing !== undefined) {
-              setLocalFollowingState(fullUser.isFollowing);
-            }
+            const nextFollowStatus = fullUser?.followStatus || 'NONE';
+            setLocalFollowingState(fullUser?.isFollowing === true || nextFollowStatus === 'ACTIVE');
             if (fullUser && fullUser.followStatus) {
               setFollowStatus(fullUser.followStatus);
             }
@@ -338,6 +337,28 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
   const mySurveys = surveys;
 
+  const canViewPrivateProfileContent = useMemo(() => {
+    if (isMe) return true;
+    if (!profileUser?.isPrivate) return true;
+    return isFollowing || followStatus === 'ACTIVE';
+  }, [isMe, profileUser?.isPrivate, isFollowing, followStatus]);
+
+  const renderPrivateProfileState = () => (
+    <div className="flex flex-col items-center justify-center py-20 px-8 text-center text-gray-400">
+      <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-6 text-gray-300">
+        <Lock size={40} />
+      </div>
+      <h3 className="text-xl font-black text-gray-900 mb-2">{t('Private Account')}</h3>
+      <p className="text-gray-500 text-sm">{t('Follow this account to see their activity and posts.')}</p>
+    </div>
+  );
+
+  useEffect(() => {
+    if (showProfileAnalysis && !canViewPrivateProfileContent) {
+      setShowProfileAnalysis(false);
+    }
+  }, [showProfileAnalysis, canViewPrivateProfileContent]);
+
   const responsesCount = useMemo(() => {
     return profileUser?.stats?.responses || 0;
   }, [profileUser?.stats?.responses]);
@@ -358,7 +379,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   }, [mySurveys, postFilter, statSearch]);
 
   const renderStatSheetContent = () => {
-    if (profileUser.isPrivate && !isMe) {
+    if (!canViewPrivateProfileContent) {
       return (
         <div className="flex flex-col items-center justify-center h-[60vh] text-center p-8">
           <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-6 text-gray-300">
@@ -517,6 +538,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const renderTabContent = () => {
     switch (activeTab as any) {
       case 'content':
+        if (!canViewPrivateProfileContent) {
+          return renderPrivateProfileState();
+        }
+
         const publishedPosts = mySurveys.filter(s => !s.isDraft && !s.sharedFrom);
         return publishedPosts.length > 0 ? (
           <div className="space-y-1 animate-in fade-in duration-300">
@@ -610,6 +635,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         );
 
       case 'reposts':
+        if (!canViewPrivateProfileContent) {
+          return renderPrivateProfileState();
+        }
+
         const reposts = mySurveys.filter(s => !s.isDraft && s.sharedFrom);
         return reposts.length > 0 ? (
           <div className="space-y-1 animate-in fade-in duration-300">
@@ -698,7 +727,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     }
   };
 
-  if (showProfileAnalysis) {
+  if (showProfileAnalysis && canViewPrivateProfileContent) {
     return <ProfileAnalysis userProfile={profileUser} onBack={() => setShowProfileAnalysis(false)} />;
   }
 
@@ -846,13 +875,13 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               </button>
 
               <button
-                disabled={profileUser.isPrivate && !isMe}
-                onClick={() => { setStatSearch(''); setPostFilter('All'); setActiveStatSheet('posts'); }}
-                className={`flex flex-col items-center group active:scale-95 transition-transform ${profileUser.isPrivate && !isMe ? 'opacity-30 grayscale' : ''}`}
+                disabled={!canViewPrivateProfileContent}
+                onClick={() => { if (canViewPrivateProfileContent) { setStatSearch(''); setPostFilter('All'); setActiveStatSheet('posts'); } }}
+                className={`flex flex-col items-center group active:scale-95 transition-transform ${!canViewPrivateProfileContent ? 'opacity-30 grayscale cursor-not-allowed' : ''}`}
               >
                 <div className="p-2 rounded-xl bg-orange-50 text-orange-600 mb-2 transition-colors relative">
                   <FileText size={16} strokeWidth={2.5} />
-                  {profileUser.isPrivate && !isMe && <Lock size={8} className="absolute top-1 right-1" />}
+                  {!canViewPrivateProfileContent && <Lock size={8} className="absolute top-1 right-1" />}
                 </div>
                 <div className="text-sm font-black text-gray-900 tabular-nums">
                   {profileUser?.stats?.posts || 0}
@@ -861,11 +890,13 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               </button>
 
               <button
-                onClick={() => setShowProfileAnalysis(true)}
-                className="flex flex-col items-center group active:scale-95 transition-transform"
+                disabled={!canViewPrivateProfileContent}
+                onClick={() => { if (canViewPrivateProfileContent) setShowProfileAnalysis(true); }}
+                className={`flex flex-col items-center group active:scale-95 transition-transform ${!canViewPrivateProfileContent ? 'opacity-30 grayscale cursor-not-allowed' : ''}`}
               >
-                <div className="p-2 rounded-xl bg-green-50 text-green-600 mb-2 transition-colors">
+                <div className="p-2 rounded-xl bg-green-50 text-green-600 mb-2 transition-colors relative">
                   <TrendingUp size={16} strokeWidth={2.5} />
+                  {!canViewPrivateProfileContent && <Lock size={8} className="absolute top-1 right-1" />}
                 </div>
                 <div className="text-sm font-black text-gray-900 tabular-nums">
                   {responsesCount >= 1000 ? (responsesCount / 1000).toFixed(1) + 'K' : responsesCount}
@@ -897,7 +928,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
         <div className="pb-20">
           {renderTabContent()}
-          {(activeTab === 'content' || activeTab === 'reposts') && (
+          {canViewPrivateProfileContent && (activeTab === 'content' || activeTab === 'reposts') && (
             <div className="py-8 flex flex-col items-center justify-center min-h-[120px] transition-all">
               {isLoadingMore ? (
                 <div className="flex flex-col items-center animate-pulse opacity-50">

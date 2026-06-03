@@ -8,7 +8,7 @@ interface NotificationsScreenProps {
   notifications: Notification[];
   onNotificationsChange: (notifications: Notification[]) => void;
   onBack: () => void;
-  onItemClick: (targetId: string, type?: 'survey' | 'profile' | 'group', actor?: any) => void;
+  onItemClick: (targetId: string, type?: 'survey' | 'profile' | 'group' | 'user', actor?: any) => void;
 }
 
 export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
