@@ -93,6 +93,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
       case 'follow': icon = <UserPlus size={18} />; bgClass = 'bg-teal-100 text-teal-600'; break;
       case 'follow_request': icon = <UserPlus size={18} />; bgClass = 'bg-teal-100 text-teal-600'; break;
       case 'follow_accept': icon = <User size={18} />; bgClass = 'bg-teal-100 text-teal-600'; break;
+      case 'mention': icon = <User size={18} />; bgClass = 'bg-pink-100 text-pink-600'; break;
       default: icon = <Bell size={18} />; break;
     }
 

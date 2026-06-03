@@ -1655,6 +1655,14 @@ export const likePost = async (req: Request, res: Response) => {
     const { userId } = req.body;
     try {
         const id = await resolveInteractionTarget(rawId, 'like');
+        const targetPostCheck = await prisma.post.findUnique({ where: { id }, select: { authorId: true } });
+        if (targetPostCheck && targetPostCheck.authorId) {
+            const canView = await PrivacyService.canViewUserContent(userId, targetPostCheck.authorId);
+            if (!canView) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+        }
         const existing = await prisma.userLike.findUnique({ where: { userId_postId: { userId, postId: id } } });
         if (existing) {
             await prisma.$transaction([
@@ -1703,6 +1711,15 @@ export const getPostLikers = async (req: Request, res: Response) => {
     const rawId = req.params.id as string;
     try {
         const id = await resolveInteractionTarget(rawId, 'like');
+        const currentUserId = req.user?.userId;
+        const targetPostCheck = await prisma.post.findUnique({ where: { id }, select: { authorId: true } });
+        if (targetPostCheck && targetPostCheck.authorId && currentUserId) {
+            const canView = await PrivacyService.canViewUserContent(currentUserId, targetPostCheck.authorId);
+            if (!canView) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+        }
         const likes = await prisma.userLike.findMany({
             where: { postId: id },
             include: { user: { select: SAFE_USER_SELECT } },
@@ -1734,6 +1751,14 @@ export const savePost = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const { userId } = req.body;
     try {
+        const targetPostCheck = await prisma.post.findUnique({ where: { id }, select: { authorId: true } });
+        if (targetPostCheck && targetPostCheck.authorId) {
+            const canView = await PrivacyService.canViewUserContent(userId, targetPostCheck.authorId);
+            if (!canView) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+        }
         const existing = await prisma.savedPost.findUnique({ where: { userId_postId: { userId, postId: id } } });
         if (existing) {
             await prisma.savedPost.delete({ where: { userId_postId: { userId, postId: id } } });
@@ -1793,6 +1818,14 @@ export const sharePost = async (req: Request, res: Response) => {
         if (originalPost.targetAudience === 'Private' || originalPost.targetAudience === 'Groups' || originalPost.groupId || (originalPost as any).targetedGroups?.length > 0) {
             res.status(403).json({ error: 'Cannot share private or group content' });
             return;
+        }
+
+        if (originalPost.authorId) {
+            const canView = await PrivacyService.canViewUserContent(userId, originalPost.authorId);
+            if (!canView) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
         }
 
         const actualSharedFromId = originalPost.sharedFromId ? originalPost.sharedFromId : originalPost.id;

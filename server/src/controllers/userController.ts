@@ -338,7 +338,21 @@ export const updateUser = async (req: Request, res: Response) => {
 
 export const getUserAnalytics = async (req: Request, res: Response) => {
     const id = req.params.id as string;
+    const currentUserId = req.user?.userId;
     try {
+        if (currentUserId) {
+            const canView = await PrivacyService.canViewUserContent(currentUserId, id);
+            if (!canView) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+        } else if (id !== currentUserId) { // No auth provided and they are not the same
+            const targetUser = await prisma.user.findUnique({ where: { id }, select: { isPrivate: true } });
+            if (targetUser?.isPrivate) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+        }
         const posts = await prisma.post.findMany({
             where: { authorId: id, isDeleted: false, status: 'PUBLISHED', sharedFromId: null },
             include: {
@@ -600,7 +614,21 @@ export const markSingleNotificationRead = async (req: Request, res: Response) =>
 
 export const getUserGroups = async (req: Request, res: Response) => {
     const { id } = req.params;
+    const currentUserId = req.user?.userId;
     try {
+        if (currentUserId) {
+            const canView = await PrivacyService.canViewUserContent(currentUserId, id as string);
+            if (!canView) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+        } else {
+            const targetUser = await prisma.user.findUnique({ where: { id: id as string }, select: { isPrivate: true } });
+            if (targetUser?.isPrivate) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+        }
         const memberships = await prisma.groupMember.findMany({
             where: { userId: id as string },
             include: {

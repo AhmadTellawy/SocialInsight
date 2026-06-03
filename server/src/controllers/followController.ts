@@ -4,7 +4,7 @@ import { notify } from '../services/notificationService';
 
 export const followUser = async (req: Request, res: Response) => {
     const userId = req.params.userId as string; // The user to follow
-    const { currentUserId } = req.body; // The user who is following
+    const currentUserId = req.user?.userId; // The user who is following
 
     if (!currentUserId) {
         res.status(400).json({ error: 'currentUserId is required' });
@@ -109,7 +109,7 @@ export const followUser = async (req: Request, res: Response) => {
 
 export const getFollowStatus = async (req: Request, res: Response) => {
     const userId = req.params.userId as string;
-    const { currentUserId } = req.query;
+    const currentUserId = req.user?.userId || req.query.currentUserId;
 
     if (!currentUserId) {
         res.json({ followStatus: 'NONE' });
@@ -135,7 +135,7 @@ export const getFollowStatus = async (req: Request, res: Response) => {
 
 export const acceptFollowRequest = async (req: Request, res: Response) => {
     const followerId = req.params.userId as string; // User who sent the request
-    const currentUserId = req.user?.userId || req.body.currentUserId; // Target user
+    const currentUserId = req.user?.userId; // Target user
 
     try {
         const follow = await prisma.follow.findUnique({
@@ -167,7 +167,7 @@ export const acceptFollowRequest = async (req: Request, res: Response) => {
 
 export const rejectFollowRequest = async (req: Request, res: Response) => {
     const followerId = req.params.userId as string;
-    const currentUserId = req.user?.userId || req.body.currentUserId;
+    const currentUserId = req.user?.userId;
 
     try {
         const follow = await prisma.follow.findUnique({
@@ -193,7 +193,7 @@ export const rejectFollowRequest = async (req: Request, res: Response) => {
 
 export const removeFollower = async (req: Request, res: Response) => {
     const followerId = req.params.userId as string;
-    const currentUserId = req.user?.userId || req.body.currentUserId;
+    const currentUserId = req.user?.userId;
 
     try {
         const follow = await prisma.follow.findUnique({
@@ -219,7 +219,7 @@ export const removeFollower = async (req: Request, res: Response) => {
 };
 
 export const getPendingRequests = async (req: Request, res: Response) => {
-    const currentUserId = req.user?.userId || req.query.currentUserId as string;
+    const currentUserId = req.user?.userId;
 
     try {
         const requests = await prisma.follow.findMany({

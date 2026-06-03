@@ -240,7 +240,7 @@ export interface Survey {
 
 export interface Notification {
   id: string;
-  type: 'vote' | 'response' | 'result' | 'following_post' | 'group_invite' | 'expiry' | 'milestone' | 'follow' | 'like';
+  type: 'vote' | 'response' | 'result' | 'following_post' | 'group_invite' | 'expiry' | 'milestone' | 'follow' | 'like' | 'follow_request' | 'follow_accept' | 'mention';
   actor: {
     id?: string;
     name: string;
