@@ -48,10 +48,10 @@ const DURATION_OPTIONS = [
   { label: '1 Month', value: '1m' },
 ];
 
-type VisibilityType = 'Public' | 'Followers' | 'Groups' | 'Custom Audience' | 'Custom Domain';
+type VisibilityType = 'Groups' | 'Custom Audience' | 'Custom Domain';
 
 export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onSubmit, onSaveDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
-  const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
+  const [visibility, setVisibility] = useState<VisibilityType>('Groups');
   const [selectedGroups, setSelectedGroups] = useState<string[]>(initialGroupId ? [initialGroupId] : []);
   const [isCategorySheetOpen, setIsCategorySheetOpen] = useState(false);
   const [isAdvancedSheetOpen, setIsAdvancedSheetOpen] = useState(false);
@@ -177,7 +177,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
 
   useEffect(() => {
     if (selectedDemographics.length === 0) {
-      setSelectedInsightPreset(null);
+      setSelectedInsightPreset(prev => prev === 'custom' ? 'custom' : null);
       return;
     }
     const isBasic = selectedDemographics.length === 3 && selectedDemographics.includes('gender') && selectedDemographics.includes('ageGroup') && selectedDemographics.includes('residence');
@@ -306,8 +306,6 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   }, [userGroups]);
 
   const visibilityOptions = [
-    { id: 'Public', label: 'Public', desc: 'Visible to all users on the platform.', icon: Globe, allowed: true },
-    { id: 'Followers', label: 'Followers', desc: 'Visible only to users who follow you.', icon: UserCircle, allowed: true },
     { id: 'Groups', label: 'Selected groups', desc: 'Visible only within selected groups.', icon: Users, allowed: true },
     { id: 'Custom Audience', label: 'Custom audience', desc: 'Specific targeted audience.', icon: Target, allowed: isVerified, premium: true },
     { id: 'Custom Domain', label: 'Custom domain', desc: 'Private branded link.', icon: Link2, allowed: isOrganization, premium: true },
@@ -1097,14 +1095,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                 </div>
               </div>
 
-              <div className="pt-4">
-                <button
-                  onClick={() => setIsAdvancedSheetOpen(false)}
-                  className="w-full bg-gray-900 text-white py-3.5 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg active:scale-95 transition-all"
-                >
-                  Done
-                </button>
-              </div>
+
             </div>
           )}
 
