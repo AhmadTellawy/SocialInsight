@@ -12,7 +12,6 @@ import { ImageCropper } from './ImageCropper';
 import { BottomSheet } from './BottomSheet';
 import { UserProfile } from '../types';
 import { NotificationSettingsScreen } from './NotificationSettingsScreen';
-import { FollowRequestsSheet } from './FollowRequestsSheet';
 import { api } from '../services/api';
 import { useTranslation } from 'react-i18next';
 
@@ -23,7 +22,7 @@ interface ProfileSettingsScreenProps {
   onLogout: () => void;
 }
 
-type SubPage = 'main' | 'edit-profile' | 'username' | 'email-phone' | 'language' | 'privacy' | 'content-visibility' | 'demographics' | 'notifications-detailed' | 'group-privacy';
+type SubPage = 'main' | 'edit-profile' | 'username' | 'email-phone' | 'language' | 'privacy' | 'content-visibility' | 'demographics' | 'notifications-detailed' | 'group-privacy' | 'account-privacy';
 
 const NATIONALITIES = [
   'Afghanistan', 'Albania', 'Algeria', 'Andorra', 'Angola', 'Argentina', 'Armenia', 'Australia', 'Austria', 'Azerbaijan',
@@ -621,6 +620,49 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
     );
   }
 
+  if (currentSubPage === 'account-privacy') {
+    return (
+      <div className="flex flex-col h-full bg-gray-50 animate-in slide-in-from-right duration-300">
+        <PageHeader title={t('Account privacy')} showSave={false} />
+        <div className="flex-1 overflow-y-auto px-5 py-6 space-y-6">
+          <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <span className="text-base font-bold text-gray-900">{t('Private account')}</span>
+              <div 
+                className={`w-12 h-6 rounded-full transition-colors cursor-pointer relative ${profileForm.isPrivate ? 'bg-blue-600' : 'bg-gray-200'}`}
+                onClick={async () => {
+                  const newVal = !profileForm.isPrivate;
+                  if (!newVal) {
+                    const confirmPublic = window.confirm(t('Switching to Public will automatically accept all pending follow requests. Do you want to continue?'));
+                    if (!confirmPublic) return;
+                  }
+                  
+                  setProfileForm({ ...profileForm, isPrivate: newVal });
+                  try {
+                    await api.updateUser(userProfile.id, { isPrivate: newVal });
+                    onUpdateProfile({ ...userProfile, isPrivate: newVal });
+                  } catch (e) {
+                    console.error('Failed to update privacy', e);
+                    setProfileForm({ ...profileForm, isPrivate: !newVal }); // revert
+                  }
+                }}
+              >
+                <div className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${profileForm.isPrivate ? 'translate-x-6' : 'translate-x-0'}`} />
+              </div>
+            </div>
+            
+            <p className="text-sm text-gray-500 leading-relaxed mb-4">
+              {t("When your account is public, your profile and posts can be seen by anyone, on or off SocialInsight, even if they don't have a SocialInsight account.")}
+            </p>
+            <p className="text-sm text-gray-500 leading-relaxed">
+              {t("When your account is private, only the followers you approve can see what you share, including your polls and responses, and your followers and following lists. Certain info on your profile, like your profile picture and username, is visible to everyone on and off SocialInsight.")}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (currentSubPage === 'language') {
     const languages = [
       { code: 'en', label: 'English', native: 'English' },
@@ -712,32 +754,9 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
         <div className="bg-white border-y border-gray-100 shadow-sm">
           <SettingItem
             icon={Lock}
-            label={t('Private Account')}
-            type="toggle"
-            active={profileForm.isPrivate || false}
-            onClick={() => {
-              const updatedProfile = { ...profileForm, isPrivate: !profileForm.isPrivate };
-              setProfileForm(updatedProfile);
-              
-              if (updatedProfile.isPrivate === false) {
-                // Warning modal before switching to Public
-                const confirmPublic = window.confirm(t('Switching to Public will automatically accept all pending follow requests. Do you want to continue?'));
-                if (!confirmPublic) {
-                   setProfileForm({ ...profileForm, isPrivate: true });
-                   return;
-                }
-              }
-              
-              // We should trigger a save for this specific setting immediately or let the user click save. 
-              // Wait, the page has a general "Save" button in the header? No, for toggle items like these, wait, settings state is separate?
-              // The other settings are in `settings` state and aren't saved to backend in this code!
-              // I will update the profile form so it gets saved.
-            }}
-          />
-          <SettingItem
-            icon={UserPlus}
-            label={t('Follow Requests')}
-            onClick={() => setShowFollowRequests(true)}
+            label={t('Account privacy')}
+            value={profileForm.isPrivate ? t('Private') : t('Public')}
+            onClick={() => setCurrentSubPage('account-privacy')}
           />
           <SettingItem
             icon={Search}
@@ -874,14 +893,6 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
             </div>
           </div>
         </div>
-      )}
-
-      {showFollowRequests && userProfile.id && (
-         <FollowRequestsSheet
-           isOpen={showFollowRequests}
-           onClose={() => setShowFollowRequests(false)}
-           userId={userProfile.id}
-         />
       )}
     </div>
   );

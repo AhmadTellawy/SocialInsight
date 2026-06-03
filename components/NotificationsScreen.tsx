@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { ArrowLeft, Trash2, User, PieChart, FileText, Users, Clock, Trophy, Bell, Heart, UserPlus } from 'lucide-react';
 import { Notification } from '../types';
+import { api } from '../services/api';
 
 interface NotificationsScreenProps {
   notifications: Notification[];
@@ -52,6 +53,26 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
     }
   };
 
+  const handleAcceptRequest = async (id: string, actorId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await api.acceptFollowRequest(actorId);
+      onNotificationsChange(notifications.filter(n => n.id !== id));
+    } catch (err) {
+      console.error('Failed to accept request', err);
+    }
+  };
+
+  const handleRejectRequest = async (id: string, actorId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await api.rejectFollowRequest(actorId);
+      onNotificationsChange(notifications.filter(n => n.id !== id));
+    } catch (err) {
+      console.error('Failed to reject request', err);
+    }
+  };
+
   const getIcon = (type: Notification['type'], avatar?: string) => {
     if (avatar && type !== 'group_invite' && type !== 'milestone') {
       return <img src={avatar} alt="" className="w-10 h-10 rounded-full object-cover border border-gray-100" />;
@@ -70,6 +91,8 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
       case 'milestone': icon = <Trophy size={18} />; bgClass = 'bg-yellow-100 text-yellow-600'; break;
       case 'like': icon = <Heart size={18} />; bgClass = 'bg-pink-100 text-pink-600'; break;
       case 'follow': icon = <UserPlus size={18} />; bgClass = 'bg-teal-100 text-teal-600'; break;
+      case 'follow_request': icon = <UserPlus size={18} />; bgClass = 'bg-teal-100 text-teal-600'; break;
+      case 'follow_accept': icon = <User size={18} />; bgClass = 'bg-teal-100 text-teal-600'; break;
       default: icon = <Bell size={18} />; break;
     }
 
@@ -143,7 +166,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                       {notification.type === 'response' && <div className="bg-blue-100 text-blue-600 rounded-full p-0.5"><FileText size={10} /></div>}
                       {notification.type === 'group_invite' && <div className="bg-orange-100 text-orange-600 rounded-full p-0.5"><Users size={10} /></div>}
                       {notification.type === 'like' && <div className="bg-pink-100 text-pink-600 rounded-full p-0.5"><Heart size={10} /></div>}
-                      {notification.type === 'follow' && <div className="bg-teal-100 text-teal-600 rounded-full p-0.5"><UserPlus size={10} /></div>}
+                      {(notification.type === 'follow' || notification.type === 'follow_request' || notification.type === 'follow_accept') && <div className="bg-teal-100 text-teal-600 rounded-full p-0.5"><UserPlus size={10} /></div>}
                     </div>
                   )}
                 </div>
@@ -162,6 +185,23 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                       {getTimeAgo(notification.timestamp)}
                     </span>
                   </div>
+
+                  {notification.type === 'follow_request' && notification.actor?.id && (
+                    <div className="flex gap-2 mt-3 mb-1">
+                      <button
+                        onClick={(e) => handleAcceptRequest(notification.id, notification.actor!.id, e)}
+                        className="flex-1 bg-blue-600 text-white text-xs font-bold py-2 rounded-lg active:scale-95 transition-transform"
+                      >
+                        Accept
+                      </button>
+                      <button
+                        onClick={(e) => handleRejectRequest(notification.id, notification.actor!.id, e)}
+                        className="flex-1 bg-gray-200 text-gray-800 text-xs font-bold py-2 rounded-lg active:scale-95 transition-transform"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="shrink-0 flex flex-col justify-between items-end">
