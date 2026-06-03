@@ -378,6 +378,83 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     return list.filter(s => s.title.toLowerCase().includes(statSearch.toLowerCase()));
   }, [mySurveys, postFilter, statSearch]);
 
+  const getPostEmptyState = () => {
+    const hasSearch = statSearch.trim().length > 0;
+    const pluralLabels: Record<string, string> = {
+      All: 'posts',
+      [SurveyType.POLL]: 'polls',
+      [SurveyType.SURVEY]: 'surveys',
+      [SurveyType.QUIZ]: 'quizzes',
+      [SurveyType.CHALLENGE]: 'challenges'
+    };
+    const singularLabels: Record<string, string> = {
+      [SurveyType.POLL]: 'poll',
+      [SurveyType.SURVEY]: 'survey',
+      [SurveyType.QUIZ]: 'quiz',
+      [SurveyType.CHALLENGE]: 'challenge'
+    };
+    const contentName = t(pluralLabels[postFilter] || 'posts');
+    const singularName = t(singularLabels[postFilter] || 'post');
+    const Icon = postFilter === SurveyType.POLL
+      ? PieChart
+      : postFilter === SurveyType.QUIZ || postFilter === SurveyType.CHALLENGE
+        ? Zap
+        : postFilter === SurveyType.SURVEY
+          ? FileText
+          : Grid;
+
+    if (hasSearch) {
+      return {
+        Icon,
+        title: t('No matching posts'),
+        description: t('Try a different search term.')
+      };
+    }
+
+    if (isMe) {
+      return {
+        Icon,
+        title: postFilter === 'All' ? t('No posts yet') : t(`No ${contentName} yet`),
+        description: postFilter === 'All'
+          ? t('Create your first post to start collecting responses.')
+          : t(`Create your first ${singularName} to start collecting responses.`)
+      };
+    }
+
+    return {
+      Icon,
+      title: postFilter === 'All' ? t('No posts yet') : t(`No ${contentName} yet`),
+      description: postFilter === 'All'
+        ? t(`${profileUser.name} has not published any posts yet.`)
+        : t(`${profileUser.name} has not published any ${contentName} yet.`)
+    };
+  };
+
+  const getConnectionsEmptyState = () => {
+    if (statSearch.trim()) {
+      return {
+        title: t('No matching people'),
+        description: t('Try a different search term.')
+      };
+    }
+
+    if (activeStatSheet === 'followers') {
+      return {
+        title: t('No followers yet'),
+        description: isMe
+          ? t('New followers will appear here.')
+          : t(`${profileUser.name} does not have followers yet.`)
+      };
+    }
+
+    return {
+      title: t('Not following anyone yet'),
+      description: isMe
+        ? t('People you follow will appear here.')
+        : t(`${profileUser.name} is not following anyone yet.`)
+    };
+  };
+
   const renderStatSheetContent = () => {
     if (!canViewPrivateProfileContent) {
       return (
@@ -443,10 +520,19 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 ))}
               </div>
             ) : (
-              <div className="py-20 text-center text-gray-400">
-                <Grid size={48} className="mx-auto mb-4 opacity-10" />
-                <p className="text-sm font-bold uppercase tracking-widest">{t('No posts yet — start your first poll')}</p>
-              </div>
+              (() => {
+                const emptyState = getPostEmptyState();
+                const EmptyIcon = emptyState.Icon;
+                return (
+                  <div className="py-20 px-8 text-center text-gray-400">
+                    <div className="w-20 h-20 mx-auto mb-5 rounded-3xl bg-gray-50 border border-gray-100 flex items-center justify-center">
+                      <EmptyIcon size={34} className="text-gray-300" strokeWidth={1.75} />
+                    </div>
+                    <p className="text-sm font-black uppercase tracking-widest text-gray-700">{emptyState.title}</p>
+                    <p className="text-xs text-gray-400 mt-2 leading-relaxed max-w-[260px] mx-auto">{emptyState.description}</p>
+                  </div>
+                );
+              })()
             )}
           </div>
         </div>
@@ -468,7 +554,22 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           </div>
         </div>
         <div className="flex-1 overflow-y-auto px-4 pb-20 no-scrollbar">
-          {filteredConnections.length > 0 ? (
+          {isConnectionLoading && connectionList.length === 0 ? (
+            <div className="divide-y divide-gray-50">
+              {[1, 2, 3, 4].map(item => (
+                <div key={item} className="flex items-center justify-between py-4">
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <div className="w-12 h-12 rounded-full bg-gray-100 animate-pulse" />
+                    <div className="min-w-0 flex-1">
+                      <div className="w-36 h-4 bg-gray-100 rounded-full animate-pulse mb-2" />
+                      <div className="w-24 h-3 bg-gray-50 rounded-full animate-pulse" />
+                    </div>
+                  </div>
+                  <div className="w-20 h-8 bg-gray-50 rounded-xl animate-pulse" />
+                </div>
+              ))}
+            </div>
+          ) : filteredConnections.length > 0 ? (
             <div className="divide-y divide-gray-50">
               {filteredConnections.map(person => (
                 <div key={person.id} className="flex items-center justify-between py-4 group">
@@ -497,10 +598,18 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               ))}
             </div>
           ) : (
-            <div className="py-20 text-center text-gray-400">
-              <Users size={48} className="mx-auto mb-4 opacity-10" />
-              <p className="text-sm font-bold uppercase tracking-widest">{t('No connections yet')}</p>
-            </div>
+            (() => {
+              const emptyState = getConnectionsEmptyState();
+              return (
+                <div className="py-20 px-8 text-center text-gray-400">
+                  <div className="w-20 h-20 mx-auto mb-5 rounded-full bg-gray-50 border border-gray-100 flex items-center justify-center">
+                    <Users size={34} className="text-gray-300" strokeWidth={1.75} />
+                  </div>
+                  <p className="text-sm font-black uppercase tracking-widest text-gray-700">{emptyState.title}</p>
+                  <p className="text-xs text-gray-400 mt-2 leading-relaxed max-w-[260px] mx-auto">{emptyState.description}</p>
+                </div>
+              );
+            })()
           )}
         </div>
       </div>
