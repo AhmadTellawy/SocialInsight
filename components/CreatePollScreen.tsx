@@ -901,7 +901,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   Select Custom Attributes
                 </span>
                 <div className="flex flex-wrap gap-1.5">
-                  {DEMOGRAPHIC_OPTIONS.map((opt) => {
+                  {DEMOGRAPHIC_OPTIONS.filter(opt => opt.id !== 'ageGroup').map((opt) => {
                     const isSelected = selectedDemographics.includes(opt.id);
                     return (
                       <button
