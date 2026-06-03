@@ -1280,7 +1280,7 @@ const App: React.FC = () => {
           if (!userProfile) return <div className="flex-1 flex items-center justify-center p-8 text-center"><h2 className="text-xl font-bold">Please log in to view settings.</h2></div>;
           return (
             <ErrorBoundary>
-              <ProfileSettingsScreen userProfile={userProfile} onUpdateProfile={(prof) => { setUserProfile(prof); localStorage.setItem('si_user', JSON.stringify(prof)); }} onBack={() => navigate('/profile')} onLogout={handleLogout} />
+              <ProfileSettingsScreen userProfile={userProfile} onUpdateProfile={(prof) => { setUserProfile(prof); localStorage.setItem('si_user', JSON.stringify(prof)); }} onBack={() => window.history.length > 2 ? navigate(-1) : navigate('/profile', { replace: true })} onLogout={handleLogout} />
             </ErrorBoundary>
           );
         }
@@ -1302,9 +1302,9 @@ const App: React.FC = () => {
             }
           }
           setNotifications(newNotifs);
-        }} onBack={() => handleTabChange('home')} onItemClick={(tid, ttype, actor) => ttype === 'profile' ? navigateToProfile({ id: actor?.id || '', name: actor?.name || '', avatar: actor?.avatar || '' }) : handleSurveyClick(tid)} />;
+        }} onBack={() => window.history.length > 2 ? navigate(-1) : navigate('/', { replace: true })} onItemClick={(tid, ttype, actor) => ttype === 'profile' ? navigateToProfile({ id: actor?.id || '', name: actor?.name || '', avatar: actor?.avatar || '' }) : handleSurveyClick(tid)} />;
       case 'messages':
-        return <MessagesScreen onBack={() => handleTabChange(prevTab)} />;
+        return <MessagesScreen onBack={() => window.history.length > 2 ? navigate(-1) : navigate('/', { replace: true })} />;
       default:
         // When activeTab isn't explicitly matched but a modal is open
         if (activeCreationFlow || accountModalType) {
@@ -1484,7 +1484,7 @@ const App: React.FC = () => {
               <GroupSettingsScreen
                 group={activeGroup}
                 currentUserId={viewerProfile.id || ''}
-                onBack={() => navigate(`/group/${activeGroup.id}`)}
+                onBack={() => window.history.length > 2 ? navigate(-1) : navigate(`/group/${activeGroup.id}`, { replace: true })}
                 onUpdateGroup={(id, updates) => setUserGroups(prev => prev.map(g => g.id === id ? { ...g, ...updates } : g))}
                 onDeleteGroup={(id) => { setUserGroups(prev => prev.filter(g => g.id !== id)); navigateToGroup(null); }}
               />
