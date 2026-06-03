@@ -137,6 +137,11 @@ export const acceptFollowRequest = async (req: Request, res: Response) => {
     const followerId = req.params.userId as string; // User who sent the request
     const currentUserId = req.user?.userId; // Target user
 
+    if (!currentUserId) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+    }
+
     try {
         const follow = await prisma.follow.findUnique({
             where: { followerId_followingId: { followerId, followingId: currentUserId } }
@@ -169,6 +174,11 @@ export const rejectFollowRequest = async (req: Request, res: Response) => {
     const followerId = req.params.userId as string;
     const currentUserId = req.user?.userId;
 
+    if (!currentUserId) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+    }
+
     try {
         const follow = await prisma.follow.findUnique({
             where: { followerId_followingId: { followerId, followingId: currentUserId } }
@@ -195,6 +205,11 @@ export const removeFollower = async (req: Request, res: Response) => {
     const followerId = req.params.userId as string;
     const currentUserId = req.user?.userId;
 
+    if (!currentUserId) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+    }
+
     try {
         const follow = await prisma.follow.findUnique({
             where: { followerId_followingId: { followerId, followingId: currentUserId } }
@@ -220,6 +235,11 @@ export const removeFollower = async (req: Request, res: Response) => {
 
 export const getPendingRequests = async (req: Request, res: Response) => {
     const currentUserId = req.user?.userId;
+
+    if (!currentUserId) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+    }
 
     try {
         const requests = await prisma.follow.findMany({
