@@ -59,8 +59,6 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   const [isAdvancedSheetOpen, setIsAdvancedSheetOpen] = useState(false);
   const [advancedSheetView, setAdvancedSheetView] = useState<'main' | 'visibility' | 'results'>('main');
   const [isCategorySheetOpen, setIsCategorySheetOpen] = useState(false);
-  const [isVisibilitySheetOpen, setIsVisibilitySheetOpen] = useState(false);
-  const [isResultVisibilitySheetOpen, setIsResultVisibilitySheetOpen] = useState(false);
 
   // Detailed Visibility
   const [resultsWho, setResultsWho] = useState<'Public' | 'Followers' | 'Participants' | 'OnlyMe'>('Public');
@@ -71,6 +69,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   const [croppingImage, setCroppingImage] = useState<string | null>(null);
   const [activeCropId, setActiveCropId] = useState<string | null>(null);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
 
   const handleExit = () => {
     if (title.trim() || options.some(o => o.text.trim()) || coverImage) {
@@ -138,7 +137,6 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   };
 
   const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
   const [options, setOptions] = useState<{ id: string; text: string; image: string | null; withFollowUp?: boolean; followUpLabel?: string }[]>([
     { id: '1', text: '', image: null },
     { id: '2', text: '', image: null }
@@ -198,7 +196,6 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   useEffect(() => {
     if (draft) {
       setTitle(draft.title || '');
-      setDescription(draft.description || '');
       setCategory(draft.category || '');
       const draftVisibility = draft.targetAudience as VisibilityType;
       setVisibility(['Groups', 'Custom Audience', 'Custom Domain'].includes(draftVisibility) ? draftVisibility : 'Groups');
@@ -319,35 +316,35 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
     setActiveCropId(null);
   };
 
-  const validateStep1 = () => {
+  const validate = () => {
     const newErrors: { [key: string]: boolean | string } = {};
+    let isValid = true;
     if (!userProfile?.id) {
       newErrors.userProfile = "User profile not found. Please log in.";
+      isValid = false;
     }
-    if (!title.trim()) newErrors.title = "Challenge text is required";
-    if (!category) newErrors.category = true;
-    if (visibility === 'Groups' && selectedGroups.length === 0) {
-      newErrors.visibility = "Please select at least one group.";
-      setIsAdvancedSheetOpen(true);
-      setAdvancedSheetView('visibility');
-    }
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const validateStep2 = () => {
-    const newErrors: { [key: string]: boolean | string } = {};
-    if (!userProfile?.id) {
-      newErrors.userProfile = "User profile not found. Please log in.";
+    if (!title.trim()) {
+      newErrors.title = "Challenge text is required";
+      isValid = false;
     }
     const filledOptions = options.filter(o => o.text.trim() !== '');
     if (filledOptions.length < 2) {
       newErrors.options = "You need at least 2 items to compare.";
-      setErrors(newErrors);
-      return false;
+      isValid = false;
+    }
+    if (!category) {
+      newErrors.category = "Please select a category";
+      isValid = false;
+      setIsCategorySheetOpen(true);
+    }
+    if (visibility === 'Groups' && selectedGroups.length === 0) {
+      newErrors.visibility = "Please select at least one group.";
+      isValid = false;
+      setIsAdvancedSheetOpen(true);
+      setAdvancedSheetView('visibility');
     }
     setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    return isValid && Object.keys(newErrors).length === 0;
   };
 
   const getExpiresAt = () => {
@@ -361,10 +358,12 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
 
   const handleFinalPost = () => {
     if (!userProfile?.id) {
+      alert('Please log in to create a post');
       onClose();
       return;
     }
-    if (!validateStep1() || !validateStep2()) return;
+    setHasAttemptedSubmit(true);
+    if (!validate()) return;
     onSubmit({
       title,
       description: '',
@@ -402,287 +401,626 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   return (
     <div className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-right duration-350">
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white/95 backdrop-blur-md sticky top-0 z-40 safe-top shrink-0">
-        <button onClick={handleExit} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500"><ArrowLeft size={24} /></button>
-        <h1 className="text-sm font-black text-gray-800 flex items-center gap-1.5"><Zap size={15} className="text-amber-600" fill="currentColor" /> New Challenge</h1>
-        <button onClick={handleFinalPost} className="text-white font-black text-[11px] px-5 py-2.5 rounded-full bg-amber-600 hover:bg-amber-700 transition-all uppercase tracking-widest shadow-md active:scale-95 shadow-amber-200/60">
-          Start
+        <button onClick={handleExit} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">
+          <ArrowLeft size={24} />
+        </button>
+        <h1 className="text-sm font-black text-gray-800">New Challenge</h1>
+        <button onClick={handleFinalPost} className="text-white font-black text-[11px] px-5 py-2.5 rounded-full bg-amber-600 hover:bg-amber-700 transition-all uppercase tracking-widest shadow-md active:scale-95 shadow-amber-200/50">
+          Post
         </button>
       </div>
 
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto no-scrollbar bg-white">
         <div className="max-w-md mx-auto px-4 py-6 pb-32 space-y-6">
-            <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
-              {errors.userProfile && (
-                <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2">
-                  <AlertCircle size={16} />
-                  <span>{errors.userProfile}</span>
+          {errors.userProfile && (
+            <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2">
+              <AlertCircle size={16} />
+              <span>{errors.userProfile}</span>
+            </div>
+          )}
+
+          {/* 1. Challenge Section */}
+          <section className="space-y-4 pb-4 border-b border-gray-100">
+            <div className="flex items-start gap-3">
+              <div className="flex-1">
+                <RichMentionInput
+                  value={title}
+                  onChange={(val) => { setTitle(val); if (errors.title) setErrors(prev => ({ ...prev, title: false })) }}
+                  placeholder="Create a challenge..."
+                  className={`text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-amber-500 transition-all pt-0.5 pb-1.5 placeholder-gray-300 min-h-[44px] ${errors.title ? 'border-red-300 text-red-500' : 'text-gray-900'}`}
+                  minRows={1}
+                  autoFocus
+                />
+                {errors.title && <p className="text-[10px] font-bold text-red-500 px-1 mt-1">{errors.title}</p>}
+              </div>
+              <button
+                type="button"
+                onClick={() => { setActiveCropId('cover'); fileInputRef.current?.click(); }}
+                className={`p-1.5 rounded-full transition-colors shrink-0 mt-1 ${coverImage ? 'text-amber-600 bg-amber-50' : 'text-gray-400 hover:text-amber-500 hover:bg-gray-50'}`}
+              >
+                <Camera size={20} />
+              </button>
+            </div>
+
+            {/* Cover Media Preview */}
+            {coverImage && (
+              <div className="relative w-24 h-24 rounded-xl overflow-hidden border border-gray-100 shadow-sm group animate-in zoom-in-95 mt-2">
+                <img src={coverImage} className="w-full h-full object-cover" alt="Cover" />
+                <button onClick={() => setCoverImage(null)} className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={10} /></button>
+              </div>
+            )}
+
+            {/* Category Grid */}
+            <div className="grid grid-cols-1 gap-4 pt-3 mt-3 border-t border-gray-55/50">
+              <div className="space-y-1.5 text-left min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="p-1.5 bg-gray-50 rounded-lg text-gray-500 border border-gray-100 shrink-0">
+                    <Tag size={12} />
+                  </div>
+                  <span className="text-xs font-bold text-gray-800">Category</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsCategorySheetOpen(true)}
+                  className={`w-full flex items-center justify-between border rounded-xl px-3 py-2 text-[8px] font-semibold transition-all active:scale-[0.98] min-w-0 ${
+                    category
+                      ? 'bg-amber-50 border-amber-200 text-amber-700 font-semibold'
+                      : hasAttemptedSubmit && !category
+                      ? 'bg-red-50 border-red-200 text-red-600 font-bold'
+                      : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-55'
+                  }`}
+                >
+                  <div className="flex items-center min-w-0 mr-1">
+                    <span className="truncate">{category || 'Select category'}</span>
+                  </div>
+                  <ChevronDown size={14} className="text-gray-400 shrink-0" />
+                </button>
+                {errors.category && !category && (
+                  <p className="text-[10px] font-semibold text-red-600 px-1 mt-1">Please select a category.</p>
+                )}
+              </div>
+            </div>
+          </section>
+          {/* 3. Options Section */}
+          <section className="space-y-4 pb-2.5 border-b border-gray-100">
+            <div className="flex items-center justify-between px-1 border-b border-gray-55/40 pb-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="p-1.5 bg-gray-55/30 rounded-lg text-gray-500 border border-gray-100 shrink-0">
+                  <List size={12} />
+                </div>
+                <span className="text-xs font-bold text-gray-800">Challenge Items <span className="text-red-500">*</span></span>
+                {errors.options && <span className="text-[10px] font-bold text-red-600 truncate">{errors.options}</span>}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {options.map((option, idx) => (
+                <div key={option.id} className="flex items-center gap-2 animate-in fade-in slide-in-from-bottom-1 duration-200">
+                  <span className="text-xs font-black text-gray-300 w-4 text-center shrink-0">{idx + 1}</span>
+                  <div className="flex-1 flex flex-col gap-1.5">
+                    <div className="flex items-center w-full bg-gray-55/5 border border-gray-200 rounded-xl px-2 py-0.5 focus-within:border-amber-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-amber-100 transition-all shadow-xs">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveCropId(option.id);
+                            fileInputRef.current?.click();
+                          }}
+                          className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-dashed transition-all ${option.image ? 'border-amber-500' : 'border-gray-200 text-gray-400 hover:text-amber-500'}`}
+                        >
+                          {option.image ? (
+                            <img src={option.image} className="w-full h-full object-cover" alt="" />
+                          ) : (
+                            <Camera size={14} />
+                          )}
+                        </button>
+
+                        <input
+                          type="text"
+                          value={option.text}
+                          maxLength={80}
+                          autoFocus={focusedOptionId === option.id}
+                          onChange={(e) => handleOptionChange(option.id, e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleAddOption();
+                            }
+                          }}
+                          onBlur={() => {
+                            if (focusedOptionId === option.id) setFocusedOptionId(null);
+                          }}
+                          placeholder={`Item ${idx + 1} Name`}
+                          className="flex-1 px-2.5 py-1.5 bg-transparent text-sm font-semibold focus:outline-none text-gray-900"
+                        />
+
+                        <span className="text-[9px] text-gray-450 mr-1.5 whitespace-nowrap">{option.text.length}/80</span>
+
+                      {option.image && (
+                        <button
+                          type="button"
+                          onClick={() => setOptions(options.map(o => o.id === option.id ? { ...o, image: null } : o))}
+                          className="p-1.5 text-gray-300 hover:text-red-500 rounded-full flex items-center justify-center transition-colors mr-1"
+                        >
+                          <X size={14} strokeWidth={3} />
+                        </button>
+                      )}
+                    </div>
+
+                    {option.withFollowUp && (
+                      <div className="px-2 py-1.5 bg-amber-50 border border-amber-100 rounded-lg text-[10px] flex items-center gap-2">
+                        <MessageSquare size={10} className="text-amber-500" />
+                        <span className="font-bold text-amber-700 truncate">Feedback: {option.followUpLabel || "Why?"}</span>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSettingsOptionId(option.id)}
+                    className="p-2 text-gray-400 hover:text-gray-650 rounded-full flex items-center justify-center shrink-0 transition-colors"
+                  >
+                    <MoreHorizontal size={18} />
+                  </button>
+                </div>
+              ))}
+
+              {/* Interactive Placeholder / Auto-Add Option */}
+                <div className="flex items-center gap-2 opacity-50 hover:opacity-80 focus-within:opacity-100 transition-opacity duration-200">
+                  <span className="text-xs font-black text-gray-300 w-4 text-center shrink-0">{options.length + 1}</span>
+                  <div className="flex-1 flex flex-col gap-2">
+                    <div className="flex items-center w-full bg-gray-50/30 border border-dashed border-gray-200 rounded-xl px-2 py-0.5">
+                      <button disabled className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border border-dashed border-gray-200 text-gray-300">
+                        <Camera size={14} />
+                      </button>
+                      <input
+                        type="text"
+                        placeholder="Add item to compare..."
+                        className="flex-1 px-2.5 py-1.5 bg-transparent text-sm font-semibold focus:outline-none text-gray-400 cursor-pointer"
+                        onFocus={handleAddOption}
+                      />
+                    </div>
+                  </div>
+                  <button disabled className="p-2 text-gray-200 rounded-full flex items-center justify-center shrink-0">
+                    <MoreHorizontal size={18} />
+                  </button>
+                </div>
+            </div>
+          </section>
+
+          {/* 5. Advanced Settings Row */}
+          <button
+            type="button"
+            onClick={() => {
+              setAdvancedSheetView('main');
+              setIsAdvancedSheetOpen(true);
+            }}
+            className="w-full flex items-center justify-between py-2.5 px-1 text-left transition-all active:opacity-75"
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-gray-50 rounded-xl text-gray-500 border border-gray-100">
+                <Settings2 size={16} />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-gray-805">Advanced Settings</h4>
+                <p className="text-[9px] text-gray-400 mt-0.5 leading-tight">Visibility, results, duration & challenge behavior</p>
+              </div>
+            </div>
+            <ChevronRight size={14} className="text-gray-400" />
+          </button>
+
+            <section className="space-y-3 pt-3 border-t border-gray-100">
+              <div className="flex items-center justify-between px-1">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 bg-gray-55/30 rounded-lg text-gray-500 border border-gray-100 shrink-0">
+                    <Users size={12} />
+                  </div>
+                  <span className="text-xs font-bold text-gray-800">Unlock Deeper Analytics</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowInsightInfo(!showInsightInfo)}
+                    className="text-gray-400 hover:text-amber-500 transition-colors ml-0.5"
+                  >
+                    <Info size={14} />
+                  </button>
+                </div>
+              </div>
+
+              {showInsightInfo && (
+                <div className="p-3 bg-amber-50 border border-amber-100 text-amber-800 text-[10px] font-semibold rounded-xl leading-relaxed animate-in fade-in slide-in-from-top-1 duration-200">
+                  Choose optional demographic questions for participants to unlock deeper insights, audience trends, and response analysis.
                 </div>
               )}
 
-               <section className={`space-y-2 pb-3 border-b border-gray-100 relative transition-colors ${errors.title ? 'p-3 rounded-2xl bg-red-50' : ''}`}>
-                 <div className="flex items-center justify-between"><label className="block text-xs font-bold text-gray-400 uppercase tracking-wide">Challenge <span className="text-red-500">*</span></label><button onClick={() => { setActiveCropId('cover'); fileInputRef.current?.click(); }} className={`p-1.5 rounded-full transition-colors ${coverImage ? 'text-amber-600 bg-amber-50' : 'text-gray-400 hover:text-amber-500 hover:bg-gray-50'}`}><ImageIcon size={20} /></button></div>
-                 {coverImage && <div className="mb-2"><div className="relative w-full aspect-video rounded-2xl overflow-hidden shadow-sm group animate-in zoom-in-95"><img src={coverImage} className="w-full h-full object-cover" alt="Cover" /><button onClick={() => setCoverImage(null)} className="absolute top-2 right-2 p-1.5 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={14} /></button></div></div>}
-                 <RichMentionInput
-                   value={title}
-                   onChange={(val) => { setTitle(val); setErrors(prev => ({ ...prev, title: false })); }}
-                   placeholder="Create a challenge..."
-                   className={`text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-amber-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] ${errors.title ? 'text-red-500 border-red-300' : 'text-gray-900'}`}
-                   minRows={1}
-                   autoFocus
-                 />
-                 {errors.title && <p className="text-[10px] font-bold text-red-500 px-1 mt-1">{errors.title}</p>}
-               </section>
+              <div className="flex flex-wrap gap-2">
+                {(['basic', 'professional', 'social', 'custom'] as const).map((preset) => {
+                  const isActive = selectedInsightPreset === preset;
+                  const labels: Record<string, string> = {
+                    basic: 'Basic',
+                    professional: 'Professional',
+                    social: 'Social',
+                    custom: 'Custom'
+                  };
+                  return (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => handlePresetChange(preset)}
+                      className={`px-3 py-1.5 rounded-xl text-[10px] font-bold border uppercase tracking-wider transition-all duration-200 active:scale-95 ${
+                        isActive
+                          ? 'bg-amber-600 text-white border-amber-600 shadow-sm'
+                          : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      {labels[preset]}
+                    </button>
+                  );
+                })}
+              </div>
 
-              <div className="space-y-3 pt-2">
-                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Category <span className="text-red-500">*</span></label>
-                <button onClick={() => setIsCategorySheetOpen(true)} className={`inline-flex px-4 py-2 rounded-full text-xs font-bold border transition-all active:scale-95 ${category ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-white border-gray-200 text-gray-400 hover:bg-gray-50'} ${errors.category ? 'border-red-300 bg-red-50 text-red-500' : ''}`}>
-                  {category || 'Select Challenge Category'}
+              {selectedInsightPreset && selectedInsightPreset !== 'custom' && (
+                <div className="p-3 bg-white rounded-xl border border-gray-100 space-y-1 mx-0.5 animate-in fade-in duration-200">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-bold text-gray-700">
+                      Provides {selectedDemographics.length} analytical comparisons
+                    </span>
+                    <span className="text-[10px] font-extrabold text-amber-600 whitespace-nowrap">
+                      +{selectedDemographics.length} questions for participant
+                    </span>
+                  </div>
+                  <div className="text-[9px] text-gray-550 font-medium mt-1 pb-1">
+                    Demographics requested: <span className="text-gray-800 font-bold">{selectedDemographics.map(id => DEMOGRAPHIC_OPTIONS.find(opt => opt.id === id)?.label).filter(Boolean).join(', ')}</span>
+                  </div>
+                  <p className="text-[8px] text-gray-400 font-medium leading-normal">
+                    * Selected questions will be prompted as optional questions during participation.
+                  </p>
+                </div>
+              )}
+
+              {selectedInsightPreset === 'custom' && (
+                <div className="space-y-2 p-3 bg-gray-50/30 border border-gray-100 rounded-2xl animate-in fade-in duration-200">
+                  <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">
+                    Select Custom Attributes
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {DEMOGRAPHIC_OPTIONS.filter(opt => opt.id !== 'ageGroup').map((opt) => {
+                      const isSelected = selectedDemographics.includes(opt.id);
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => handleDemographicToggle(opt.id)}
+                          className={`px-2.5 py-1 rounded-lg text-[9px] font-bold border transition-all flex items-center gap-1 active:scale-95 ${
+                            isSelected
+                              ? 'bg-amber-50 border-amber-200 text-amber-700 shadow-xs'
+                              : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
+                          }`}
+                        >
+                          {isSelected && <Check size={10} strokeWidth={3} className="text-amber-500" />}
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </section>
+        </div>
+      </div>
+
+      <BottomSheet
+        isOpen={isAdvancedSheetOpen}
+        onClose={() => {
+          setAdvancedSheetView('main');
+          setIsAdvancedSheetOpen(false);
+        }}
+        title={
+          advancedSheetView === 'visibility'
+            ? 'Post Visibility'
+            : advancedSheetView === 'results'
+            ? 'Result Visibility'
+            : 'Advanced Settings'
+        }
+      >
+        <div className="space-y-5 py-2 px-2 animate-in fade-in duration-200">
+          {advancedSheetView === 'main' && (
+            <div className="space-y-5">
+              <p className="text-[11px] text-gray-550 leading-relaxed px-1">
+                Control who can see, participate, and view challenge results.
+              </p>
+
+              <div className="space-y-1.5">
+                <button
+                  type="button"
+                  onClick={() => setAdvancedSheetView('visibility')}
+                  className="w-full flex items-center justify-between p-3.5 bg-gray-50 hover:bg-gray-100/70 rounded-xl transition-all border border-gray-100"
+                >
+                  <span className="text-xs font-bold text-gray-800">Post Visibility</span>
+                  <div className="flex items-center gap-1 text-xs text-amber-600 font-black">
+                    <span>{audienceLabel}</span>
+                    <ChevronRight size={14} />
+                  </div>
                 </button>
-                {errors.category && (
-                  <div className="text-[10px] font-bold text-red-500 flex items-center gap-1 mt-1 px-1">
-                    <AlertCircle size={10} /> Category is required.
+
+                <button
+                  type="button"
+                  onClick={() => setAdvancedSheetView('results')}
+                  className="w-full flex items-center justify-between p-3.5 bg-gray-50 hover:bg-gray-100/70 rounded-xl transition-all border border-gray-100"
+                >
+                  <span className="text-xs font-bold text-gray-800">Result Visibility</span>
+                  <div className="flex items-center gap-1 text-xs text-amber-600 font-black">
+                    <span>{resultsLabel}</span>
+                    <ChevronRight size={14} />
+                  </div>
+                </button>
+              </div>
+
+              <div className="space-y-3 pb-4 border-b border-gray-100 pt-1">
+                <label className="flex items-center gap-2 text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                  <Calendar size={12} /> Challenge Duration
+                </label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {DURATION_OPTIONS.map(opt => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setDuration(opt.value)}
+                      className={`py-2 rounded-xl text-xs font-bold border transition-all ${
+                        duration === opt.value
+                          ? 'bg-amber-600 text-white border-amber-600 shadow-sm shadow-amber-100'
+                          : 'bg-gray-50 text-gray-500 border-transparent hover:bg-gray-100'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setDuration('custom')}
+                    className={`py-2 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1 ${
+                      duration === 'custom'
+                        ? 'bg-amber-600 text-white border-amber-600 shadow-sm shadow-amber-100'
+                        : 'bg-gray-50 text-gray-500 border-transparent hover:bg-gray-100'
+                    }`}
+                  >
+                    <Plus size={12} /> Custom
+                  </button>
+                </div>
+                {duration === 'custom' && (
+                  <div className="mt-2 animate-in fade-in slide-in-from-top-1">
+                    <input
+                      type="datetime-local"
+                      value={customEndDate}
+                      onChange={(e) => setCustomEndDate(e.target.value)}
+                      className="w-full bg-amber-50/50 border border-amber-100 rounded-xl px-4 py-2.5 text-xs font-bold focus:outline-none focus:bg-white focus:border-amber-500 transition-all text-amber-900"
+                    />
                   </div>
                 )}
               </div>
 
-            </div>
-          
-            <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
-              {errors.userProfile && (
-                <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2">
-                  <AlertCircle size={16} />
-                  <span>{errors.userProfile}</span>
-                </div>
-              )}
-              <section className="space-y-4">
-                <div className="flex items-center justify-between px-1">
-                  <h2 className="text-xl font-black text-gray-900 tracking-tight">Challenge Items</h2>
-                  {errors.options && <span className="text-[10px] font-bold text-red-500 animate-pulse">{errors.options}</span>}
+              <div className="space-y-4 pt-1">
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col text-left">
+                    <span className="text-xs font-bold text-gray-800">Allow comments</span>
+                    <span className="text-[10px] text-gray-400">Enable user comments on the challenge</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAllowComments(!allowComments)}
+                    className={`w-10 h-5 rounded-full relative transition-colors ${allowComments ? 'bg-amber-600' : 'bg-gray-200'}`}
+                  >
+                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowComments ? 'left-6' : 'left-1'}`} />
+                  </button>
                 </div>
 
-                <div className="space-y-3">
-                  {options.map((option, idx) => (
-                    <div key={option.id} className="flex items-start gap-3 animate-in slide-in-from-bottom-2 duration-300">
-                      <div className="flex flex-col items-center pt-3 gap-1">
-                        <span className="text-[10px] font-black text-gray-300 uppercase tracking-tighter">#{idx + 1}</span>
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col text-left">
+                    <span className="text-xs font-bold text-gray-800">Random matchups</span>
+                    <span className="text-[10px] text-gray-400">Randomize how challenge items are paired</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setRandomPairing(!randomPairing)}
+                    className={`w-10 h-5 rounded-full relative transition-colors ${randomPairing ? 'bg-amber-600' : 'bg-gray-200'}`}
+                  >
+                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${randomPairing ? 'left-6' : 'left-1'}`} />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col text-left">
+                    <span className="text-xs font-bold text-gray-800">Force anonymous</span>
+                    <span className="text-[10px] text-gray-400">Keep all participants identity completely anonymous</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setForceAnonymous(!forceAnonymous)}
+                    className={`w-10 h-5 rounded-full relative transition-colors ${forceAnonymous ? 'bg-amber-600' : 'bg-gray-200'}`}
+                  >
+                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${forceAnonymous ? 'left-6' : 'left-1'}`} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {advancedSheetView === 'visibility' && (
+            <div className="space-y-4">
+              <button
+                type="button"
+                onClick={() => {
+                  if (visibility === 'Groups' && selectedGroups.length === 0) {
+                    setErrors(prev => ({ ...prev, visibility: "Please select at least one group." }));
+                    return;
+                  }
+                  setErrors(prev => ({ ...prev, visibility: false }));
+                  setAdvancedSheetView('main');
+                }}
+                className="flex items-center gap-1.5 text-xs text-amber-600 font-bold hover:opacity-80 transition-opacity pb-2"
+              >
+                <span>&larr; Back to Advanced Settings</span>
+              </button>
+
+              <div className="space-y-2">
+                {visibilityOptions.map((option) => {
+                  const Icon = option.icon;
+                  const isSelected = visibility === option.id;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      disabled={!option.allowed}
+                      onClick={() => {
+                        if (option.allowed) {
+                          setVisibility(option.id as VisibilityType);
+                          if (option.id !== 'Groups') {
+                            setErrors(prev => ({ ...prev, visibility: false }));
+                          }
+                        }
+                      }}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl border transition-all text-left group ${!option.allowed ? 'opacity-40 cursor-not-allowed grayscale' : 'hover:bg-gray-50'
+                        } ${isSelected ? 'border-amber-500 bg-amber-50/50 ring-1 ring-amber-500/20' : 'border-transparent'}`}
+                    >
+                      <div className={`p-2.5 rounded-xl transition-colors ${isSelected ? 'bg-amber-600 text-white shadow-md' : 'bg-gray-100 text-gray-500 group-hover:bg-gray-200'}`}>
+                        <Icon size={20} />
                       </div>
-                      <div className="flex-1 flex flex-col gap-2">
-                        <div className="flex items-center bg-gray-50 rounded-2xl p-1.5 border border-transparent focus-within:border-amber-200 focus-within:bg-white transition-all shadow-sm">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <h4 className={`font-bold text-sm ${isSelected ? 'text-amber-700' : 'text-gray-900'}`}>{option.label}</h4>
+                          {option.premium && (
+                            <span className="text-[8px] font-black bg-gradient-to-r from-amber-400 to-orange-500 text-white px-1.5 py-0.5 rounded-md uppercase tracking-wider">PRO</span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-gray-500 leading-tight mt-0.5">{option.desc}</p>
+                      </div>
+                      {isSelected && (
+                        <div className="w-6 h-6 bg-amber-600 text-white rounded-full flex items-center justify-center shadow-sm">
+                          <Check size={14} strokeWidth={3} />
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {visibility === 'Groups' && (
+                <div className="mt-4 p-4 bg-gray-50 rounded-2xl animate-in slide-in-from-top-2 border border-gray-100">
+                  <div className="flex items-center justify-between mb-3 px-1">
+                    <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Select target groups</h5>
+                    <span className="text-[9px] font-bold text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded uppercase">Postable</span>
+                  </div>
+
+                  {postableGroups.length > 0 ? (
+                    <div className="space-y-2 max-h-[250px] overflow-y-auto no-scrollbar">
+                      {postableGroups.map(group => {
+                        const isGroupSelected = selectedGroups.includes(group.id);
+                        return (
                           <button
-                            onClick={() => { setActiveCropId(option.id); fileInputRef.current?.click(); }}
-                            className={`w-14 h-14 rounded-xl flex items-center justify-center shrink-0 overflow-hidden border border-dashed transition-all ${option.image ? 'border-amber-500' : 'border-gray-200 text-gray-400 hover:text-amber-500'
+                            key={group.id}
+                            type="button"
+                            onClick={() => {
+                              handleGroupToggle(group.id);
+                              setErrors(prev => ({ ...prev, visibility: false }));
+                            }}
+                            className={`w-full flex items-center gap-3 p-2 rounded-xl transition-all border ${isGroupSelected
+                              ? 'bg-white border-amber-200 shadow-sm ring-1 ring-amber-500/5'
+                              : 'bg-transparent border-transparent hover:bg-white/50'
                               }`}
                           >
-                            {option.image ? <img src={option.image} className="w-full h-full object-cover" alt="" /> : <Camera size={20} />}
+                            <img src={group.image} className="w-10 h-10 rounded-lg object-cover border border-gray-200 shadow-xs" alt="" />
+                            <div className="flex-1 text-left min-w-0">
+                              <p className="text-xs font-bold text-gray-800 truncate">{group.name}</p>
+                              <p className="text-[10px] text-gray-400">{(group.memberCount || 0).toLocaleString()} members</p>
+                            </div>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${isGroupSelected ? 'bg-amber-600 border-amber-600' : 'border-gray-200'
+                              }`}>
+                              {isGroupSelected && <Check size={12} className="text-white" strokeWidth={3} />}
+                            </div>
                           </button>
-                          <input
-                            type="text"
-                            value={option.text}
-                            maxLength={80}
-                            autoFocus={focusedOptionId === option.id}
-                            onChange={(e) => handleOptionChange(option.id, e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                handleAddOption();
-                              }
-                            }}
-                            onBlur={() => {
-                              if (focusedOptionId === option.id) setFocusedOptionId(null);
-                            }}
-                            placeholder={`Item ${idx + 1} Name`}
-                            className="flex-1 px-4 py-2 bg-transparent text-sm font-bold focus:outline-none text-gray-900 placeholder-gray-300"
-                          />
-                          <span className="text-[9px] text-gray-400 mr-1.5 whitespace-nowrap">{option.text.length}/80</span>
-                          <div className="flex items-center gap-1 shrink-0 px-1">
-                            {option.image && (
-                              <button onClick={() => setOptions(options.map(o => o.id === option.id ? { ...o, image: null } : o))} className="p-3 text-gray-300 hover:text-red-500 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"><X size={14} strokeWidth={3} /></button>
-                            )}
-                            <button onClick={() => setSettingsOptionId(option.id)} className="p-3 text-gray-400 hover:text-gray-600 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"><MoreHorizontal size={18} /></button>
-                          </div>
-                        </div>
-                        {option.withFollowUp && (
-                          <div className="px-3 py-1.5 bg-amber-50 border border-amber-100 rounded-xl text-[10px] flex items-center gap-2 animate-in zoom-in-95">
-                            <MessageSquare size={10} className="text-amber-500" />
-                            <span className="font-bold text-amber-700 truncate">Feedback: {option.followUpLabel || "Why?"}</span>
-                          </div>
-                        )}
-                      </div>
+                        );
+                      })}
                     </div>
-                  ))}
-
-                  {/* Interactive Placeholder / Auto-Add Option */}
-                  <div className="flex items-start gap-3 opacity-50 hover:opacity-80 focus-within:opacity-100 transition-opacity duration-200">
-                    <div className="flex flex-col items-center pt-3 gap-1">
-                      <span className="text-[10px] font-black text-gray-300 uppercase tracking-tighter">#{options.length + 1}</span>
+                  ) : (
+                    <div className="py-6 text-center">
+                      <Users size={32} className="mx-auto text-gray-300 mb-2 opacity-30" />
+                      <p className="text-xs text-gray-500 font-medium leading-relaxed px-4">
+                        You don't have permission to post in any groups.
+                      </p>
                     </div>
-                    <div className="flex-1 flex flex-col gap-2">
-                      <div className="flex items-center bg-gray-50/50 border border-dashed border-gray-200 rounded-2xl p-1.5 shadow-sm">
-                        <button
-                          disabled
-                          className="w-14 h-14 rounded-xl flex items-center justify-center shrink-0 border border-dashed border-gray-200 text-gray-300"
-                        >
-                          <Camera size={20} />
-                        </button>
-                        <input
-                          type="text"
-                          placeholder="Add item to compare..."
-                          className="flex-1 px-4 py-2 bg-transparent text-sm font-bold focus:outline-none text-gray-400 cursor-pointer placeholder-gray-300"
-                          onFocus={handleAddOption}
-                        />
-                        <div className="flex items-center gap-1 shrink-0 px-1">
-                          <button disabled className="p-3 text-gray-300 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]">
-                            <MoreHorizontal size={18} />
-                          </button>
-                        </div>
-                      </div>
+                  )}
+
+                  {errors.visibility && selectedGroups.length === 0 && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-[10px] text-red-600 font-bold flex items-center gap-1.5 mt-2 animate-in fade-in">
+                      <AlertCircle size={14} className="shrink-0" />
+                      <span>{errors.visibility}</span>
                     </div>
-                  </div>
-                </div>
-              </section>
-            </div>
-
-            <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
-              <div className="bg-amber-50 rounded-[2.5rem] p-6 border border-amber-100 shadow-sm relative overflow-hidden">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-10 h-10 bg-amber-600 text-white rounded-2xl flex items-center justify-center shadow-md">
-                    <BarChart3 size={20} />
-                  </div>
-                  <div>
-                    <h2 className="text-xl font-black text-gray-900 leading-tight">Unlock Deeper Analytics</h2>
-                    <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest mt-0.5">Demographics Setup</p>
-                  </div>
-                </div>
-                <p className="text-sm text-gray-700 leading-relaxed bg-white/50 p-4 rounded-2xl border border-amber-100/50">
-                  Choose optional demographics to help understand voter breakdowns. Participants will be asked optionally to improve analysis.
-                </p>
-              </div>
-
-              {/* Preset Packages */}
-              <div className="space-y-3">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] px-1">Preset Packages</label>
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    { id: 'recommended', label: 'Recommended' },
-                    { id: 'professional', label: 'Professional' },
-                    { id: 'geographic', label: 'Geographic' },
-                    { id: 'custom', label: 'Custom' }
-                  ].map((preset) => {
-                    const isActive = selectedInsightPreset === preset.id;
-                    return (
-                      <button
-                        key={preset.id}
-                        onClick={() => handlePresetChange(preset.id as any)}
-                        className={`px-4 py-2 rounded-full text-xs font-bold border transition-all active:scale-95 ${
-                          isActive 
-                            ? 'bg-amber-600 text-white border-amber-600 shadow-md shadow-amber-200' 
-                            : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
-                        }`}
-                      >
-                        {preset.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Dynamic Value/Cost Indicator */}
-              <div className="p-3.5 bg-gray-50 rounded-2xl border border-gray-100 space-y-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold text-gray-700">
-                    Provides {selectedDemographics.length} analytical comparisons
-                  </span>
-                  <span className="text-[10px] font-extrabold text-amber-600">
-                    +{selectedDemographics.length} questions for participant
-                  </span>
-                </div>
-                <p className="text-[9px] text-gray-400 font-medium leading-normal">
-                  * Selected questions will be prompted as optional questions during participation.
-                </p>
-              </div>
-
-              {/* Collapsible Pills */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between px-1">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">
-                    Selected Attributes
-                  </label>
-                  {selectedInsightPreset !== 'custom' && (
-                    <span className="text-[9px] text-gray-400 font-medium">
-                      (Read-only, select Custom to edit)
-                    </span>
                   )}
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {DEMOGRAPHIC_OPTIONS.map((opt) => {
-                    const isSelected = selectedDemographics.includes(opt.id);
-                    const isCustomMode = selectedInsightPreset === 'custom';
-                    return (
-                      <button
-                        key={opt.id}
-                        disabled={!isCustomMode}
-                        onClick={() => setSelectedDemographics(prev => isSelected ? prev.filter(d => d !== opt.id) : [...prev, opt.id])}
-                        className={`px-3 py-1.5 rounded-full text-[10px] font-bold border transition-all flex items-center gap-1 ${
-                          isSelected
-                            ? 'bg-amber-50 border-amber-200 text-amber-600 font-semibold'
-                            : 'bg-white border-gray-100 text-gray-400'
-                        } ${!isCustomMode ? 'cursor-default opacity-85' : 'active:scale-95'}`}
-                      >
-                        {isSelected && <Check size={10} strokeWidth={4} />}
-                        <span>{opt.label}</span>
-                      </button>
-                    );
-                  })}
+              )}
+            </div>
+          )}
+
+          {advancedSheetView === 'results' && (
+            <div className="space-y-4">
+              <button
+                type="button"
+                onClick={() => setAdvancedSheetView('main')}
+                className="flex items-center gap-1.5 text-xs text-amber-600 font-bold hover:opacity-80 transition-opacity pb-2"
+              >
+                <span>&larr; Back to Advanced Settings</span>
+              </button>
+
+              <div className="space-y-2">
+                {[
+                  { id: 'Public', label: 'Public', desc: 'Results are visible to everyone.' },
+                  { id: 'Participants', label: 'Participants Only', desc: 'Only participants can see results after participating.' },
+                  { id: 'OnlyMe', label: 'Private (Only Me)', desc: 'Only you can see the results.' }
+                ].map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setResultsWho(opt.id as any)}
+                    className="w-full flex items-center justify-between p-4 rounded-2xl border transition-all text-left"
+                    style={{ borderColor: resultsWho === opt.id ? '#d97706' : '#f3f4f6', backgroundColor: resultsWho === opt.id ? '#fffbeb' : 'white' }}
+                  >
+                    <div>
+                      <span className={`text-sm font-bold block ${resultsWho === opt.id ? 'text-amber-700' : 'text-gray-700'}`}>{opt.label}</span>
+                      <span className="text-[10px] text-gray-505 leading-tight mt-0.5 block">{opt.desc}</span>
+                    </div>
+                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${resultsWho === opt.id ? 'border-amber-600 bg-amber-600' : 'border-gray-200'}`}>
+                      {resultsWho === opt.id && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              <div className="space-y-3 pt-2">
+                <div className="flex items-center justify-between px-1">
+                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">When Results Are Visible</span>
+                  {!canShowResultsAfterEnd && <span className="text-[9px] font-bold text-gray-450 flex items-center gap-1"><Info size={10} /> Set duration to enable timing</span>}
+                </div>
+                <div className="space-y-2">
+                  {[
+                    { id: 'AnyTime', label: 'Any time', enabled: true },
+                    { id: 'Immediately', label: 'Immediately after participation', enabled: true },
+                    { id: 'AfterEnd', label: 'After post ends', enabled: canShowResultsAfterEnd }
+                  ].map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      disabled={!opt.enabled}
+                      onClick={() => setResultsTiming(opt.id as any)}
+                      className={`w-full flex items-center justify-between p-4 rounded-2xl border transition-all text-left ${!opt.enabled ? 'opacity-40 cursor-not-allowed bg-gray-50 grayscale' : ''}`}
+                      style={{ borderColor: resultsTiming === opt.id ? '#d97706' : '#f3f4f6', backgroundColor: resultsTiming === opt.id ? '#fffbeb' : 'white' }}
+                    >
+                      <span className={`text-sm font-bold ${resultsTiming === opt.id ? 'text-amber-700' : 'text-gray-700'}`}>{opt.label}</span>
+                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${resultsTiming === opt.id ? 'border-amber-600 bg-amber-600' : 'border-gray-200'}`}>
+                        {resultsTiming === opt.id && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
+                      </div>
+                    </button>
+                  ))}
                 </div>
               </div>
-
-              <div className="flex flex-col gap-3 pt-6">
-                <button onClick={handleFinalPost} className="w-full py-5 bg-amber-600 text-white rounded-[2rem] font-black uppercase tracking-[0.2em] text-xs shadow-xl shadow-amber-500/20 active:scale-95 transition-all flex items-center justify-center gap-2">Confirm & Start Challenge <ChevronRight size={18} /></button>
-              </div>
             </div>
-        </div>
-      </div>
-
-      {/* Visibility Bottom Sheets */}
-      <BottomSheet isOpen={isVisibilitySheetOpen} onClose={() => setIsVisibilitySheetOpen(false)} title="Post visibility">
-        <div className="space-y-2 py-2">
-          {visibilityOptions.map((option) => {
-            const Icon = option.icon;
-            const isSelected = visibility === option.id;
-            return (
-              <button key={option.id} disabled={!option.allowed} onClick={() => { setVisibility(option.id as VisibilityType); if (option.id !== 'Groups') setIsVisibilitySheetOpen(false); }} className={`w-full flex items-center gap-4 p-4 rounded-2xl border transition-all text-left group ${!option.allowed ? 'opacity-40 cursor-not-allowed grayscale' : isSelected ? 'border-amber-500 bg-amber-50/50' : 'border-transparent hover:bg-gray-50'}`}>
-                <div className={`p-2.5 rounded-xl ${isSelected ? 'bg-amber-600 text-white shadow-md' : 'bg-gray-100 text-gray-500'}`}><Icon size={20} /></div>
-                <div className="flex-1"><h4 className={`font-bold text-sm ${isSelected ? 'text-amber-700' : 'text-gray-900'}`}>{option.label}</h4><p className="text-[10px] text-gray-500 mt-0.5">{option.desc}</p></div>
-                {isSelected && <div className="w-6 h-6 bg-amber-600 text-white rounded-full flex items-center justify-center"><Check size={14} strokeWidth={3} /></div>}
-              </button>
-            );
-          })}
-        </div>
-      </BottomSheet>
-
-      <BottomSheet isOpen={isResultVisibilitySheetOpen} onClose={() => setIsResultVisibilitySheetOpen(false)} title="Result Visibility" customLayout={true}>
-        <div className="flex flex-col h-full bg-white px-5 py-4 space-y-8 overflow-y-auto no-scrollbar">
-          <div className="space-y-4">
-            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Section 1: Who Can See the Results</h3>
-            <div className="space-y-2">
-              {['Public', 'Followers', 'Participants', 'OnlyMe'].map((opt) => (
-                <button key={opt} onClick={() => setResultsWho(opt as any)} className="w-full flex items-center justify-between p-4 rounded-2xl border transition-all" style={{ borderColor: resultsWho === opt ? '#d97706' : '#f3f4f6', backgroundColor: resultsWho === opt ? '#fffbeb' : 'white' }}>
-                  <span className="text-sm font-bold text-gray-700">{opt === 'Participants' ? 'Participants Only' : opt === 'OnlyMe' ? 'Only Me' : opt}</span>
-                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${resultsWho === opt ? 'border-amber-600 bg-amber-600' : 'border-gray-200'}`}>{resultsWho === opt && <div className="w-1.5 h-1.5 bg-white rounded-full" />}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Section 3: When Results Are Visible</h3>
-            <div className="space-y-2">
-              <button onClick={() => setResultsTiming('AnyTime')} className="w-full flex items-center justify-between p-4 rounded-2xl border transition-all" style={{ borderColor: resultsTiming === 'AnyTime' ? '#d97706' : '#f3f4f6', backgroundColor: resultsTiming === 'AnyTime' ? '#fffbeb' : 'white' }}><span className="text-sm font-bold text-gray-700">Any time</span></button>
-              <button onClick={() => setResultsTiming('Immediately')} className="w-full flex items-center justify-between p-4 rounded-2xl border transition-all" style={{ borderColor: resultsTiming === 'Immediately' ? '#d97706' : '#f3f4f6', backgroundColor: resultsTiming === 'Immediately' ? '#fffbeb' : 'white' }}><span className="text-sm font-bold text-gray-700">Immediately after participation</span></button>
-              <button disabled={!canShowResultsAfterEnd} onClick={() => setResultsTiming('AfterEnd')} className="w-full flex items-center justify-between p-4 rounded-2xl border disabled:opacity-40" style={{ borderColor: resultsTiming === 'AfterEnd' ? '#d97706' : '#f3f4f6', backgroundColor: resultsTiming === 'AfterEnd' ? '#fffbeb' : 'white' }}><span className="text-sm font-bold text-gray-700">After post ends</span></button>
-            </div>
-          </div>
-          <button onClick={() => setIsResultVisibilitySheetOpen(false)} className="w-full py-4 bg-gray-900 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl">Done</button>
+          )}
         </div>
       </BottomSheet>
 
