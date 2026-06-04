@@ -18,7 +18,7 @@ interface ProfileScreenProps {
   onGroupClick?: (id: string) => void;
   onVote: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: any, followUpAnswers?: Record<string, string>, answers?: PostAnswerPayload[]) => void;
   onSurveyProgress?: (surveyId: string, progress: { index: number, answers: Record<string, any>, followUpAnswers?: Record<string, string>, historyStack?: number[], isAnonymous?: boolean }) => void;
-  user?: { id?: string; name: string; avatar: string; handle?: string; isFollowing?: boolean; followStatus?: string; isPrivate?: boolean };
+  user?: Partial<UserProfile> & { id?: string; name: string; avatar: string; handle?: string; isFollowing?: boolean; followStatus?: string; isPrivate?: boolean };
   onBack?: () => void;
   onAuthorClick?: (author: { id: string; name: string; avatar: string; handle?: string }) => void;
   onShareToFeed?: (survey: Survey, caption: string) => void;
@@ -71,8 +71,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [targetUser, setTargetUser] = useState<UserProfile | null>(null);
 
   const viewUserId = (!user?.id || user.id === userProfile.id) ? userProfile.id : (user as any)?.id;
-  const [isFollowing, setLocalFollowingState] = useFollowState(viewUserId, (user as any)?.isFollowing || false);
-  const [followStatus, setFollowStatus] = useState<string>((user as any)?.followStatus || 'NONE');
+  const initialFollowStatus = (user as any)?.followStatus || ((user as any)?.isFollowing ? 'ACTIVE' : 'NONE');
+  const [isFollowing, setLocalFollowingState] = useFollowState(viewUserId, (user as any)?.isFollowing === true || initialFollowStatus === 'ACTIVE');
+  const [followStatus, setFollowStatus] = useState<string>(initialFollowStatus);
 
   const [drafts, setDrafts] = useState<Survey[]>([]);
   const [savedPosts, setSavedPosts] = useState<Survey[]>([]);
@@ -86,6 +87,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [isConnectionLoading, setIsConnectionLoading] = useState(false);
 
   const isMe = !user?.id || user.id === userProfile.id;
+  const suppliedUser = user as (Partial<UserProfile> & { isFollowing?: boolean; followStatus?: string }) | undefined;
+  const resolvedTargetUser = targetUser?.id === viewUserId ? targetUser : null;
+  const hasProfileStats = isMe || !!resolvedTargetUser?.stats || !!suppliedUser?.stats;
 
   useEffect(() => {
     if (activeTab === 'drafts' && isMe && userProfile.id) {
@@ -134,6 +138,16 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         if (groupsRequestRef.current === requestId) setIsGroupsLoading(false);
       });
   }, [activeTab, isMe, userProfile.id, user, userGroups]);
+
+  useEffect(() => {
+    if (isMe) {
+      setTargetUser(null);
+      return;
+    }
+
+    setTargetUser(prev => prev?.id === viewUserId ? prev : null);
+    setFollowStatus(suppliedUser?.followStatus || (suppliedUser?.isFollowing ? 'ACTIVE' : 'NONE'));
+  }, [isMe, viewUserId, suppliedUser?.followStatus, suppliedUser?.isFollowing]);
 
   useEffect(() => {
     const loadFollowStatus = async () => {
@@ -308,32 +322,37 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       };
     }
 
-    if (targetUser) {
+    if (resolvedTargetUser) {
       return {
-        ...targetUser,
+        ...resolvedTargetUser,
         stats: {
-          ...targetUser.stats,
-          responses: analytics?.totalResponses ?? targetUser.stats?.responses ?? 0
+          ...resolvedTargetUser.stats,
+          responses: analytics?.totalResponses ?? resolvedTargetUser.stats?.responses ?? 0
         }
       };
     }
 
+    const suppliedStats = suppliedUser?.stats;
     return {
       id: user?.id,
       name: user!.name,
       avatar: user!.avatar,
-      handle: user!.name.replace(/\s+/g, '').toLowerCase(),
-      bio: `Content creator on SocialInsight.`,
-      location: 'Global',
-      website: '',
-      isPrivate: false,
+      handle: suppliedUser?.handle || user!.name.replace(/\s+/g, '').toLowerCase(),
+      bio: suppliedUser?.bio || `Content creator on SocialInsight.`,
+      location: suppliedUser?.location || '',
+      website: suppliedUser?.website || '',
+      isPrivate: suppliedUser?.isPrivate ?? false,
+      groupPrivacy: suppliedUser?.groupPrivacy,
+      followStatus: suppliedUser?.followStatus as any,
+      isFollowing: suppliedUser?.isFollowing,
       stats: {
-        followers: 0,
-        following: 0,
-        responses: analytics?.totalResponses || 0
+        followers: suppliedStats?.followers ?? 0,
+        following: suppliedStats?.following ?? 0,
+        posts: suppliedStats?.posts ?? 0,
+        responses: analytics?.totalResponses ?? suppliedStats?.responses ?? 0
       }
     } as UserProfile;
-  }, [isMe, user, userProfile, analytics, targetUser]);
+  }, [isMe, user, userProfile, analytics, resolvedTargetUser, suppliedUser]);
 
   const mySurveys = surveys;
 
@@ -362,6 +381,15 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const responsesCount = useMemo(() => {
     return profileUser?.stats?.responses || 0;
   }, [profileUser?.stats?.responses]);
+
+  const renderStatValue = (value: number | undefined, compact = false) => {
+    if (!hasProfileStats) {
+      return <span className="block w-8 h-4 rounded-full bg-gray-100 animate-pulse" />;
+    }
+
+    const safeValue = value || 0;
+    return compact && safeValue >= 1000 ? (safeValue / 1000).toFixed(1) + 'K' : safeValue.toLocaleString();
+  };
 
   const filteredConnections = useMemo(() => {
     return connectionList.filter(c =>
@@ -958,57 +986,59 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           <div className="w-full bg-white rounded-[2.5rem] border border-gray-100 shadow-xl shadow-gray-200/40 px-3 py-6 mb-4">
             <div className="grid grid-cols-4 gap-0 divide-x divide-gray-50">
               <button
-                onClick={() => { setStatSearch(''); setActiveStatSheet('following'); }}
-                className="flex flex-col items-center group active:scale-95 transition-transform"
+                disabled={!hasProfileStats}
+                onClick={() => { if (hasProfileStats) { setStatSearch(''); setActiveStatSheet('following'); } }}
+                className={`flex flex-col items-center group active:scale-95 transition-transform ${!hasProfileStats ? 'cursor-wait' : ''}`}
               >
                 <div className="p-2 rounded-xl bg-blue-50 text-blue-600 mb-2 transition-colors">
                   <UserPlus size={16} strokeWidth={2.5} />
                 </div>
-                <div className="text-sm font-black text-gray-900 tabular-nums">
-                  {profileUser?.stats?.following?.toLocaleString() || 0}
+                <div className="text-sm font-black text-gray-900 tabular-nums h-5 flex items-center justify-center">
+                  {renderStatValue(profileUser?.stats?.following)}
                 </div>
                 <div className="text-[8px] font-black text-gray-400 uppercase tracking-tighter mt-1">{t('Following')}</div>
               </button>
 
               <button
-                onClick={() => { setStatSearch(''); setActiveStatSheet('followers'); }}
-                className="flex flex-col items-center group active:scale-95 transition-transform"
+                disabled={!hasProfileStats}
+                onClick={() => { if (hasProfileStats) { setStatSearch(''); setActiveStatSheet('followers'); } }}
+                className={`flex flex-col items-center group active:scale-95 transition-transform ${!hasProfileStats ? 'cursor-wait' : ''}`}
               >
                 <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600 mb-2 transition-colors">
                   <Users size={16} strokeWidth={2.5} />
                 </div>
-                <div className="text-sm font-black text-gray-900 tabular-nums">
-                  {profileUser?.stats?.followers?.toLocaleString() || 0}
+                <div className="text-sm font-black text-gray-900 tabular-nums h-5 flex items-center justify-center">
+                  {renderStatValue(profileUser?.stats?.followers)}
                 </div>
                 <div className="text-[8px] font-black text-gray-400 uppercase tracking-tighter mt-1">{t('Followers')}</div>
               </button>
 
               <button
-                disabled={!canViewPrivateProfileContent}
-                onClick={() => { if (canViewPrivateProfileContent) { setStatSearch(''); setPostFilter('All'); setActiveStatSheet('posts'); } }}
-                className={`flex flex-col items-center group active:scale-95 transition-transform ${!canViewPrivateProfileContent ? 'opacity-30 grayscale cursor-not-allowed' : ''}`}
+                disabled={!hasProfileStats || !canViewPrivateProfileContent}
+                onClick={() => { if (hasProfileStats && canViewPrivateProfileContent) { setStatSearch(''); setPostFilter('All'); setActiveStatSheet('posts'); } }}
+                className={`flex flex-col items-center group active:scale-95 transition-transform ${!canViewPrivateProfileContent ? 'opacity-30 grayscale cursor-not-allowed' : !hasProfileStats ? 'cursor-wait' : ''}`}
               >
                 <div className="p-2 rounded-xl bg-orange-50 text-orange-600 mb-2 transition-colors relative">
                   <FileText size={16} strokeWidth={2.5} />
                   {!canViewPrivateProfileContent && <Lock size={8} className="absolute top-1 right-1" />}
                 </div>
-                <div className="text-sm font-black text-gray-900 tabular-nums">
-                  {profileUser?.stats?.posts || 0}
+                <div className="text-sm font-black text-gray-900 tabular-nums h-5 flex items-center justify-center">
+                  {renderStatValue(profileUser?.stats?.posts)}
                 </div>
                 <div className="text-[8px] font-black text-gray-400 uppercase tracking-tighter mt-1">{t('Posts')}</div>
               </button>
 
               <button
-                disabled={!canViewPrivateProfileContent}
-                onClick={() => { if (canViewPrivateProfileContent) setShowProfileAnalysis(true); }}
-                className={`flex flex-col items-center group active:scale-95 transition-transform ${!canViewPrivateProfileContent ? 'opacity-30 grayscale cursor-not-allowed' : ''}`}
+                disabled={!hasProfileStats || !canViewPrivateProfileContent}
+                onClick={() => { if (hasProfileStats && canViewPrivateProfileContent) setShowProfileAnalysis(true); }}
+                className={`flex flex-col items-center group active:scale-95 transition-transform ${!canViewPrivateProfileContent ? 'opacity-30 grayscale cursor-not-allowed' : !hasProfileStats ? 'cursor-wait' : ''}`}
               >
                 <div className="p-2 rounded-xl bg-green-50 text-green-600 mb-2 transition-colors relative">
                   <TrendingUp size={16} strokeWidth={2.5} />
                   {!canViewPrivateProfileContent && <Lock size={8} className="absolute top-1 right-1" />}
                 </div>
-                <div className="text-sm font-black text-gray-900 tabular-nums">
-                  {responsesCount >= 1000 ? (responsesCount / 1000).toFixed(1) + 'K' : responsesCount}
+                <div className="text-sm font-black text-gray-900 tabular-nums h-5 flex items-center justify-center">
+                  {renderStatValue(responsesCount, true)}
                 </div>
                 <div className="text-[8px] font-black text-gray-400 uppercase tracking-tighter mt-1">{t('Responses')}</div>
               </button>
