@@ -59,6 +59,8 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   const [isAdvancedSheetOpen, setIsAdvancedSheetOpen] = useState(false);
   const [advancedSheetView, setAdvancedSheetView] = useState<'main' | 'visibility' | 'results'>('main');
   const [isCategorySheetOpen, setIsCategorySheetOpen] = useState(false);
+  const [isVisibilitySheetOpen, setIsVisibilitySheetOpen] = useState(false);
+  const [isResultVisibilitySheetOpen, setIsResultVisibilitySheetOpen] = useState(false);
 
   // Detailed Visibility
   const [resultsWho, setResultsWho] = useState<'Public' | 'Followers' | 'Participants' | 'OnlyMe'>('Public');
@@ -566,7 +568,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                     { id: 'geographic', label: 'Geographic' },
                     { id: 'custom', label: 'Custom' }
                   ].map((preset) => {
-                    const isActive = activePreset === preset.id;
+                    const isActive = selectedInsightPreset === preset.id;
                     return (
                       <button
                         key={preset.id}
@@ -605,7 +607,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">
                     Selected Attributes
                   </label>
-                  {activePreset !== 'custom' && (
+                  {selectedInsightPreset !== 'custom' && (
                     <span className="text-[9px] text-gray-400 font-medium">
                       (Read-only, select Custom to edit)
                     </span>
@@ -614,7 +616,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                 <div className="flex flex-wrap gap-2">
                   {DEMOGRAPHIC_OPTIONS.map((opt) => {
                     const isSelected = selectedDemographics.includes(opt.id);
-                    const isCustomMode = activePreset === 'custom';
+                    const isCustomMode = selectedInsightPreset === 'custom';
                     return (
                       <button
                         key={opt.id}
