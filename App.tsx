@@ -102,13 +102,30 @@ const App: React.FC = () => {
   const getGuestId = () => localStorage.getItem('guest_id') || '';
   const fetchInitialData = (uid?: string) => fetchData(uid, userProfile || undefined);
 
-  const handleAuthSuccess = (user: any) => {
-    localStorage.setItem('si_user', JSON.stringify(user));
-    setUserProfile(user);
+  const handleAuthSuccess = (authPayload: any) => {
+    const authenticatedUser = authPayload?.user || authPayload;
+    const authToken = authPayload?.token || authenticatedUser?.token;
+    const { token: _token, ...profile } = authenticatedUser || {};
+
+    if (authToken) {
+      localStorage.setItem('si_token', authToken);
+    }
+    localStorage.setItem('si_user', JSON.stringify(profile));
+    setUserProfile(profile);
     setIsAuthenticated(true);
     setAuthBootstrapped(true);
     setAuthModalOpen(false);
+    setAuthModalType('flow');
+    setSelectedSurveyId(null);
+    setSelectedProfile(null);
+    setSelectedGroupId(null);
+    setIsProfileSettingsOpen(false);
+    setIsGroupSettingsOpen(false);
+    setActiveCreationFlow(null);
+    setAccountModalType(null);
+    setActiveTab('home');
     lastFetchedUserIdRef.current = null;
+    navigate('/', { replace: true });
 
     // Initialize Push Notifications if permission granted
     api.setupPushNotifications().catch(console.error);
@@ -119,7 +136,24 @@ const App: React.FC = () => {
     setIsAuthenticated(false);
     setUserProfile(null);
     setSurveys([]);
+    setProfileSurveys([]);
+    setProfileNextCursor(null);
+    setNotifications([]);
+    setSelectedSurveyId(null);
+    setDetailSurvey(null);
+    setDetailError(null);
+    setSelectedProfile(null);
+    setSelectedGroupId(null);
+    setExternalGroup(null);
+    setIsProfileSettingsOpen(false);
+    setIsGroupSettingsOpen(false);
+    setAuthModalOpen(false);
+    setActiveCreationFlow(null);
+    setActiveCreationGroupId(null);
+    setAccountModalType(null);
+    setShowUsersTable(false);
     setActiveTab('home');
+    setIsNavVisible(true);
     navigate('/', { replace: true });
     lastFetchedUserIdRef.current = null;
     localStorage.removeItem('si_user');
@@ -601,6 +635,13 @@ const App: React.FC = () => {
     }
 
     // Auth Routes
+    if ((path === '/login' || path === '/signup') && isAuthenticated && userProfile?.id) {
+      setAuthModalOpen(false);
+      setAuthModalType('flow');
+      navigate('/', { replace: true });
+      return;
+    }
+
     if (path === '/login') {
       setAuthModalType('login');
       setAuthModalOpen(true);
@@ -631,7 +672,7 @@ const App: React.FC = () => {
       if (activeCreationFlow && !path.startsWith('/create/')) setActiveCreationFlow(null);
       if (accountModalType && !path.startsWith('/create/')) setAccountModalType(null);
     }
-  }, [location.pathname, authBootstrapped, userProfile?.id]);
+  }, [location.pathname, authBootstrapped, isAuthenticated, userProfile?.id, authModalOpen]);
 
   React.useEffect(() => {
     if (!authBootstrapped) return;
@@ -1461,7 +1502,7 @@ const App: React.FC = () => {
           <button onClick={handleCloseAuth} className="absolute top-4 right-4 z-[110] p-2 bg-gray-100 rounded-full hover:bg-gray-200">
             <X size={20} />
           </button>
-          <AuthScreen onAuthSuccess={handleAuthSuccess} initialViewMode={authModalType} />
+          <AuthScreen key={authModalType} onAuthSuccess={handleAuthSuccess} initialViewMode={authModalType} />
         </div>
       )}
       <div className="min-h-screen bg-gray-100/50 flex justify-center items-center">
