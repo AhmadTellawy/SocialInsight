@@ -633,89 +633,12 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
               <div></div>
             </div>
 
-            {/* Advanced Settings Row */}
-            <button
-              type="button"
-              onClick={() => {
-                setAdvancedSheetView('main');
-                setIsAdvancedSheetOpen(true);
-              }}
-              className="w-full flex items-center justify-between py-2.5 px-1 text-left transition-all active:opacity-75 pt-3 border-t border-gray-100"
-            >
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-gray-55/30 rounded-xl text-gray-500 border border-gray-100">
-                  <Settings size={16} />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-gray-805">Advanced Settings</h4>
-                  <p className="text-[9px] text-gray-400 mt-0.5 leading-tight">Visibility, results, duration & comments</p>
-                </div>
-              </div>
-              <ChevronRight size={14} className="text-gray-400" />
-            </button>
           </section>
 
           {/* Question Builder Area */}
           <div className="space-y-6 mt-4">
-            {/* Sections header row */}
-            <div className="flex items-center justify-between px-1 mb-2">
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 bg-gray-50 rounded-lg text-gray-500 border border-gray-100 shrink-0">
-                  <Layout size={12} />
-                </div>
-                <span className="text-xs font-bold text-gray-800">
-                  Sections ({sections.length})
-                </span>
-              </div>
-              <button
-                onClick={addSection}
-                className="px-3.5 py-1.5 bg-purple-50 text-purple-600 rounded-xl border border-dashed border-purple-200 text-[10px] font-bold flex items-center gap-1 active:scale-95 transition-all"
-              >
-                <Plus size={12} /> Add Section
-              </button>
-            </div>
-
-            {/* If there are multiple sections, show the section tab bar here */}
-            {sections.length > 1 && (
-              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 px-1">
-                {sections.map((sec, idx) => (
-                  <button
-                    key={sec.id}
-                    onClick={() => setActiveSectionId(sec.id)}
-                    className={`shrink-0 px-4 py-2 rounded-xl text-xs font-bold border transition-all flex items-center gap-2 ${
-                      activeSectionId === sec.id
-                        ? 'bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-200'
-                        : 'bg-gray-55 text-gray-500 border-gray-100'
-                    }`}
-                  >
-                    <span className="opacity-40">{idx + 1}</span>
-                    <span className="truncate max-w-[100px]">{sec.title || `Section ${idx + 1}`}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-
             {activeSection && (
               <div className="space-y-4 animate-in fade-in duration-300">
-                {/* Section Title Input - only show if sections > 1 */}
-                {sections.length > 1 && (
-                  <div className="px-1 flex items-start gap-2">
-                    <textarea
-                      rows={1}
-                      value={activeSection.title}
-                      onChange={(e) => setSections(sections.map(s => s.id === activeSection.id ? { ...s, title: e.target.value } : s))}
-                      placeholder={`Section ${activeSectionIndex + 1} Title`}
-                      className="flex-1 text-base font-bold bg-transparent border-b border-gray-100 focus:outline-none focus:border-purple-500 transition-all p-0 pb-2 placeholder-gray-300 resize-none min-h-[40px]"
-                    />
-                    <button
-                      onClick={() => setIsSectionSettingsSheetOpen(true)}
-                      className="p-3 text-gray-400 hover:text-gray-650 hover:bg-gray-50 rounded-full transition-all shrink-0 mt-1 flex items-center justify-center min-w-[44px] min-h-[44px]"
-                    >
-                      <MoreHorizontalIcon size={20} />
-                    </button>
-                  </div>
-                )}
-
                 {/* Questions Tab/Progress Row */}
                 <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 px-1">
                   {activeSection.questions.map((q, qIdx) => {
@@ -942,7 +865,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                   Select Custom Attributes
                 </span>
                 <div className="flex flex-wrap gap-1.5">
-                  {DEMOGRAPHIC_OPTIONS.map((opt) => {
+                  {DEMOGRAPHIC_OPTIONS.filter(opt => opt.id !== 'ageGroup').map((opt) => {
                     const isSelected = selectedDemographics.includes(opt.id);
                     return (
                       <button
@@ -963,6 +886,29 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                 </div>
               </div>
             )}
+          </section>
+
+          {/* Advanced Settings Row */}
+          <section className="pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                setAdvancedSheetView('main');
+                setIsAdvancedSheetOpen(true);
+              }}
+              className="w-full flex items-center justify-between py-2.5 px-1 text-left transition-all active:opacity-75 pt-3 border-t border-gray-100"
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-gray-55/30 rounded-xl text-gray-500 border border-gray-100">
+                  <Settings size={16} />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-gray-805">Advanced Settings</h4>
+                  <p className="text-[9px] text-gray-400 mt-0.5 leading-tight">Visibility, results, duration & comments</p>
+                </div>
+              </div>
+              <ChevronRight size={14} className="text-gray-400" />
+            </button>
           </section>
 
           {/* Unified Validation Error Display */}

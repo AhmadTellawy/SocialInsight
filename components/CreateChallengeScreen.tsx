@@ -5,7 +5,7 @@ import {
   AlertCircle, Clock, Calendar, ChevronDown, List, Info,
   Lock, Camera, Save, BarChart3, Check, ChevronRight,
   UserCircle, Target, Link2, Shuffle, Zap, MoreHorizontal,
-  ArrowUp, ArrowDown, MessageSquare
+  ArrowUp, ArrowDown, MessageSquare, Settings2, ArrowLeft, Tag
 } from 'lucide-react';
 import { Survey, SurveyType, UserProfile, Option, Group } from '../types';
 import { ImageCropper } from './ImageCropper';
@@ -30,10 +30,17 @@ const CHALLENGE_CATEGORIES = [
 
 const DEMOGRAPHIC_OPTIONS = [
   { id: 'gender', label: 'Gender', desc: 'Understand response patterns by gender' },
-  { id: 'marital_status', label: 'Marital Status', desc: 'Identify trends based on marital status' },
-  { id: 'age_group', label: 'Age Group', desc: 'Compare responses across age groups' },
+  { id: 'maritalStatus', label: 'Marital Status', desc: 'Identify trends based on marital status' },
+  { id: 'residence', label: 'Country of Residence', desc: 'Analyze responses by participants country of residence' },
   { id: 'nationality', label: 'Nationality', desc: 'Analyze by responses by Nationality' },
+  { id: 'ageGroup', label: 'Age Group', desc: 'Compare responses across age groups' },
+  { id: 'education', label: 'Education Level', desc: 'Analyze responses by education level' },
+  { id: 'household', label: 'Household Size', desc: 'Understand patterns based on household size' },
+  { id: 'familyRole', label: 'Family Role', desc: 'Explore insights based on family role' },
   { id: 'employment', label: 'Employment Type', desc: 'Analyze responses by employment type' },
+  { id: 'sector', label: 'Employment Sector', desc: 'Analyze responses by employment sector' },
+  { id: 'industry', label: 'Industry / Field of Work', desc: 'Identify trends across different industries' },
+  { id: 'occupation', label: 'Occupation', desc: 'Analyze response differences by occupation' },
 ];
 
 const DURATION_OPTIONS = [
@@ -45,13 +52,12 @@ const DURATION_OPTIONS = [
   { label: '1 Month', value: '1m' },
 ];
 
-type VisibilityType = 'Public' | 'Followers' | 'Groups' | 'Custom Audience' | 'Custom Domain';
+type VisibilityType = 'Groups' | 'Custom Audience' | 'Custom Domain';
 
 export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ onClose, onSubmit, onSaveDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
-  const [step, setStep] = useState<1 | 2 | 3>((draft?.currentStep as 1 | 2 | 3) || 1);
-  const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
-  const [isVisibilitySheetOpen, setIsVisibilitySheetOpen] = useState(false);
-  const [isResultVisibilitySheetOpen, setIsResultVisibilitySheetOpen] = useState(false);
+  const [visibility, setVisibility] = useState<VisibilityType>('Groups');
+  const [isAdvancedSheetOpen, setIsAdvancedSheetOpen] = useState(false);
+  const [advancedSheetView, setAdvancedSheetView] = useState<'main' | 'visibility' | 'results'>('main');
   const [isCategorySheetOpen, setIsCategorySheetOpen] = useState(false);
 
   // Detailed Visibility
@@ -96,7 +102,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
       const draftData: Partial<Survey> = {
         id: draft?.id,
         title,
-        description,
+        description: '',
         type: SurveyType.CHALLENGE,
         author: { id: userProfile.id, name: userProfile.name, avatar: userProfile.avatar },
         options: options.map(o => ({
@@ -122,7 +128,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
         createdAt: new Date().toISOString(),
         status: 'DRAFT',
         isDraft: true,
-        currentStep: step
+        currentStep: 1
       };
       onSaveDraft(draftData);
     }
@@ -144,31 +150,41 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   const [duration, setDuration] = useState<string>('none');
   const [customEndDate, setCustomEndDate] = useState<string>('');
 
-  const [selectedDemographics, setSelectedDemographics] = useState<string[]>(['gender', 'age_group']);
+  const [selectedDemographics, setSelectedDemographics] = useState<string[]>([]);
   const [selectedGroups, setSelectedGroups] = useState<string[]>(initialGroupId ? [initialGroupId] : []);
   const [errors, setErrors] = useState<{ [key: string]: boolean | string }>({});
   const [focusedOptionId, setFocusedOptionId] = useState<string | null>(null);
-  const [activePreset, setActivePreset] = useState<'recommended' | 'professional' | 'geographic' | 'custom'>('recommended');
+  const [selectedInsightPreset, setSelectedInsightPreset] = useState<'basic' | 'professional' | 'social' | 'custom' | null>(null);
+  const [showInsightInfo, setShowInsightInfo] = useState(false);
 
   useEffect(() => {
-    const isRecommended = selectedDemographics.length === 2 && selectedDemographics.includes('gender') && selectedDemographics.includes('age_group');
-    const isProfessional = selectedDemographics.length === 1 && selectedDemographics.includes('employment');
-    const isGeographic = selectedDemographics.length === 1 && selectedDemographics.includes('nationality');
+    if (selectedDemographics.length === 0) {
+      setSelectedInsightPreset(prev => prev === 'custom' ? 'custom' : null);
+      return;
+    }
+    const isBasic = selectedDemographics.length === 3 && selectedDemographics.includes('gender') && selectedDemographics.includes('ageGroup') && selectedDemographics.includes('residence');
+    const isProfessional = selectedDemographics.length === 4 && selectedDemographics.includes('education') && selectedDemographics.includes('employment') && selectedDemographics.includes('industry') && selectedDemographics.includes('sector');
+    const isSocial = selectedDemographics.length === 1 && selectedDemographics.includes('maritalStatus');
     
-    if (isRecommended) setActivePreset('recommended');
-    else if (isProfessional) setActivePreset('professional');
-    else if (isGeographic) setActivePreset('geographic');
-    else setActivePreset('custom');
+    if (isBasic) setSelectedInsightPreset('basic');
+    else if (isProfessional) setSelectedInsightPreset('professional');
+    else if (isSocial) setSelectedInsightPreset('social');
+    else setSelectedInsightPreset('custom');
   }, [selectedDemographics]);
 
-  const handlePresetChange = (preset: 'recommended' | 'professional' | 'geographic' | 'custom') => {
-    setActivePreset(preset);
-    if (preset === 'recommended') {
-      setSelectedDemographics(['gender', 'age_group']);
+  const handlePresetChange = (preset: 'basic' | 'professional' | 'social' | 'custom') => {
+    if (selectedInsightPreset === preset) {
+      setSelectedInsightPreset(null);
+      setSelectedDemographics([]);
+      return;
+    }
+    setSelectedInsightPreset(preset);
+    if (preset === 'basic') {
+      setSelectedDemographics(['gender', 'ageGroup', 'residence']);
     } else if (preset === 'professional') {
-      setSelectedDemographics(['employment']);
-    } else if (preset === 'geographic') {
-      setSelectedDemographics(['nationality']);
+      setSelectedDemographics(['education', 'employment', 'industry', 'sector']);
+    } else if (preset === 'social') {
+      setSelectedDemographics(['maritalStatus']);
     } else if (preset === 'custom') {
       setSelectedDemographics([]);
     }
@@ -182,7 +198,8 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
       setTitle(draft.title || '');
       setDescription(draft.description || '');
       setCategory(draft.category || '');
-      setVisibility((draft.targetAudience as VisibilityType) || 'Public');
+      const draftVisibility = draft.targetAudience as VisibilityType;
+      setVisibility(['Groups', 'Custom Audience', 'Custom Domain'].includes(draftVisibility) ? draftVisibility : 'Groups');
       setResultsWho(draft.resultsWho || 'Public');
       setResultsTiming(draft.resultsTiming || 'AnyTime');
       setAllowComments(draft.allowComments !== undefined ? draft.allowComments : true);
@@ -198,6 +215,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   useEffect(() => { if (duration === 'none' && resultsTiming === 'AfterEnd') setResultsTiming('Immediately'); }, [duration]);
 
   const isVerified = (userProfile?.stats?.followers || 0) > 1000;
+  const isOrganization = false;
 
   const postableGroups = useMemo(() => {
     return userGroups.filter(group => {
@@ -207,12 +225,25 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   }, [userGroups]);
 
   const visibilityOptions = [
-    { id: 'Public', label: 'Public', desc: 'Visible to all users on the platform.', icon: Globe, allowed: true },
-    { id: 'Followers', label: 'Followers', desc: 'Visible only to users who follow you.', icon: UserCircle, allowed: true },
     { id: 'Groups', label: 'Selected groups', desc: 'Visible only within selected groups.', icon: Users, allowed: true },
     { id: 'Custom Audience', label: 'Custom audience', desc: 'Specific targeted audience.', icon: Target, allowed: isVerified, premium: true },
-    { id: 'Custom Domain', label: 'Custom domain', desc: 'Private branded link.', icon: Link2, allowed: false, premium: true },
+    { id: 'Custom Domain', label: 'Custom domain', desc: 'Private branded link.', icon: Link2, allowed: isOrganization, premium: true },
   ];
+
+  const audienceLabel = visibility === 'Groups' && selectedGroups.length > 0 ? `${selectedGroups.length} Groups` : visibility;
+  const resultsLabel = resultsWho === 'OnlyMe' ? 'Only Me' : resultsWho;
+  const durationLabel = DURATION_OPTIONS.find(opt => opt.value === duration)?.label || (duration === 'custom' ? 'Custom' : 'None');
+  const advancedItems = [
+    duration !== 'none' ? durationLabel : null,
+    !allowComments ? 'Comments off' : null,
+    forceAnonymous ? 'Anon' : null,
+    randomPairing ? 'Random' : null,
+  ].filter(Boolean) as string[];
+  const advancedSummary = advancedItems.length === 0
+    ? 'Default'
+    : advancedItems.length === 1
+      ? advancedItems[0]
+      : `${advancedItems.length} on`;
 
   const handleAddOption = () => {
     const newOptId = Date.now().toString();
@@ -226,6 +257,18 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
 
   const handleOptionChange = (id: string, text: string) => {
     setOptions(options.map(o => id === o.id ? { ...o, text } : o));
+  };
+
+  const handleDemographicToggle = (id: string) => {
+    setSelectedDemographics(prev =>
+      prev.includes(id) ? prev.filter(d => d !== id) : [...prev, id]
+    );
+  };
+
+  const handleGroupToggle = (groupId: string) => {
+    setSelectedGroups(prev =>
+      prev.includes(groupId) ? prev.filter(id => id !== groupId) : [...prev, groupId]
+    );
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -279,9 +322,13 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
     if (!userProfile?.id) {
       newErrors.userProfile = "User profile not found. Please log in.";
     }
-    if (!title.trim()) newErrors.title = true;
+    if (!title.trim()) newErrors.title = "Challenge text is required";
     if (!category) newErrors.category = true;
-    if (visibility === 'Groups' && selectedGroups.length === 0) newErrors.visibility = "Please select at least one group.";
+    if (visibility === 'Groups' && selectedGroups.length === 0) {
+      newErrors.visibility = "Please select at least one group.";
+      setIsAdvancedSheetOpen(true);
+      setAdvancedSheetView('visibility');
+    }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -318,7 +365,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
     if (!validateStep1() || !validateStep2()) return;
     onSubmit({
       title,
-      description,
+      description: '',
       type: SurveyType.CHALLENGE,
       author: { id: userProfile.id, name: userProfile.name, avatar: userProfile.avatar },
       options: options.map(o => ({
