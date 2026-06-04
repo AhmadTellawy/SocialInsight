@@ -398,31 +398,17 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   const selectedOptionForSettings = options.find(o => o.id === settingsOptionId);
 
   return (
-    <div className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-bottom duration-300">
+    <div className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-right duration-350">
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white/95 backdrop-blur-md sticky top-0 z-40 safe-top shrink-0">
-        <button onClick={handleExit} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500"><X size={24} /></button>
-        <div className="flex flex-col items-center flex-1 mx-2">
-          <h1 className="text-[10px] font-black text-amber-600 uppercase tracking-widest mb-0.5 flex items-center gap-1"><Zap size={10} fill="currentColor" /> Challenge Creation</h1>
-          <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest mt-1 text-gray-400">
-            <span className={step === 1 ? 'text-amber-500' : 'text-gray-400'}>Details</span>
-            <ChevronRight size={10} className="text-gray-300" />
-            <span className={step === 2 ? 'text-amber-500' : 'text-gray-400'}>Questions</span>
-            <ChevronRight size={10} className="text-gray-300" />
-            <span className={step === 3 ? 'text-amber-500' : 'text-gray-400'}>Analytics</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {step < 3 ? (
-            <button onClick={() => step === 1 ? validateStep1() && setStep(2) : validateStep2() && setStep(3)} className="text-amber-600 font-black text-[10px] px-5 py-2 rounded-full bg-amber-50 hover:bg-amber-100 transition-all uppercase tracking-widest">Next</button>
-          ) : (
-            <button onClick={handleFinalPost} className="text-white font-black text-[10px] px-5 py-2 rounded-full bg-amber-600 hover:bg-amber-700 transition-all uppercase tracking-widest shadow-lg shadow-amber-200">Start</button>
-          )}
-        </div>
+        <button onClick={handleExit} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500"><ArrowLeft size={24} /></button>
+        <h1 className="text-sm font-black text-gray-800 flex items-center gap-1.5"><Zap size={15} className="text-amber-600" fill="currentColor" /> New Challenge</h1>
+        <button onClick={handleFinalPost} className="text-white font-black text-[11px] px-5 py-2.5 rounded-full bg-amber-600 hover:bg-amber-700 transition-all uppercase tracking-widest shadow-md active:scale-95 shadow-amber-200/60">
+          Start
+        </button>
       </div>
 
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto no-scrollbar bg-white">
-        <div className="max-w-md mx-auto p-5 pb-32">
-          {step === 1 && (
+        <div className="max-w-md mx-auto px-4 py-6 pb-32 space-y-6">
             <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
               {errors.userProfile && (
                 <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2">
@@ -431,46 +417,18 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                 </div>
               )}
 
-              <section className="grid grid-cols-2 gap-4 pb-4 border-b border-gray-50">
-                <div className={errors.visibility ? 'p-1 rounded-xl bg-red-50 ring-1 ring-red-100' : ''}>
-                  <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Globe size={10} /> Visibility</label>
-                  <button onClick={() => setIsVisibilitySheetOpen(true)} className="w-full flex items-center justify-between bg-gray-50 text-gray-900 text-[11px] font-bold rounded-xl px-3 py-2.5 transition-colors text-left border border-gray-100">
-                    <span className="truncate">{visibility === 'Groups' && selectedGroups.length > 0 ? `${selectedGroups.length} Groups` : visibility}</span>
-                    <ChevronDown className="text-amber-500 shrink-0" size={14} />
-                  </button>
-                  {typeof errors.visibility === 'string' && (
-                    <div className="text-[10px] font-bold text-red-500 flex items-center gap-1 mt-1">
-                      <AlertCircle size={10} /> {errors.visibility}
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Lock size={10} /> Results</label>
-                  <button onClick={() => setIsResultVisibilitySheetOpen(true)} className="w-full flex items-center justify-between bg-gray-50 text-gray-900 text-[11px] font-bold rounded-xl px-3 py-2.5 transition-colors text-left border border-gray-100">
-                    <span className="truncate">{resultsWho === 'OnlyMe' ? 'Only Me' : resultsWho}</span>
-                    <ChevronDown className="text-amber-500 shrink-0" size={14} />
-                  </button>
-                </div>
-              </section>
-
                <section className={`space-y-2 pb-3 border-b border-gray-100 relative transition-colors ${errors.title ? 'p-3 rounded-2xl bg-red-50' : ''}`}>
-                 <div className="flex items-center justify-between"><label className="block text-xs font-bold text-gray-400 uppercase tracking-wide">The Challenge <span className="text-red-500">*</span></label><button onClick={() => { setActiveCropId('cover'); fileInputRef.current?.click(); }} className={`p-1.5 rounded-full transition-colors ${coverImage ? 'text-amber-600 bg-amber-50' : 'text-gray-400 hover:text-amber-500 hover:bg-gray-50'}`}><ImageIcon size={20} /></button></div>
+                 <div className="flex items-center justify-between"><label className="block text-xs font-bold text-gray-400 uppercase tracking-wide">Challenge <span className="text-red-500">*</span></label><button onClick={() => { setActiveCropId('cover'); fileInputRef.current?.click(); }} className={`p-1.5 rounded-full transition-colors ${coverImage ? 'text-amber-600 bg-amber-50' : 'text-gray-400 hover:text-amber-500 hover:bg-gray-50'}`}><ImageIcon size={20} /></button></div>
                  {coverImage && <div className="mb-2"><div className="relative w-full aspect-video rounded-2xl overflow-hidden shadow-sm group animate-in zoom-in-95"><img src={coverImage} className="w-full h-full object-cover" alt="Cover" /><button onClick={() => setCoverImage(null)} className="absolute top-2 right-2 p-1.5 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={14} /></button></div></div>}
                  <RichMentionInput
                    value={title}
                    onChange={(val) => { setTitle(val); setErrors(prev => ({ ...prev, title: false })); }}
-                   placeholder="e.g. Which logo looks better?"
+                   placeholder="Create a challenge..."
                    className={`text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-amber-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] ${errors.title ? 'text-red-500 border-red-300' : 'text-gray-900'}`}
                    minRows={1}
                    autoFocus
                  />
-                 <RichMentionInput
-                   value={description}
-                   onChange={(val) => setDescription(val)}
-                   placeholder="Describe the challenge rules or context..."
-                   className="mt-1.5 text-[11px] text-gray-500 bg-transparent border-b border-gray-100 focus:outline-none focus:border-amber-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[32px]"
-                   minRows={1}
-                 />
+                 {errors.title && <p className="text-[10px] font-bold text-red-500 px-1 mt-1">{errors.title}</p>}
                </section>
 
               <div className="space-y-3 pt-2">
@@ -485,29 +443,8 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                 )}
               </div>
 
-              <section className="p-2 space-y-3">
-                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1"><Clock size={12} /> Duration</label>
-                <div className="flex flex-wrap gap-2">
-                  {DURATION_OPTIONS.map(opt => (
-                    <button key={opt.value} onClick={() => setDuration(opt.value)} className={`px-4 py-1.5 rounded-full text-xs font-bold border transition-all ${duration === opt.value ? 'bg-gray-900 text-white border-gray-900 shadow-md' : 'bg-white text-gray-500 border-gray-100 hover:border-gray-300'}`}>
-                      {opt.label}
-                    </button>
-                  ))}
-                  <button onClick={() => setDuration('custom')} className={`px-4 py-1.5 rounded-full text-xs font-bold border transition-all flex items-center gap-1 ${duration === 'custom' ? 'bg-amber-600 text-white border-amber-600' : 'bg-white text-gray-500 border-gray-100'}`}>
-                    <Calendar size={12} /> Custom
-                  </button>
-                </div>
-              </section>
-
-              <section className="space-y-4 pb-4 border-b border-gray-50">
-                <button onClick={() => setAllowComments(!allowComments)} className="w-full flex items-center justify-between py-1 group"><div className="flex flex-col text-left"><span className="text-sm font-bold text-gray-800">Allow comments</span><span className="text-[10px] text-gray-400">Enable users to leave comments</span></div><div className={`w-10 h-5 rounded-full transition-colors relative ${allowComments ? 'bg-amber-600' : 'bg-gray-200'}`}><div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowComments ? 'left-6' : 'left-1'}`} /></div></button>
-                <button onClick={() => setForceAnonymous(!forceAnonymous)} className="w-full flex items-center justify-between py-1 group"><div className="flex flex-col text-left"><span className="text-sm font-bold text-gray-800">Require Anonymous Responses</span><span className="text-[10px] text-gray-400">All participants will be forced to respond without identity</span></div><div className={`w-10 h-5 rounded-full transition-colors relative ${forceAnonymous ? 'bg-amber-600' : 'bg-gray-200'}`}><div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${forceAnonymous ? 'left-6' : 'left-1'}`} /></div></button>
-                <button onClick={() => setRandomPairing(!randomPairing)} className="w-full flex items-center justify-between py-1 group"><div className="flex flex-col text-left"><span className="text-sm font-bold text-gray-800">Random matchups</span><span className="text-[10px] text-gray-400">Show items in different pairs to users</span></div><div className={`w-10 h-5 rounded-full transition-colors relative ${randomPairing ? 'bg-amber-600' : 'bg-gray-200'}`}><div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${randomPairing ? 'left-6' : 'left-1'}`} /></div></button>
-              </section>
             </div>
-          )}
-
-          {step === 2 && (
+          
             <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
               {errors.userProfile && (
                 <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold flex items-center gap-2">
@@ -602,9 +539,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                 </div>
               </section>
             </div>
-          )}
 
-          {step === 3 && (
             <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
               <div className="bg-amber-50 rounded-[2.5rem] p-6 border border-amber-100 shadow-sm relative overflow-hidden">
                 <div className="flex items-center gap-3 mb-4">
@@ -701,10 +636,8 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
 
               <div className="flex flex-col gap-3 pt-6">
                 <button onClick={handleFinalPost} className="w-full py-5 bg-amber-600 text-white rounded-[2rem] font-black uppercase tracking-[0.2em] text-xs shadow-xl shadow-amber-500/20 active:scale-95 transition-all flex items-center justify-center gap-2">Confirm & Start Challenge <ChevronRight size={18} /></button>
-                <button onClick={() => setStep(2)} className="w-full py-4 bg-gray-50 text-gray-400 rounded-[2rem] font-black uppercase tracking-[0.2em] text-[10px] active:scale-95 transition-all">Back</button>
               </div>
             </div>
-          )}
         </div>
       </div>
 
