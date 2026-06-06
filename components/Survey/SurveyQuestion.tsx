@@ -183,21 +183,21 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
               borderColor = 'border-green-500';
               textColor = 'text-green-700';
               percentageTextColor = 'text-green-600';
-              icon = <CheckCircle2 size={18} className="text-green-500" fill="currentColor" stroke="white" />;
+              icon = <CheckCircle2 size={16} className="text-green-500" fill="currentColor" stroke="white" />;
             } else if (isWrongSelection) {
               resultColor = 'bg-red-500';
               borderColor = 'border-red-500';
               textColor = 'text-red-700';
               percentageTextColor = 'text-red-600';
-              icon = <XCircle size={18} className="text-red-500" fill="currentColor" stroke="white" />;
+              icon = <XCircle size={16} className="text-red-500" fill="currentColor" stroke="white" />;
             } else if (isSelected) {
               resultColor = 'bg-blue-600';
               borderColor = 'border-blue-500';
               textColor = 'text-blue-700';
               percentageTextColor = 'text-blue-600';
-              icon = <CheckCircle2 size={18} className="text-blue-600" fill="currentColor" stroke="white" />;
+              icon = <CheckCircle2 size={16} className="text-blue-600" fill="currentColor" stroke="white" />;
             } else {
-              icon = <div className="w-[18px] h-[18px] rounded-full border-2 border-gray-300 group-hover:border-blue-400 transition-colors" />;
+              icon = <div className="w-[16px] h-[16px] rounded-full border-2 border-gray-300 group-hover:border-blue-400 transition-colors" />;
             }
           } else {
             if (isSelected) {
@@ -205,9 +205,9 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
               borderColor = 'border-blue-500';
               textColor = 'text-blue-700';
               percentageTextColor = 'text-blue-600';
-              icon = <CheckCircle2 size={18} className="text-blue-600" fill="currentColor" stroke="white" />;
+              icon = <CheckCircle2 size={16} className="text-blue-600" fill="currentColor" stroke="white" />;
             } else {
-              icon = <div className="w-[18px] h-[18px] rounded-full border-2 border-gray-300 group-hover:border-blue-400 transition-colors" />;
+              icon = <div className="w-[16px] h-[16px] rounded-full border-2 border-gray-300 group-hover:border-blue-400 transition-colors" />;
             }
           }
 
@@ -226,8 +226,8 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
                 disabled={hasVoted || isExpired}
                 className={`relative w-full text-left rounded-2xl border transition-all duration-300 overflow-hidden group ${buttonState}`}
               >
-                <div className="relative z-10 px-4 py-3">
-                  <div className="flex items-center gap-3">
+                <div className="relative z-10 px-3.5 py-2.5">
+                  <div className="flex items-center gap-2.5">
                     {/* Left Icon */}
                     <div className="shrink-0">
                       {icon}
