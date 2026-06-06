@@ -46,6 +46,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
   const { t } = useTranslation();
   const isQuiz = sourceSurvey.type === SurveyType.QUIZ;
   const firstQuestion = sourceSurvey.sections?.[0]?.questions?.[0];
+  const isTextOnlyPoll = !hasImages && !isRating && (sourceSurvey.type === SurveyType.POLL || sourceSurvey.type === SurveyType.TRENDING);
 
   const renderHorizontal = () => (
     <div className="flex overflow-x-auto snap-x snap-mandatory hide-scrollbar gap-3 pb-4 px-1" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
@@ -160,14 +161,101 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
   );
 
   const renderVertical = () => (
-    <div className="space-y-2">
-      {(options || []).map((option) => {
+    <div className={isTextOnlyPoll ? "space-y-2.5" : "space-y-2"}>
+      {(options || []).map((option, idx) => {
         const isSelected = selectedOptions.includes(option.id);
         const percentage = shouldShowResults ? getPercentage(option.votes || 0, totalVotes) : 0;
+        const optionVotes = option.votes || 0;
         const isPortrait = option.image && portraitImages.has(option.image);
         const isCorrect = isQuiz && option.isCorrect;
         const isWrongSelection = isQuiz && isSelected && !isCorrect;
         
+        if (isTextOnlyPoll) {
+          const resultColor = isSelected ? 'bg-blue-600' : 'bg-gray-400';
+          const buttonState = hasVoted || isExpired
+            ? isSelected
+              ? 'border-blue-200 bg-blue-50/70 shadow-sm'
+              : 'border-gray-100 bg-white'
+            : isSelected
+              ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-500/10 shadow-sm'
+              : 'border-gray-200 bg-white hover:border-blue-300 hover:bg-blue-50/30 hover:shadow-sm active:scale-[0.99]';
+          const indexState = isSelected
+            ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+            : 'bg-gray-50 text-gray-500 border-gray-200 group-hover:border-blue-200 group-hover:text-blue-600';
+
+          return (
+            <div key={option.id} className="flex flex-col gap-2">
+              <button
+                onClick={() => onOptionClick(option.id)}
+                disabled={hasVoted || isExpired}
+                className={`relative w-full text-left rounded-2xl border transition-all duration-300 overflow-hidden group ${buttonState}`}
+              >
+                <div className="relative z-10 p-3.5">
+                  <div className="flex items-start gap-3">
+                    <div className={`w-7 h-7 rounded-xl border flex items-center justify-center shrink-0 text-[11px] font-black transition-all ${indexState}`}>
+                      {idx + 1}
+                    </div>
+
+                    <div className="min-w-0 flex-1 pt-0.5">
+                      <span className={`block text-sm font-semibold leading-5 line-clamp-2 break-words ${isSelected ? 'text-blue-800' : 'text-gray-800'}`}>
+                        {option.text}
+                      </span>
+                    </div>
+
+                    <div className="shrink-0 pl-1">
+                      {hasVoted || isExpired ? (
+                        shouldShowResults ? (
+                          <div className="flex min-w-[62px] flex-col items-end gap-1">
+                            <span className={`rounded-full px-2.5 py-1 text-xs font-black leading-none ${isSelected ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}>
+                              {percentage}%
+                            </span>
+                            <span className="text-[10px] font-bold text-gray-400 leading-none whitespace-nowrap">
+                              {optionVotes.toLocaleString()} {t('votes')}
+                            </span>
+                          </div>
+                        ) : (
+                          isSelected && <CheckCircle2 size={18} className="text-blue-600 mt-0.5" />
+                        )
+                      ) : (
+                        <div className={`w-5 h-5 rounded-full border-2 transition-colors flex items-center justify-center mt-0.5 ${isSelected ? 'border-blue-500 bg-blue-500' : 'border-gray-300 group-hover:border-blue-400 group-hover:bg-blue-400/10'}`}>
+                          {isSelected && <CheckCircle2 size={13} className="text-white" strokeWidth={3} />}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {shouldShowResults && (
+                    <div className="mt-3 pl-10 animate-in fade-in slide-in-from-bottom-1 duration-500">
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                        <div
+                          className={`h-full rounded-full transition-all duration-700 ease-out ${resultColor}`}
+                          style={{ width: `${percentage}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </button>
+
+              {isSelected && !hasVoted && option.withFollowUp && (
+                <div className="px-2 pb-3 pt-1 animate-in fade-in slide-in-from-top-1">
+                  <div className="p-4 bg-blue-50/50 border border-blue-100 rounded-2xl">
+                    <label className="text-[11px] font-black text-blue-600 uppercase tracking-widest mb-2 block">
+                      {option.followUpLabel || t('Please explain your choice:')}
+                    </label>
+                    <textarea
+                      value={followUpAnswers[option.id] || ''}
+                      onChange={(e) => onFollowUpChange(option.id, e.target.value)}
+                      placeholder={t('Type your response...')}
+                      className="w-full p-3 text-sm bg-white border border-blue-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all min-h-[90px] resize-none shadow-sm"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }
+
         return (
           <div key={option.id} className="flex flex-col gap-2">
             <button onClick={() => onOptionClick(option.id)} disabled={hasVoted || isExpired} className={`relative w-full text-left rounded-xl border transition-all duration-300 overflow-hidden group ${hasImages ? 'p-1 pr-3' : 'p-3'} ${hasVoted || isExpired ? (isCorrect ? 'border-green-500 bg-green-50' : isWrongSelection ? 'border-red-500 bg-red-50' : isSelected ? 'border-blue-500 bg-blue-50' : 'border-gray-100 bg-gray-50') : isSelected ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500/20' : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/30 active:scale-[0.99]'}`}>
@@ -246,7 +334,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
   );
 
   return (
-    <div className="mb-4">
+    <div className={isTextOnlyPoll ? "mb-2" : "mb-4"}>
       {isQuiz && firstQuestion?.image && (
         <div className="w-full rounded-xl overflow-hidden mb-3 bg-gray-100">
           <img src={firstQuestion.image} crossOrigin="anonymous" className="w-full max-h-[500px] object-cover block" alt="Question context" />

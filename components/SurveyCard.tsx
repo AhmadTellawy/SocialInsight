@@ -854,6 +854,9 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const isMultiple = sourceSurvey.allowMultipleSelection || false;
   const isRating = sourceSurvey.pollChoiceType === 'rating';
   const hasImages = (localOptions || []).some(opt => opt.image);
+  const isPollType = sourceSurvey.type === SurveyType.POLL || sourceSurvey.type === SurveyType.TRENDING;
+  const isTextOnlyPoll = isPollType && !isRating && !hasImages;
+  const hasDescription = !!sourceSurvey.description?.trim();
 
   // NEW LOGIC: Any selected option has clarification enabled?
   const hasActiveFollowUp = selectedOptions.some(id => localOptions.find(o => o.id === id)?.withFollowUp);
@@ -1751,7 +1754,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
               <button onClick={() => setIsMenuOpen(true)} className="text-gray-400 hover:text-gray-600 p-2 -mr-2 rounded-full hover:bg-gray-50 transition-colors shrink-0"><MoreHorizontal size={20} /></button>
             </div>
 
-            <div className="mb-4">
+            <div className={isTextOnlyPoll ? "mb-2" : "mb-4"}>
               <div className="flex items-start gap-2 mb-2">
                 <div className="flex-1 min-w-0">
                   <h2
@@ -1771,23 +1774,25 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
               {sourceSurvey.coverImage && <div onClick={onContentClick} className={`w-full rounded-xl overflow-hidden mb-3 bg-gray-100 ${onContentClick ? 'cursor-pointer hover:opacity-95 transition-opacity' : ''}`}><img src={sourceSurvey.coverImage} crossOrigin="anonymous" alt="Cover" className="w-full max-h-[500px] object-cover block" /></div>}
 
-              <div className="relative mb-3">
-                <p
-                  onClick={onContentClick}
-                  className={`text-gray-600 text-[13px] leading-relaxed whitespace-pre-wrap ${onContentClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''} ${!isDetailView ? 'line-clamp-3' : ''}`}
-                >
-                  <RichTextRenderer text={sourceSurvey.description} />
-                </p>
-                {!isDetailView && (sourceSurvey.description?.length > 150 || (sourceSurvey.description?.match(/\n/g) || []).length > 2) && (
-                  <button onClick={onContentClick} className="text-gray-500 hover:text-gray-800 font-bold text-sm mt-0.5 block text-left">
-                    ... {t('See more')}
-                  </button>
-                )}
-              </div>
+              {hasDescription && (
+                <div className="relative mb-3">
+                  <p
+                    onClick={onContentClick}
+                    className={`text-gray-600 text-[13px] leading-relaxed whitespace-pre-wrap ${onContentClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''} ${!isDetailView ? 'line-clamp-3' : ''}`}
+                  >
+                    <RichTextRenderer text={sourceSurvey.description} />
+                  </p>
+                  {!isDetailView && (sourceSurvey.description?.length > 150 || (sourceSurvey.description?.match(/\n/g) || []).length > 2) && (
+                    <button onClick={onContentClick} className="text-gray-500 hover:text-gray-800 font-bold text-sm mt-0.5 block text-left">
+                      ... {t('See more')}
+                    </button>
+                  )}
+                </div>
+              )}
               {renderBodyContent()}
             </div>
 
-            <div className="flex items-center justify-between text-[11px] text-gray-400 font-medium mb-3 px-1 mt-2">
+            <div className={`flex items-center justify-between text-[11px] text-gray-400 font-medium px-1 ${isTextOnlyPoll ? 'mt-0 mb-2' : 'mt-2 mb-3'}`}>
               <div className="flex items-center gap-3">
                 <button onClick={() => setIsParticipantsOpen(true)} className="flex items-center gap-1 hover:text-blue-600 transition-colors">
                   <Users size={12} />
