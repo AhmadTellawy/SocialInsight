@@ -39,7 +39,7 @@ export const canViewPost = async (postId: string, userId?: string): Promise<bool
 
 export const recordPostView = async (req: Request, res: Response) => {
     try {
-        const { id: postId } = req.params;
+        const postId = req.params.id as string;
         const { source, deviceType, guestSessionId } = req.body;
         const user = (req as any).user;
         const userId = user?.id;
@@ -74,7 +74,8 @@ export const recordPostView = async (req: Request, res: Response) => {
         }
 
         const ip = req.ip || req.socket?.remoteAddress || 'unknown';
-        const userAgent = req.headers['user-agent'] || 'unknown';
+        const userAgentRaw = req.headers['user-agent'];
+        const userAgent = Array.isArray(userAgentRaw) ? userAgentRaw[0] : (userAgentRaw || 'unknown');
         const ipHash = hashString(ip);
         const userAgentHash = hashString(userAgent);
 
