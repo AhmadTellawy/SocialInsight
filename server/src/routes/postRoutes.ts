@@ -25,6 +25,7 @@ import {
     deleteComment
 } from '../controllers/postController';
 
+import { recordPostView } from '../controllers/viewController';
 import { requireAuth, optionalAuth } from '../middleware/authMiddleware';
 
 const router = Router();
@@ -39,6 +40,8 @@ router.get('/:id/participants', optionalAuth, getParticipants);
 router.get('/:id/results', optionalAuth, getPostResults);
 router.get('/:id/comments', optionalAuth, getComments);
 router.get('/:id/likes', optionalAuth, getPostLikers);
+
+router.post('/:id/views', optionalAuth, recordPostView);
 
 // Require Auth (Only logged in users can mutate data/view private lists)
 router.post('/comments/:id/like', requireAuth, likeComment);

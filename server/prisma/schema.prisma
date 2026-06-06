@@ -196,6 +196,11 @@ model Post {
   sharesCount Int       @default(0)
   visibility  String    @default("PUBLIC")
 
+  // View Counts
+  viewCount       Int @default(0)
+  uniqueViewCount Int @default(0)
+  views           PostView[]
+
   @@index([authorId])
   @@index([sharedFromId])
   @@index([groupId])
@@ -442,4 +447,22 @@ model UserBlock {
 
   @@unique([blockerId, blockedId])
   @@map("user_blocks")
+}
+
+model PostView {
+  id            String   @id @default(uuid())
+  postId        String
+  viewerKey     String   // e.g., "user:<userId>" or "session:<guestSessionId>"
+  source        String?  // e.g., "FEED", "PROFILE"
+  deviceType    String?  // e.g., "WEB", "IOS"
+  ipHash        String?
+  userAgentHash String?
+  viewedAt      DateTime @default(now())
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId, viewerKey, viewedAt])
+  @@index([postId, viewedAt])
+  @@index([viewerKey])
+  @@map("post_views")
 }

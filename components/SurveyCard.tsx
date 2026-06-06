@@ -1,7 +1,12 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PostAnswerPayload, Survey, SurveyType, Option, LogicRule, UserProfile } from '../types';
-import { Clock, Users, TrendingUp, MoreHorizontal, Share2, CheckCircle2, Flag, EyeOff, Bookmark, Link as LinkIcon, UserMinus, ThumbsUp, MessageCircle, FileText, PieChart, HelpCircle, Globe, Lock, Plus, AlertCircle, ImageIcon, ChevronLeft, ChevronRight, Check, ArrowRight, XCircle, Trophy, Target, X, ListChecks, Zap, Timer, Play, Repeat, UserPlus, PlusCircle, Shield, Shuffle, Heart, Search, Send, Star, Maximize2, BarChart3, Trash2, Edit3 } from 'lucide-react';
+import { Clock, Users, TrendingUp, MoreHorizontal, Share2, CheckCircle2, Flag, Eye, EyeOff, Bookmark, Link as LinkIcon, UserMinus, ThumbsUp, MessageCircle, FileText, PieChart, HelpCircle, Globe, Lock, Plus, AlertCircle, ImageIcon, ChevronLeft, ChevronRight, Check, ArrowRight, XCircle, Trophy, Target, X, ListChecks, Zap, Timer, Play, Repeat, UserPlus, PlusCircle, Shield, Shuffle, Heart, Search, Send, Star, Maximize2, BarChart3, Trash2, Edit3 } from 'lucide-react';
+import { Analytics } from '../utils/analytics';
+import { BottomSheet } from './BottomSheet';
+import { CommentsSheet } from './CommentsSheet';
+import { ShareSheet } from './ShareSheet';
+import { Clock, Users, TrendingUp, MoreHorizontal, Share2, CheckCircle2, Flag, Eye, EyeOff, Bookmark, Link as LinkIcon, UserMinus, ThumbsUp, MessageCircle, FileText, PieChart, HelpCircle, Globe, Lock, Plus, AlertCircle, ImageIcon, ChevronLeft, ChevronRight, Check, ArrowRight, XCircle, Trophy, Target, X, ListChecks, Zap, Timer, Play, Repeat, UserPlus, PlusCircle, Shield, Shuffle, Heart, Search, Send, Star, Maximize2, BarChart3, Trash2, Edit3 } from 'lucide-react';
 import { Analytics } from '../utils/analytics';
 import { BottomSheet } from './BottomSheet';
 import { CommentsSheet } from './CommentsSheet';
@@ -15,6 +20,7 @@ import { useFollowState } from '../hooks/useFollowState';
 import { useTranslation } from 'react-i18next';
 import { SurveyActions } from './Survey/SurveyActions';
 import { SurveyQuestion } from './Survey/SurveyQuestion';
+import { usePostViewTracker } from '../hooks/usePostViewTracker';
 
 interface SurveyCardProps {
   survey: Survey;
@@ -258,9 +264,6 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
   // Tracking Refs
   const viewRef = useRef<HTMLDivElement>(null);
-  const dwellStartTime = useRef<number | null>(null);
-  const totalDwellTime = useRef<number>(0);
-  const viewLogged = useRef<boolean>(false);
 
   const isCurrentlyAnonymous = sourceSurvey.forceAnonymous ? true : (sourceSurvey.allowAnonymous ? isAnonToggled : false);
 
@@ -443,52 +446,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     setLikeCount(sourceSurvey.likes || survey.likes || 0);
   }, [sourceSurvey.id, sourceSurvey.isSaved, sourceSurvey.isLiked, sourceSurvey.likes, survey.id, survey.isSaved, survey.isLiked, survey.likes]);
 
-  // E1: POST_VIEW Tracking
-  useEffect(() => {
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting) {
-          // Entry
-          dwellStartTime.current = Date.now();
-          if (!viewLogged.current) {
-            Analytics.track({
-              event_type: 'POST_VIEW_START',
-              post_id: survey.id,
-              actor_user_id: userProfile?.id,
-              source_surface: sourceSurface,
-              position_in_feed: positionInFeed
-            });
-            viewLogged.current = true;
-          }
-        } else {
-          // Exit
-          if (dwellStartTime.current) {
-            totalDwellTime.current += (Date.now() - dwellStartTime.current);
-            dwellStartTime.current = null;
-          }
-        }
-      });
-    }, { threshold: 0.1 }); // 10% visible
-
-    if (viewRef.current) observer.observe(viewRef.current);
-
-    return () => {
-      if (dwellStartTime.current) {
-        totalDwellTime.current += (Date.now() - dwellStartTime.current);
-      }
-      if (totalDwellTime.current >= 500) {
-        Analytics.track({
-          event_type: 'POST_VIEW_END',
-          post_id: survey.id,
-          actor_user_id: userProfile?.id,
-          dwell_time_ms: totalDwellTime.current,
-          source_surface: sourceSurface,
-          position_in_feed: positionInFeed
-        });
-      }
-      observer.disconnect();
-    };
-  }, [survey.id, userProfile?.id, positionInFeed, sourceSurface]);
+  const { viewCount } = usePostViewTracker(survey.id, viewRef, {
+    sourceSurface,
+    positionInFeed,
+    initialViewCount: (sourceSurvey as any).viewCount || (survey as any).viewCount || 0
+  });
 
   useEffect(() => {
     if (survey.type === SurveyType.CHALLENGE && !hasVoted && localOptions.length >= 2 && challengeActivePair.length === 0) {
@@ -1793,16 +1755,6 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             </div>
 
             <div className={`flex items-center justify-between text-[11px] text-gray-400 font-medium px-1 ${isTextOnlyPoll ? 'mt-0 mb-2' : 'mt-2 mb-3'}`}>
-              <div className="flex items-center gap-3">
-                <button onClick={() => setIsParticipantsOpen(true)} className="flex items-center gap-1 hover:text-blue-600 transition-colors">
-                  <Users size={12} />
-                  <span>{sourceSurvey.participants.toLocaleString()} {survey.type === SurveyType.POLL ? t('votes') : t('responses')}</span>
-                </button>
-                {isRating && Number(averageRating) > 0 && (
-                  <div className="flex items-center gap-1 text-yellow-600 bg-yellow-50 px-2 py-0.5 rounded-md border border-yellow-200/60 shadow-sm pt-[3px]">
-                    <Star size={11} fill="currentColor" />
-                    <span className="font-bold text-[10px] uppercase tracking-widest">{averageRating} {t('Average')}</span>
-                  </div>
                 )}
                 {timeLeftStr && (
                   <div className="flex items-center gap-1">
