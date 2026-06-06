@@ -46,7 +46,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
   const { t } = useTranslation();
   const isQuiz = sourceSurvey.type === SurveyType.QUIZ;
   const firstQuestion = sourceSurvey.sections?.[0]?.questions?.[0];
-  const isTextOnlyPoll = !hasImages && !isRating;
+  const isTextOnlyPoll = !hasImages;
 
   const renderHorizontal = () => (
     <div className="flex overflow-x-auto snap-x snap-mandatory hide-scrollbar gap-3 pb-4 px-1" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
@@ -235,9 +235,17 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
 
                     {/* Center Content: Text & Progress Bar */}
                     <div className="min-w-0 flex-1 flex flex-col justify-center">
-                      <span className={`block text-[13px] font-medium leading-snug line-clamp-2 break-words ${textColor}`}>
-                        {option.text}
-                      </span>
+                      {isRating ? (
+                        <div className="flex text-yellow-500 py-0.5">
+                          {Array.from({ length: option.ratingValue || 0 }).map((_, i) => (
+                            <Star key={i} size={16} fill="currentColor" />
+                          ))}
+                        </div>
+                      ) : (
+                        <span className={`block text-[13px] font-medium leading-snug line-clamp-2 break-words ${textColor}`}>
+                          {option.text}
+                        </span>
+                      )}
                       
                       {shouldShowResults && (
                         <div className="mt-2.5 animate-in fade-in slide-in-from-bottom-1 duration-500">
