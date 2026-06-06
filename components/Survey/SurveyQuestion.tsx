@@ -187,20 +187,20 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
                 disabled={hasVoted || isExpired}
                 className={`relative w-full text-left rounded-2xl border transition-all duration-300 overflow-hidden group ${buttonState}`}
               >
-                <div className="relative z-10 p-4">
-                  <div className="flex items-start gap-3.5">
+                <div className="relative z-10 px-4 py-3">
+                  <div className="flex items-center gap-3">
                     {/* Left Icon */}
-                    <div className="shrink-0 mt-0.5">
+                    <div className="shrink-0">
                       {isSelected ? (
-                        <CheckCircle2 size={22} className="text-blue-600" fill="currentColor" stroke="white" />
+                        <CheckCircle2 size={18} className="text-blue-600" fill="currentColor" stroke="white" />
                       ) : (
-                        <div className="w-[22px] h-[22px] rounded-full border-2 border-gray-300 group-hover:border-blue-400 transition-colors" />
+                        <div className="w-[18px] h-[18px] rounded-full border-2 border-gray-300 group-hover:border-blue-400 transition-colors" />
                       )}
                     </div>
 
                     {/* Center Content: Text & Progress Bar */}
                     <div className="min-w-0 flex-1 flex flex-col justify-center">
-                      <span className="block text-[15px] font-bold leading-snug line-clamp-2 break-words text-gray-900">
+                      <span className="block text-[13px] font-medium leading-snug line-clamp-2 break-words text-gray-900">
                         {option.text}
                       </span>
                       
@@ -221,7 +221,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
                       {hasVoted || isExpired ? (
                         shouldShowResults ? (
                           <div className="flex flex-col items-end gap-1">
-                            <span className={`text-[15px] font-bold leading-none ${isSelected ? 'text-blue-600' : 'text-gray-900'}`}>
+                            <span className={`text-[13px] font-medium leading-none ${isSelected ? 'text-blue-600' : 'text-gray-900'}`}>
                               {percentage}%
                             </span>
                             <span className="text-[11px] font-medium text-gray-500 leading-none whitespace-nowrap">
