@@ -171,17 +171,14 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
         const isWrongSelection = isQuiz && isSelected && !isCorrect;
         
         if (isTextOnlyPoll) {
-          const resultColor = isSelected ? 'bg-blue-600' : 'bg-gray-400';
+          const resultColor = isSelected ? 'bg-blue-600' : 'bg-gray-300';
           const buttonState = hasVoted || isExpired
             ? isSelected
-              ? 'border-blue-200 bg-blue-50/70 shadow-sm'
-              : 'border-gray-100 bg-white'
+              ? 'border-blue-500 ring-1 ring-blue-500/20 bg-white'
+              : 'border-gray-200 bg-white'
             : isSelected
-              ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-500/10 shadow-sm'
-              : 'border-gray-200 bg-white hover:border-blue-300 hover:bg-blue-50/30 hover:shadow-sm active:scale-[0.99]';
-          const indexState = isSelected
-            ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-            : 'bg-gray-50 text-gray-500 border-gray-200 group-hover:border-blue-200 group-hover:text-blue-600';
+              ? 'border-blue-500 ring-1 ring-blue-500/20 bg-white shadow-sm'
+              : 'border-gray-200 bg-white hover:border-blue-400/50 hover:bg-gray-50/50 active:scale-[0.99]';
 
           return (
             <div key={option.id} className="flex flex-col gap-2">
@@ -190,50 +187,51 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
                 disabled={hasVoted || isExpired}
                 className={`relative w-full text-left rounded-2xl border transition-all duration-300 overflow-hidden group ${buttonState}`}
               >
-                <div className="relative z-10 p-3.5">
-                  <div className="flex items-start gap-3">
-                    <div className={`w-7 h-7 rounded-xl border flex items-center justify-center shrink-0 text-[11px] font-black transition-all ${indexState}`}>
-                      {idx + 1}
+                <div className="relative z-10 p-4">
+                  <div className="flex items-start gap-3.5">
+                    {/* Left Icon */}
+                    <div className="shrink-0 mt-0.5">
+                      {isSelected ? (
+                        <CheckCircle2 size={22} className="text-blue-600" fill="currentColor" stroke="white" />
+                      ) : (
+                        <div className="w-[22px] h-[22px] rounded-full border-2 border-gray-300 group-hover:border-blue-400 transition-colors" />
+                      )}
                     </div>
 
-                    <div className="min-w-0 flex-1 pt-0.5">
-                      <span className={`block text-sm font-semibold leading-5 line-clamp-2 break-words ${isSelected ? 'text-blue-800' : 'text-gray-800'}`}>
+                    {/* Center Content: Text & Progress Bar */}
+                    <div className="min-w-0 flex-1 flex flex-col justify-center">
+                      <span className="block text-[15px] font-bold leading-snug line-clamp-2 break-words text-gray-900">
                         {option.text}
                       </span>
-                    </div>
-
-                    <div className="shrink-0 pl-1">
-                      {hasVoted || isExpired ? (
-                        shouldShowResults ? (
-                          <div className="flex min-w-[62px] flex-col items-end gap-1">
-                            <span className={`rounded-full px-2.5 py-1 text-xs font-black leading-none ${isSelected ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}>
-                              {percentage}%
-                            </span>
-                            <span className="text-[10px] font-bold text-gray-400 leading-none whitespace-nowrap">
-                              {optionVotes.toLocaleString()} {t('votes')}
-                            </span>
+                      
+                      {shouldShowResults && (
+                        <div className="mt-2.5 animate-in fade-in slide-in-from-bottom-1 duration-500">
+                          <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                            <div
+                              className={`h-full rounded-full transition-all duration-700 ease-out ${resultColor}`}
+                              style={{ width: `${percentage}%` }}
+                            />
                           </div>
-                        ) : (
-                          isSelected && <CheckCircle2 size={18} className="text-blue-600 mt-0.5" />
-                        )
-                      ) : (
-                        <div className={`w-5 h-5 rounded-full border-2 transition-colors flex items-center justify-center mt-0.5 ${isSelected ? 'border-blue-500 bg-blue-500' : 'border-gray-300 group-hover:border-blue-400 group-hover:bg-blue-400/10'}`}>
-                          {isSelected && <CheckCircle2 size={13} className="text-white" strokeWidth={3} />}
                         </div>
                       )}
                     </div>
-                  </div>
 
-                  {shouldShowResults && (
-                    <div className="mt-3 pl-10 animate-in fade-in slide-in-from-bottom-1 duration-500">
-                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
-                        <div
-                          className={`h-full rounded-full transition-all duration-700 ease-out ${resultColor}`}
-                          style={{ width: `${percentage}%` }}
-                        />
-                      </div>
+                    {/* Right Content: Stats */}
+                    <div className="shrink-0 pl-3">
+                      {hasVoted || isExpired ? (
+                        shouldShowResults ? (
+                          <div className="flex flex-col items-end gap-1">
+                            <span className={`text-[15px] font-bold leading-none ${isSelected ? 'text-blue-600' : 'text-gray-900'}`}>
+                              {percentage}%
+                            </span>
+                            <span className="text-[11px] font-medium text-gray-500 leading-none whitespace-nowrap">
+                              {optionVotes.toLocaleString()} {optionVotes === 1 ? t('vote') : t('votes')}
+                            </span>
+                          </div>
+                        ) : null
+                      ) : null}
                     </div>
-                  )}
+                  </div>
                 </div>
               </button>
 
