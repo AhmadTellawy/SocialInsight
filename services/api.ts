@@ -81,6 +81,15 @@ export const authFetch = async (input: RequestInfo | URL, init?: RequestInit): P
 };
 
 export const api = {
+    recordPostView: async (postId: string, data: { source: string; deviceType: string; guestSessionId: string }) => {
+        const response = await authFetch(`${API_BASE_URL}/posts/${postId}/views`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        if (!response.ok) throw new Error('Failed to record view');
+        return response.json();
+    },
     getSurveys: async (userId?: string, cursor?: string, limit: number = 10, authorId?: string, authorHandle?: string) => {
         const guestId = !userId ? getGuestId() : undefined;
         let url = userId ? `${API_BASE_URL}/posts?userId=${userId}&limit=${limit}` : `${API_BASE_URL}/posts?guestId=${guestId}&limit=${limit}`;
