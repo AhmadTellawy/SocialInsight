@@ -6,7 +6,21 @@ import { registerSW } from 'virtual:pwa-register';
 import './i18n';
 
 // Register the PWA service worker
-registerSW({ immediate: true });
+registerSW({ 
+  immediate: true,
+  onNeedRefresh() {
+    window.location.reload();
+  },
+  onOfflineReady() {
+    console.log('App ready to work offline');
+  }
+});
+
+if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    window.location.reload();
+  });
+}
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
