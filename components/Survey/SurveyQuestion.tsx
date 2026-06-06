@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, X, Maximize2, ImageIcon, Star } from 'lucide-react';
+import { CheckCircle2, X, XCircle, Maximize2, ImageIcon, Star } from 'lucide-react';
 import { Survey, SurveyType, Option } from '../../types';
 import { useTranslation } from 'react-i18next';
 import { getPercentage } from '../../utils/formatters';
@@ -46,7 +46,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
   const { t } = useTranslation();
   const isQuiz = sourceSurvey.type === SurveyType.QUIZ;
   const firstQuestion = sourceSurvey.sections?.[0]?.questions?.[0];
-  const isTextOnlyPoll = !hasImages && !isRating && (sourceSurvey.type === SurveyType.POLL || sourceSurvey.type === SurveyType.TRENDING);
+  const isTextOnlyPoll = !hasImages && !isRating;
 
   const renderHorizontal = () => (
     <div className="flex overflow-x-auto snap-x snap-mandatory hide-scrollbar gap-3 pb-4 px-1" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
@@ -171,13 +171,52 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
         const isWrongSelection = isQuiz && isSelected && !isCorrect;
         
         if (isTextOnlyPoll) {
-          const resultColor = isSelected ? 'bg-blue-600' : 'bg-gray-300';
+          let resultColor = 'bg-gray-300';
+          let borderColor = 'border-gray-200';
+          let textColor = 'text-gray-900';
+          let percentageTextColor = isSelected ? 'text-blue-600' : 'text-gray-900';
+          let icon = null;
+
+          if (isQuiz && shouldShowResults) {
+            if (isCorrect) {
+              resultColor = 'bg-green-500';
+              borderColor = 'border-green-500';
+              textColor = 'text-green-700';
+              percentageTextColor = 'text-green-600';
+              icon = <CheckCircle2 size={18} className="text-green-500" fill="currentColor" stroke="white" />;
+            } else if (isWrongSelection) {
+              resultColor = 'bg-red-500';
+              borderColor = 'border-red-500';
+              textColor = 'text-red-700';
+              percentageTextColor = 'text-red-600';
+              icon = <XCircle size={18} className="text-red-500" fill="currentColor" stroke="white" />;
+            } else if (isSelected) {
+              resultColor = 'bg-blue-600';
+              borderColor = 'border-blue-500';
+              textColor = 'text-blue-700';
+              percentageTextColor = 'text-blue-600';
+              icon = <CheckCircle2 size={18} className="text-blue-600" fill="currentColor" stroke="white" />;
+            } else {
+              icon = <div className="w-[18px] h-[18px] rounded-full border-2 border-gray-300 group-hover:border-blue-400 transition-colors" />;
+            }
+          } else {
+            if (isSelected) {
+              resultColor = 'bg-blue-600';
+              borderColor = 'border-blue-500';
+              textColor = 'text-blue-700';
+              percentageTextColor = 'text-blue-600';
+              icon = <CheckCircle2 size={18} className="text-blue-600" fill="currentColor" stroke="white" />;
+            } else {
+              icon = <div className="w-[18px] h-[18px] rounded-full border-2 border-gray-300 group-hover:border-blue-400 transition-colors" />;
+            }
+          }
+
           const buttonState = hasVoted || isExpired
-            ? isSelected
-              ? 'border-blue-500 ring-1 ring-blue-500/20 bg-white'
-              : 'border-gray-200 bg-white'
+            ? isSelected || (isQuiz && shouldShowResults && isCorrect)
+              ? `${borderColor} ring-1 ring-black/5 bg-white`
+              : 'border-gray-200 bg-white opacity-70'
             : isSelected
-              ? 'border-blue-500 ring-1 ring-blue-500/20 bg-white shadow-sm'
+              ? `${borderColor} ring-1 ring-blue-500/20 bg-white shadow-sm`
               : 'border-gray-200 bg-white hover:border-blue-400/50 hover:bg-gray-50/50 active:scale-[0.99]';
 
           return (
@@ -191,16 +230,12 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
                   <div className="flex items-center gap-3">
                     {/* Left Icon */}
                     <div className="shrink-0">
-                      {isSelected ? (
-                        <CheckCircle2 size={18} className="text-blue-600" fill="currentColor" stroke="white" />
-                      ) : (
-                        <div className="w-[18px] h-[18px] rounded-full border-2 border-gray-300 group-hover:border-blue-400 transition-colors" />
-                      )}
+                      {icon}
                     </div>
 
                     {/* Center Content: Text & Progress Bar */}
                     <div className="min-w-0 flex-1 flex flex-col justify-center">
-                      <span className="block text-[13px] font-medium leading-snug line-clamp-2 break-words text-gray-900">
+                      <span className={`block text-[13px] font-medium leading-snug line-clamp-2 break-words ${textColor}`}>
                         {option.text}
                       </span>
                       
@@ -221,7 +256,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
                       {hasVoted || isExpired ? (
                         shouldShowResults ? (
                           <div className="flex flex-col items-end gap-1">
-                            <span className={`text-[13px] font-medium leading-none ${isSelected ? 'text-blue-600' : 'text-gray-900'}`}>
+                            <span className={`text-[13px] font-medium leading-none ${percentageTextColor}`}>
                               {percentage}%
                             </span>
                             <span className="text-[11px] font-medium text-gray-500 leading-none whitespace-nowrap">
