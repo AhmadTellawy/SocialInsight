@@ -1331,7 +1331,7 @@ const App: React.FC = () => {
         }
         return <ProfileScreen isLoading={isProfileLoading} surveys={profileSurveys} userGroups={userGroups} userProfile={userProfile!} user={selectedProfile || undefined} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onAuthorClick={navigateToProfile} onSurveyProgress={handleSurveyProgress} onShareToFeed={handleShareToFeed} onSettingsClick={() => navigate('/settings/profile')} onEditDraft={(d) => { navigate(`/create/${d.type.toLowerCase()}`); setEditingDraft(d); }} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} onLike={handleLikePost} />;
       case 'notifications':
-        return <NotificationsScreen notifications={notifications} onNotificationsChange={(newNotifs) => {
+        return <NotificationsScreen currentUserId={userProfile?.id || ""} notifications={notifications} onNotificationsChange={(newNotifs) => {
           if (userProfile?.id) {
             const oldUnread = notifications.filter(n => !n.isRead);
             const newUnread = newNotifs.filter(n => !n.isRead);
@@ -1583,7 +1583,19 @@ const App: React.FC = () => {
                 onVote={handleVote}
                 onSurveyProgress={handleSurveyProgress}
                 onSettingsClick={() => navigate(`/group/${activeGroup.id}/settings`)}
-                onCreatePost={() => { navigate('/create/survey'); setActiveCreationGroupId(activeGroup.id); }}
+                onCreatePost={(type) => {
+                  setActiveCreationGroupId(activeGroup.id);
+                  const routes = {
+                    Poll: '/create/poll',
+                    Survey: '/create/survey',
+                    Quiz: '/create/quiz',
+                    Challenge: '/create/challenge',
+                  };
+                  navigate(routes[type] || '/create/survey');
+                }}
+                onInviteUser={async (groupId, userId) => {
+                  await api.inviteToGroup(groupId, userId);
+                }}
                 onShareToFeed={handleShareToFeed}
                 onUpdateDemographics={handleUpdateDemographics}
                 onLike={handleLikePost}

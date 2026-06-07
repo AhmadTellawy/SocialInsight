@@ -20,7 +20,9 @@ import {
     rejectJoinRequest,
     getPendingPosts,
     approvePendingPost,
-    rejectPendingPost
+    rejectPendingPost,
+    inviteToGroup,
+    declineGroupInvite
 } from '../controllers/groupController';
 
 import { requireAuth, optionalAuth } from '../middleware/authMiddleware';
@@ -36,6 +38,8 @@ router.get('/:id/membership', optionalAuth, getMembership);
 router.post('/:id/join', requireAuth, joinGroup);
 router.post('/:id/leave', requireAuth, leaveGroup);
 router.post('/:id/request-join', requireAuth, requestJoin);
+router.post('/:id/invite', requireAuth, inviteToGroup);
+router.post('/:id/invite/decline', requireAuth, declineGroupInvite);
 router.get('/:id/stats', optionalAuth, getGroupStats);
 router.get('/:id/members', optionalAuth, getGroupMembers);
 router.get('/:id/posts', optionalAuth, getGroupPosts);

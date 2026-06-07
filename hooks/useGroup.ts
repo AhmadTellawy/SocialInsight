@@ -125,6 +125,22 @@ export function useGroupMembership(groupId: string, userId?: string) {
         }
     };
 
+    const declineInvite = async () => {
+        try {
+            if (!userId) throw new Error('Must be logged in to decline invite');
+            setIsLoading(true);
+            const res = await authFetch(`/api/groups/${groupId}/invite/decline`, { method: 'POST' });
+            if (!res.ok) throw new Error('Failed to decline invite');
+            setMembershipStatus('NOT_JOINED');
+            setRole(null);
+        } catch (err: any) {
+            setError(err.message);
+            throw err;
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     return {
         membershipStatus,
         role,
@@ -133,6 +149,7 @@ export function useGroupMembership(groupId: string, userId?: string) {
         joinGroup,
         leaveGroup,
         requestToJoin,
+        declineInvite,
     };
 }
 

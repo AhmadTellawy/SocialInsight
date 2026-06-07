@@ -1,12 +1,12 @@
 import prisma from '../prisma';
-import { GROUP_ROLES, MEMBERSHIP_STATUS, POSTING_PERMISSIONS, POST_STATUS } from '../utils/constants';
+import { GROUP_ROLES, MEMBERSHIP_STATUS, POSTING_PERMISSIONS, POST_STATUS, JOIN_POLICIES } from '../utils/constants';
 
 export class GroupPermissionService {
     /**
      * Calculates permissions based on group settings and membership role/status.
      */
     static calculatePermissions(
-        group: { isPublic: boolean; postingPermissions: string; isDeleted: boolean },
+        group: { isPublic: boolean; postingPermissions: string; isDeleted: boolean; joinPolicy: string },
         role: string | null,
         status: string | null
     ) {
@@ -47,7 +47,7 @@ export class GroupPermissionService {
             canManageRoles: isOwner,
             canManageMembers: isManager,
             canDeleteGroup: isOwner,
-            canInviteMembers: isJoined,
+            canInviteMembers: group.joinPolicy === JOIN_POLICIES.INVITE_ONLY ? isManager : isJoined,
             canApproveRequests: isManager
         };
     }

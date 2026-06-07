@@ -1342,3 +1342,93 @@ export const rejectPendingPost = async (req: Request, res: Response) => {
         res.status(500).json({ error: 'Failed to reject post' });
     }
 };
+
+// ---------------------------------------------
+// Invite Management
+// ---------------------------------------------
+
+export const inviteToGroup = async (req: Request, res: Response) => {
+    const groupId = req.params.id as string;
+    const actorId = req.user?.userId;
+    const { userId: targetUserId } = req.body;
+
+    if (!actorId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+    if (!targetUserId || typeof targetUserId !== 'string') {
+        res.status(400).json({ error: 'userId is required' }); return;
+    }
+    if (actorId === targetUserId) {
+        res.status(400).json({ error: 'Cannot invite yourself' }); return;
+    }
+
+    try {
+        const group = await prisma.group.findUnique({ where: { id: groupId, isDeleted: false } });
+        if (!group) { res.status(404).json({ error: 'Group not found' }); return; }
+
+        const permissions = await GroupPermissionService.getPermissions(groupId, actorId);
+        if (!permissions.canInviteMembers) {
+            res.status(403).json({ error: 'You do not have permission to invite members' });
+            return;
+        }
+
+        const targetUser = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, name: true } });
+        if (!targetUser) { res.status(404).json({ error: 'User not found' }); return; }
+
+        const existing = await prisma.groupMember.findUnique({ where: { userId_groupId: { userId: targetUserId, groupId } } });
+
+        if (existing) {
+            switch (existing.status) {
+                case MEMBERSHIP_STATUS.JOINED:
+                    res.status(400).json({ error: 'User is already a member' }); return;
+                case MEMBERSHIP_STATUS.PENDING:
+                    res.status(400).json({ error: 'User already has a pending join request' }); return;
+                case MEMBERSHIP_STATUS.INVITED:
+                    res.status(400).json({ error: 'User has already been invited' }); return;
+                case MEMBERSHIP_STATUS.BANNED:
+                    res.status(403).json({ error: 'Cannot invite a banned user' }); return;
+                case MEMBERSHIP_STATUS.REMOVED:
+                    await prisma.groupMember.update({
+                        where: { userId_groupId: { userId: targetUserId, groupId } },
+                        data: { status: MEMBERSHIP_STATUS.INVITED, role: GROUP_ROLES.MEMBER }
+                    });
+                    break;
+                default:
+                    res.status(400).json({ error: 'Cannot invite this user' }); return;
+            }
+        } else {
+            await prisma.groupMember.create({
+                data: { userId: targetUserId, groupId, role: GROUP_ROLES.MEMBER, status: MEMBERSHIP_STATUS.INVITED }
+            });
+        }
+
+        await notify(actorId, targetUserId, 'group_invite', `invited you to join ${group.name}`, 'group', groupId);
+        res.json({ success: true, status: MEMBERSHIP_STATUS.INVITED });
+    } catch (error) {
+        console.error('inviteToGroup error:', error);
+        res.status(500).json({ error: 'Failed to send invite' });
+    }
+};
+
+export const declineGroupInvite = async (req: Request, res: Response) => {
+    const groupId = req.params.id as string;
+    const userId = req.user?.userId;
+
+    if (!userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+
+    try {
+        const membership = await prisma.groupMember.findUnique({ where: { userId_groupId: { userId, groupId } } });
+
+        if (!membership || membership.status !== MEMBERSHIP_STATUS.INVITED) {
+            res.status(404).json({ error: 'No pending invite found' }); return;
+        }
+
+        await prisma.groupMember.update({
+            where: { userId_groupId: { userId, groupId } },
+            data: { status: MEMBERSHIP_STATUS.REMOVED }
+        });
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('declineGroupInvite error:', error);
+        res.status(500).json({ error: 'Failed to decline invite' });
+    }
+};

@@ -9,13 +9,15 @@ interface NotificationsScreenProps {
   onNotificationsChange: (notifications: Notification[]) => void;
   onBack: () => void;
   onItemClick: (targetId: string, type?: 'survey' | 'profile' | 'group' | 'user', actor?: any) => void;
+  currentUserId?: string;
 }
 
 export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
   notifications,
   onNotificationsChange,
   onBack,
-  onItemClick
+  onItemClick,
+  currentUserId,
 }) => {
   const getTimeAgo = (dateStr: string) => {
     const date = new Date(dateStr);
@@ -70,6 +72,43 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
       onNotificationsChange(notifications.filter(n => n.id !== id));
     } catch (err) {
       console.error('Failed to reject request', err);
+    }
+  };
+
+  // ── Group Invite Actions ─────────────────────────────────────────
+  const handleAcceptGroupInvite = async (notif: Notification, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!notif.targetId) return;
+    try {
+      await api.joinGroup(notif.targetId);
+      if (currentUserId) {
+        api.markNotificationRead(currentUserId, notif.id).catch(console.error);
+      }
+      onNotificationsChange(
+        notifications.map(n =>
+          n.id === notif.id ? { ...n, isRead: true, message: 'You joined the group ✓' } : n
+        )
+      );
+    } catch (err) {
+      console.error('Failed to accept group invite', err);
+    }
+  };
+
+  const handleDeclineGroupInvite = async (notif: Notification, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!notif.targetId) return;
+    try {
+      await api.declineGroupInvite(notif.targetId);
+      if (currentUserId) {
+        api.markNotificationRead(currentUserId, notif.id).catch(console.error);
+      }
+      onNotificationsChange(
+        notifications.map(n =>
+          n.id === notif.id ? { ...n, isRead: true, message: 'Invite declined' } : n
+        )
+      );
+    } catch (err) {
+      console.error('Failed to decline group invite', err);
     }
   };
 
@@ -187,6 +226,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                     </span>
                   </div>
 
+                  {/* Follow Request Actions */}
                   {notification.type === 'follow_request' && notification.actor?.id && (
                     <div className="flex gap-2 mt-3 mb-1">
                       <button
@@ -200,6 +240,24 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                         className="flex-1 bg-gray-200 text-gray-800 text-xs font-bold py-2 rounded-lg active:scale-95 transition-transform"
                       >
                         Reject
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Group Invite Actions — shown only while the invite is still pending (unread) */}
+                  {notification.type === 'group_invite' && !notification.isRead && notification.targetId && (
+                    <div className="flex gap-2 mt-3 mb-1">
+                      <button
+                        onClick={(e) => handleAcceptGroupInvite(notification, e)}
+                        className="flex-1 bg-blue-600 text-white text-xs font-bold py-2 rounded-xl active:scale-95 transition-all hover:bg-blue-700"
+                      >
+                        Accept
+                      </button>
+                      <button
+                        onClick={(e) => handleDeclineGroupInvite(notification, e)}
+                        className="flex-1 bg-gray-100 text-gray-700 text-xs font-bold py-2 rounded-xl active:scale-95 transition-all hover:bg-gray-200"
+                      >
+                        Decline
                       </button>
                     </div>
                   )}

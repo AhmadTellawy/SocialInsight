@@ -765,6 +765,26 @@ export const api = {
         if (!response.ok) throw new Error('Failed to reject post');
         return response.json();
     },
+    inviteToGroup: async (groupId: string, userId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/invite`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId })
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error((err as any).error || 'Failed to invite user');
+        }
+        return response.json();
+    },
+
+    declineGroupInvite: async (groupId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/invite/decline`, {
+            method: 'POST'
+        });
+        if (!response.ok) throw new Error('Failed to decline invite');
+        return response.json();
+    },
 
     getVapidPublicKey: async () => {
         const response = await fetch(`${API_BASE_URL}/push/vapid-public-key`);
