@@ -328,6 +328,11 @@ export function useGroupMembers(groupId: string) {
         }
     };
 
+    const refresh = useCallback(() => {
+        setPage(1);
+        fetchMembers(1, true);
+    }, [fetchMembers]);
+
     return {
         members,
         isLoading,
@@ -335,5 +340,90 @@ export function useGroupMembers(groupId: string) {
         error,
         hasMore,
         fetchNextPage,
+        refresh,
+    };
+}
+
+// ------------------------------------------------------------------
+// 5. Pending Requests Hook
+// ------------------------------------------------------------------
+export function useGroupPendingRequests(groupId: string) {
+    const [requests, setRequests] = useState<any[]>([]);
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const fetchRequests = useCallback(async () => {
+        if (!groupId) return;
+        try {
+            setIsLoading(true);
+            setError(null);
+            const res = await authFetch(`/api/groups/${groupId}/pending-requests`);
+            if (!res.ok) {
+                throw new Error('Failed to fetch pending requests');
+            }
+            const data = await res.json();
+            setRequests(data);
+        } catch (err: any) {
+            setError(err.message);
+        } finally {
+            setIsLoading(false);
+        }
+    }, [groupId]);
+
+    useEffect(() => {
+        fetchRequests();
+    }, [fetchRequests]);
+
+    return {
+        requests,
+        isLoading,
+        error,
+        refresh: fetchRequests
+    };
+}
+
+// ------------------------------------------------------------------
+// 6. Pending Posts Hook
+// ------------------------------------------------------------------
+export function useGroupPendingPosts(groupId: string) {
+    const [pendingPosts, setPendingPosts] = useState<Survey[]>([]);
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const fetchPendingPosts = useCallback(async () => {
+        if (!groupId) return;
+        try {
+            setIsLoading(true);
+            setError(null);
+            const res = await authFetch(`/api/groups/${groupId}/pending-posts`);
+            if (!res.ok) {
+                throw new Error('Failed to fetch pending posts');
+            }
+            const data = await res.json();
+            const normalized = (data || []).map((post: any) => {
+                try {
+                    return normalizeSurvey(post);
+                } catch (e) {
+                    console.error(`[useGroupPendingPosts] Failed to normalize post:`, post?.id, e);
+                    return null;
+                }
+            }).filter(Boolean) as Survey[];
+            setPendingPosts(normalized);
+        } catch (err: any) {
+            setError(err.message);
+        } finally {
+            setIsLoading(false);
+        }
+    }, [groupId]);
+
+    useEffect(() => {
+        fetchPendingPosts();
+    }, [fetchPendingPosts]);
+
+    return {
+        pendingPosts,
+        isLoading,
+        error,
+        refresh: fetchPendingPosts
     };
 }

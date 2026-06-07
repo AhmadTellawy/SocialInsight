@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../prisma';
 import crypto from 'crypto';
+import { GroupPermissionService } from '../services/groupPermissionService';
 
 // In-memory cache to prevent DB spam for the 60-minute window
 // Key: "postId:viewerKey", Value: timestamp
@@ -21,22 +22,6 @@ function hashString(str: string): string {
     return crypto.createHash('sha256').update(str).digest('hex');
 }
 
-export const canViewPost = async (postId: string, userId?: string): Promise<boolean> => {
-    const post = await prisma.post.findUnique({
-        where: { id: postId },
-        include: { targetedGroups: true }
-    });
-
-    if (!post || post.isDeleted) return false;
-    if (post.status === 'DRAFT' && post.authorId !== userId) return false;
-    
-    // Note: If post is for specific groups, we should ideally check membership.
-    // For now, if visibility is strictly private and not author, deny.
-    if (post.visibility === 'PRIVATE' && post.authorId !== userId) return false;
-
-    return true;
-};
-
 export const recordPostView = async (req: Request, res: Response) => {
     try {
         const postId = req.params.id as string;
@@ -55,7 +40,7 @@ export const recordPostView = async (req: Request, res: Response) => {
         }
 
         // 1. Authorization check
-        const isAllowed = await canViewPost(postId, userId);
+        const isAllowed = await GroupPermissionService.canViewPost(postId, userId);
         if (!isAllowed) {
             return res.status(403).json({ error: 'Not allowed to view this post' });
         }

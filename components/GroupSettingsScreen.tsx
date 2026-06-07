@@ -1,12 +1,11 @@
-
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   ArrowLeft, Shield, Users, UserPlus, Link, Mail,
   MessageSquare, Trash2, AlertTriangle, Check, UserMinus,
-  Globe, Info, UserCheck
+  Globe, Info, UserCheck, X, Ban
 } from 'lucide-react';
-import { Group, UserProfile } from '../types';
-import { useGroupMembers } from '../hooks/useGroup';
+import { Group, Survey } from '../types';
+import { useGroupMembers, useGroupPendingRequests, useGroupPendingPosts } from '../hooks/useGroup';
 
 export type JoinPolicy = 'OPEN' | 'REQUEST' | 'INVITE_ONLY';
 export type PostingPerms = 'AdminsOnly' | 'AllMembers' | 'ApprovalNeeded';
@@ -14,17 +13,9 @@ export type PostingPerms = 'AdminsOnly' | 'AllMembers' | 'ApprovalNeeded';
 export interface GroupUpdatePayload {
   joinPolicy?: JoinPolicy;
   postingPermissions?: PostingPerms;
-  // include other group fields as needed
 }
 
 export type GroupRole = 'Owner' | 'Admin' | 'Moderator' | 'Member';
-
-export interface GroupMember {
-  id: string;
-  name: string;
-  avatar: string;
-  role: GroupRole;
-}
 
 interface GroupSettingsScreenProps {
   group: Group;
@@ -34,7 +25,103 @@ interface GroupSettingsScreenProps {
   onDeleteGroup: (id: string) => Promise<void>;
   onManageRoles?: (memberId: string, newRole: GroupRole) => Promise<void>;
   onInviteManager?: () => void;
+  onKickMember?: (memberId: string) => Promise<void>;
+  onBanMember?: (memberId: string) => Promise<void>;
+  onApproveJoinRequest?: (memberId: string) => Promise<void>;
+  onRejectJoinRequest?: (memberId: string) => Promise<void>;
+  onApprovePendingPost?: (postId: string) => Promise<void>;
+  onRejectPendingPost?: (postId: string, reason: string) => Promise<void>;
 }
+
+const PendingPostRow: React.FC<{
+  post: any;
+  onApprove: (id: string) => Promise<void>;
+  onReject: (id: string, reason: string) => Promise<void>;
+}> = ({ post, onApprove, onReject }) => {
+  const [showRejectForm, setShowRejectForm] = useState(false);
+  const [reason, setReason] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleReject = async () => {
+    if (!reason.trim()) return;
+    try {
+      setIsSubmitting(true);
+      await onReject(post.id, reason);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSubmitting(false);
+      setShowRejectForm(false);
+    }
+  };
+
+  return (
+    <div className="p-4 flex flex-col gap-3">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-1.5">
+            <img
+              src={post.author?.avatar || 'https://picsum.photos/100'}
+              className="w-5 h-5 rounded-full border border-gray-100"
+              alt=""
+            />
+            <span className="text-[10px] font-bold text-gray-500">{post.author?.name || 'Anonymous'}</span>
+          </div>
+          <h4 className="text-sm font-bold text-gray-900 leading-snug">{post.title}</h4>
+          <p className="text-xs text-gray-500 line-clamp-2 mt-0.5">{post.description}</p>
+        </div>
+
+        {!showRejectForm && (
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              onClick={() => onApprove(post.id)}
+              className="p-1.5 rounded-lg bg-green-50 text-green-600 hover:bg-green-100 transition-all"
+              title="Approve & Publish"
+            >
+              <Check size={16} strokeWidth={2.5} />
+            </button>
+            <button
+              onClick={() => setShowRejectForm(true)}
+              className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition-all"
+              title="Reject"
+            >
+              <X size={16} strokeWidth={2.5} />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {showRejectForm && (
+        <div className="bg-gray-50 rounded-xl p-3 border border-gray-100 animate-in fade-in slide-in-from-top duration-200">
+          <p className="text-[10px] font-bold text-gray-400 mb-1.5 uppercase tracking-wider">Rejection Reason</p>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Explain why this post is rejected..."
+              className="flex-1 bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
+            />
+            <button
+              onClick={handleReject}
+              disabled={!reason.trim() || isSubmitting}
+              className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-bold disabled:opacity-50"
+            >
+              Send
+            </button>
+            <button
+              onClick={() => { setShowRejectForm(false); setReason(''); }}
+              disabled={isSubmitting}
+              className="px-3 py-1.5 bg-gray-200 text-gray-600 rounded-lg text-xs font-bold"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
   group,
@@ -43,12 +130,20 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
   onUpdateGroup,
   onDeleteGroup,
   onManageRoles,
-  onInviteManager
+  onInviteManager,
+  onKickMember,
+  onBanMember,
+  onApproveJoinRequest,
+  onRejectJoinRequest,
+  onApprovePendingPost,
+  onRejectPendingPost
 }) => {
   const [activeJoinPolicy, setActiveJoinPolicy] = useState<JoinPolicy>((group.joinPolicy as JoinPolicy) || 'OPEN');
   const [activePostingPerms, setActivePostingPerms] = useState<PostingPerms>((group.postingPermissions as PostingPerms) || 'AllMembers');
 
-  const { members, isLoading: isMembersLoading, error: membersError } = useGroupMembers(group.id);
+  const { members, isLoading: isMembersLoading, error: membersError, refresh: refreshMembers } = useGroupMembers(group.id);
+  const { requests, isLoading: isRequestsLoading, error: requestsError, refresh: refreshRequests } = useGroupPendingRequests(group.id);
+  const { pendingPosts, isLoading: isPostsLoading, error: postsError, refresh: refreshPosts } = useGroupPendingPosts(group.id);
 
   useEffect(() => {
     setActiveJoinPolicy((group.joinPolicy as JoinPolicy) || 'OPEN');
@@ -70,6 +165,7 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
     canManageRoles: false,
     canDeleteGroup: false,
     canInviteMembers: false,
+    canApproveRequests: false
   };
 
   useEffect(() => {
@@ -122,8 +218,76 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
     try {
       await onManageRoles(memberId, newRole);
       showToast('Role updated');
+      refreshMembers();
     } catch (e) {
       showToast('Failed to update role', 'error');
+    }
+  };
+
+  const handleKick = async (memberId: string) => {
+    if (!permissions.canManageRoles || !onKickMember) return;
+    try {
+      await onKickMember(memberId);
+      showToast('Member kicked');
+      refreshMembers();
+    } catch (e) {
+      showToast('Failed to kick member', 'error');
+    }
+  };
+
+  const handleBan = async (memberId: string) => {
+    if (!permissions.canManageRoles || !onBanMember) return;
+    try {
+      await onBanMember(memberId);
+      showToast('Member banned');
+      refreshMembers();
+    } catch (e) {
+      showToast('Failed to ban member', 'error');
+    }
+  };
+
+  const handleApproveRequest = async (memberId: string) => {
+    if (!onApproveJoinRequest) return;
+    try {
+      await onApproveJoinRequest(memberId);
+      showToast('Join request approved');
+      refreshRequests();
+      refreshMembers();
+    } catch (e) {
+      showToast('Failed to approve join request', 'error');
+    }
+  };
+
+  const handleRejectRequest = async (memberId: string) => {
+    if (!onRejectJoinRequest) return;
+    try {
+      await onRejectJoinRequest(memberId);
+      showToast('Join request rejected');
+      refreshRequests();
+    } catch (e) {
+      showToast('Failed to reject join request', 'error');
+    }
+  };
+
+  const handleApprovePost = async (postId: string) => {
+    if (!onApprovePendingPost) return;
+    try {
+      await onApprovePendingPost(postId);
+      showToast('Post approved');
+      refreshPosts();
+    } catch (e) {
+      showToast('Failed to approve post', 'error');
+    }
+  };
+
+  const handleRejectPost = async (postId: string, reason: string) => {
+    if (!onRejectPendingPost) return;
+    try {
+      await onRejectPendingPost(postId, reason);
+      showToast('Post rejected');
+      refreshPosts();
+    } catch (e) {
+      showToast('Failed to reject post', 'error');
     }
   };
 
@@ -223,6 +387,74 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
           </div>
         </div>
 
+        {/* Section: Pending Join Requests */}
+        {permissions.canApproveRequests && (
+          <div className="mt-8 px-4 animate-in fade-in duration-200">
+            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 px-1">Pending Join Requests</h3>
+            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden divide-y divide-gray-50">
+              {isRequestsLoading ? (
+                <div className="p-6 text-center text-gray-400 text-xs font-bold animate-pulse">Loading requests...</div>
+              ) : requestsError ? (
+                <div className="p-6 text-center text-red-500 text-xs font-bold">Failed to load requests</div>
+              ) : requests.length === 0 ? (
+                <div className="p-6 text-center text-gray-400 text-xs">No pending join requests</div>
+              ) : requests.map(req => (
+                <div key={req.id} className="p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <img
+                      src={req.avatar || 'https://picsum.photos/100'}
+                      className="w-10 h-10 rounded-full border border-gray-200"
+                      alt=""
+                      onError={(e) => (e.currentTarget.src = 'https://picsum.photos/100')}
+                    />
+                    <div>
+                      <p className="text-sm font-bold text-gray-900">{req.name}</p>
+                      <p className="text-[10px] text-gray-400">@{req.handle}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleApproveRequest(req.id)}
+                      className="px-3 py-1.5 rounded-lg bg-green-50 text-green-600 hover:bg-green-100 text-xs font-bold transition-all"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      onClick={() => handleRejectRequest(req.id)}
+                      className="px-3 py-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 text-xs font-bold transition-all"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Section: Pending Posts Queue */}
+        {permissions.canApproveRequests && (
+          <div className="mt-8 px-4 animate-in fade-in duration-200">
+            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 px-1">Pending Posts Queue</h3>
+            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden divide-y divide-gray-50">
+              {isPostsLoading ? (
+                <div className="p-6 text-center text-gray-400 text-xs font-bold animate-pulse">Loading pending posts...</div>
+              ) : postsError ? (
+                <div className="p-6 text-center text-red-500 text-xs font-bold">Failed to load pending posts</div>
+              ) : pendingPosts.length === 0 ? (
+                <div className="p-6 text-center text-gray-400 text-xs">No pending posts in queue</div>
+              ) : pendingPosts.map(post => (
+                <PendingPostRow
+                  key={post.id}
+                  post={post}
+                  onApprove={handleApprovePost}
+                  onReject={handleRejectPost}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Section: Roles & Management */}
         <div className="mt-8 px-4">
           <div className="flex items-center justify-between mb-3 px-1">
@@ -275,13 +507,29 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
                   </div>
 
                   {permissions.canManageRoles && !isOwnerRole && !isMe && (
-                    <button
-                      onClick={() => toggleAdmin(member.id, member.role as GroupRole)}
-                      className={`p-2 rounded-xl transition-all ${isAdminRole ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`}
-                      title={isAdminRole ? "Remove Admin" : "Make Admin"}
-                    >
-                      {isAdminRole ? <UserMinus size={18} /> : <UserCheck size={18} />}
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => toggleAdmin(member.id, member.role as GroupRole)}
+                        className={`p-2 rounded-xl transition-all ${isAdminRole ? 'bg-purple-50 text-purple-600 hover:bg-purple-100' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`}
+                        title={isAdminRole ? "Remove Admin" : "Make Admin"}
+                      >
+                        {isAdminRole ? <UserMinus size={18} /> : <UserCheck size={18} />}
+                      </button>
+                      <button
+                        onClick={() => handleKick(member.id)}
+                        className="p-2 rounded-xl bg-orange-50 text-orange-500 hover:bg-orange-100 transition-all"
+                        title="Kick Member"
+                      >
+                        <UserMinus size={18} />
+                      </button>
+                      <button
+                        onClick={() => handleBan(member.id)}
+                        className="p-2 rounded-xl bg-red-50 text-red-500 hover:bg-red-100 transition-all"
+                        title="Ban Member"
+                      >
+                        <Ban size={18} />
+                      </button>
+                    </div>
                   )}
                 </div>
               );

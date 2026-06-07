@@ -3,6 +3,8 @@ import prisma from '../prisma';
 import { notify, extractAndNotifyMentions } from '../services/notificationService';
 import { processBase64Image } from '../utils/imageProcessor';
 import { PrivacyService } from '../services/privacyService';
+import { GroupPermissionService } from '../services/groupPermissionService';
+import { POST_STATUS, MEMBERSHIP_STATUS, GROUP_ROLES } from '../utils/constants';
 
 export const SAFE_USER_SELECT = {
     id: true,
@@ -327,13 +329,14 @@ export const getPostById = async (req: Request, res: Response) => {
         }
 
         const p = post as any;
-        if (p.status === 'DRAFT' && (!userId || p.authorId !== userId)) {
-            res.status(404).json({ error: 'Post not found' });
+        const canViewPost = await GroupPermissionService.canViewPost(id, userId);
+        if (!canViewPost) {
+            res.status(403).json({ error: 'Forbidden' });
             return;
         }
 
-        const canView = await PrivacyService.canViewUserContent(userId, p.authorId);
-        if (!canView) {
+        const canViewAuthorContent = await PrivacyService.canViewUserContent(userId, p.authorId);
+        if (!canViewAuthorContent) {
             res.status(403).json({ error: 'Forbidden' });
             return;
         }
@@ -446,6 +449,7 @@ export const createPost = async (req: Request, res: Response) => {
         }
         // --------------------------
 
+        let needsApproval = false;
         if (data.targetGroups && Array.isArray(data.targetGroups) && data.targetGroups.length > 0) {
             for (const groupId of data.targetGroups) {
                 const group = await prisma.group.findUnique({
@@ -457,19 +461,18 @@ export const createPost = async (req: Request, res: Response) => {
                         where: { userId_groupId: { userId: authorId, groupId } }
                     });
 
-                    if (!membership || membership.status !== 'JOINED') {
+                    if (!membership || membership.status !== MEMBERSHIP_STATUS.JOINED) {
                         res.status(403).json({ error: 'You must be a member of the group to post.' });
                         return;
                     }
 
-                    if (group.postingPermissions === 'AdminsOnly' && membership.role === 'Member') {
+                    if (group.postingPermissions === 'AdminsOnly' && membership.role === GROUP_ROLES.MEMBER) {
                         res.status(403).json({ error: 'Only admins can post in this group.' });
                         return;
                     }
 
-                    if (group.postingPermissions === 'ApprovalNeeded' && membership.role === 'Member') {
-                        res.status(403).json({ error: 'Posts require admin approval in this group (feature pending).' });
-                        return;
+                    if (group.postingPermissions === 'ApprovalNeeded' && membership.role === GROUP_ROLES.MEMBER) {
+                        needsApproval = true;
                     }
                 }
             }
@@ -480,6 +483,9 @@ export const createPost = async (req: Request, res: Response) => {
             description: data.description || "",
             type: normalizePostType(data.type) || "Post",
             authorId: authorId,
+            groupId: data.targetGroups && Array.isArray(data.targetGroups) && data.targetGroups.length > 0 
+                ? data.targetGroups[0] 
+                : null,
             category: data.category,
             image: data.coverImage || data.image,
             expiresAt: data.expiresAt ? new Date(data.expiresAt) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
@@ -500,7 +506,7 @@ export const createPost = async (req: Request, res: Response) => {
             demographics: normalizeDemographicFilters(data.demographics),
             allowAnonymous: parseBoolean(data.allowAnonymous),
             forceAnonymous: data.forceAnonymous !== undefined ? parseBoolean(data.forceAnonymous) : false,
-            status: data.status === 'DRAFT' ? 'DRAFT' : 'PUBLISHED'
+            status: needsApproval ? POST_STATUS.PENDING_APPROVAL : (data.status === 'DRAFT' ? POST_STATUS.DRAFT : POST_STATUS.PUBLISHED)
         };
 
         const { post, createdOptions, createdSections } = await prisma.$transaction(async (tx) => {
@@ -588,9 +594,26 @@ export const createPost = async (req: Request, res: Response) => {
 
         console.log(`[CREATE POST] Saved to DB:`, JSON.stringify({ id: post.id, allowAnonymous: postData.allowAnonymous, forceAnonymous: postData.forceAnonymous }));
 
-        if (postData.status === 'PUBLISHED') {
+        if (postData.status === POST_STATUS.PUBLISHED) {
             const fullText = `${post.title} ${post.description}`;
             await extractAndNotifyMentions(fullText, authorId, 'survey', post.id);
+        } else if (postData.status === POST_STATUS.PENDING_APPROVAL) {
+            // Notify target group owners & admins
+            const targetGroupId = data.targetGroups[0];
+            const group = await prisma.group.findUnique({ where: { id: targetGroupId }, select: { name: true } });
+            const managers = await prisma.groupMember.findMany({
+                where: { groupId: targetGroupId, role: { in: [GROUP_ROLES.OWNER, GROUP_ROLES.ADMIN] }, status: MEMBERSHIP_STATUS.JOINED }
+            });
+            for (const manager of managers) {
+                await notify(
+                    authorId,
+                    manager.userId,
+                    'group_post_pending',
+                    `A new post in "${group?.name || 'group'}" is pending approval.`,
+                    'group',
+                    targetGroupId
+                );
+            }
         }
 
         const mappedPost = {
@@ -673,6 +696,7 @@ export const updatePost = async (req: Request, res: Response) => {
         }
         // --------------------------
 
+        let needsApproval = false;
         if (data.targetGroups && Array.isArray(data.targetGroups) && data.targetGroups.length > 0) {
             for (const groupId of data.targetGroups) {
                 const group = await prisma.group.findUnique({
@@ -685,19 +709,18 @@ export const updatePost = async (req: Request, res: Response) => {
                     where: { userId_groupId: { userId: trustedUserId, groupId } }
                 });
 
-                if (!membership || membership.status !== 'JOINED') {
+                if (!membership || membership.status !== MEMBERSHIP_STATUS.JOINED) {
                     res.status(403).json({ error: 'You must be a member of the group to post.' });
                     return;
                 }
 
-                if (group.postingPermissions === 'AdminsOnly' && membership.role === 'Member') {
+                if (group.postingPermissions === 'AdminsOnly' && membership.role === GROUP_ROLES.MEMBER) {
                     res.status(403).json({ error: 'Only admins can post in this group.' });
                     return;
                 }
 
-                if (group.postingPermissions === 'ApprovalNeeded' && membership.role === 'Member') {
-                    res.status(403).json({ error: 'Posts require admin approval in this group (feature pending).' });
-                    return;
+                if (group.postingPermissions === 'ApprovalNeeded' && membership.role === GROUP_ROLES.MEMBER) {
+                    needsApproval = true;
                 }
             }
         }
@@ -717,9 +740,10 @@ export const updatePost = async (req: Request, res: Response) => {
             ...(data.resultsWho !== undefined && { resultsWho: data.resultsWho }),
             ...(data.resultsDetail !== undefined && { resultsDetail: data.resultsDetail }),
             ...(data.resultsTiming !== undefined && { resultsTiming: data.resultsTiming }),
-            ...(data.status !== undefined && { status: data.status === 'DRAFT' ? 'DRAFT' : 'PUBLISHED' }),
+            ...(data.status !== undefined && { status: data.status === 'DRAFT' ? POST_STATUS.DRAFT : POST_STATUS.PUBLISHED }),
             ...(data.targetAudience !== undefined && { targetAudience: data.targetAudience }),
             ...(data.targetGroups !== undefined && { 
+                groupId: Array.isArray(data.targetGroups) && data.targetGroups.length > 0 ? data.targetGroups[0] : null,
                 targetedGroups: { 
                     set: Array.isArray(data.targetGroups) ? data.targetGroups.map((id: string) => ({ id })) : [] 
                 } 
@@ -729,6 +753,29 @@ export const updatePost = async (req: Request, res: Response) => {
             ...(data.randomPairing !== undefined && { randomPairing: parseBoolean(data.randomPairing) }),
             ...(data.demographics !== undefined && { demographics: normalizeDemographicFilters(data.demographics) })
         };
+
+        // Resubmission flow for rejected/draft posts
+        if (existingPost.status === POST_STATUS.REJECTED) {
+            if (data.status === 'PUBLISHED') {
+                updateData.status = POST_STATUS.PENDING_APPROVAL;
+                // Clear rejection & approval metadata
+                updateData.approvedById = null;
+                updateData.approvedAt = null;
+                updateData.rejectedById = null;
+                updateData.rejectedAt = null;
+                updateData.rejectionReason = null;
+            }
+        } else if (existingPost.status === POST_STATUS.DRAFT) {
+            if (data.status === 'PUBLISHED') {
+                updateData.status = needsApproval ? POST_STATUS.PENDING_APPROVAL : POST_STATUS.PUBLISHED;
+                // Clear rejection & approval metadata
+                updateData.approvedById = null;
+                updateData.approvedAt = null;
+                updateData.rejectedById = null;
+                updateData.rejectedAt = null;
+                updateData.rejectionReason = null;
+            }
+        }
 
         const post = await prisma.post.update({
             where: { id },
@@ -740,9 +787,28 @@ export const updatePost = async (req: Request, res: Response) => {
         });
         console.log(`[UPDATE POST] Saved to DB:`, JSON.stringify({ id: post.id, allowAnonymous: updateData.allowAnonymous }));
 
-        if (existingPost.status !== 'PUBLISHED' && updateData.status === 'PUBLISHED') {
+        if (existingPost.status !== POST_STATUS.PUBLISHED && post.status === POST_STATUS.PUBLISHED) {
             const fullText = `${post.title} ${post.description}`;
             await extractAndNotifyMentions(fullText, trustedUserId, 'survey', post.id);
+        } else if (post.status === POST_STATUS.PENDING_APPROVAL && existingPost.status !== POST_STATUS.PENDING_APPROVAL) {
+            // Notify target group owners & admins of resubmitted post
+            const targetGroupId = post.groupId || (post.targetedGroups.length > 0 ? post.targetedGroups[0].id : null);
+            if (targetGroupId) {
+                const group = await prisma.group.findUnique({ where: { id: targetGroupId }, select: { name: true } });
+                const managers = await prisma.groupMember.findMany({
+                    where: { groupId: targetGroupId, role: { in: [GROUP_ROLES.OWNER, GROUP_ROLES.ADMIN] }, status: MEMBERSHIP_STATUS.JOINED }
+                });
+                for (const manager of managers) {
+                    await notify(
+                        trustedUserId,
+                        manager.userId,
+                        'group_post_pending',
+                        `A rejected post in "${group?.name || 'group'}" was resubmitted and is pending approval.`,
+                        'group',
+                        targetGroupId
+                    );
+                }
+            }
         }
 
         let finalOptions: any[] = [];
@@ -898,7 +964,7 @@ export const getDrafts = async (req: Request, res: Response) => {
     const userId = req.query.userId as any;
     try {
         const drafts = await prisma.post.findMany({
-            where: { authorId: userId, status: 'DRAFT', isDeleted: false },
+            where: { authorId: userId, status: { in: [POST_STATUS.DRAFT, POST_STATUS.PENDING_APPROVAL, POST_STATUS.REJECTED] }, isDeleted: false },
             include: {
                 questions: { include: { options: { orderBy: { order: 'asc' } } } },
                 sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
@@ -935,6 +1001,7 @@ export const getSavedPosts = async (req: Request, res: Response) => {
                 userId, 
                 post: { 
                     isDeleted: false,
+                    status: POST_STATUS.PUBLISHED,
                     ...PrivacyService.getPostPrivacyWhereClause(userId)
                 } 
             },
@@ -1590,30 +1657,10 @@ export const getComments = async (req: Request, res: Response) => {
 
 export const createComment = async (req: Request, res: Response) => {
     const rawId = req.params.id as string;
-    const { text, parentId } = req.body;
+    const { text, content, parentId } = req.body;
     try {
         const id = await resolveInteractionTarget(rawId, 'comment');
         const userId = req.user?.userId || req.body.userId;
-        const cleanText = typeof text === 'string' ? text.trim() : '';
-        if (!cleanText) {
-            res.status(400).json({ error: 'Comment text is required' });
-            return;
-        }
-
-        if (parentId) {
-            const parentComment = await prisma.comment.findUnique({
-                where: { id: parentId },
-                select: { postId: true }
-            });
-            if (!parentComment) {
-                res.status(400).json({ error: 'Parent comment not found' });
-                return;
-            }
-            if (parentComment.postId !== id) {
-                res.status(400).json({ error: 'Parent comment does not belong to the same post' });
-                return;
-            }
-        }
 
         const commentTarget = await prisma.post.findUnique({
             where: { id },
@@ -1655,6 +1702,28 @@ export const createComment = async (req: Request, res: Response) => {
             });
             if (!follow) {
                 res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+        }
+
+        const bodyText = text !== undefined ? text : content;
+        const cleanText = typeof bodyText === 'string' ? bodyText.trim() : '';
+        if (!cleanText) {
+            res.status(400).json({ error: 'Comment text is required' });
+            return;
+        }
+
+        if (parentId) {
+            const parentComment = await prisma.comment.findUnique({
+                where: { id: parentId },
+                select: { postId: true }
+            });
+            if (!parentComment) {
+                res.status(400).json({ error: 'Parent comment not found' });
+                return;
+            }
+            if (parentComment.postId !== id) {
+                res.status(400).json({ error: 'Parent comment does not belong to the same post' });
                 return;
             }
         }

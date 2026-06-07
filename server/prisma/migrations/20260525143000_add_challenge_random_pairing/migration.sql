@@ -1,1 +1,0 @@
-ALTER TABLE "Post" ADD COLUMN "randomPairing" BOOLEAN NOT NULL DEFAULT true;

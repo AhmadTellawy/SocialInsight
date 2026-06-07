@@ -123,25 +123,27 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
       return;
     }
 
-    if (group.isPublic) {
-      joinGroup();
-    } else if (membershipStatus === 'INVITED') {
+    if (membershipStatus === 'INVITED') {
       joinGroup(); // Accept invite
-    } else {
+    } else if (group.joinPolicy === 'OPEN') {
+      joinGroup();
+    } else if (group.joinPolicy === 'REQUEST') {
       requestToJoin();
     }
   };
 
   const getJoinButtonLabel = () => {
     if (isMembershipLoading) return 'Loading...';
+    if (membershipStatus === 'BANNED') return 'Banned';
     if (membershipStatus === 'JOINED') return 'Joined';
     if (membershipStatus === 'PENDING') return 'Pending';
     if (membershipStatus === 'INVITED') return 'Accept Invite';
-    if (!group.isPublic) return 'Request to Join';
+    if (group.joinPolicy === 'REQUEST') return 'Request to Join';
+    if (group.joinPolicy === 'INVITE_ONLY') return 'Invite Only';
     return 'Join Group';
   };
 
-  const isJoinDisabled = isMembershipLoading || membershipStatus === 'PENDING';
+  const isJoinDisabled = isMembershipLoading || membershipStatus === 'PENDING' || membershipStatus === 'BANNED' || (membershipStatus !== 'JOINED' && group.joinPolicy === 'INVITE_ONLY');
 
   const renderTabContent = () => {
     switch (activeTab) {

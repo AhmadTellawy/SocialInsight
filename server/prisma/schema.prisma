@@ -123,11 +123,15 @@ model Group {
   joinPolicy         String        @default("OPEN")
   postingPermissions String        @default("AllMembers")
   memberCount        Int           @default(0)
+  isDeleted          Boolean       @default(false)
+  deletedAt          DateTime?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
   members            GroupMember[]
   posts              Post[]        @relation("PrimaryGroup")
   targetedPosts      Post[]        @relation("PostTargetGroups")
+
+  @@index([isDeleted])
 }
 
 model GroupMember {
@@ -196,6 +200,13 @@ model Post {
   sharesCount Int       @default(0)
   visibility  String    @default("PUBLIC")
 
+  // Audit Fields
+  approvedById    String?
+  approvedAt      DateTime?
+  rejectedById    String?
+  rejectedAt      DateTime?
+  rejectionReason String?
+
   // View Counts
   viewCount       Int @default(0)
   uniqueViewCount Int @default(0)
@@ -206,6 +217,8 @@ model Post {
   @@index([groupId])
   @@index([createdAt])
   @@index([isDeleted])
+  @@index([status])
+  @@index([approvedAt])
 }
 
 model Section {

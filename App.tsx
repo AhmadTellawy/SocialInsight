@@ -1541,8 +1541,37 @@ const App: React.FC = () => {
                 group={activeGroup}
                 currentUserId={viewerProfile.id || ''}
                 onBack={() => window.history.length > 2 ? navigate(-1) : navigate(`/group/${activeGroup.id}`, { replace: true })}
-                onUpdateGroup={(id, updates) => setUserGroups(prev => prev.map(g => g.id === id ? { ...g, ...updates } : g))}
-                onDeleteGroup={(id) => { setUserGroups(prev => prev.filter(g => g.id !== id)); navigateToGroup(null); }}
+                onUpdateGroup={async (id, updates) => {
+                  await api.updateGroup(id, updates);
+                  setActiveGroup(prev => prev && prev.id === id ? { ...prev, ...updates } : prev);
+                  setUserGroups(prev => prev.map(g => g.id === id ? { ...g, ...updates } : g));
+                }}
+                onDeleteGroup={async (id) => {
+                  await api.deleteGroup(id);
+                  setUserGroups(prev => prev.filter(g => g.id !== id));
+                  navigateToGroup(null);
+                }}
+                onManageRoles={async (memberId, newRole) => {
+                  await api.updateMemberRole(activeGroup.id, memberId, newRole);
+                }}
+                onKickMember={async (memberId) => {
+                  await api.kickMember(activeGroup.id, memberId);
+                }}
+                onBanMember={async (memberId) => {
+                  await api.banMember(activeGroup.id, memberId);
+                }}
+                onApproveJoinRequest={async (memberId) => {
+                  await api.approveJoinRequest(activeGroup.id, memberId);
+                }}
+                onRejectJoinRequest={async (memberId) => {
+                  await api.rejectJoinRequest(activeGroup.id, memberId);
+                }}
+                onApprovePendingPost={async (postId) => {
+                  await api.approvePendingPost(activeGroup.id, postId);
+                }}
+                onRejectPendingPost={async (postId, reason) => {
+                  await api.rejectPendingPost(activeGroup.id, postId, reason);
+                }}
               />
             ) : (
               <GroupScreen

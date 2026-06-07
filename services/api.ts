@@ -609,6 +609,54 @@ export const api = {
         return response.json();
     },
 
+    getMembership: async (groupId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/membership`);
+        if (!response.ok) throw new Error('Failed to fetch group membership status');
+        return response.json();
+    },
+
+    joinGroup: async (groupId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/join`, {
+            method: 'POST'
+        });
+        if (!response.ok) throw new Error('Failed to join group');
+        return response.json();
+    },
+
+    leaveGroup: async (groupId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/leave`, {
+            method: 'POST'
+        });
+        if (!response.ok) throw new Error('Failed to leave group');
+        return response.json();
+    },
+
+    requestJoin: async (groupId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/request-join`, {
+            method: 'POST'
+        });
+        if (!response.ok) throw new Error('Failed to request joining group');
+        return response.json();
+    },
+
+    getGroupStats: async (groupId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/stats`);
+        if (!response.ok) throw new Error('Failed to fetch group statistics');
+        return response.json();
+    },
+
+    getGroupMembers: async (groupId: string, page = 1, limit = 20) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/members?page=${page}&limit=${limit}`);
+        if (!response.ok) throw new Error('Failed to fetch group members');
+        return response.json();
+    },
+
+    getGroupPosts: async (groupId: string, page = 1, limit = 10) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/posts?page=${page}&limit=${limit}`);
+        if (!response.ok) throw new Error('Failed to fetch group posts');
+        return response.json();
+    },
+
     createGroup: async (data: any) => {
         const response = await authFetch(`${API_BASE_URL}/groups`, {
             method: 'POST',
@@ -625,6 +673,96 @@ export const api = {
     getUserGroups: async (userId: string) => {
         const response = await authFetch(`${API_BASE_URL}/users/${userId}/groups`);
         if (!response.ok) throw new Error('Failed to fetch user groups');
+        return response.json();
+    },
+
+    updateGroup: async (groupId: string, data: any) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        if (!response.ok) throw new Error('Failed to update group settings');
+        return response.json();
+    },
+
+    deleteGroup: async (groupId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}`, {
+            method: 'DELETE'
+        });
+        if (!response.ok) throw new Error('Failed to delete group');
+        return response.json();
+    },
+
+    updateMemberRole: async (groupId: string, memberId: string, role: string) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/members/${memberId}/role`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ role })
+        });
+        if (!response.ok) throw new Error('Failed to update member role');
+        return response.json();
+    },
+
+    kickMember: async (groupId: string, memberId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/members/${memberId}/kick`, {
+            method: 'POST'
+        });
+        if (!response.ok) throw new Error('Failed to kick member');
+        return response.json();
+    },
+
+    banMember: async (groupId: string, memberId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/members/${memberId}/ban`, {
+            method: 'POST'
+        });
+        if (!response.ok) throw new Error('Failed to ban member');
+        return response.json();
+    },
+
+    getPendingRequests: async (groupId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/pending-requests`);
+        if (!response.ok) throw new Error('Failed to fetch pending requests');
+        return response.json();
+    },
+
+    approveJoinRequest: async (groupId: string, memberId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/members/${memberId}/approve`, {
+            method: 'POST'
+        });
+        if (!response.ok) throw new Error('Failed to approve join request');
+        return response.json();
+    },
+
+    rejectJoinRequest: async (groupId: string, memberId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/members/${memberId}/reject`, {
+            method: 'POST'
+        });
+        if (!response.ok) throw new Error('Failed to reject join request');
+        return response.json();
+    },
+
+    getPendingPosts: async (groupId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/pending-posts`);
+        if (!response.ok) throw new Error('Failed to fetch pending posts');
+        return response.json();
+    },
+
+    approvePendingPost: async (groupId: string, postId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/posts/${postId}/approve`, {
+            method: 'POST'
+        });
+        if (!response.ok) throw new Error('Failed to approve post');
+        return response.json();
+    },
+
+    rejectPendingPost: async (groupId: string, postId: string, reason: string) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/posts/${postId}/reject`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reason })
+        });
+        if (!response.ok) throw new Error('Failed to reject post');
         return response.json();
     },
 
