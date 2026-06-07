@@ -15,7 +15,7 @@ export interface GroupUpdatePayload {
   postingPermissions?: PostingPerms;
 }
 
-export type GroupRole = 'Owner' | 'Admin' | 'Moderator' | 'Member';
+export type GroupRole = 'Owner' | 'Admin' | 'Member';
 
 interface GroupSettingsScreenProps {
   group: Group;
@@ -161,8 +161,13 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const permissions = group.permissions || {
+    canViewGroup: true,
+    canViewMembers: true,
+    postRequiresApproval: false,
+    canPost: false,
     canManageSettings: false,
     canManageRoles: false,
+    canManageMembers: false,
     canDeleteGroup: false,
     canInviteMembers: false,
     canApproveRequests: false
@@ -506,29 +511,35 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
                     </div>
                   </div>
 
-                  {permissions.canManageRoles && !isOwnerRole && !isMe && (
+                  {(permissions.canManageRoles || (permissions.canManageMembers && !isAdminRole)) && !isOwnerRole && !isMe && (
                     <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={() => toggleAdmin(member.id, member.role as GroupRole)}
-                        className={`p-2 rounded-xl transition-all ${isAdminRole ? 'bg-purple-50 text-purple-600 hover:bg-purple-100' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`}
-                        title={isAdminRole ? "Remove Admin" : "Make Admin"}
-                      >
-                        {isAdminRole ? <UserMinus size={18} /> : <UserCheck size={18} />}
-                      </button>
-                      <button
-                        onClick={() => handleKick(member.id)}
-                        className="p-2 rounded-xl bg-orange-50 text-orange-500 hover:bg-orange-100 transition-all"
-                        title="Kick Member"
-                      >
-                        <UserMinus size={18} />
-                      </button>
-                      <button
-                        onClick={() => handleBan(member.id)}
-                        className="p-2 rounded-xl bg-red-50 text-red-500 hover:bg-red-100 transition-all"
-                        title="Ban Member"
-                      >
-                        <Ban size={18} />
-                      </button>
+                      {permissions.canManageRoles && (
+                        <button
+                          onClick={() => toggleAdmin(member.id, member.role as GroupRole)}
+                          className={`p-2 rounded-xl transition-all ${isAdminRole ? 'bg-purple-50 text-purple-600 hover:bg-purple-100' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`}
+                          title={isAdminRole ? "Remove Admin" : "Make Admin"}
+                        >
+                          {isAdminRole ? <UserMinus size={18} /> : <UserCheck size={18} />}
+                        </button>
+                      )}
+                      {(permissions.canManageRoles || (!isAdminRole && permissions.canManageMembers)) && (
+                        <>
+                          <button
+                            onClick={() => handleKick(member.id)}
+                            className="p-2 rounded-xl bg-orange-50 text-orange-500 hover:bg-orange-100 transition-all"
+                            title="Kick Member"
+                          >
+                            <UserMinus size={18} />
+                          </button>
+                          <button
+                            onClick={() => handleBan(member.id)}
+                            className="p-2 rounded-xl bg-red-50 text-red-500 hover:bg-red-100 transition-all"
+                            title="Ban Member"
+                          >
+                            <Ban size={18} />
+                          </button>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>

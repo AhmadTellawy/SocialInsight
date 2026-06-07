@@ -53,8 +53,15 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
   const isJoined = membershipStatus === 'JOINED';
 
   const permissions = group.permissions || {
+    canViewGroup: true,
     canViewMembers: true,
+    postRequiresApproval: false,
     canManageSettings: role === 'Owner' || role === 'Admin',
+    canManageRoles: role === 'Owner',
+    canManageMembers: role === 'Owner' || role === 'Admin',
+    canDeleteGroup: role === 'Owner',
+    canInviteMembers: isJoined,
+    canApproveRequests: role === 'Owner' || role === 'Admin',
     canPost: true,
   };
   const isAdmin = permissions.canManageSettings || role === 'Owner' || role === 'Admin';

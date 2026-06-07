@@ -47,12 +47,19 @@ export interface UserProfile {
 }
 
 export interface GroupPermissions {
+  canViewGroup: boolean;
   canViewMembers: boolean;
+  postRequiresApproval: boolean;
   canManageSettings: boolean;
+  canManageRoles: boolean;
+  canManageMembers: boolean;
+  canDeleteGroup: boolean;
+  canInviteMembers: boolean;
+  canApproveRequests: boolean;
   canPost: boolean;
 }
 
-export type MembershipStatus = 'JOINED' | 'NOT_JOINED' | 'PENDING' | 'INVITED';
+export type MembershipStatus = 'JOINED' | 'NOT_JOINED' | 'PENDING' | 'INVITED' | 'REMOVED' | 'BANNED';
 
 export interface Group {
   id: string;
@@ -61,7 +68,7 @@ export interface Group {
   category: string;
   isPublic: boolean;
   members: number; // legacy
-  role: 'Owner' | 'Admin' | 'Moderator' | 'Member';
+  role: 'Owner' | 'Admin' | 'Member';
   permissions?: GroupPermissions; // Added for new permission checks
   image?: string;
   createdAt: string;

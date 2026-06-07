@@ -478,6 +478,11 @@ export const createPost = async (req: Request, res: Response) => {
             }
         }
 
+        if (needsApproval && data.targetGroups.length > 1) {
+            res.status(400).json({ error: 'Posts requiring group approval can target one group only.' });
+            return;
+        }
+
         const postData: any = {
             title: data.title || "Untitled",
             description: data.description || "",
@@ -647,7 +652,15 @@ export const updatePost = async (req: Request, res: Response) => {
         const trustedUserId = req.user?.userId || data.userId;
         const existingPost = await prisma.post.findUnique({
             where: { id },
-            select: { authorId: true, status: true, createdAt: true, isDeleted: true, responseCount: true }
+            select: {
+                authorId: true,
+                status: true,
+                createdAt: true,
+                isDeleted: true,
+                responseCount: true,
+                groupId: true,
+                targetedGroups: { select: { id: true } }
+            }
         });
 
         if (!existingPost || existingPost.isDeleted) {
@@ -696,9 +709,17 @@ export const updatePost = async (req: Request, res: Response) => {
         }
         // --------------------------
 
+        const submittedTargetGroups = Array.isArray(data.targetGroups) ? data.targetGroups : undefined;
+        const existingTargetGroups = Array.from(new Set([
+            existingPost.groupId,
+            ...existingPost.targetedGroups.map((group) => group.id)
+        ].filter((groupId): groupId is string => typeof groupId === 'string' && groupId.length > 0)));
+        const effectiveTargetGroups = submittedTargetGroups !== undefined ? submittedTargetGroups : existingTargetGroups;
+        const shouldValidateGroupPosting = submittedTargetGroups !== undefined || data.status === 'PUBLISHED' || existingPost.status === POST_STATUS.DRAFT || existingPost.status === POST_STATUS.REJECTED;
+
         let needsApproval = false;
-        if (data.targetGroups && Array.isArray(data.targetGroups) && data.targetGroups.length > 0) {
-            for (const groupId of data.targetGroups) {
+        if (shouldValidateGroupPosting && effectiveTargetGroups.length > 0) {
+            for (const groupId of effectiveTargetGroups) {
                 const group = await prisma.group.findUnique({
                     where: { id: groupId },
                     select: { postingPermissions: true }
@@ -723,6 +744,11 @@ export const updatePost = async (req: Request, res: Response) => {
                     needsApproval = true;
                 }
             }
+        }
+
+        if (needsApproval && effectiveTargetGroups.length > 1) {
+            res.status(400).json({ error: 'Posts requiring group approval can target one group only.' });
+            return;
         }
 
         const updateData: any = {

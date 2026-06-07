@@ -3,6 +3,8 @@ import prisma from '../prisma';
 import { PrivacyService } from '../services/privacyService';
 import { notify } from '../services/notificationService';
 import { processBase64Image } from '../utils/imageProcessor';
+import { GroupPermissionService } from '../services/groupPermissionService';
+import { MEMBERSHIP_STATUS, POST_STATUS } from '../utils/constants';
 
 const SAFE_USER_SELECT = {
     id: true,
@@ -632,28 +634,37 @@ export const getUserGroups = async (req: Request, res: Response) => {
             }
         }
         const memberships = await prisma.groupMember.findMany({
-            where: { userId: id as string },
+            where: {
+                userId: id as string,
+                status: MEMBERSHIP_STATUS.JOINED,
+                group: { isDeleted: false }
+            },
             include: {
-                group: {
-                    include: {
-                        _count: {
-                            select: { members: true, posts: true }
-                        }
-                    }
-                }
+                group: true
             }
         });
 
-        const groups = memberships.map(m => ({
-            ...m.group,
-            memberCount: m.group._count?.members || 0,
-            postsCount: m.group._count?.posts || 0,
-            permissions: {
-                canViewMembers: true,
-                canManageSettings: m.role === 'Admin' || m.role === 'Owner',
-                canPost: true,
-            },
-            role: m.role
+        const groups = await Promise.all(memberships.map(async (m) => {
+            const [memberCount, postsCount] = await Promise.all([
+                prisma.groupMember.count({
+                    where: { groupId: m.groupId, status: MEMBERSHIP_STATUS.JOINED }
+                }),
+                prisma.post.count({
+                    where: {
+                        targetedGroups: { some: { id: m.groupId } },
+                        isDeleted: false,
+                        status: POST_STATUS.PUBLISHED
+                    }
+                })
+            ]);
+
+            return {
+                ...m.group,
+                memberCount,
+                postsCount,
+                permissions: GroupPermissionService.calculatePermissions(m.group, m.role, m.status),
+                role: m.role
+            };
         }));
 
         res.json(groups);

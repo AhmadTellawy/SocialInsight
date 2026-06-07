@@ -16,6 +16,48 @@ export const updateGroupMemberCount = async (groupId: string) => {
     });
 };
 
+const softDeleteGroupAndCleanPosts = async (tx: any, groupId: string) => {
+    await tx.group.update({
+        where: { id: groupId },
+        data: { isDeleted: true, deletedAt: new Date() }
+    });
+
+    const posts = await tx.post.findMany({
+        where: {
+            OR: [
+                { groupId },
+                { targetedGroups: { some: { id: groupId } } }
+            ]
+        },
+        include: {
+            group: { select: { id: true, isDeleted: true } },
+            targetedGroups: { select: { id: true, isDeleted: true } }
+        }
+    });
+
+    for (const post of posts) {
+        const activeOtherTargetGroup = post.targetedGroups.find((group: any) => group.id !== groupId && !group.isDeleted);
+        const activePrimaryGroup = post.group && post.group.id !== groupId && !post.group.isDeleted ? post.group : null;
+        const replacementGroupId = activeOtherTargetGroup?.id || activePrimaryGroup?.id || null;
+
+        if (!replacementGroupId) {
+            await tx.post.update({
+                where: { id: post.id },
+                data: { isDeleted: true, deletedAt: new Date() }
+            });
+            continue;
+        }
+
+        await tx.post.update({
+            where: { id: post.id },
+            data: {
+                groupId: post.groupId === groupId || post.group?.isDeleted ? replacementGroupId : post.groupId,
+                targetedGroups: { disconnect: { id: groupId } }
+            }
+        });
+    }
+};
+
 export const getGroups = async (req: Request, res: Response) => {
     const currentUserId = req.user?.userId;
     try {
@@ -292,42 +334,7 @@ export const deleteGroup = async (req: Request, res: Response) => {
         }
 
         await prisma.$transaction(async (tx) => {
-            // Soft delete group
-            await tx.group.update({
-                where: { id },
-                data: { isDeleted: true, deletedAt: new Date() }
-            });
-
-            // Handle posts
-            const posts = await tx.post.findMany({
-                where: {
-                    OR: [
-                        { groupId: id },
-                        { targetedGroups: { some: { id } } }
-                    ]
-                },
-                include: { targetedGroups: true }
-            });
-
-            for (const post of posts) {
-                const hasOtherGroup = (post.groupId && post.groupId !== id) || post.targetedGroups.some(g => g.id !== id);
-                if (!hasOtherGroup) {
-                    await tx.post.update({
-                        where: { id: post.id },
-                        data: { isDeleted: true, deletedAt: new Date() }
-                    });
-                } else {
-                    await tx.post.update({
-                        where: { id: post.id },
-                        data: {
-                            groupId: post.groupId === id ? (post.targetedGroups.find(g => g.id !== id)?.id || null) : post.groupId,
-                            targetedGroups: { disconnect: { id } }
-                        }
-                    });
-                }
-            }
-
-            // Remove/archive memberships
+            await softDeleteGroupAndCleanPosts(tx, id);
             await tx.groupMember.updateMany({
                 where: { groupId: id },
                 data: { status: MEMBERSHIP_STATUS.REMOVED }
@@ -519,13 +526,11 @@ export const leaveGroup = async (req: Request, res: Response) => {
                     res.status(400).json({ error: 'You are the sole owner. You must transfer ownership to another member before leaving.' });
                     return;
                 } else {
-                    // Sole member and owner leaving -> soft delete group
-                    await prisma.group.update({
-                        where: { id },
-                        data: { isDeleted: true, deletedAt: new Date() }
-                    });
-                    await prisma.groupMember.delete({
-                        where: { id: membership.id }
+                    await prisma.$transaction(async (tx) => {
+                        await softDeleteGroupAndCleanPosts(tx, id);
+                        await tx.groupMember.delete({
+                            where: { id: membership.id }
+                        });
                     });
                     res.json({ status: 'NOT_JOINED', role: null, deleted: true });
                     return;

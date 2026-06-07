@@ -14,10 +14,12 @@ export class GroupPermissionService {
         if (group.isDeleted) {
             return {
                 canViewGroup: false,
+                canViewMembers: false,
                 canPost: false,
                 postRequiresApproval: false,
                 canManageSettings: false,
                 canManageRoles: false,
+                canManageMembers: false,
                 canDeleteGroup: false,
                 canInviteMembers: false,
                 canApproveRequests: false
@@ -38,10 +40,12 @@ export class GroupPermissionService {
 
         return {
             canViewGroup,
+            canViewMembers: canViewGroup,
             canPost,
             postRequiresApproval,
             canManageSettings: isManager,
-            canManageRoles: isManager,
+            canManageRoles: isOwner,
+            canManageMembers: isManager,
             canDeleteGroup: isOwner,
             canInviteMembers: isJoined,
             canApproveRequests: isManager
@@ -59,10 +63,12 @@ export class GroupPermissionService {
         if (!group) {
             return {
                 canViewGroup: false,
+                canViewMembers: false,
                 canPost: false,
                 postRequiresApproval: false,
                 canManageSettings: false,
                 canManageRoles: false,
+                canManageMembers: false,
                 canDeleteGroup: false,
                 canInviteMembers: false,
                 canApproveRequests: false
@@ -110,31 +116,39 @@ export class GroupPermissionService {
             select: {
                 id: true,
                 status: true,
+                isDeleted: true,
                 authorId: true,
                 groupId: true,
-                targetedGroups: { select: { id: true } }
+                targetAudience: true,
+                group: { select: { id: true, isPublic: true, isDeleted: true } },
+                targetedGroups: { select: { id: true, isPublic: true, isDeleted: true } }
             }
         });
 
-        if (!post) return false;
+        if (!post || post.isDeleted) return false;
 
-        // Published posts are visible to all (subject to group/profile privacy elsewhere)
-        if (post.status === POST_STATUS.PUBLISHED) {
-            return true;
-        }
+        const linkedGroups = [
+            ...(post.group ? [post.group] : []),
+            ...post.targetedGroups
+        ];
+        const activeGroupsById = new Map(
+            linkedGroups
+                .filter((group) => group && !group.isDeleted)
+                .map((group) => [group.id, group])
+        );
+        const activeGroupIds = Array.from(activeGroupsById.keys());
+
+        if ((post.targetAudience === 'Groups' || linkedGroups.length > 0) && activeGroupIds.length === 0) return false;
 
         // If not published (DRAFT, PENDING_APPROVAL, REJECTED), only author or target group admins can view it
-        if (!userId) return false;
-        if (post.authorId === userId) return true;
-
-        const targetGroupIds = post.targetedGroups.map(g => g.id);
-        if (post.groupId) targetGroupIds.push(post.groupId);
-
-        if (targetGroupIds.length > 0) {
+        if (post.status !== POST_STATUS.PUBLISHED) {
+            if (!userId) return false;
+            if (post.authorId === userId) return true;
+            if (activeGroupIds.length === 0) return false;
             const groupManagerMembership = await prisma.groupMember.findFirst({
                 where: {
                     userId,
-                    groupId: { in: targetGroupIds },
+                    groupId: { in: activeGroupIds },
                     role: { in: [GROUP_ROLES.OWNER, GROUP_ROLES.ADMIN] },
                     status: MEMBERSHIP_STATUS.JOINED
                 }
@@ -142,6 +156,19 @@ export class GroupPermissionService {
             return !!groupManagerMembership;
         }
 
-        return false;
+        if (activeGroupIds.length === 0) return true;
+        if (post.authorId === userId) return true;
+        if (Array.from(activeGroupsById.values()).some((group) => group.isPublic)) return true;
+        if (!userId) return false;
+
+        const membership = await prisma.groupMember.findFirst({
+            where: {
+                userId,
+                groupId: { in: activeGroupIds },
+                status: MEMBERSHIP_STATUS.JOINED
+            }
+        });
+
+        return !!membership;
     }
 }

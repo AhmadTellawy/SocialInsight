@@ -26,8 +26,7 @@ export const recordPostView = async (req: Request, res: Response) => {
     try {
         const postId = req.params.id as string;
         const { source, deviceType, guestSessionId } = req.body;
-        const user = (req as any).user;
-        const userId = user?.id;
+        const userId = req.user?.userId;
 
         // Determine viewer key
         let viewerKey = '';
