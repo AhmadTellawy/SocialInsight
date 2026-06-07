@@ -22,7 +22,10 @@ import {
     approvePendingPost,
     rejectPendingPost,
     inviteToGroup,
-    declineGroupInvite
+    declineGroupInvite,
+    cancelJoinRequest,
+    getBannedMembers,
+    unbanMember
 } from '../controllers/groupController';
 
 import { requireAuth, optionalAuth } from '../middleware/authMiddleware';
@@ -54,5 +57,10 @@ router.post('/:id/members/:memberId/reject', requireAuth, rejectJoinRequest);
 router.get('/:id/pending-posts', requireAuth, getPendingPosts);
 router.post('/:id/posts/:postId/approve', requireAuth, approvePendingPost);
 router.post('/:id/posts/:postId/reject', requireAuth, rejectPendingPost);
+
+// Cancel join request, banned members, unban
+router.delete('/:id/cancel-request', requireAuth, cancelJoinRequest);
+router.get('/:id/banned-members', requireAuth, getBannedMembers);
+router.delete('/:id/members/:memberId/unban', requireAuth, unbanMember);
 
 export default router;

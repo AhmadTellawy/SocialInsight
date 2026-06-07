@@ -27,6 +27,7 @@ interface GroupSettingsScreenProps {
   onInviteManager?: () => void;
   onKickMember?: (memberId: string) => Promise<void>;
   onBanMember?: (memberId: string) => Promise<void>;
+  onUnbanMember?: (memberId: string) => Promise<void>;
   onApproveJoinRequest?: (memberId: string) => Promise<void>;
   onRejectJoinRequest?: (memberId: string) => Promise<void>;
   onApprovePendingPost?: (postId: string) => Promise<void>;
@@ -133,6 +134,7 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
   onInviteManager,
   onKickMember,
   onBanMember,
+  onUnbanMember,
   onApproveJoinRequest,
   onRejectJoinRequest,
   onApprovePendingPost,
@@ -144,6 +146,9 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
   const { members, isLoading: isMembersLoading, error: membersError, refresh: refreshMembers } = useGroupMembers(group.id);
   const { requests, isLoading: isRequestsLoading, error: requestsError, refresh: refreshRequests } = useGroupPendingRequests(group.id);
   const { pendingPosts, isLoading: isPostsLoading, error: postsError, refresh: refreshPosts } = useGroupPendingPosts(group.id);
+  const [bannedMembers, setBannedMembers] = useState<any[]>([]);
+  const [isBannedLoading, setIsBannedLoading] = useState(false);
+  const [showBannedSection, setShowBannedSection] = useState(false);
 
   useEffect(() => {
     setActiveJoinPolicy((group.joinPolicy as JoinPolicy) || 'OPEN');
@@ -230,24 +235,52 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
   };
 
   const handleKick = async (memberId: string) => {
-    if (!permissions.canManageRoles || !onKickMember) return;
+    // ✅ Fixed: use canManageMembers, not canManageRoles
+    if (!permissions.canManageMembers || !onKickMember) return;
     try {
       await onKickMember(memberId);
-      showToast('Member kicked');
+      showToast('Member removed');
       refreshMembers();
     } catch (e) {
-      showToast('Failed to kick member', 'error');
+      showToast('Failed to remove member', 'error');
     }
   };
 
   const handleBan = async (memberId: string) => {
-    if (!permissions.canManageRoles || !onBanMember) return;
+    // ✅ Fixed: use canManageMembers, not canManageRoles
+    if (!permissions.canManageMembers || !onBanMember) return;
     try {
       await onBanMember(memberId);
       showToast('Member banned');
       refreshMembers();
     } catch (e) {
       showToast('Failed to ban member', 'error');
+    }
+  };
+
+  const loadBannedMembers = async () => {
+    if (!onUnbanMember && !permissions.canManageMembers) return;
+    setIsBannedLoading(true);
+    try {
+      const { api } = await import('../services/api');
+      const banned = await api.getBannedMembers(group.id);
+      setBannedMembers(banned);
+      setShowBannedSection(true);
+    } catch (e) {
+      showToast('Failed to load banned members', 'error');
+    } finally {
+      setIsBannedLoading(false);
+    }
+  };
+
+  const handleUnban = async (memberId: string) => {
+    if (!onUnbanMember) return;
+    try {
+      await onUnbanMember(memberId);
+      showToast('Member unbanned');
+      setBannedMembers(prev => prev.filter(m => m.id !== memberId));
+    } catch (e) {
+      showToast('Failed to unban member', 'error');
     }
   };
 
@@ -551,6 +584,52 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
             <p className="text-[10px] text-gray-500 leading-tight">Admins can manage content and members but cannot delete the group or transfer ownership.</p>
           </div>
         </div>
+
+        {/* Banned Members Section */}
+        {permissions.canManageMembers && (
+          <div className="mt-8 px-4">
+            <div className="flex items-center justify-between mb-3 px-1">
+              <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Banned Members</h3>
+              <button
+                onClick={showBannedSection ? () => setShowBannedSection(false) : loadBannedMembers}
+                disabled={isBannedLoading}
+                className="text-[10px] font-bold text-red-500 uppercase flex items-center gap-1 disabled:opacity-50"
+              >
+                <Ban size={12} /> {isBannedLoading ? 'Loading...' : showBannedSection ? 'Hide' : 'View Banned'}
+              </button>
+            </div>
+            {showBannedSection && (
+              <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden divide-y divide-gray-50 animate-in fade-in duration-200">
+                {bannedMembers.length === 0 ? (
+                  <div className="p-6 text-center text-gray-400 text-xs">No banned members</div>
+                ) : bannedMembers.map(member => (
+                  <div key={member.id} className="p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={member.avatar || 'https://picsum.photos/100'}
+                        className="w-9 h-9 rounded-full border border-gray-200 grayscale"
+                        alt=""
+                        onError={(e) => (e.currentTarget.src = 'https://picsum.photos/100')}
+                      />
+                      <div>
+                        <p className="text-sm font-bold text-gray-700">{member.name}</p>
+                        <span className="text-[9px] font-black uppercase tracking-wider text-red-500">Banned</span>
+                      </div>
+                    </div>
+                    {onUnbanMember && (
+                      <button
+                        onClick={() => handleUnban(member.id)}
+                        className="px-3 py-1.5 rounded-lg bg-green-50 text-green-600 hover:bg-green-100 text-xs font-bold transition-all"
+                      >
+                        Unban
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Danger Zone */}
         {permissions.canDeleteGroup && (

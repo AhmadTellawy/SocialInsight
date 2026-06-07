@@ -1560,6 +1560,9 @@ const App: React.FC = () => {
                 onBanMember={async (memberId) => {
                   await api.banMember(activeGroup.id, memberId);
                 }}
+                onUnbanMember={async (memberId) => {
+                  await api.unbanMember(activeGroup.id, memberId);
+                }}
                 onApproveJoinRequest={async (memberId) => {
                   await api.approveJoinRequest(activeGroup.id, memberId);
                 }}

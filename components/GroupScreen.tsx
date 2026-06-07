@@ -162,8 +162,23 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
     else if (group.joinPolicy === 'REQUEST') requestToJoin();
   };
 
+  const handleCancelRequest = async () => {
+    try {
+      await api.cancelGroupJoinRequest(group.id);
+      showToast('Join request cancelled');
+      // force membership refetch by triggering leaveGroup logic on client only
+      window.location.reload();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to cancel request');
+    }
+  };
+
   // ── Invite search with debounce ──────────────────────────────────
-  const memberIdSet = new Set(members.map((m: any) => m.userId || m.id));
+  // useMemo so memberIdSet is not recreated on every render
+  const memberIdSet = React.useMemo(
+    () => new Set(members.map((m: any) => m.userId || m.id)),
+    [members]
+  );
 
   useEffect(() => {
     if (!showInviteModal) return;
@@ -171,13 +186,17 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
     const t = setTimeout(async () => {
       setInviteSearching(true);
       try {
+        // Pass userId so backend excludes blocked users; also exclude current user & existing members
         const results: any[] = await api.searchUsers(inviteQuery);
-        setInviteResults(results.filter((u: any) => u.id !== userProfile.id && !memberIdSet.has(u.id)));
+        setInviteResults(
+          results.filter((u: any) => u.id !== userProfile.id && !memberIdSet.has(u.id))
+        );
       } catch { setInviteResults([]); }
       finally { setInviteSearching(false); }
     }, 300);
     return () => clearTimeout(t);
-  }, [inviteQuery, showInviteModal]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inviteQuery, showInviteModal, memberIdSet]);
 
   const handleInviteUser = async (userId: string) => {
     if (inviteLoadingId) return;
@@ -272,9 +291,17 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
 
     if (membershipStatus === 'PENDING') {
       return (
-        <button disabled className="flex items-center gap-1 px-5 py-2 rounded-full bg-amber-50 text-amber-600 text-xs font-bold border border-amber-200 cursor-not-allowed">
-          <Clock size={11} /> Pending
-        </button>
+        <div className="flex items-center gap-2">
+          <span className="flex items-center gap-1 px-4 py-2 rounded-full bg-amber-50 text-amber-600 text-xs font-bold border border-amber-200">
+            <Clock size={11} /> Pending
+          </span>
+          <button
+            onClick={handleCancelRequest}
+            className="px-4 py-2 rounded-full bg-gray-100 text-gray-600 text-xs font-bold hover:bg-red-50 hover:text-red-500 border border-gray-200 hover:border-red-200 active:scale-95 transition-all"
+          >
+            Cancel
+          </button>
+        </div>
       );
     }
 
@@ -344,7 +371,28 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
               </div>
             )}
 
-            {isPostsLoading && posts.length === 0 ? (
+            {/* Private group guard for non-members */}
+            {!group.isPublic && !isJoined && membershipStatus !== 'INVITED' ? (
+              <div className="flex flex-col items-center justify-center py-24 px-8 text-center">
+                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                  <Lock size={28} className="text-gray-400" />
+                </div>
+                <h3 className="text-gray-900 font-black text-base mb-2">Private Group</h3>
+                <p className="text-gray-400 text-sm leading-relaxed">
+                  {group.joinPolicy === 'INVITE_ONLY'
+                    ? 'This group is invite-only. You need an invitation to view its content.'
+                    : 'Join this group to see posts and participate in discussions.'}
+                </p>
+                {group.joinPolicy !== 'INVITE_ONLY' && membershipStatus !== 'PENDING' && (
+                  <button
+                    onClick={handleJoinClick}
+                    className="mt-6 px-6 py-2.5 rounded-full bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 shadow-md active:scale-95 transition-all"
+                  >
+                    {group.joinPolicy === 'REQUEST' ? 'Request to Join' : 'Join Group'}
+                  </button>
+                )}
+              </div>
+            ) : isPostsLoading && posts.length === 0 ? (
               <div className="py-10 text-center text-gray-500 animate-pulse">Loading posts...</div>
             ) : postsError ? (
               <div className="py-10 text-center text-red-500 text-sm">Error: {postsError}</div>
@@ -355,6 +403,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
                     key={post.clientKey || post.id}
                     survey={post}
                     userProfile={userProfile}
+                    contextGroups={[group]}
                     onContentClick={() => onPostClick(post.id, 'GROUP')}
                     onAnalysisClick={() => onPostClick(post.id, 'GROUP', 'analysis')}
                     onVote={onVote}
@@ -415,6 +464,19 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
                   {group.isPublic ? 'Public' : 'Private'}
                 </div>
               </div>
+              <div className="p-4 bg-white border border-gray-100 rounded-2xl shadow-sm">
+                <div className="text-[10px] font-black text-gray-400 uppercase mb-1">Membership</div>
+                <div className="flex items-center gap-1.5 text-sm font-bold text-gray-900">
+                  {group.joinPolicy === 'OPEN' && <><Globe size={13} className="text-green-600" /> Open</>}
+                  {group.joinPolicy === 'REQUEST' && <><UserPlus size={13} className="text-blue-600" /> Request</>}
+                  {group.joinPolicy === 'INVITE_ONLY' && <><Lock size={13} className="text-orange-600" /> Invite Only</>}
+                  {!group.joinPolicy && <span className="text-gray-400">—</span>}
+                </div>
+              </div>
+              <div className="p-4 bg-white border border-gray-100 rounded-2xl shadow-sm">
+                <div className="text-[10px] font-black text-gray-400 uppercase mb-1">Members</div>
+                <div className="text-sm font-bold text-gray-900">{isStatsLoading ? '—' : (stats?.membersCount || 0).toLocaleString()}</div>
+              </div>
             </div>
             <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100 flex items-start gap-3">
               <Info size={18} className="text-blue-600 mt-0.5" />
@@ -440,11 +502,21 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
               <div className="flex flex-col">
                 {members.map((member: any) => (
                   <div key={member.id} className="flex items-center gap-3 p-4 border-b border-gray-50 bg-white">
-                    <SafeImage src={member.avatar} fallback="https://picsum.photos/100" className="w-10 h-10 rounded-full" />
-                    <div>
-                      <div className="text-sm font-bold text-gray-900">{member.name}</div>
-                      {member.role && <div className="text-xs text-blue-600 font-medium">{member.role}</div>}
+                    <SafeImage src={member.avatar} fallback="https://picsum.photos/100" className="w-10 h-10 rounded-full border border-gray-100" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-bold text-gray-900 truncate">{member.name}</div>
+                      <div className="text-xs text-gray-400">@{member.handle || '—'}</div>
                     </div>
+                    {member.role === 'Owner' && (
+                      <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-gradient-to-r from-yellow-100 to-orange-100 text-orange-600 text-[10px] font-black border border-orange-200 shrink-0">
+                        <Crown size={9} strokeWidth={3} /> Owner
+                      </div>
+                    )}
+                    {member.role === 'Admin' && (
+                      <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 text-[10px] font-black border border-blue-100 shrink-0">
+                        <Shield size={9} strokeWidth={3} /> Admin
+                      </div>
+                    )}
                   </div>
                 ))}
                 {hasMoreMembers && (
@@ -640,6 +712,10 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
       {/* Stats & Actions Row */}
       <div className="px-5 py-4 flex items-center justify-between border-b border-gray-50">
         <div className="flex gap-5">
+          <div className="flex flex-col">
+            <span className="text-xs font-black text-gray-900">{isStatsLoading ? '-' : (stats?.membersCount || 0).toLocaleString()}</span>
+            <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Members</span>
+          </div>
           <div className="flex flex-col">
             <span className="text-xs font-black text-gray-900">{isStatsLoading ? '-' : (stats?.postsCount || 0)}</span>
             <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Posts</span>

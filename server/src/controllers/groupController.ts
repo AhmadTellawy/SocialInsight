@@ -1432,3 +1432,93 @@ export const declineGroupInvite = async (req: Request, res: Response) => {
         res.status(500).json({ error: 'Failed to decline invite' });
     }
 };
+
+export const cancelJoinRequest = async (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    const currentUserId = req.user?.userId;
+
+    if (!currentUserId) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+    }
+
+    try {
+        const record = await prisma.groupMember.findUnique({
+            where: { userId_groupId: { userId: currentUserId, groupId: id } }
+        });
+
+        if (!record || record.status !== MEMBERSHIP_STATUS.PENDING) {
+            res.status(404).json({ error: 'No pending join request found' });
+            return;
+        }
+
+        await prisma.groupMember.delete({ where: { id: record.id } });
+        res.json({ success: true });
+    } catch (error) {
+        console.error('cancelJoinRequest error:', error);
+        res.status(500).json({ error: 'Failed to cancel join request' });
+    }
+};
+
+export const getBannedMembers = async (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    const currentUserId = req.user?.userId;
+
+    try {
+        const group = await prisma.group.findUnique({ where: { id, isDeleted: false } });
+        if (!group) { res.status(404).json({ error: 'Group not found' }); return; }
+
+        const permissions = await GroupPermissionService.getPermissions(id, currentUserId);
+        if (!permissions.canManageMembers) {
+            res.status(403).json({ error: 'Forbidden' }); return;
+        }
+
+        const banned = await prisma.groupMember.findMany({
+            where: { groupId: id, status: MEMBERSHIP_STATUS.BANNED },
+            include: { user: { select: { id: true, name: true, avatar: true, handle: true } } }
+        });
+
+        res.json(banned.map((m: any) => ({
+            id: m.userId,
+            name: m.user.name,
+            avatar: m.user.avatar,
+            handle: m.user.handle,
+            status: m.status
+        })));
+    } catch (error) {
+        console.error('getBannedMembers error:', error);
+        res.status(500).json({ error: 'Failed to get banned members' });
+    }
+};
+
+export const unbanMember = async (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    const memberId = req.params.memberId as string;
+    const currentUserId = req.user?.userId;
+
+    if (!currentUserId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+
+    try {
+        const group = await prisma.group.findUnique({ where: { id, isDeleted: false } });
+        if (!group) { res.status(404).json({ error: 'Group not found' }); return; }
+
+        const callerPermissions = await GroupPermissionService.getPermissions(id, currentUserId);
+        if (!callerPermissions.canManageMembers) {
+            res.status(403).json({ error: 'Forbidden: You cannot manage members.' }); return;
+        }
+
+        const record = await prisma.groupMember.findUnique({
+            where: { userId_groupId: { userId: memberId, groupId: id } }
+        });
+
+        if (!record || record.status !== MEMBERSHIP_STATUS.BANNED) {
+            res.status(404).json({ error: 'Banned member not found' }); return;
+        }
+
+        await prisma.groupMember.delete({ where: { id: record.id } });
+        res.json({ success: true, message: 'User unbanned successfully.' });
+    } catch (error) {
+        console.error('unbanMember error:', error);
+        res.status(500).json({ error: 'Failed to unban member' });
+    }
+};

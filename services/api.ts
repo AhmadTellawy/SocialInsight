@@ -786,6 +786,31 @@ export const api = {
         return response.json();
     },
 
+    cancelGroupJoinRequest: async (groupId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/cancel-request`, {
+            method: 'DELETE'
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || 'Failed to cancel join request');
+        }
+        return response.json();
+    },
+
+    getBannedMembers: async (groupId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/banned-members`);
+        if (!response.ok) throw new Error('Failed to fetch banned members');
+        return response.json();
+    },
+
+    unbanMember: async (groupId: string, memberId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/members/${memberId}/unban`, {
+            method: 'DELETE'
+        });
+        if (!response.ok) throw new Error('Failed to unban member');
+        return response.json();
+    },
+
     getVapidPublicKey: async () => {
         const response = await fetch(`${API_BASE_URL}/push/vapid-public-key`);
         if (!response.ok) throw new Error('Failed to get VAPID public key');
