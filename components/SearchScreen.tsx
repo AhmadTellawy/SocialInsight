@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Search, X, Clock, TrendingUp, ChevronRight, User, Users, FileText, PieChart, Hash, ArrowLeft, Shield, Lock, Globe } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { 
+  Search, X, Clock, TrendingUp, ChevronRight, User, Users, 
+  FileText, PieChart, Hash, ArrowLeft, Shield, Lock, Globe, 
+  Trophy, Sparkles, Flame, HelpCircle 
+} from 'lucide-react';
 import { Survey, SurveyType } from '../types';
 import { UserAvatar } from './UserAvatar';
 import { api } from '../services/api';
@@ -10,6 +15,20 @@ interface SearchScreenProps {
   onAuthorClick?: (author: { id: string; name: string; avatar: string; handle?: string }) => void;
   onGroupClick?: (groupId: string) => void;
 }
+
+// Full List of Real Categories in the App
+const POPULAR_CATEGORIES = [
+  { id: 'Technology', name: 'Technology', arName: 'تقنية', gradient: 'from-indigo-500 to-purple-600', icon: PieChart },
+  { id: 'Social', name: 'Social', arName: 'اجتماعي', gradient: 'from-blue-500 to-cyan-500', icon: Users },
+  { id: 'Economic', name: 'Economic', arName: 'اقتصادي', gradient: 'from-emerald-500 to-teal-650', icon: FileText },
+  { id: 'Political', name: 'Political', arName: 'سياسي', gradient: 'from-red-500 to-rose-650', icon: Shield },
+  { id: 'Health', name: 'Health', arName: 'صحة', gradient: 'from-green-400 to-emerald-550', icon: Flame },
+  { id: 'Educational', name: 'Education', arName: 'تعليم', gradient: 'from-amber-500 to-orange-600', icon: HelpCircle },
+  { id: 'Sports', name: 'Sports', arName: 'رياضة', gradient: 'from-orange-500 to-red-550', icon: Trophy },
+  { id: 'Business / Commercial', name: 'Business', arName: 'أعمال', gradient: 'from-fuchsia-500 to-pink-650', icon: PieChart },
+  { id: 'Cultural', name: 'Cultural', arName: 'ثقافي', gradient: 'from-violet-500 to-purple-700', icon: Globe },
+  { id: 'Entertainment', name: 'Entertainment', arName: 'ترفيه', gradient: 'from-pink-400 to-rose-550', icon: Sparkles }
+];
 
 // Helper for highlighting text
 const HighlightedText: React.FC<{ text: string; highlight: string; className?: string }> = ({ text, highlight, className = "" }) => {
@@ -28,6 +47,9 @@ const HighlightedText: React.FC<{ text: string; highlight: string; className?: s
 };
 
 export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyClick, onAuthorClick, onGroupClick }) => {
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === 'ar' || i18n.language === 'ur';
+
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<'All' | 'Surveys' | 'Polls' | 'Groups' | 'Categories' | 'People'>('All');
@@ -131,24 +153,34 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
 
   const hasResults = filteredSurveys.length > 0 || searchResults.people.length > 0 || searchResults.groups.length > 0 || searchResults.categories.length > 0;
 
+  const getFilterLabel = (filter: string) => {
+    if (filter === 'All') return isRtl ? 'الكل' : 'All';
+    if (filter === 'Surveys') return t('Surveys');
+    if (filter === 'Polls') return t('Polls');
+    if (filter === 'Groups') return t('Groups');
+    if (filter === 'Categories') return t('Categories');
+    if (filter === 'People') return isRtl ? 'الحسابات' : 'Creators';
+    return filter;
+  };
+
   return (
-    <div className="bg-white min-h-[100dvh] flex flex-col pb-20">
+    <div className="bg-white min-h-[100dvh] flex flex-col pb-20" dir={isRtl ? 'rtl' : 'ltr'}>
       {/* 1. Header & Input */}
       <div className="sticky top-0 bg-white z-20 px-4 py-3 border-b border-gray-100 shadow-sm">
         <div className="relative">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+          <Search className={`absolute ${isRtl ? 'right-3.5' : 'left-3.5'} top-1/2 -translate-y-1/2 text-gray-400`} size={18} />
           <input
             autoFocus
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search surveys, polls, groups, or creators"
-            className="w-full bg-gray-100 border-none rounded-2xl pl-10 pr-10 py-3.5 text-sm font-medium text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 placeholder-gray-500 transition-all"
+            placeholder={isRtl ? "البحث عن استطلاعات، استبيانات، مجموعات..." : "Search surveys, polls, groups, or creators..."}
+            className={`w-full bg-gray-100 border-none rounded-2xl ${isRtl ? 'pr-10 pl-10' : 'pl-10 pr-10'} py-3.5 text-sm font-medium text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 placeholder-gray-500 transition-all`}
           />
           {query && (
             <button
               onClick={() => { setQuery(''); setDebouncedQuery(''); }}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full bg-gray-200 text-gray-500 hover:bg-gray-300"
+              className={`absolute ${isRtl ? 'left-3' : 'right-3'} top-1/2 -translate-y-1/2 p-1 rounded-full bg-gray-200 text-gray-500 hover:bg-gray-300`}
             >
               <X size={14} strokeWidth={3} />
             </button>
@@ -167,7 +199,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                   : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
                   }`}
               >
-                {filter}
+                {getFilterLabel(filter)}
               </button>
             ))}
           </div>
@@ -185,8 +217,8 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
             {recentSearches.length > 0 && (
               <section>
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Recent Searches</h3>
-                  <button onClick={handleClearRecent} className="text-xs font-semibold text-blue-600 hover:text-blue-700">Clear</button>
+                  <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">{isRtl ? 'عمليات البحث الأخيرة' : 'Recent Searches'}</h3>
+                  <button onClick={handleClearRecent} className="text-xs font-semibold text-blue-600 hover:text-blue-700">{t('Reset All')}</button>
                 </div>
                 <div className="space-y-1">
                   {recentSearches.map((term, idx) => (
@@ -201,7 +233,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                       </div>
                       <span 
                         onClick={(e) => handleDeleteRecentSearch(e, term)}
-                        className="p-1 rounded-full text-gray-300 hover:text-gray-600 hover:bg-gray-200/50 shrink-0"
+                        className="p-1 rounded-full text-gray-305 hover:text-gray-600 hover:bg-gray-200/50 shrink-0"
                       >
                         <X size={14} />
                       </span>
@@ -214,7 +246,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
             {/* Trending Topics */}
             <section>
               <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-1">
-                <TrendingUp size={12} /> Trending Now
+                <TrendingUp size={12} /> {isRtl ? 'رائج الآن' : 'Trending Now'}
               </h3>
               <div className="flex flex-wrap gap-2">
                 {['#RemoteWork', '#AI', '#Climate', '#CoffeeLover', '#TechTrends'].map(tag => (
@@ -229,39 +261,24 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
               </div>
             </section>
 
-            {/* Popular Categories */}
+            {/* Popular Categories (Now Complete) */}
             <section>
-              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Browse Categories</h3>
+              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">{t('Categories')}</h3>
               <div className="grid grid-cols-2 gap-3">
-                <button onClick={() => setQuery('Technology')} className="bg-gradient-to-br from-indigo-500 to-purple-600 text-white p-4 rounded-xl text-left shadow-sm hover:shadow-md transition-all">
-                  <PieChart className="mb-2 opacity-80" size={20} />
-                  <span className="font-bold text-sm block">Technology</span>
-                </button>
-                <button onClick={() => setQuery('Lifestyle')} className="bg-gradient-to-br from-orange-400 to-pink-500 text-white p-4 rounded-xl text-left shadow-sm hover:shadow-md transition-all">
-                  <User className="mb-2 opacity-80" size={20} />
-                  <span className="font-bold text-sm block">Lifestyle</span>
-                </button>
+                {POPULAR_CATEGORIES.map((c) => {
+                  const Icon = c.icon;
+                  return (
+                    <button 
+                      key={c.id} 
+                      onClick={() => setQuery(c.name)} 
+                      className={`bg-gradient-to-br ${c.gradient} text-white p-4 rounded-2xl text-left shadow-sm hover:shadow-md transition-all flex flex-col justify-between h-24`}
+                    >
+                      <Icon className="opacity-80 shrink-0" size={20} />
+                      <span className="font-extrabold text-sm block leading-none">{isRtl ? c.arName : c.name}</span>
+                    </button>
+                  );
+                })}
               </div>
-            </section>
-
-            {/* All Users Directory */}
-            <section>
-              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Community</h3>
-              <button
-                onClick={() => (window as any).showUsersTable?.()}
-                className="w-full flex items-center justify-between p-5 bg-white border border-blue-100 rounded-3xl hover:shadow-lg hover:shadow-blue-500/5 transition-all active:scale-[0.98] group"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                    <Users size={24} />
-                  </div>
-                  <div className="text-left">
-                    <div className="font-bold text-gray-900">User Directory</div>
-                    <div className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-0.5">View all members</div>
-                  </div>
-                </div>
-                <ChevronRight size={20} className="text-gray-300 group-hover:text-blue-600 transition-colors" />
-              </button>
             </section>
           </div>
         )}
@@ -320,15 +337,15 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                 <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mb-4">
                   <Search size={24} className="text-gray-300" />
                 </div>
-                <h3 className="text-gray-900 font-bold mb-1">No results found</h3>
-                <p className="text-sm text-gray-500">We couldn't find anything matching "{query}"</p>
+                <h3 className="text-gray-900 font-bold mb-1">{isRtl ? 'لا توجد نتائج' : 'No results found'}</h3>
+                <p className="text-sm text-gray-500">{isRtl ? `لم نجد أي تطابقات لـ "${query}"` : `We couldn't find anything matching "${query}"`}</p>
               </div>
             ) : (
               <>
                 {/* 1. Categories */}
                 {showCategories && searchResults.categories.length > 0 && (
                   <section className="animate-in fade-in slide-in-from-bottom-2">
-                    {activeFilter === 'All' && <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 px-1">Categories</h3>}
+                    {activeFilter === 'All' && <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 px-1">{t('Categories')}</h3>}
                     <div className="flex flex-wrap gap-2">
                       {searchResults.categories.map(cat => (
                         <button
@@ -349,13 +366,13 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                   <section className="animate-in fade-in slide-in-from-bottom-2">
                     {activeFilter === 'All' && (
                       <div className="flex justify-between items-center mb-2 px-1">
-                        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Creators</h3>
-                        {searchResults.people.length > 3 && <button onClick={() => setActiveFilter('People')} className="text-xs text-blue-600 font-bold">See all</button>}
+                        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">{isRtl ? 'الحسابات' : 'Creators'}</h3>
+                        {searchResults.people.length > 3 && <button onClick={() => setActiveFilter('People')} className="text-xs text-blue-600 font-bold">{isRtl ? 'عرض الكل' : 'See all'}</button>}
                       </div>
                     )}
                     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                       {(activeFilter === 'All' ? searchResults.people.slice(0, 3) : searchResults.people).map((person, i) => (
-                        <div key={i} className="flex items-center justify-between p-3.5 hover:bg-gray-50 border-b border-gray-50 last:border-0 transition-colors">
+                        <div key={i} className="flex items-center justify-between p-3.5 hover:bg-gray-50 border-b border-gray-55 last:border-0 transition-colors">
                           <div className="flex items-center gap-3">
                             <UserAvatar 
                               src={person.avatar} 
@@ -370,7 +387,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                           </div>
                           <button
                             onClick={() => onAuthorClick?.({ id: person.id, name: person.name, avatar: person.avatar, handle: person.handle })}
-                            className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-full text-xs font-bold hover:bg-gray-200 transition-colors">View</button>
+                            className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-full text-xs font-bold hover:bg-gray-200 transition-colors">{t('View')}</button>
                         </div>
                       ))}
                     </div>
@@ -382,8 +399,8 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                   <section className="animate-in fade-in slide-in-from-bottom-2">
                     {activeFilter === 'All' && (
                       <div className="flex justify-between items-center mb-2 px-1">
-                        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Groups</h3>
-                        {searchResults.groups.length > 3 && <button onClick={() => setActiveFilter('Groups')} className="text-xs text-blue-600 font-bold">See all</button>}
+                        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">{t('Groups')}</h3>
+                        {searchResults.groups.length > 3 && <button onClick={() => setActiveFilter('Groups')} className="text-xs text-blue-600 font-bold">{isRtl ? 'عرض الكل' : 'See all'}</button>}
                       </div>
                     )}
                     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden divide-y divide-gray-50">
@@ -406,7 +423,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                             onClick={() => onGroupClick?.(group.id)}
                             className="px-3.5 py-1.5 bg-blue-50 text-blue-600 rounded-full text-xs font-bold hover:bg-blue-100 shrink-0"
                           >
-                            View
+                            {t('View')}
                           </button>
                         </div>
                       ))}
@@ -417,7 +434,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                 {/* 4. Surveys & Polls */}
                 {showSurveys && filteredSurveys.length > 0 && (
                   <section className="animate-in fade-in slide-in-from-bottom-2">
-                    {activeFilter === 'All' && <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 px-1">Surveys & Polls</h3>}
+                    {activeFilter === 'All' && <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 px-1">{t('Surveys')} & {t('Polls')}</h3>}
 
                     <div className="space-y-3">
                       {filteredSurveys.map(survey => (
@@ -453,7 +470,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                               <span>{survey.author?.name}</span>
                             </div>
                             <div className="flex items-center gap-3 text-xs text-gray-400 font-medium">
-                              <span>{survey.participants || 0} votes</span>
+                              <span>{survey.participants || 0} {t('votes')}</span>
                               <span>{survey.timeLeft || 'Active'}</span>
                             </div>
                           </div>
