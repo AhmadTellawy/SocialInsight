@@ -819,6 +819,17 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const isTextOnlyPoll = isPollType && !isRating && !hasImages;
   const hasDescription = !!sourceSurvey.description?.trim();
 
+  // Premium cover-image poll card: polls with a coverImage but no option images, not rating
+  const isCoverImagePollCard = !!sourceSurvey.coverImage && isPollType && !isRating && !hasImages;
+
+  // Integer percentage for a single option
+  const getOptionPercentage = (optionId: string): number => {
+    if (totalVotes === 0) return 0;
+    const opt = localOptions.find(o => o.id === optionId);
+    if (!opt) return 0;
+    return Math.round(((opt.votes || 0) / totalVotes) * 100);
+  };
+
   // NEW LOGIC: Any selected option has clarification enabled?
   const hasActiveFollowUp = selectedOptions.some(id => localOptions.find(o => o.id === id)?.withFollowUp);
   const followUpRequiredAndMissing = selectedOptions.some(optId => {
@@ -1550,6 +1561,175 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     </div>
   );
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Premium cover-image poll card
+  // Applies when: sourceSurvey.coverImage && isPollType && !isRating && !hasImages
+  // Layout: full-width image → 2-col chip grid below → description → actions
+  // ─────────────────────────────────────────────────────────────────────────
+  const renderCoverImagePollCard = () => {
+    const MAX_FEED_OPTIONS = 4;
+    const allowUserOptions = sourceSurvey.allowUserOptions || false;
+    const hasComplexOptions = isMultiple || allowUserOptions || localOptions.some(o => o.withFollowUp);
+    const displayedOptions = (!isDetailView && localOptions.length > MAX_FEED_OPTIONS)
+      ? localOptions.slice(0, MAX_FEED_OPTIONS)
+      : localOptions;
+    const hiddenCount = localOptions.length - displayedOptions.length;
+
+    return (
+      <>
+        {/* Cover image - clean, no overlays */}
+        <div
+          onClick={onContentClick}
+          className={`w-full rounded-xl overflow-hidden mb-2 bg-gray-100${onContentClick ? ' cursor-pointer hover:opacity-95 transition-opacity' : ''}`}
+        >
+          <img
+            src={sourceSurvey.coverImage!}
+            crossOrigin="anonymous"
+            alt="Cover"
+            className="w-full max-h-[500px] object-cover block"
+          />
+        </div>
+
+        {/* Chips directly below the image */}
+        <div className="mb-1">
+
+          {/* STATE A – before voting, simple options */}
+          {!shouldShowResults && !hasComplexOptions && (
+            <div className="grid grid-cols-2 gap-2">
+              {displayedOptions.map((opt) => {
+                const isSelected = selectedOptions.includes(opt.id);
+                return (
+                  <button
+                    key={opt.id}
+                    aria-label={opt.text}
+                    onClick={(e) => { e.stopPropagation(); handlePollOptionClick(opt.id); }}
+                    disabled={hasVoted || isExpired}
+                    className={`relative min-h-[44px] rounded-2xl border px-3 py-2 text-left transition-all duration-200 active:scale-[0.97]${
+                      isSelected
+                        ? ' bg-blue-600 border-blue-500 shadow-md shadow-blue-500/20'
+                        : ' bg-white border-gray-200 hover:border-blue-300 hover:bg-blue-50/40'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2">
+                      <div className={`mt-0.5 w-3.5 h-3.5 rounded-full border-2 shrink-0 flex items-center justify-center transition-colors${
+                        isSelected ? ' border-white bg-white' : ' border-gray-300'
+                      }`}>
+                        {isSelected && <div className="w-1.5 h-1.5 bg-blue-600 rounded-full" />}
+                      </div>
+                      <span
+                        dir="auto"
+                        className={`text-[12px] font-semibold leading-snug line-clamp-2 break-words${
+                          isSelected ? ' text-white' : ' text-gray-800'
+                        }`}
+                      >
+                        {opt.text}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* STATE A – complex options: show a single "Vote Now" button that opens detail */}
+          {!shouldShowResults && hasComplexOptions && (
+            <button
+              onClick={onContentClick}
+              className="w-full py-3 rounded-2xl bg-gray-900 text-white text-xs font-bold tracking-wide active:scale-[0.98] transition-all shadow-md"
+            >
+              {t('Vote Now')}
+            </button>
+          )}
+
+          {/* STATE A – participate button (multiple-choice / followUp) */}
+          {!shouldShowResults && !hasComplexOptions && showParticipateButton && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!hasVoted && onVote) {
+                  const customOpt = localOptions.find(o => o.id.startsWith('custom-') && selectedOptions.includes(o.id));
+                  onVote(sourceSurvey.id, selectedOptions, isCurrentlyAnonymous, customOpt, followUpAnswers);
+                  setHasVoted(true);
+                  startDemographicFlow();
+                }
+              }}
+              disabled={selectedOptions.length === 0 || followUpRequiredAndMissing}
+              className={`w-full mt-2 py-3 rounded-2xl text-white text-xs font-bold tracking-wide transition-all shadow-md${
+                selectedOptions.length === 0 || followUpRequiredAndMissing
+                  ? ' bg-gray-300 cursor-not-allowed'
+                  : ' bg-gray-900 active:scale-[0.98]'
+              }`}
+            >
+              {t('Participate')}
+            </button>
+          )}
+
+          {/* STATE B – after voting: result chips with progress fill */}
+          {shouldShowResults && (
+            <div className="grid grid-cols-2 gap-2">
+              {displayedOptions.map((opt) => {
+                const isSelected = selectedOptions.includes(opt.id);
+                const pct = getOptionPercentage(opt.id);
+                return (
+                  <div
+                    key={opt.id}
+                    aria-label={`${opt.text}: ${pct}%`}
+                    className={`relative min-h-[44px] rounded-2xl border overflow-hidden${
+                      isSelected ? ' border-blue-400 bg-white' : ' border-gray-200 bg-white'
+                    }`}
+                  >
+                    {/* Animated progress fill */}
+                    <div
+                      className={`absolute inset-y-0 left-0 transition-all duration-700 ease-out z-0${
+                        isSelected ? ' bg-blue-100' : ' bg-gray-100'
+                      }`}
+                      style={{ width: `${pct}%` }}
+                    />
+                    {/* Content */}
+                    <div className="relative z-10 h-full flex items-center justify-between px-3 py-2 gap-2">
+                      <div className="flex items-start gap-1.5 flex-1 min-w-0">
+                        {isSelected && (
+                          <div className="shrink-0 w-3.5 h-3.5 rounded-full bg-blue-600 flex items-center justify-center mt-0.5">
+                            <Check size={8} strokeWidth={3.5} className="text-white" />
+                          </div>
+                        )}
+                        <span
+                          dir="auto"
+                          className={`text-[12px] font-semibold leading-snug line-clamp-2 break-words${
+                            isSelected ? ' text-blue-700' : ' text-gray-700'
+                          }`}
+                        >
+                          {opt.text}
+                        </span>
+                      </div>
+                      <span className={`text-[12px] font-bold shrink-0 tabular-nums${
+                        isSelected ? ' text-blue-600' : ' text-gray-500'
+                      }`}>
+                        {pct}%
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* See more options (feed only) */}
+          {!isDetailView && hiddenCount > 0 && (
+            <button
+              onClick={onContentClick}
+              className="mt-2 text-xs text-blue-600 font-bold hover:underline flex items-center gap-1 px-1"
+            >
+              <Plus size={12} />
+              {t('See more options')} ({hiddenCount})
+            </button>
+          )}
+
+        </div>
+      </>
+    );
+  };
+
   const renderBodyContent = () => {
     if (survey.type === SurveyType.CHALLENGE) {
       return renderChallengeInteractive();
@@ -1733,7 +1913,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 {sourceSurvey.isTrending && <span className="inline-flex items-center gap-1 bg-red-50 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 mt-1"><TrendingUp size={10} /> {t('Hot')}</span>}
               </div>
 
-              {sourceSurvey.coverImage && <div onClick={onContentClick} className={`w-full rounded-xl overflow-hidden mb-3 bg-gray-100 ${onContentClick ? 'cursor-pointer hover:opacity-95 transition-opacity' : ''}`}><img src={sourceSurvey.coverImage} crossOrigin="anonymous" alt="Cover" className="w-full max-h-[500px] object-cover block" /></div>}
+              {/* Cover image / chips block */}
+              {isCoverImagePollCard
+                ? renderCoverImagePollCard()
+                : (sourceSurvey.coverImage && <div onClick={onContentClick} className={`w-full rounded-xl overflow-hidden mb-3 bg-gray-100 ${onContentClick ? 'cursor-pointer hover:opacity-95 transition-opacity' : ''}`}><img src={sourceSurvey.coverImage} crossOrigin="anonymous" alt="Cover" className="w-full max-h-[500px] object-cover block" /></div>)
+              }
 
               {hasDescription && (
                 <div className="relative mb-3">
@@ -1750,7 +1934,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                   )}
                 </div>
               )}
-              {renderBodyContent()}
+              {/* Skip body content for cover-image poll cards — chips handle voting above */}
+              {!isCoverImagePollCard && renderBodyContent()}
             </div>
 
             <div className={`flex items-center justify-between text-[11px] text-gray-400 font-medium px-1 ${isTextOnlyPoll ? 'mt-0 mb-2' : 'mt-2 mb-3'}`}>
