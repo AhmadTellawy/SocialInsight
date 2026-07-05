@@ -819,8 +819,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const isTextOnlyPoll = isPollType && !isRating && !hasImages;
   const hasDescription = !!sourceSurvey.description?.trim();
 
-  // Premium cover-image poll card: polls with a coverImage but no option images, not rating
-  const isCoverImagePollCard = !!sourceSurvey.coverImage && isPollType && !isRating && !hasImages;
+  // Premium cover-image poll card: polls with a coverImage but no option images (rating included)
+  const isCoverImagePollCard = !!sourceSurvey.coverImage && isPollType && !hasImages;
 
   // Integer percentage for a single option
   const getOptionPercentage = (optionId: string): number => {
@@ -1622,7 +1622,16 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                           isSelected ? ' text-white' : ' text-gray-800'
                         }`}
                       >
-                        {opt.text}
+                        {isRating
+                          ? (
+                            <div className={`flex gap-0.5 ${isSelected ? 'text-yellow-300' : 'text-yellow-500'}`}>
+                              {Array.from({ length: opt.ratingValue || 0 }).map((_, i) => (
+                                <Star key={i} size={13} fill="currentColor" />
+                              ))}
+                            </div>
+                          )
+                          : opt.text
+                        }
                       </span>
                     </div>
                   </button>
@@ -1699,7 +1708,16 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                             isSelected ? ' text-blue-700' : ' text-gray-700'
                           }`}
                         >
-                          {opt.text}
+                          {isRating
+                            ? (
+                              <div className={`flex gap-0.5 ${isSelected ? 'text-yellow-500' : 'text-yellow-400'}`}>
+                                {Array.from({ length: opt.ratingValue || 0 }).map((_, i) => (
+                                  <Star key={i} size={13} fill="currentColor" />
+                                ))}
+                              </div>
+                            )
+                            : opt.text
+                          }
                         </span>
                       </div>
                       <span className={`text-[12px] font-bold shrink-0 tabular-nums${
