@@ -1317,7 +1317,7 @@ const App: React.FC = () => {
           />
         );
       case 'search':
-        return <SearchScreen surveys={publishedSurveys} onSurveyClick={handleSurveyClick} onAuthorClick={navigateToProfile} />;
+        return <SearchScreen surveys={publishedSurveys} onSurveyClick={handleSurveyClick} onAuthorClick={navigateToProfile} onGroupClick={navigateToGroup} />;
       case 'trends':
         return <TrendsScreen surveys={publishedSurveys} onSurveyClick={handleSurveyClick} />;
       case 'profile':

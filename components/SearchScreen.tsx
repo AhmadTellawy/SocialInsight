@@ -1,12 +1,14 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Search, X, Clock, TrendingUp, ChevronRight, User, Users, FileText, PieChart, Hash, ArrowLeft } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Search, X, Clock, TrendingUp, ChevronRight, User, Users, FileText, PieChart, Hash, ArrowLeft, Shield, Lock, Globe } from 'lucide-react';
 import { Survey, SurveyType } from '../types';
 import { UserAvatar } from './UserAvatar';
+import { api } from '../services/api';
 
 interface SearchScreenProps {
-  surveys: Survey[];
+  surveys: Survey[]; // Kept for interface compatibility or fallback
   onSurveyClick: (id: string, surface?: string) => void;
   onAuthorClick?: (author: { id: string; name: string; avatar: string; handle?: string }) => void;
+  onGroupClick?: (groupId: string) => void;
 }
 
 // Helper for highlighting text
@@ -25,13 +27,29 @@ const HighlightedText: React.FC<{ text: string; highlight: string; className?: s
   );
 };
 
-export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyClick, onAuthorClick }) => {
+export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyClick, onAuthorClick, onGroupClick }) => {
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState<'All' | 'Surveys' | 'Polls' | 'Categories' | 'People'>('All');
+  const [activeFilter, setActiveFilter] = useState<'All' | 'Surveys' | 'Polls' | 'Groups' | 'Categories' | 'People'>('All');
+  const [isLoading, setIsLoading] = useState(false);
 
-  // Mock Recent Searches (In a real app, persist this to localStorage)
-  const [recentSearches, setRecentSearches] = useState<string[]>(['Remote Work', 'Climate Change', 'Coffee']);
+  // Unified Search Results from API
+  const [searchResults, setSearchResults] = useState<{
+    surveys: any[];
+    people: any[];
+    groups: any[];
+    categories: string[];
+  }>({ surveys: [], people: [], groups: [], categories: [] });
+
+  // Persisted Recent Searches (In localStorage)
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('si_recent_searches');
+      return saved ? JSON.parse(saved) : ['Remote Work', 'Climate Change', 'Coffee'];
+    } catch {
+      return ['Remote Work', 'Climate Change', 'Coffee'];
+    }
+  });
 
   // Debounce logic
   useEffect(() => {
@@ -41,50 +59,77 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
     return () => clearTimeout(timer);
   }, [query]);
 
-  // Derived Data: Extract People and Categories from existing surveys
-  const allPeople = useMemo(() => {
-    const authors = new Map<string, { id: string; name: string; avatar: string }>();
-    surveys.forEach(s => authors.set(s.author.name, { id: s.author.id, name: s.author.name, avatar: s.author.avatar }));
-    return Array.from(authors.values());
-  }, [surveys]);
+  // Persist search history helpers
+  const handleAddRecentSearch = (term: string) => {
+    const cleanTerm = term.trim();
+    if (!cleanTerm || cleanTerm.length < 2) return;
+    setRecentSearches(prev => {
+      const filtered = prev.filter(t => t.toLowerCase() !== cleanTerm.toLowerCase());
+      const next = [cleanTerm, ...filtered].slice(0, 10);
+      localStorage.setItem('si_recent_searches', JSON.stringify(next));
+      return next;
+    });
+  };
 
-  const allCategories = useMemo(() => {
-    const cats = new Set<string>();
-    surveys.forEach(s => { if (s.category) cats.add(s.category); });
-    return Array.from(cats);
-  }, [surveys]);
+  const handleDeleteRecentSearch = (e: React.MouseEvent, term: string) => {
+    e.stopPropagation();
+    setRecentSearches(prev => {
+      const next = prev.filter(t => t !== term);
+      localStorage.setItem('si_recent_searches', JSON.stringify(next));
+      return next;
+    });
+  };
 
-  // Search Logic
-  const results = useMemo(() => {
-    const q = debouncedQuery.toLowerCase();
-    if (!q) return { surveys: [], people: [], categories: [] };
+  const handleClearRecent = () => {
+    setRecentSearches([]);
+    localStorage.removeItem('si_recent_searches');
+  };
 
-    return {
-      surveys: surveys.filter(s =>
-        s.title.toLowerCase().includes(q) ||
-        s.description.toLowerCase().includes(q) ||
-        s.category?.toLowerCase().includes(q)
-      ),
-      people: allPeople.filter(p => p.name.toLowerCase().includes(q)),
-      categories: allCategories.filter(c => c.toLowerCase().includes(q))
+  // Fetch Results from API on Debounced Query Change
+  useEffect(() => {
+    if (!debouncedQuery.trim() || debouncedQuery.trim().length < 2) {
+      setSearchResults({ surveys: [], people: [], groups: [], categories: [] });
+      return;
+    }
+
+    setIsLoading(true);
+    let active = true;
+
+    const performSearch = async () => {
+      try {
+        const data = await api.searchAll(debouncedQuery);
+        if (active) {
+          setSearchResults(data);
+          handleAddRecentSearch(debouncedQuery);
+        }
+      } catch (err) {
+        console.error('Failed to fetch search results:', err);
+      } finally {
+        if (active) setIsLoading(false);
+      }
     };
-  }, [debouncedQuery, surveys, allPeople, allCategories]);
+
+    performSearch();
+
+    return () => {
+      active = false;
+    };
+  }, [debouncedQuery]);
 
   // Filter Logic
   const showSurveys = (activeFilter === 'All' || activeFilter === 'Surveys' || activeFilter === 'Polls');
   const showPeople = (activeFilter === 'All' || activeFilter === 'People');
+  const showGroups = (activeFilter === 'All' || activeFilter === 'Groups');
   const showCategories = (activeFilter === 'All' || activeFilter === 'Categories');
 
-  // Specific filtering for Survey vs Poll within the Survey list
-  const filteredSurveys = results.surveys.filter(s => {
-    if (activeFilter === 'Surveys') return s.type === SurveyType.SURVEY;
-    if (activeFilter === 'Polls') return s.type === SurveyType.POLL || s.type === SurveyType.TRENDING;
+  // Filter Post by Type (Survey vs Poll)
+  const filteredSurveys = searchResults.surveys.filter(s => {
+    if (activeFilter === 'Surveys') return s.type === 'Survey';
+    if (activeFilter === 'Polls') return s.type === 'Poll' || s.type === 'Trending';
     return true;
   });
 
-  const hasResults = filteredSurveys.length > 0 || results.people.length > 0 || results.categories.length > 0;
-
-  const handleClearRecent = () => setRecentSearches([]);
+  const hasResults = filteredSurveys.length > 0 || searchResults.people.length > 0 || searchResults.groups.length > 0 || searchResults.categories.length > 0;
 
   return (
     <div className="bg-white min-h-[100dvh] flex flex-col pb-20">
@@ -97,7 +142,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search surveys, polls, topics, or creators"
+            placeholder="Search surveys, polls, groups, or creators"
             className="w-full bg-gray-100 border-none rounded-2xl pl-10 pr-10 py-3.5 text-sm font-medium text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 placeholder-gray-500 transition-all"
           />
           {query && (
@@ -113,7 +158,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
         {/* Filter Chips (Only show when searching) */}
         {query && (
           <div className="flex gap-2 overflow-x-auto no-scrollbar mt-3 pb-1">
-            {['All', 'Surveys', 'Polls', 'Categories', 'People'].map((filter) => (
+            {['All', 'Surveys', 'Polls', 'Groups', 'Categories', 'People'].map((filter) => (
               <button
                 key={filter}
                 onClick={() => setActiveFilter(filter as any)}
@@ -148,10 +193,18 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                     <button
                       key={idx}
                       onClick={() => setQuery(term)}
-                      className="flex items-center gap-3 w-full p-2.5 rounded-xl hover:bg-gray-50 text-left group transition-colors"
+                      className="flex items-center justify-between w-full p-2.5 rounded-xl hover:bg-gray-50 text-left group transition-colors"
                     >
-                      <Clock size={16} className="text-gray-400 group-hover:text-gray-600" />
-                      <span className="text-sm text-gray-700 font-medium group-hover:text-gray-900">{term}</span>
+                      <div className="flex items-center gap-3">
+                        <Clock size={16} className="text-gray-400 group-hover:text-gray-600" />
+                        <span className="text-sm text-gray-700 font-medium group-hover:text-gray-900">{term}</span>
+                      </div>
+                      <span 
+                        onClick={(e) => handleDeleteRecentSearch(e, term)}
+                        className="p-1 rounded-full text-gray-300 hover:text-gray-600 hover:bg-gray-200/50 shrink-0"
+                      >
+                        <X size={14} />
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -213,11 +266,57 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
           </div>
         )}
 
-        {/* State B: Live Results */}
+        {/* State B: Live Results & Loading */}
         {query && (
           <div className="p-4 space-y-6">
-            {!hasResults ? (
-              <div className="flex flex-col items-center justify-center pt-12 text-center">
+            {isLoading ? (
+              <div className="space-y-6">
+                {/* Categories Skeleton */}
+                <div className="flex gap-2">
+                  {[1, 2, 3].map(i => (
+                    <div key={i} className="w-20 h-8 bg-gray-100 rounded-lg animate-pulse" />
+                  ))}
+                </div>
+                {/* People Skeleton */}
+                <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-3">
+                  {[1, 2].map(i => (
+                    <div key={i} className="flex items-center justify-between animate-pulse">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-gray-200 rounded-full" />
+                        <div className="space-y-2">
+                          <div className="h-3 bg-gray-200 rounded-md w-24" />
+                          <div className="h-2.5 bg-gray-200 rounded-md w-16" />
+                        </div>
+                      </div>
+                      <div className="w-12 h-6 bg-gray-200 rounded-full" />
+                    </div>
+                  ))}
+                </div>
+                {/* Posts Skeleton */}
+                <div className="space-y-3">
+                  {[1, 2].map(i => (
+                    <div key={i} className="bg-white border border-gray-100 rounded-3xl p-5 shadow-sm animate-pulse space-y-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-gray-200 rounded-full" />
+                        <div className="space-y-2 flex-1">
+                          <div className="h-3.5 bg-gray-200 rounded-md w-1/3" />
+                          <div className="h-2.5 bg-gray-200 rounded-md w-1/4" />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="h-4 bg-gray-200 rounded-md w-3/4" />
+                        <div className="h-3 bg-gray-200 rounded-md w-full" />
+                      </div>
+                      <div className="flex gap-4 pt-2">
+                        <div className="h-6 bg-gray-200 rounded-full w-16" />
+                        <div className="h-6 bg-gray-200 rounded-full w-16" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : !hasResults ? (
+              <div className="flex flex-col items-center justify-center pt-12 text-center animate-in fade-in duration-200">
                 <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mb-4">
                   <Search size={24} className="text-gray-300" />
                 </div>
@@ -227,15 +326,15 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
             ) : (
               <>
                 {/* 1. Categories */}
-                {showCategories && results.categories.length > 0 && (
+                {showCategories && searchResults.categories.length > 0 && (
                   <section className="animate-in fade-in slide-in-from-bottom-2">
                     {activeFilter === 'All' && <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 px-1">Categories</h3>}
                     <div className="flex flex-wrap gap-2">
-                      {results.categories.map(cat => (
+                      {searchResults.categories.map(cat => (
                         <button
                           key={cat}
                           onClick={() => setQuery(cat)}
-                          className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 text-xs font-bold hover:border-blue-300 hover:text-blue-600"
+                          className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 text-xs font-bold hover:border-blue-350 hover:text-blue-600 transition-colors"
                         >
                           <Hash size={12} className="text-gray-400" />
                           <HighlightedText text={cat} highlight={debouncedQuery} />
@@ -245,40 +344,77 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                   </section>
                 )}
 
-                {/* 2. People */}
-                {showPeople && results.people.length > 0 && (
-                  <section className="animate-in fade-in slide-in-in-from-bottom-2">
+                {/* 2. People (Creators) */}
+                {showPeople && searchResults.people.length > 0 && (
+                  <section className="animate-in fade-in slide-in-from-bottom-2">
                     {activeFilter === 'All' && (
                       <div className="flex justify-between items-center mb-2 px-1">
                         <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Creators</h3>
-                        {results.people.length > 3 && <button onClick={() => setActiveFilter('People')} className="text-xs text-blue-600 font-bold">See all</button>}
+                        {searchResults.people.length > 3 && <button onClick={() => setActiveFilter('People')} className="text-xs text-blue-600 font-bold">See all</button>}
                       </div>
                     )}
                     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                      {(activeFilter === 'All' ? results.people.slice(0, 3) : results.people).map((person, i) => (
+                      {(activeFilter === 'All' ? searchResults.people.slice(0, 3) : searchResults.people).map((person, i) => (
                         <div key={i} className="flex items-center justify-between p-3.5 hover:bg-gray-50 border-b border-gray-50 last:border-0 transition-colors">
                           <div className="flex items-center gap-3">
                             <UserAvatar 
-                                src={person.avatar} 
-                                alt={person.name} 
-                                size={40} 
-                                className="border border-gray-100" 
+                              src={person.avatar} 
+                              alt={person.name} 
+                              size={40} 
+                              className="border border-gray-100" 
                             />
                             <div>
                               <div className="text-sm font-bold text-gray-900"><HighlightedText text={person.name} highlight={debouncedQuery} /></div>
-                              <div className="text-xs text-gray-500">Creator</div>
+                              <div className="text-xs text-gray-500">@{person.handle || '—'}</div>
                             </div>
                           </div>
                           <button
                             onClick={() => onAuthorClick?.({ id: person.id, name: person.name, avatar: person.avatar, handle: person.handle })}
-                            className="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-xs font-bold hover:bg-gray-200">View</button>
+                            className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-full text-xs font-bold hover:bg-gray-200 transition-colors">View</button>
                         </div>
                       ))}
                     </div>
                   </section>
                 )}
 
-                {/* 3. Surveys & Polls */}
+                {/* 3. Groups */}
+                {showGroups && searchResults.groups.length > 0 && (
+                  <section className="animate-in fade-in slide-in-from-bottom-2">
+                    {activeFilter === 'All' && (
+                      <div className="flex justify-between items-center mb-2 px-1">
+                        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Groups</h3>
+                        {searchResults.groups.length > 3 && <button onClick={() => setActiveFilter('Groups')} className="text-xs text-blue-600 font-bold">See all</button>}
+                      </div>
+                    )}
+                    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden divide-y divide-gray-50">
+                      {(activeFilter === 'All' ? searchResults.groups.slice(0, 3) : searchResults.groups).map((group, i) => (
+                        <div key={i} className="flex items-center justify-between p-4 hover:bg-gray-50 transition-colors">
+                          <div className="flex items-center gap-3 min-w-0 flex-1 mr-3">
+                            <img 
+                              src={group.image || `https://ui-avatars.com/api/?name=${encodeURIComponent(group.name)}&background=random&color=fff&size=200`} 
+                              alt={group.name} 
+                              className="w-10 h-10 rounded-xl object-cover border border-gray-100 shrink-0" 
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm font-bold text-gray-900 truncate">
+                                <HighlightedText text={group.name} highlight={debouncedQuery} />
+                              </div>
+                              <p className="text-xs text-gray-500 truncate mt-0.5">{group.description || 'No description'}</p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => onGroupClick?.(group.id)}
+                            className="px-3.5 py-1.5 bg-blue-50 text-blue-600 rounded-full text-xs font-bold hover:bg-blue-100 shrink-0"
+                          >
+                            View
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* 4. Surveys & Polls */}
                 {showSurveys && filteredSurveys.length > 0 && (
                   <section className="animate-in fade-in slide-in-from-bottom-2">
                     {activeFilter === 'All' && <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 px-1">Surveys & Polls</h3>}
@@ -293,7 +429,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                           <div className="flex justify-between items-start">
                             <div className="flex-1">
                               <div className="flex items-center gap-2 mb-1">
-                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md uppercase tracking-wide ${survey.type === SurveyType.POLL ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
+                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md uppercase tracking-wide ${survey.type === 'Poll' || survey.type === 'Trending' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
                                   }`}>
                                   {survey.type}
                                 </span>
@@ -313,12 +449,12 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
 
                           <div className="flex items-center justify-between pt-2 border-t border-gray-50 mt-1">
                             <div className="flex items-center gap-2 text-xs text-gray-500">
-                              <img src={survey.author.avatar} className="w-4 h-4 rounded-full" alt="" />
-                              <span>{survey.author.name}</span>
+                              <img src={survey.author?.avatar || 'https://picsum.photos/100'} className="w-4 h-4 rounded-full" alt="" />
+                              <span>{survey.author?.name}</span>
                             </div>
                             <div className="flex items-center gap-3 text-xs text-gray-400 font-medium">
-                              <span>{survey.participants} votes</span>
-                              <span>{survey.timeLeft}</span>
+                              <span>{survey.participants || 0} votes</span>
+                              <span>{survey.timeLeft || 'Active'}</span>
                             </div>
                           </div>
                         </div>

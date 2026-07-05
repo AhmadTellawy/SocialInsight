@@ -209,6 +209,13 @@ export const api = {
         return response.json();
     },
 
+    searchAll: async (query: string) => {
+        if (!query) return { surveys: [], people: [], groups: [], categories: [] };
+        const response = await authFetch(`${API_BASE_URL}/search?q=${encodeURIComponent(query)}`);
+        if (!response.ok) throw new Error('Failed to fetch search results');
+        return response.json();
+    },
+
     getGroups: async () => {
         const response = await authFetch(`${API_BASE_URL}/groups`);
         if (!response.ok) throw new Error('Failed to fetch groups');
