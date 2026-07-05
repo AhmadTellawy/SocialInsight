@@ -222,6 +222,19 @@ export const api = {
         return response.json();
     },
 
+    getTrends: async (params: { period?: string; type?: string; country?: string; limit?: number; category?: string }) => {
+        const queryParams = new URLSearchParams();
+        if (params.period) queryParams.append('period', params.period);
+        if (params.type) queryParams.append('type', params.type);
+        if (params.country) queryParams.append('country', params.country);
+        if (params.limit) queryParams.append('limit', params.limit.toString());
+        if (params.category) queryParams.append('category', params.category);
+
+        const response = await authFetch(`${API_BASE_URL}/posts/trends?${queryParams.toString()}`);
+        if (!response.ok) throw new Error('Failed to fetch trends');
+        return response.json();
+    },
+
     createSurvey: async (data: any) => {
         const response = await authFetch(`${API_BASE_URL}/posts`, {
             method: 'POST',

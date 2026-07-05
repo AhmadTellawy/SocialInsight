@@ -22,7 +22,8 @@ import {
     deletePost,
     getPostAnalytics,
     updateComment,
-    deleteComment
+    deleteComment,
+    getTrends
 } from '../controllers/postController';
 
 import { recordPostView } from '../controllers/viewController';
@@ -32,6 +33,7 @@ const router = Router();
 
 // Optional Auth (Guests can view, Users get personalized views)
 router.get('/', optionalAuth, getPosts);
+router.get('/trends', optionalAuth, getTrends);
 router.get('/drafts', requireAuth, getDrafts);
 router.get('/saved', requireAuth, getSavedPosts);
 router.get('/comments/:id/likes', optionalAuth, getCommentLikers);

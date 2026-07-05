@@ -262,6 +262,120 @@ export const getPosts = async (req: Request, res: Response) => {
     }
 };
 
+export const getTrends = async (req: Request, res: Response) => {
+    const userId = req.query.userId as string | undefined;
+    const period = (req.query.period as string || '24h').toLowerCase();
+    const type = req.query.type as string | undefined; // "Poll", "Survey", "Quiz", "Challenge"
+    const country = req.query.country as string | undefined; // country code like 'JO', 'SA'
+    const category = req.query.category as string | undefined;
+    const limit = parseInt(req.query.limit as string) || 10;
+
+    try {
+        // Date range filter
+        let dateFilter = {};
+        const now = new Date();
+        if (period === '24h') {
+            dateFilter = { createdAt: { gte: new Date(now.getTime() - 24 * 60 * 60 * 1000) } };
+        } else if (period === '7d') {
+            dateFilter = { createdAt: { gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000) } };
+        } else if (period === '30d') {
+            dateFilter = { createdAt: { gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) } };
+        }
+
+        // Fetch all candidates matching basic criteria
+        const posts = await prisma.post.findMany({
+            where: {
+                isDeleted: false,
+                status: 'PUBLISHED',
+                ...dateFilter,
+                ...(type && type !== 'all' ? { type: { equals: type, mode: 'insensitive' } } : {}),
+                ...(category ? { category: { equals: category, mode: 'insensitive' } } : {}),
+                ...(country && country !== 'ALL' ? {
+                    author: {
+                        OR: [
+                            { country: { equals: country, mode: 'insensitive' } },
+                            { location: { contains: country, mode: 'insensitive' } }
+                        ]
+                    }
+                } : {})
+            },
+            include: {
+                author: {
+                    select: {
+                        id: true,
+                        name: true,
+                        avatar: true,
+                        handle: true,
+                        location: true,
+                        country: true,
+                        followersCount: true
+                    }
+                }
+            }
+        });
+
+        // Map and rank candidates in-memory
+        const nowMs = Date.now();
+        const scoredPosts = posts.map(post => {
+            const votes = post.responseCount || 0;
+            const comments = post.commentsCount || 0;
+            const likes = post.likesCount || 0;
+            const shares = post.sharesCount || 0;
+            const views = post.viewCount || 0;
+
+            // gravity score: engagement / (ageHours + 2)^1.5
+            const ageHours = (nowMs - post.createdAt.getTime()) / (3600 * 1000);
+            const engagement = votes * 3 + comments * 2 + likes + shares * 4 + views * 0.1;
+            const trendScore = engagement / Math.pow(ageHours + 2, 1.5);
+
+            // Compute dynamic trending reason
+            let trendingReason = 'تفاعل نشط'; // Active engagement
+            if (comments > votes * 0.4 && comments > 5) {
+                trendingReason = 'الأكثر تعليقاً';
+            } else if (shares > 5) {
+                trendingReason = 'ينمو بسرعة';
+            } else if (ageHours < 12 && engagement > 15) {
+                trendingReason = 'صاعد حديثاً';
+            } else if (votes > 50) {
+                trendingReason = 'مشاركة قياسية';
+            }
+
+            return {
+                id: post.id,
+                title: post.title,
+                description: post.description,
+                type: post.type,
+                category: post.category,
+                coverImage: post.image,
+                likesCount: post.likesCount,
+                commentsCount: post.commentsCount,
+                participants: post.responseCount,
+                sharesCount: post.sharesCount,
+                viewCount: post.viewCount,
+                trendScore,
+                trendingReason,
+                createdAt: post.createdAt,
+                author: {
+                    id: post.author.id,
+                    name: post.author.name,
+                    avatar: post.author.avatar || 'https://picsum.photos/100',
+                    handle: post.author.handle,
+                    location: post.author.location
+                }
+            };
+        });
+
+        // Sort descending by trendScore
+        scoredPosts.sort((a, b) => b.trendScore - a.trendScore);
+
+        // Return top-N
+        res.json(scoredPosts.slice(0, limit));
+    } catch (error) {
+        console.error('Failed to get trends:', error);
+        res.status(500).json({ error: 'Failed to fetch trends' });
+    }
+};
+
 export const getPostById = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const userId = req.query.userId as any;
