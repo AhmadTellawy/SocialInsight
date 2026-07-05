@@ -68,10 +68,12 @@ export interface Group {
   category: string;
   isPublic: boolean;
   members: number; // legacy
+  memberCount: number;
   role: 'Owner' | 'Admin' | 'Member';
   permissions?: GroupPermissions; // Added for new permission checks
   image?: string;
   createdAt: string;
+  rules?: string;
   // Settings
   joinPolicy?: 'OPEN' | 'REQUEST' | 'INVITE_ONLY';
   postingPermissions?: 'AdminsOnly' | 'AllMembers' | 'ApprovalNeeded';

@@ -225,7 +225,7 @@ export const createGroup = async (req: Request, res: Response) => {
 
 export const updateGroup = async (req: Request, res: Response) => {
     const id = req.params.id as string;
-    const { name, description, category, image, isPublic, joinPolicy, postingPermissions } = req.body;
+    const { name, description, category, image, isPublic, joinPolicy, postingPermissions, rules } = req.body;
     const currentUserId = req.user?.userId;
 
     if (!currentUserId) {
@@ -265,6 +265,15 @@ export const updateGroup = async (req: Request, res: Response) => {
                 return;
             }
             updateData.description = trimmedDesc;
+        }
+
+        if (rules !== undefined) {
+            const trimmedRules = (rules || '').trim();
+            if (trimmedRules.length > 1000) {
+                res.status(400).json({ error: 'Group rules cannot exceed 1000 characters.' });
+                return;
+            }
+            updateData.rules = trimmedRules;
         }
 
         if (category !== undefined) updateData.category = category;

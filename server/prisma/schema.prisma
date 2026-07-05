@@ -123,6 +123,7 @@ model Group {
   joinPolicy         String        @default("OPEN")
   postingPermissions String        @default("AllMembers")
   memberCount        Int           @default(0)
+  rules              String?
   isDeleted          Boolean       @default(false)
   deletedAt          DateTime?
   createdAt          DateTime      @default(now())

@@ -75,6 +75,8 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
   const [inviteSearching, setInviteSearching]     = useState(false);
   const [inviteLoadingId, setInviteLoadingId]     = useState<string | null>(null);
   const [invitedIds, setInvitedIds]               = useState<Set<string>>(new Set());
+  const [selectedInviteIds, setSelectedInviteIds] = useState<Set<string>>(new Set());
+  const [isBulkInviting, setIsBulkInviting]       = useState(false);
 
   const {
     membershipStatus, role, joinGroup, leaveGroup, requestToJoin, declineInvite,
@@ -210,11 +212,55 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
     } finally { setInviteLoadingId(null); }
   };
 
+  const toggleSelectUser = (userId: string) => {
+    setSelectedInviteIds(prev => {
+      const next = new Set(prev);
+      if (next.has(userId)) next.delete(userId);
+      else next.add(userId);
+      return next;
+    });
+  };
+
+  const toggleSelectAllVisible = () => {
+    const uninvitedVisible = inviteResults.filter(user => !invitedIds.has(user.id));
+    const allSelected = uninvitedVisible.length > 0 && uninvitedVisible.every(user => selectedInviteIds.has(user.id));
+    setSelectedInviteIds(prev => {
+      const next = new Set(prev);
+      if (allSelected) {
+        uninvitedVisible.forEach(user => next.delete(user.id));
+      } else {
+        uninvitedVisible.forEach(user => next.add(user.id));
+      }
+      return next;
+    });
+  };
+
+  const handleBulkInvite = async () => {
+    if (selectedInviteIds.size === 0 || isBulkInviting) return;
+    setIsBulkInviting(true);
+    const ids = Array.from(selectedInviteIds);
+    let successCount = 0;
+    for (const userId of ids) {
+      try {
+        await (onInviteUser ? onInviteUser(group.id, userId) : api.inviteToGroup(group.id, userId));
+        setInvitedIds(prev => new Set([...prev, userId]));
+        successCount++;
+      } catch (err) {
+        console.error(`Failed to invite user ${userId}:`, err);
+      }
+    }
+    showToast(`Invited ${successCount} user(s) successfully!`);
+    setSelectedInviteIds(new Set());
+    setIsBulkInviting(false);
+  };
+
   const resetInviteModal = () => {
     setShowInviteModal(false);
     setInviteQuery('');
     setInviteResults([]);
     setInvitedIds(new Set());
+    setSelectedInviteIds(new Set());
+    setIsBulkInviting(false);
   };
 
   // ── Membership Status Button ─────────────────────────────────────
@@ -393,7 +439,29 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
                 )}
               </div>
             ) : isPostsLoading && posts.length === 0 ? (
-              <div className="py-10 text-center text-gray-500 animate-pulse">Loading posts...</div>
+              <div className="flex flex-col gap-4 p-4">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="bg-white border border-gray-100 rounded-3xl p-5 shadow-sm animate-pulse space-y-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-gray-200 rounded-full" />
+                      <div className="space-y-2 flex-1">
+                        <div className="h-3.5 bg-gray-200 rounded-md w-1/3" />
+                        <div className="h-2.5 bg-gray-200 rounded-md w-1/4" />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="h-4 bg-gray-200 rounded-md w-3/4" />
+                      <div className="h-3 bg-gray-200 rounded-md w-full" />
+                      <div className="h-3 bg-gray-200 rounded-md w-5/6" />
+                    </div>
+                    <div className="h-28 bg-gray-200 rounded-2xl w-full" />
+                    <div className="flex gap-4 pt-2">
+                      <div className="h-8 bg-gray-200 rounded-full w-20" />
+                      <div className="h-8 bg-gray-200 rounded-full w-20" />
+                    </div>
+                  </div>
+                ))}
+              </div>
             ) : postsError ? (
               <div className="py-10 text-center text-red-500 text-sm">Error: {postsError}</div>
             ) : posts.length > 0 ? (
@@ -480,10 +548,10 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
             </div>
             <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100 flex items-start gap-3">
               <Info size={18} className="text-blue-600 mt-0.5" />
-              <div>
+              <div className="flex-1">
                 <h5 className="text-xs font-bold text-blue-900">Rules &amp; Guidelines</h5>
-                <p className="text-[11px] text-blue-700 mt-1 leading-relaxed">
-                  Respect all members, no spamming, and ensure polls are relevant to {group.category}.
+                <p className="text-[11px] text-blue-700 mt-1 leading-relaxed whitespace-pre-wrap">
+                  {group.rules || `Respect all members, no spamming, and ensure polls are relevant to ${group.category}.`}
                 </p>
               </div>
             </div>
@@ -494,8 +562,18 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
         if (!permissions.canViewMembers) return null;
         return (
           <div className="p-0 animate-in fade-in">
-            {isMembersLoading && members.length === 0 ? (
-              <div className="py-10 text-center text-gray-500 animate-pulse">Loading members...</div>
+             {isMembersLoading && members.length === 0 ? (
+              <div className="flex flex-col">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <div key={i} className="flex items-center gap-3 p-4 border-b border-gray-50 bg-white animate-pulse">
+                    <div className="w-10 h-10 bg-gray-200 rounded-full shrink-0" />
+                    <div className="flex-1 space-y-2">
+                      <div className="h-3.5 bg-gray-200 rounded-md w-1/4" />
+                      <div className="h-2.5 bg-gray-200 rounded-md w-1/6" />
+                    </div>
+                  </div>
+                ))}
+              </div>
             ) : membersError ? (
               <div className="py-10 text-center text-red-500 text-sm">Error: {errorToText(membersError)}</div>
             ) : members.length > 0 ? (
@@ -600,6 +678,20 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
               />
             </div>
 
+            {inviteResults.some(user => !invitedIds.has(user.id)) && (
+              <div className="px-5 py-2 flex items-center justify-between border-b border-gray-50 shrink-0 bg-gray-50/50">
+                <span className="text-[10px] font-bold text-gray-400 uppercase">Select multiple users to bulk invite</span>
+                <button 
+                  onClick={toggleSelectAllVisible}
+                  className="text-xs font-bold text-blue-600 hover:text-blue-700"
+                >
+                  {inviteResults.filter(user => !invitedIds.has(user.id)).every(user => selectedInviteIds.has(user.id)) 
+                    ? 'Deselect All' 
+                    : 'Select All'}
+                </button>
+              </div>
+            )}
+
             <div className="overflow-y-auto flex-1 px-4 pb-8">
               {inviteSearching ? (
                 <div className="py-8 text-center text-gray-400 text-sm animate-pulse">Searching...</div>
@@ -610,11 +702,26 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
               ) : (
                 inviteResults.map((user: any) => {
                   const isInvited  = invitedIds.has(user.id);
+                  const isSelected = selectedInviteIds.has(user.id);
                   const isLoadingU = inviteLoadingId === user.id;
                   return (
                     <div key={user.id} className="flex items-center gap-3 py-3 border-b border-gray-50 last:border-0">
+                      {!isInvited && (
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleSelectUser(user.id)}
+                          className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500/20 border-gray-300"
+                        />
+                      )}
+                      {isInvited && (
+                        <div className="w-4 h-4 flex items-center justify-center text-green-600 shrink-0">
+                          <Check size={14} strokeWidth={3} />
+                        </div>
+                      )}
+
                       <SafeImage src={user.avatar} fallback="https://picsum.photos/100" className="w-10 h-10 rounded-full object-cover shrink-0" />
-                      <div className="flex-1 min-w-0">
+                      <div className="flex-1 min-w-0" onClick={() => !isInvited && toggleSelectUser(user.id)}>
                         <p className="text-sm font-bold text-gray-900 truncate">{user.name}</p>
                         <p className="text-xs text-gray-400">@{user.handle}</p>
                       </div>
@@ -627,13 +734,25 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
                             : 'bg-blue-600 text-white hover:bg-blue-700 active:scale-95 shadow-sm'
                         } disabled:opacity-70`}
                       >
-                        {isLoadingU ? '...' : isInvited ? '✓ Invited' : 'Invite'}
+                        {isLoadingU ? '...' : isInvited ? 'Invited' : 'Invite'}
                       </button>
                     </div>
                   );
                 })
               )}
             </div>
+
+            {selectedInviteIds.size > 0 && (
+              <div className="p-4 border-t border-gray-100 shrink-0 bg-white animate-in slide-in-from-bottom">
+                <button
+                  onClick={handleBulkInvite}
+                  disabled={isBulkInviting}
+                  className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-2xl text-xs uppercase tracking-widest shadow-lg shadow-blue-200 transition-all flex items-center justify-center gap-2"
+                >
+                  {isBulkInviting ? 'Inviting Selected...' : `Send Invites to ${selectedInviteIds.size} Users`}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

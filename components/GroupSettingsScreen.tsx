@@ -13,6 +13,11 @@ export type PostingPerms = 'AdminsOnly' | 'AllMembers' | 'ApprovalNeeded';
 export interface GroupUpdatePayload {
   joinPolicy?: JoinPolicy;
   postingPermissions?: PostingPerms;
+  name?: string;
+  description?: string;
+  category?: string;
+  image?: string;
+  rules?: string;
 }
 
 export type GroupRole = 'Owner' | 'Admin' | 'Member';
@@ -150,10 +155,24 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
   const [isBannedLoading, setIsBannedLoading] = useState(false);
   const [showBannedSection, setShowBannedSection] = useState(false);
 
+  const [name, setName] = useState(group.name || '');
+  const [description, setDescription] = useState(group.description || '');
+  const [category, setCategory] = useState(group.category || 'Other');
+  const [image, setImage] = useState<string | null>(group.image || null);
+  const [rules, setRules] = useState(group.rules || '');
+  const [isSavingInfo, setIsSavingInfo] = useState(false);
+  const [memberSearch, setMemberSearch] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     setActiveJoinPolicy((group.joinPolicy as JoinPolicy) || 'OPEN');
     setActivePostingPerms((group.postingPermissions as PostingPerms) || 'AllMembers');
-  }, [group.id, group.joinPolicy, group.postingPermissions]);
+    setName(group.name || '');
+    setDescription(group.description || '');
+    setCategory(group.category || 'Other');
+    setImage(group.image || null);
+    setRules(group.rules || '');
+  }, [group.id, group.joinPolicy, group.postingPermissions, group.name, group.description, group.category, group.image, group.rules]);
 
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [confirmName, setConfirmName] = useState('');
@@ -343,6 +362,49 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
     }
   };
 
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      showToast('Image size exceeds 2MB limit', 'error');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      if (typeof event.target?.result === 'string') {
+        setImage(event.target.result);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSaveDetails = async () => {
+    if (!name.trim()) {
+      showToast('Group name is required', 'error');
+      return;
+    }
+    try {
+      setIsSavingInfo(true);
+      await onUpdateGroup(group.id, {
+        name: name.trim(),
+        description: description.trim(),
+        category,
+        image: image || undefined,
+        rules: rules.trim()
+      });
+      showToast('Group profile updated successfully');
+    } catch (e: any) {
+      showToast(e.message || 'Failed to update group profile', 'error');
+    } finally {
+      setIsSavingInfo(false);
+    }
+  };
+
+  const filteredMembers = members.filter(member => 
+    (member.name || '').toLowerCase().includes(memberSearch.toLowerCase()) ||
+    (member.handle || '').toLowerCase().includes(memberSearch.toLowerCase())
+  );
+
   return (
     <div className="flex flex-col h-full bg-gray-50 animate-in slide-in-from-right duration-300 relative">
       {/* Toast */}
@@ -362,7 +424,114 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
       </div>
 
       <div className="flex-1 overflow-y-auto no-scrollbar pb-10">
-        <div className="mt-4 px-4">
+        {/* Section: Edit Group Profile */}
+        {permissions.canManageSettings && (
+          <div className="mt-4 px-4">
+            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 px-1">Group Profile</h3>
+            <div className="bg-white rounded-2xl border border-gray-100 p-4 flex flex-col gap-4">
+              {/* Image Uploader */}
+              <div className="flex items-center gap-4">
+                <div 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-16 h-16 rounded-2xl bg-gray-50 border border-gray-100 overflow-hidden relative cursor-pointer group shrink-0"
+                >
+                  <img 
+                    src={image || `https://ui-avatars.com/api/?name=${encodeURIComponent(name || 'G')}&background=random&color=fff&size=200`} 
+                    alt="Group Avatar" 
+                    className="w-full h-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-[10px] font-bold">
+                    Change
+                  </div>
+                </div>
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  onChange={handleImageChange} 
+                  accept="image/*" 
+                  className="hidden" 
+                />
+                <div className="flex-1">
+                  <p className="text-xs font-bold text-gray-900">Group Avatar</p>
+                  <p className="text-[10px] text-gray-400 leading-normal mt-0.5">JPEG or PNG. Max size 2MB.</p>
+                </div>
+              </div>
+
+              {/* Name Input */}
+              <div>
+                <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Group Name</label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Group Name"
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                />
+              </div>
+
+              {/* Description Input */}
+              <div>
+                <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Description</label>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Describe your group..."
+                  rows={3}
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 resize-none"
+                />
+              </div>
+
+              {/* Category Dropdown */}
+              <div>
+                <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Category</label>
+                <select
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                >
+                  {[
+                    'Hobby & Interests',
+                    'Education & Study',
+                    'Non-Profit & Community',
+                    'Gaming & Esports',
+                    'Health & Wellness',
+                    'Professional Networking',
+                    'Technology',
+                    'Marketing',
+                    'Finance',
+                    'Consumer Goods',
+                    'Retail',
+                    'Other'
+                  ].map((cat) => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Rules Input */}
+              <div>
+                <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Group Rules & Guidelines</label>
+                <textarea
+                  value={rules}
+                  onChange={(e) => setRules(e.target.value)}
+                  placeholder="Define guidelines for members..."
+                  rows={4}
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 resize-none"
+                />
+              </div>
+
+              <button
+                onClick={handleSaveDetails}
+                disabled={isSavingInfo}
+                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-200 transition-all flex items-center justify-center disabled:opacity-50"
+              >
+                {isSavingInfo ? 'Saving Changes...' : 'Save Profile Details'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-8 px-4">
           <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 px-1">Join Policy</h3>
           <div className={`bg-white rounded-2xl border border-gray-100 overflow-hidden ${!permissions.canManageSettings ? 'opacity-70 pointer-events-none' : ''}`}>
             {[
@@ -507,12 +676,26 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
               </button>
             )}
           </div>
+
+          {/* Member Search Bar */}
+          <div className="mb-3 px-1">
+            <input
+              type="text"
+              value={memberSearch}
+              onChange={(e) => setMemberSearch(e.target.value)}
+              placeholder="Search members by name or handle..."
+              className="w-full bg-white border border-gray-150 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+            />
+          </div>
+
           <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden divide-y divide-gray-50">
             {isMembersLoading ? (
               <div className="p-8 text-center text-gray-400 text-xs font-bold animate-pulse">Loading members...</div>
             ) : membersError ? (
               <div className="p-8 text-center text-red-500 text-xs font-bold">Failed to load members</div>
-            ) : members.map(member => {
+            ) : filteredMembers.length === 0 ? (
+              <div className="p-8 text-center text-gray-400 text-xs">No members found matching "{memberSearch}"</div>
+            ) : filteredMembers.map(member => {
               const isMe = member.id === currentUserId;
               const isOwnerRole = member.role === 'Owner';
               const isAdminRole = member.role === 'Admin';
