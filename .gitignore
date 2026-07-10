@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+.env.e2e.local
 *.local
 test-results/
 playwright-report/
