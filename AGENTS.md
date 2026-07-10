@@ -1,0 +1,180 @@
+# socialinsight Agent Governance
+
+This file defines operating rules for all future AI-assisted work on socialinsight.
+
+## Product Identity
+
+- Product/application name: socialinsight.
+- Repository folder name: socialinsight.
+- Use the name "socialinsight" consistently in documentation, code comments, plans, reports, and user-facing summaries.
+- Do not introduce alternative product names unless explicitly instructed by the user.
+
+## Evidence-First Behavior
+
+- Inspect before modifying.
+- Cite relevant repository file paths for material conclusions.
+- Separate confirmed evidence from inference.
+- Do not claim runtime behavior from static code alone.
+- Do not claim visual UX findings without browser evidence.
+- Do not upgrade suspected issues into confirmed findings without sufficient evidence.
+- Clearly state when runtime, browser, database, or live-environment verification is still required.
+- When a finding is based only on source inspection, label it as static evidence.
+
+## Mandatory Impact Analysis
+
+Before modifying a feature, inspect all relevant layers where applicable:
+
+- frontend
+- backend
+- database
+- API contracts
+- authentication
+- authorization
+- privacy
+- realtime behavior
+- notifications
+- background jobs
+- PWA behavior
+- tests
+- mobile behavior
+- responsive behavior
+- RTL/LTR behavior
+- Arabic/English behavior
+- deployment implications
+
+Document which layers were inspected and which remain unverified.
+
+## Git Safety
+
+- Never force push.
+- Never rewrite history.
+- Never merge automatically.
+- Never delete branches automatically.
+- Never reset or discard user changes automatically.
+- Prefer branch-based changes.
+- Report git status before major implementation work.
+- Identify uncommitted and untracked files before major changes.
+- Never assume the working tree is clean.
+- Do not commit or push unless explicitly instructed.
+- If existing user changes are present, preserve them and work around them.
+
+## Database Safety
+
+- Never run destructive database commands automatically.
+- Never run `prisma db push --accept-data-loss`.
+- Never modify production data automatically.
+- Never reset the database automatically.
+- Never drop tables, columns, schemas, or databases automatically.
+- Schema changes require explicit review.
+- Prefer reviewed Prisma migrations.
+- Database migrations require impact analysis.
+- Clearly identify possible data-loss risks.
+- Distinguish local, test, staging, and production database actions where evidence exists.
+- Do not access or modify the database unless explicitly approved for the task.
+
+## Security And Privacy
+
+- Never trust caller-supplied identity when verified identity is available.
+- Derive authenticated identity from verified server-side authentication context.
+- Authorization must be enforced server-side.
+- Frontend restrictions are not sufficient authorization controls.
+- Private account and content visibility rules must be checked across all access paths.
+- Search, feeds, comments, followers, following, poll results, realtime events, notifications, and analytics require privacy review where applicable.
+- Realtime/socket identity must be authenticated.
+- Sensitive data must not be exposed in logs or reports.
+- Secret values must never be displayed.
+- Security findings must distinguish confirmed vulnerabilities from suspected risks.
+
+## Operating Modes
+
+### REVIEW_ONLY
+
+- Inspect and analyze.
+- Do not modify files.
+- Do not install dependencies.
+- Do not deploy.
+- Do not modify databases.
+
+### PROPOSE_ONLY
+
+- Inspect and analyze.
+- Propose changes.
+- Identify affected files.
+- Identify risks.
+- Do not implement changes.
+
+### IMPLEMENT_APPROVED
+
+- Implement only explicitly approved changes.
+- Do not expand scope silently.
+- Run relevant checks.
+- Report every changed file.
+- Report remaining risks.
+
+### VERIFY_ONLY
+
+- Verify existing implementation.
+- Do not modify application logic unless explicitly approved.
+- State exactly which verification levels were completed.
+
+Default to REVIEW_ONLY when user intent is ambiguous.
+
+## Testing Rules
+
+- Do not claim a fix is complete merely because code was edited.
+- Run relevant available checks when permitted.
+- Report missing tests.
+- Report test failures honestly.
+- Distinguish static verification from runtime verification.
+- Distinguish a successful build from successful functional testing.
+- Distinguish browser testing from code inspection.
+- Do not hide flaky or inconsistent test behavior.
+- Identify untested critical flows.
+
+## UI/UX Rules
+
+- Follow mobile-first principles.
+- Support Arabic and English.
+- Support RTL and LTR.
+- Consider accessibility.
+- Consider touch usability.
+- Consider responsive behavior.
+- Review consistency across related screens and states.
+- Review loading states.
+- Review empty states.
+- Review error states.
+- Review success states.
+- Review disabled states.
+- Review long-content behavior.
+- Review image handling.
+- Review keyboard behavior where relevant.
+- Do not infer visual quality from CSS alone.
+- Do not claim browser-visible issues without browser evidence.
+- Distinguish code-level UX findings from visually verified findings.
+- Distinguish UX recommendations from confirmed defects.
+
+## Required Output For Implementation Work
+
+Always report:
+
+- objective
+- operating mode
+- current-state evidence
+- relevant file paths
+- proposed approach
+- files changed
+- business-logic impact
+- frontend impact
+- backend impact
+- API-contract impact
+- security/privacy impact
+- database impact
+- realtime impact where relevant
+- PWA impact where relevant
+- tests run
+- build/typecheck/lint results
+- runtime verification
+- browser verification
+- remaining risks
+- unverified assumptions
+
