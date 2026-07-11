@@ -99,12 +99,23 @@ async function waitForOptionalLoginResponse(page: Page) {
     .catch(() => null);
 }
 
-async function submitLoginAndVerifyAuthenticatedState(page: Page, submit: () => Promise<void>): Promise<void> {
+interface LoginOptions {
+  tokenTimeout?: number;
+}
+
+async function submitLoginAndVerifyAuthenticatedState(
+  page: Page,
+  submit: () => Promise<void>,
+  options: LoginOptions = {},
+): Promise<void> {
   const loginResponsePromise = waitForOptionalLoginResponse(page);
 
   await submit();
 
-  const [loginResponse, tokenPresent] = await Promise.all([loginResponsePromise, waitForAuthToken(page)]);
+  const [loginResponse, tokenPresent] = await Promise.all([
+    loginResponsePromise,
+    waitForAuthToken(page, options.tokenTimeout),
+  ]);
 
   if (loginResponse && !loginResponse.ok() && !tokenPresent) {
     throw new Error(`Login response returned HTTP ${loginResponse.status()}`);
@@ -113,7 +124,7 @@ async function submitLoginAndVerifyAuthenticatedState(page: Page, submit: () => 
   expect(tokenPresent, 'expected authenticated token in localStorage after login').toBe(true);
 }
 
-export async function loginAsPublicCreator(page: Page): Promise<void> {
+export async function loginAsPublicCreator(page: Page, options: LoginOptions = {}): Promise<void> {
   const credentials = getPublicCreatorCredentials();
   const identifierInput = page.getByPlaceholder('Enter your email or handle');
   const passwordInput = page.getByPlaceholder('Enter your password');
@@ -137,7 +148,7 @@ export async function loginAsPublicCreator(page: Page): Promise<void> {
 
   const signInButton = page.getByRole('button', { name: /sign in/i });
   await expect(signInButton).toBeEnabled({ timeout: 5_000 });
-  await submitLoginAndVerifyAuthenticatedState(page, () => signInButton.click());
+  await submitLoginAndVerifyAuthenticatedState(page, () => signInButton.click(), options);
 
   await page.waitForURL((url) => url.pathname === '/', { timeout: 10_000 }).catch(() => undefined);
   await page.waitForLoadState('domcontentloaded').catch(() => undefined);

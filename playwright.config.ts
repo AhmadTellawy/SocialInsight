@@ -1,6 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 import { baseURL } from './tests/e2e/helpers/env';
 
+const setupTestMatch = /.*\.setup\.ts/;
+
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: false,
@@ -19,13 +21,22 @@ export default defineConfig({
   },
   projects: [
     {
+      name: 'setup',
+      testMatch: setupTestMatch,
+      use: {
+        ...devices['Desktop Chrome'],
+      },
+    },
+    {
       name: 'desktop-chromium',
+      testIgnore: setupTestMatch,
       use: {
         ...devices['Desktop Chrome'],
       },
     },
     {
       name: 'mobile-chromium',
+      testIgnore: setupTestMatch,
       use: {
         ...devices['Pixel 5'],
       },
