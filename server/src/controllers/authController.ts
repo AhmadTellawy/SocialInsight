@@ -5,6 +5,9 @@ import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '../middleware/authMiddleware';
 import { z } from 'zod';
 
+const GENERIC_LOGIN_ERROR = 'Invalid login credentials';
+const LEGACY_REGISTER_DISABLED_ERROR = 'Use the multi-step registration flow';
+
 const registerSchema = z.object({
     name: z.string().min(1, 'Name is required'),
     handle: z.string().min(3, 'Handle must be at least 3 characters').regex(/^[a-z0-9_.]+$/, 'Invalid handle format'),
@@ -77,76 +80,7 @@ const SAFE_USER_SELECT = {
 };
 
 export const register = async (req: Request, res: Response) => {
-    // Validate inputs using Zod
-    const validation = registerSchema.safeParse(req.body);
-    if (!validation.success) {
-        res.status(400).json({ error: validation.error.errors[0].message });
-        return;
-    }
-
-    const { name, handle, email, phone, password, birthday, country, avatar, authProvider } = req.body;
-
-    const lowerEmail = email?.toLowerCase();
-    const lowerHandle = handle?.toLowerCase();
-
-    try {
-        const existing = await prisma.user.findFirst({
-            where: {
-                OR: [
-                    { handle: { equals: handle, mode: 'insensitive' } },
-                    email ? { email: { equals: email, mode: 'insensitive' } } : undefined,
-                    phone ? { phone } : undefined
-                ].filter(Boolean) as any
-            }
-        });
-
-        if (existing) {
-            res.status(400).json({ error: 'Username, Email or Phone already exists' });
-            return;
-        }
-
-        const parsedBirthday = birthday ? new Date(birthday) : null;
-        
-        // Hash password during registration - security fix
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(password, salt);
-
-        const newUser = await prisma.user.create({
-            data: {
-                name,
-                handle: lowerHandle,
-                email: lowerEmail,
-                phone,
-                passwordHash: hashedPassword, // Store hashed password directly
-                birthday: parsedBirthday,
-                country,
-                avatar: avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(name || handle)}&background=6366f1&color=fff&bold=true&size=200`,
-                authProvider: authProvider || 'Email',
-                demographics: { create: { ageGroup: calculateAgeGroup(parsedBirthday) } }
-            } as any,
-            select: SAFE_USER_SELECT
-        });
-
-        await prisma.notificationSettings.create({
-            data: {
-                userId: newUser.id,
-                settings: JSON.stringify({
-                    myPosts: { likes: 'everyone', comments: 'everyone', shares: 'following' },
-                    sharedPosts: { likes: 'following', comments: 'following', shares: 'off' },
-                    toggles: { activityFollowed: true, invitations: true, commentInteractions: true, newFollowers: true, emailNotifications: false }
-                })
-            }
-        });
-
-        res.json({
-            ...newUser,
-            demographics: {},
-            stats: { followers: newUser.followersCount, following: newUser.followingCount, responses: 0, posts: 0 }
-        });
-    } catch (error) {
-        console.error("Register Error:", error);
-        res.status(500).json({ error: 'Failed to register' });
-    }
+    res.status(410).json({ error: LEGACY_REGISTER_DISABLED_ERROR });
 };
 
 export const login = async (req: Request, res: Response) => {
@@ -157,28 +91,34 @@ export const login = async (req: Request, res: Response) => {
         return;
     }
 
-    const { identifier, password, authProvider } = req.body;
+    const { identifier, password } = req.body;
 
     try {
-        const lowerIdentifier = identifier?.toLowerCase();
-        
         const user = await prisma.user.findFirst({
             where: {
                 OR: [
                     { email: { equals: identifier, mode: 'insensitive' } },
                     { handle: { equals: identifier, mode: 'insensitive' } }
-                ],
-                authProvider: authProvider || 'Email'
+                ]
             } as any
         });
 
         if (!user) {
-            res.status(404).json({ error: 'User not found' });
+            res.status(401).json({ error: GENERIC_LOGIN_ERROR });
             return;
         }
 
         // Verify Password
         let isPasswordValid = false;
+        const storedProvider = (user.authProvider || 'Email').toLowerCase();
+        const hasPasswordCredential = Boolean(user.passwordHash || user.password);
+        const requiresPassword = storedProvider === 'email' || hasPasswordCredential;
+
+        if (!requiresPassword) {
+            res.status(401).json({ error: GENERIC_LOGIN_ERROR });
+            return;
+        }
+
         if (password) {
             if (user.passwordHash) {
                 isPasswordValid = await bcrypt.compare(password, user.passwordHash);
@@ -194,8 +134,8 @@ export const login = async (req: Request, res: Response) => {
             }
         }
 
-        if (!isPasswordValid && authProvider === 'Email') {
-            res.status(401).json({ error: 'Invalid password' });
+        if (!isPasswordValid) {
+            res.status(401).json({ error: GENERIC_LOGIN_ERROR });
             return;
         }
 
@@ -258,6 +198,11 @@ export const completeRegistration = async (req: Request, res: Response) => {
         const where = pendingId ? { id: pendingId } : { email: lowerEmail };
         const pending = await prisma.pendingRegistration.findUnique({ where });
         if (!pending) return res.status(404).json({ error: 'Session not found' });
+
+        if (!pending.email || !pending.fullName || !pending.dob || !pending.password || !pending.handle || pending.currentStep < 5) {
+            res.status(400).json({ error: 'Registration is incomplete' });
+            return;
+        }
 
         // 1. Verify OTP code if not bypassed in development mode
         const skipOtp = otp === 'SKIP_OTP' && process.env.NODE_ENV === 'development';
