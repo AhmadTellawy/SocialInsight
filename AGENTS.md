@@ -44,6 +44,44 @@ Before modifying a feature, inspect all relevant layers where applicable:
 
 Document which layers were inspected and which remain unverified.
 
+## Multi-Role Review Requirement
+
+- The agent must not approach socialinsight tasks as code-only tasks.
+- Before implementation, identify which specialist roles from `docs/agent/skill-matrix.md` are relevant.
+- Apply every role that materially fits the requested change, and state if a relevant role could not be fully verified.
+- For auth, privacy, visibility, search, groups, notifications, or results, Security & Privacy Engineer review is mandatory.
+- For UI changes, UI/UX Designer and Accessibility & Internationalization Specialist review are mandatory.
+- For database/schema changes, Database Architect review is mandatory.
+- For E2E or regression work, QA Automation Engineer review is mandatory.
+- For deployment changes, DevOps/Release Engineer review is mandatory.
+- For feed, posts, polls, comments, likes, follows, groups, or pages, Product Logic Analyst review is mandatory.
+- The agent must report the roles used in every implementation summary.
+
+## Process / Feature Deep Audit Requirement
+
+- When the user asks to inspect, audit, review, improve, or evaluate a specific process or feature, the agent must use `docs/agent/process-audit-protocol.md`.
+- The agent must not jump directly to implementation unless the user explicitly asks to implement.
+- The agent must produce numbered findings with priorities.
+- The agent must wait for the user to approve specific finding IDs before implementing.
+- The agent must report which specialist roles were applied from `docs/agent/skill-matrix.md`.
+- For registration, login, auth, privacy, visibility, search, groups, pages, notifications, voting, results, or user relationships, Security & Privacy Engineer and Product Logic Analyst reviews are mandatory.
+- For UI-facing changes, UI/UX Designer and Accessibility & Internationalization Specialist reviews are mandatory.
+- For backend or database changes, Backend/API Engineer and Database Architect reviews are mandatory.
+- For any online test involving writes, controlled-write guardrails and exact-ID cleanup rules are mandatory.
+
+## Natural Language Intent Routing
+
+- The agent must infer the correct workflow from normal Arabic or English user wording using `docs/agent/natural-language-intent-router.md`.
+- The user does not need to name internal docs, protocols, modes, or workflow labels.
+- Natural review, audit, inspection, evaluation, or analysis wording must trigger `docs/agent/process-audit-protocol.md`.
+- Natural UI, design, layout, screen, or mobile wording must trigger UI/UX review.
+- Natural security, privacy, auth, permission, visibility, private account, group access, or search privacy wording must trigger Security & Privacy review.
+- Natural test, browser, E2E, practical check, or online verification wording must trigger the relevant verification rules.
+- Natural implementation, fix, apply, or execute wording must implement only explicitly approved findings or clearly specified work.
+- The agent must state the selected workflow in its response.
+- If a request combines audit and implementation, audit comes first unless the user explicitly approves implementation.
+- If online writes are required, controlled-write guardrails and exact-ID cleanup are mandatory.
+
 ## Git Safety
 
 - Never force push.
@@ -187,3 +225,13 @@ Always report:
 - browser verification
 - remaining risks
 - unverified assumptions
+
+## Specialist Review Summary
+
+Future implementation summaries must include:
+
+- roles applied
+- key concerns found
+- risks
+- tests required
+- unresolved product decisions
