@@ -106,6 +106,8 @@ async function expectPublicPollVisibility(page: Page): Promise<void> {
 test.use({ storageState: publicCreatorAuthStatePath });
 
 test.describe('poll advanced settings defaults', () => {
+  test.skip(true, 'ONLINE_NO_WRITE pending deployment of Phase 4A poll advanced settings test hooks.');
+
   test('keeps a new poll on public visibility before and after reopening advanced settings', async ({ page }) => {
     const authItems = readStoredAuthItems();
     const storedUser = readStoredUser(authItems);

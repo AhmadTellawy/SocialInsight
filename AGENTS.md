@@ -131,6 +131,16 @@ Default to REVIEW_ONLY when user intent is ambiguous.
 - Do not hide flaky or inconsistent test behavior.
 - Identify untested critical flows.
 
+## Online-Only Playwright E2E Policy
+
+- During the current phase, Playwright E2E tests must target only the approved online URL: `https://socialinsightapp.com/`.
+- Localhost, local frontend, and local backend E2E targets are not allowed during this phase.
+- Controlled-write E2E tests require explicit approval before execution.
+- Test-created data must use the `e2e_` prefix.
+- Cleanup must delete only the exact captured ID created by the test.
+- Never bulk delete, delete by title, or clean up old data without separate approval.
+- Never expose auth artifacts, credentials, cookies, localStorage, authorization headers, or tokens.
+
 ## UI/UX Rules
 
 - Follow mobile-first principles.
@@ -177,4 +187,3 @@ Always report:
 - browser verification
 - remaining risks
 - unverified assumptions
-

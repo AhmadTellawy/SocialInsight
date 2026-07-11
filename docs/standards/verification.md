@@ -88,6 +88,36 @@ Limitations:
 - E2E tests can miss visual quality issues unless screenshots or visual assertions are included.
 - E2E tests must use controlled test data and safe environments.
 
+### ONLINE_NO_WRITE Verification
+
+ONLINE_NO_WRITE browser tests target the deployed online socialinsight app and must not intentionally create, update, or delete data.
+
+Examples:
+
+- app-load smoke
+- login page render
+- navigation smoke
+- poll advanced settings UI
+- mobile layout smoke
+- language/RTL smoke
+- read-only authenticated checks after storageState exists
+
+### ONLINE_CONTROLLED_WRITE Verification
+
+ONLINE_CONTROLLED_WRITE browser tests target the deployed online socialinsight app and require explicit approval before execution.
+
+Required constraints:
+
+- use dedicated test accounts only
+- use `e2e_` prefixed test data
+- capture the created artifact ID before cleanup
+- delete only the exact captured ID
+- do not bulk delete
+- do not delete by title
+- do not use direct database cleanup
+- do not run Prisma commands or migrations
+- do not run unapproved follow, privacy, notification, vote, comment, like, save, share, report, or push-subscription write tests
+
 ## Level 6 - Visual Screenshot Verification
 
 Includes:
@@ -132,6 +162,11 @@ Every implementation or verification report must state:
 - browser and viewport, if any
 - database environment, if any
 - test data used, if any
+- target URL for E2E verification, if any
+- E2E test class: ONLINE_NO_WRITE or ONLINE_CONTROLLED_WRITE, if any
+- whether writes occurred
+- whether cleanup succeeded when writes occurred
+- screenshots, traces, or videos generated, by path only
+- whether token-like content exposure was checked
 - failures or flaky behavior
 - remaining unverified assumptions
-

@@ -3,6 +3,7 @@ import path from 'node:path';
 
 const DEFAULT_BASE_URL = 'https://socialinsightapp.com/';
 const LOCAL_E2E_ENV_FILE = '.env.e2e.local';
+const APPROVED_E2E_HOST = 'socialinsightapp.com';
 
 function loadLocalE2EEnv(): void {
   const envPath = path.resolve(process.cwd(), LOCAL_E2E_ENV_FILE);
@@ -40,21 +41,62 @@ function loadLocalE2EEnv(): void {
 loadLocalE2EEnv();
 
 export function resolveBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
-  const configuredUrl = env.E2E_BASE_URL || env.PLAYWRIGHT_BASE_URL || DEFAULT_BASE_URL;
+  const configuredUrl = env.E2E_BASE_URL || DEFAULT_BASE_URL;
   const candidate = configuredUrl.trim();
 
   if (!candidate) {
-    throw new Error('A Playwright base URL is required. Set E2E_BASE_URL or PLAYWRIGHT_BASE_URL.');
+    throw new Error('A Playwright base URL is required. Set E2E_BASE_URL.');
   }
 
   try {
-    return new URL(candidate).href;
+    const url = new URL(candidate);
+    assertApprovedOnlineBaseUrl(url);
+    return url.href;
   } catch {
-    throw new Error(`Invalid Playwright base URL: ${candidate}`);
+    throw new Error(
+      `Invalid Playwright base URL. E2E_BASE_URL must be an HTTPS URL on ${APPROVED_E2E_HOST}.`,
+    );
   }
 }
 
 export const baseURL = resolveBaseUrl();
+
+function assertApprovedOnlineBaseUrl(url: URL): void {
+  if (url.protocol !== 'https:') {
+    throw new Error('E2E_BASE_URL must use HTTPS.');
+  }
+
+  if (url.hostname !== APPROVED_E2E_HOST) {
+    throw new Error(`E2E_BASE_URL must target ${APPROVED_E2E_HOST}.`);
+  }
+
+  if (isForbiddenHost(url.hostname)) {
+    throw new Error('E2E_BASE_URL must not target localhost or a private network address.');
+  }
+}
+
+function isForbiddenHost(hostname: string): boolean {
+  const normalizedHost = hostname.toLowerCase();
+
+  if (['localhost', '0.0.0.0', '127.0.0.1'].includes(normalizedHost)) {
+    return true;
+  }
+
+  const octets = normalizedHost.split('.').map((part) => Number(part));
+  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) {
+    return false;
+  }
+
+  const [first, second] = octets;
+
+  return (
+    first === 10 ||
+    first === 127 ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168) ||
+    (first === 169 && second === 254)
+  );
+}
 
 export interface E2ECredentials {
   login: string;
