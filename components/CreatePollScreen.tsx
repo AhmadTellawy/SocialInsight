@@ -48,10 +48,10 @@ const DURATION_OPTIONS = [
   { label: '1 Month', value: '1m' },
 ];
 
-type VisibilityType = 'Groups' | 'Custom Audience' | 'Custom Domain';
+type VisibilityType = 'Public' | 'Groups' | 'Custom Audience' | 'Custom Domain';
 
 export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onSubmit, onSaveDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
-  const [visibility, setVisibility] = useState<VisibilityType>('Groups');
+  const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
   const [selectedGroups, setSelectedGroups] = useState<string[]>(initialGroupId ? [initialGroupId] : []);
   const [isCategorySheetOpen, setIsCategorySheetOpen] = useState(false);
   const [isAdvancedSheetOpen, setIsAdvancedSheetOpen] = useState(false);
@@ -175,6 +175,15 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   const [showInsightInfo, setShowInsightInfo] = useState(false);
   const [showLayoutInfo, setShowLayoutInfo] = useState(false);
 
+  const setPollVisibility = (nextVisibility: VisibilityType) => {
+    setVisibility(nextVisibility);
+
+    if (nextVisibility !== 'Groups') {
+      setSelectedGroups([]);
+      setErrors(prev => ({ ...prev, visibility: false }));
+    }
+  };
+
   useEffect(() => {
     if (selectedDemographics.length === 0) {
       setSelectedInsightPreset(prev => prev === 'custom' ? 'custom' : null);
@@ -217,7 +226,9 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
       setTitle(combinedPrompt || '');
       setCategory(draft.category || '');
       setPollChoiceType(draft.pollChoiceType || 'multiple');
-      setVisibility((draft.targetAudience as VisibilityType) || 'Public');
+      const draftVisibility = (draft.targetAudience as VisibilityType) || 'Public';
+      setPollVisibility(draftVisibility);
+      setSelectedGroups(draftVisibility === 'Groups' ? (draft.targetGroups || []) : []);
       setResultsWho(draft.resultsWho || 'Public');
       setResultsTiming(draft.resultsTiming || 'AnyTime');
       setAllowUserOptions(draft.allowUserOptions || false);
@@ -306,6 +317,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   }, [userGroups]);
 
   const visibilityOptions = [
+    { id: 'Public', label: 'Public', desc: 'Visible in the general public feed.', icon: Globe, allowed: true },
     { id: 'Groups', label: 'Selected groups', desc: 'Visible only within selected groups.', icon: Users, allowed: true },
     { id: 'Custom Audience', label: 'Custom audience', desc: 'Specific targeted audience.', icon: Target, allowed: isVerified, premium: true },
     { id: 'Custom Domain', label: 'Custom domain', desc: 'Private branded link.', icon: Link2, allowed: isOrganization, premium: true },
@@ -808,6 +820,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
           {/* 5. Advanced Settings Row */}
           <button
             type="button"
+            data-testid="poll-advanced-settings-trigger"
             onClick={() => {
               setAdvancedSheetView('main');
               setIsAdvancedSheetOpen(true);
@@ -939,7 +952,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
         isOpen={isAdvancedSheetOpen}
         onClose={() => {
           if (visibility === 'Groups' && selectedGroups.length === 0) {
-            setVisibility('Public');
+            setPollVisibility('Public');
           }
           setAdvancedSheetView('main');
           setIsAdvancedSheetOpen(false);
@@ -964,6 +977,9 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                 {/* Visibility Sub-trigger */}
                 <button
                   type="button"
+                  data-testid="poll-visibility-summary"
+                  data-poll-visibility={visibility}
+                  aria-label={`Post visibility: ${audienceLabel}`}
                   onClick={() => setAdvancedSheetView('visibility')}
                   className="w-full flex items-center justify-between p-3.5 bg-gray-50 hover:bg-gray-100/70 rounded-xl transition-all border border-gray-100"
                 >
@@ -1124,12 +1140,12 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   return (
                     <button
                       key={option.id}
+                      type="button"
+                      data-testid={`poll-visibility-option-${option.id.toLowerCase().replace(/\s+/g, '-')}`}
+                      aria-pressed={isSelected}
                       onClick={() => {
                         if (option.allowed) {
-                          setVisibility(option.id as VisibilityType);
-                          if (option.id !== 'Groups') {
-                            setErrors(prev => ({ ...prev, visibility: false }));
-                          }
+                          setPollVisibility(option.id as VisibilityType);
                         }
                       }}
                       className={`w-full flex items-center gap-4 p-4 rounded-2xl border transition-all text-left group ${!option.allowed ? 'opacity-40 cursor-not-allowed grayscale' : 'hover:bg-gray-50'
