@@ -1,5 +1,6 @@
 import cron from 'node-cron';
 import prisma from '../prisma';
+import { cleanupExpiredMedia } from './mediaService';
 
 export function calculateAgeGroup(dob: Date | null | undefined): string | undefined {
     if (!dob) return undefined;
@@ -75,5 +76,10 @@ export const initCronJobs = () => {
         await runAgeGroupComputation();
     });
 
-    console.log('[Cron] Monthly Age Group computation job initialized.');
+    cron.schedule('*/15 * * * *', async () => {
+        const cleaned = await cleanupExpiredMedia();
+        if (cleaned > 0) console.log(`[Cron] Cleaned ${cleaned} expired media assets.`);
+    });
+
+    console.log('[Cron] Age Group and media cleanup jobs initialized.');
 };

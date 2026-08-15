@@ -11,7 +11,7 @@
         "render-build": "prisma generate && prisma migrate deploy && tsc",
         "media:provision": "ts-node src/scripts/provisionMediaStorage.ts",
         "start": "node dist/app.js",
-        "test": "echo \"Error: no test specified\" && exit 1"
+        "test": "node --test --test-concurrency=1 -r ts-node/register src/services/mediaProcessor.test.ts"
     },
     "keywords": [],
     "author": "",
