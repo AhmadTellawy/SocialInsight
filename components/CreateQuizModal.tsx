@@ -528,6 +528,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
   }, [settingsOptionId, sections]);
 
   const errorInfo = validateQuiz();
+  const isPublishReady = errorInfo.isValid;
 
   return (
     <div className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-bottom duration-300">
@@ -546,7 +547,13 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
           </button>
           <button
             onClick={handlePost}
-            className="text-white font-black text-[9px] px-4 py-2 rounded-full bg-purple-600 hover:bg-purple-700 transition-all uppercase tracking-widest shadow-md active:scale-95 shadow-purple-200/50"
+            disabled={!isPublishReady}
+            aria-disabled={!isPublishReady}
+            className={`text-white font-black text-[9px] px-4 py-2 rounded-full transition-all uppercase tracking-widest ${
+              isPublishReady
+                ? 'bg-purple-600 hover:bg-purple-700 shadow-md active:scale-95 shadow-purple-200/50'
+                : 'bg-gray-300 shadow-none cursor-not-allowed'
+            }`}
           >
             Publish
           </button>
@@ -704,7 +711,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                               value={q.text}
                               onChange={(e) => updateQuestion(activeSection.id, q.id, { text: e.target.value })}
                               placeholder={totalQuestions <= 1 ? "Ask a question..." : "Question Text"}
-                              className="flex-1 text-sm font-semibold text-gray-900 border-b border-gray-100 focus:outline-none focus:border-purple-500 pt-0.5 pb-1.5 resize-none min-h-[44px] bg-transparent"
+                              className="flex-1 text-sm font-semibold text-gray-900 border-b border-gray-100 focus:outline-none focus:border-purple-500 pt-0.5 pb-1.5 resize-none min-h-[44px] placeholder-gray-400 bg-transparent"
                             />
                           </div>
                         </div>
@@ -750,9 +757,9 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                                         if (focusedOptionId === opt.id) setFocusedOptionId(null);
                                       }}
                                       placeholder={`Option ${oIdx + 1}`}
-                                      className="flex-1 text-xs font-semibold p-2 bg-transparent focus:outline-none"
+                                      className="flex-1 text-xs font-semibold p-2 bg-transparent focus:outline-none placeholder-gray-400"
                                     />
-                                    <span className="text-[9px] text-gray-400 mr-1.5 whitespace-nowrap">{opt.text.length}/80</span>
+                                    <span className="text-[9px] text-gray-500 mr-1.5 whitespace-nowrap">{opt.text.length}/80</span>
                                     <button onClick={() => setSettingsOptionId({ secId: activeSection.id, qId: q.id, optId: opt.id })} className="p-3 text-gray-400 hover:text-gray-600 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"><MoreHorizontalIcon size={18} /></button>
                                   </div>
                                 </div>
@@ -772,7 +779,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                               <input
                                 type="text"
                                 placeholder="Add option..."
-                                className="flex-1 text-xs font-semibold p-2 bg-transparent focus:outline-none text-gray-400 cursor-pointer"
+                                className="flex-1 text-xs font-semibold p-2 bg-transparent focus:outline-none text-gray-500 placeholder-gray-500 cursor-pointer"
                                 onFocus={() => handleAddQuizOption(activeSection.id, q.id)}
                               />
                               <button disabled className="p-3 text-gray-300 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]">
@@ -904,7 +911,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                 </div>
                 <div>
                   <h4 className="text-xs font-bold text-gray-805">Advanced Settings</h4>
-                  <p className="text-[9px] text-gray-400 mt-0.5 leading-tight">Visibility, results, duration & comments</p>
+                  <p className="text-[9px] text-gray-500 mt-0.5 leading-tight">Visibility, results, duration & comments</p>
                 </div>
               </div>
               <ChevronRight size={14} className="text-gray-400" />
@@ -1031,7 +1038,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                 <div className="flex items-center justify-between">
                   <div className="flex flex-col text-left">
                     <span className="text-xs font-bold text-gray-800">Allow comments</span>
-                    <span className="text-[10px] text-gray-400">Enable user comments on the post</span>
+                    <span className="text-[10px] text-gray-500">Enable user comments on the post</span>
                   </div>
                   <button
                     type="button"
@@ -1045,7 +1052,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                 <div className="flex items-center justify-between">
                   <div className="flex flex-col text-left">
                     <span className="text-xs font-bold text-gray-800">Force anonymous</span>
-                    <span className="text-[10px] text-gray-400">Keep all participants identity completely anonymous</span>
+                    <span className="text-[10px] text-gray-500">Keep all participants identity completely anonymous</span>
                   </div>
                   <button
                     type="button"

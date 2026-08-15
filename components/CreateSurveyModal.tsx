@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { X, Plus, Trash2, Globe, Users, ChevronDown, Clock, Calendar, Type, ListChecks, ImageIcon, Settings, Info, ArrowRight, Camera, Lock, AlertCircle, ChevronRight, ChevronLeft, MoreVertical, Layout, Terminal, Navigation, Sparkles, GripVertical, Save, FileText, BarChart3, UserCircle, Heart, Fingerprint, MapPin, Briefcase, Check, GraduationCap, Home, Smile, Building2, User, MessageSquare, ShieldCheck, Link2, Target, MoreHorizontal, ArrowUp, ArrowDown, Star, List, GalleryHorizontalEnd, CornerDownRight, PowerOff } from 'lucide-react';
+import { X, Plus, Trash2, Globe, Users, ChevronDown, Clock, Calendar, Type, ListChecks, ImageIcon, Settings, Info, ArrowRight, Camera, Lock, AlertCircle, ChevronRight, ChevronLeft, MoreVertical, Layout, Terminal, Navigation, Sparkles, GripVertical, Save, FileText, BarChart3, UserCircle, Heart, Fingerprint, MapPin, Briefcase, Check, GraduationCap, Home, Smile, Building2, User, MessageSquare, ShieldCheck, Link2, Target, MoreHorizontal, ArrowUp, ArrowDown, Star, List, LayoutGrid, CornerDownRight, PowerOff } from 'lucide-react';
 import { Survey, SurveyType, SurveySection, SurveyQuestion, Option, UserProfile, Group } from '../types';
 import { ImageCropper } from './ImageCropper';
 import { BottomSheet } from './BottomSheet';
@@ -669,7 +669,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
             errors.title ? 'border-red-200 bg-red-50/40' : 'border-gray-100 bg-white'
           }`}>
              <div className="flex items-center justify-between">
-               <label className="block text-xs font-bold text-gray-400 uppercase tracking-wide">The Survey Header <span className="text-red-500">*</span></label>
+               <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide">The Survey Header <span className="text-red-500">*</span></label>
                <button onClick={() => { setActiveCropTarget({ type: 'cover' }); fileInputRef.current?.click(); }} className={`p-1.5 rounded-full transition-colors ${coverImage ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-50'}`}><ImageIcon size={20} /></button>
              </div>
              {coverImage && (
@@ -684,7 +684,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                value={title}
                onChange={(val) => { setTitle(val); setErrors(prev => ({ ...prev, title: false })); }}
                placeholder="Survey Title"
-               className={`text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] ${errors.title ? 'text-red-500 border-red-300' : 'text-gray-900'}`}
+               className={`text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-500 min-h-[44px] ${errors.title ? 'text-red-500 border-red-300' : 'text-gray-900'}`}
                minRows={1}
                autoFocus
              />
@@ -751,7 +751,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                       value={activeSection.title}
                       onChange={(e) => setSections(sections.map(s => s.id === activeSection.id ? { ...s, title: e.target.value } : s))}
                       placeholder={`Section ${activeSectionIndex + 1} Title`}
-                      className="flex-1 text-base font-bold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all p-0 pb-2 placeholder-gray-300 resize-none min-h-[40px]"
+                      className="flex-1 text-base font-bold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all p-0 pb-2 placeholder-gray-400 resize-none min-h-[40px]"
                     />
                     <button
                       onClick={() => setIsSectionSettingsSheetOpen(true)}
@@ -836,7 +836,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                               value={q.text}
                               onChange={(e) => updateQuestion(activeSection.id, q.id, { text: e.target.value })}
                               placeholder="Question Text"
-                              className="flex-1 text-sm font-semibold text-gray-900 border-b border-gray-100 focus:outline-none focus:border-blue-500 pt-0.5 pb-1.5 resize-none min-h-[44px] placeholder-gray-300 bg-transparent"
+                              className="flex-1 text-sm font-semibold text-gray-900 border-b border-gray-100 focus:outline-none focus:border-blue-500 pt-0.5 pb-1.5 resize-none min-h-[44px] placeholder-gray-400 bg-transparent"
                             />
                           </div>
                         </div>
@@ -852,7 +852,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
 
                       {/* Choice Type Selector */}
                       <div className="space-y-3 pt-2">
-                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Choice Type</label>
+                        <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest px-1">Choice Type</label>
                         <div className="flex gap-2">
                           {[
                             { id: 'multiple', label: 'Multiple Choice' },
@@ -872,11 +872,11 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                       {q.type === 'multiple_choice' && !isRating && (
                         <div className="space-y-2 px-1 pt-2">
                           <div className="flex items-center justify-between">
-                            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Options layout</label>
+                            <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest">Options layout</label>
                             <div className="flex gap-1.5">
                               {[
-                                { id: 'vertical', icon: List },
-                                { id: 'horizontal', icon: GalleryHorizontalEnd }
+                                { id: 'vertical', label: 'List', icon: List },
+                                { id: 'horizontal', label: 'Grid', icon: LayoutGrid }
                               ].map((layout) => (
                                 <button
                                   key={layout.id}
@@ -885,14 +885,15 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                     ? 'bg-gray-900 text-white border-gray-900 shadow-sm'
                                     : 'bg-white text-gray-400 border-gray-200 hover:bg-gray-50'
                                     }`}
-                                  title={layout.id}
+                                  title={layout.label}
+                                  aria-label={`${layout.label} options layout`}
                                 >
                                   <layout.icon size={16} />
                                 </button>
                               ))}
                             </div>
                           </div>
-                          <p className="text-[9px] text-gray-400 font-bold uppercase tracking-wide italic">Applies only if images are added to options.</p>
+                          <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wide italic">Applies only if images are added to options.</p>
                         </div>
                       )}
 
@@ -940,9 +941,9 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                           if (focusedOptionId === opt.id) setFocusedOptionId(null);
                                         }}
                                         placeholder={`Option ${oIdx + 1}`}
-                                        className="flex-1 text-xs font-semibold p-2 bg-transparent focus:outline-none"
+                                        className="flex-1 text-xs font-semibold p-2 bg-transparent focus:outline-none placeholder-gray-400"
                                       />
-                                      <span className="text-[9px] text-gray-400 mr-1.5 whitespace-nowrap">{opt.text.length}/80</span>
+                                      <span className="text-[9px] text-gray-500 mr-1.5 whitespace-nowrap">{opt.text.length}/80</span>
                                       {opt.image && (
                                         <button onClick={() => {
                                           const updated = q.options?.map(o => o.id === opt.id ? { ...o, image: undefined } : o);
@@ -997,7 +998,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                 <input
                                   type="text"
                                   placeholder="Add option..."
-                                  className="flex-1 text-xs font-semibold p-2 bg-transparent focus:outline-none text-gray-400 cursor-pointer"
+                                  className="flex-1 text-xs font-semibold p-2 bg-transparent focus:outline-none text-gray-500 placeholder-gray-500 cursor-pointer"
                                   onFocus={() => handleAddSurveyOption(activeSection.id, q.id)}
                                 />
                                 <button disabled className="p-3 text-gray-300 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]">
@@ -1115,12 +1116,12 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
 
           {/* Engagement Settings */}
           <div className="border-t border-gray-100 pt-4 mt-6 space-y-3">
-            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Engagement Settings</label>
+            <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest px-1">Engagement Settings</label>
             <div className="bg-gray-50 rounded-2xl p-4 space-y-4 border border-gray-100">
               <button onClick={() => setAllowComments(!allowComments)} className="w-full flex items-center justify-between py-1 group">
                 <div className="flex flex-col text-left">
                   <span className="text-xs font-bold text-gray-800">Allow comments</span>
-                  <span className="text-[10px] text-gray-400">Enable users to leave comments</span>
+                  <span className="text-[10px] text-gray-500">Enable users to leave comments</span>
                 </div>
                 <div className={`w-10 h-5 rounded-full transition-colors relative ${allowComments ? 'bg-blue-600' : 'bg-gray-200'}`}>
                   <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${allowComments ? 'left-6' : 'left-1'}`} />
@@ -1129,7 +1130,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
               <button onClick={() => setForceAnonymous(!forceAnonymous)} className="w-full flex items-center justify-between py-1 group">
                 <div className="flex flex-col text-left">
                   <span className="text-xs font-bold text-gray-800">Require Anonymous Responses</span>
-                  <span className="text-[10px] text-gray-400">All participants will be forced to respond without identity</span>
+                  <span className="text-[10px] text-gray-500">All participants will be forced to respond without identity</span>
                 </div>
                 <div className={`w-10 h-5 rounded-full transition-colors relative ${forceAnonymous ? 'bg-blue-600' : 'bg-gray-200'}`}>
                   <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${forceAnonymous ? 'left-6' : 'left-1'}`} />
@@ -1173,7 +1174,13 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
         </button>
         <button
           onClick={() => handlePost(false)}
-          className="flex-1 py-3 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-wider text-[11px] hover:bg-blue-700 transition-all active:scale-[0.98] shadow-lg shadow-blue-200"
+          disabled={!errorInfo.isValid}
+          aria-disabled={!errorInfo.isValid}
+          className={`flex-1 py-3 text-white rounded-2xl font-black uppercase tracking-wider text-[11px] transition-all ${
+            errorInfo.isValid
+              ? 'bg-blue-600 hover:bg-blue-700 active:scale-[0.98] shadow-lg shadow-blue-200'
+              : 'bg-gray-300 shadow-none cursor-not-allowed'
+          }`}
         >
           Publish Survey
         </button>

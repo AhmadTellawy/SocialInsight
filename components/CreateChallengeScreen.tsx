@@ -397,6 +397,13 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   };
 
   const selectedOptionForSettings = options.find(o => o.id === settingsOptionId);
+  const isPostReady = Boolean(
+    userProfile?.id &&
+    title.trim() &&
+    options.filter(o => o.text.trim() !== '').length >= 2 &&
+    category &&
+    (visibility !== 'Groups' || selectedGroups.length > 0)
+  );
 
   return (
     <div className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-right duration-350">
@@ -405,7 +412,16 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
           <ArrowLeft size={24} />
         </button>
         <h1 className="text-sm font-black text-gray-800">New Challenge</h1>
-        <button onClick={handleFinalPost} className="text-white font-black text-[11px] px-5 py-2.5 rounded-full bg-amber-600 hover:bg-amber-700 transition-all uppercase tracking-widest shadow-md active:scale-95 shadow-amber-200/50">
+        <button
+          onClick={handleFinalPost}
+          disabled={!isPostReady}
+          aria-disabled={!isPostReady}
+          className={`text-white font-black text-[11px] px-5 py-2.5 rounded-full transition-all uppercase tracking-widest ${
+            isPostReady
+              ? 'bg-amber-600 hover:bg-amber-700 shadow-md active:scale-95 shadow-amber-200/50'
+              : 'bg-gray-300 shadow-none cursor-not-allowed'
+          }`}
+        >
           Post
         </button>
       </div>
@@ -427,7 +443,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                   value={title}
                   onChange={(val) => { setTitle(val); if (errors.title) setErrors(prev => ({ ...prev, title: false })) }}
                   placeholder="Create a challenge..."
-                  className={`text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-amber-500 transition-all pt-0.5 pb-1.5 placeholder-gray-300 min-h-[44px] ${errors.title ? 'border-red-300 text-red-500' : 'text-gray-900'}`}
+                  className={`text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-amber-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] ${errors.title ? 'border-red-300 text-red-500' : 'text-gray-900'}`}
                   minRows={1}
                   autoFocus
                 />
@@ -530,7 +546,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                             if (focusedOptionId === option.id) setFocusedOptionId(null);
                           }}
                           placeholder={`Item ${idx + 1} Name`}
-                          className="flex-1 px-2.5 py-1.5 bg-transparent text-sm font-semibold focus:outline-none text-gray-900"
+                          className="flex-1 px-2.5 py-1.5 bg-transparent text-sm font-semibold focus:outline-none text-gray-900 placeholder-gray-400"
                         />
 
                         <span className="text-[9px] text-gray-450 mr-1.5 whitespace-nowrap">{option.text.length}/80</span>
@@ -574,7 +590,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                       <input
                         type="text"
                         placeholder="Add item to compare..."
-                        className="flex-1 px-2.5 py-1.5 bg-transparent text-sm font-semibold focus:outline-none text-gray-400 cursor-pointer"
+                        className="flex-1 px-2.5 py-1.5 bg-transparent text-sm font-semibold focus:outline-none text-gray-500 placeholder-gray-500 cursor-pointer"
                         onFocus={handleAddOption}
                       />
                     </div>
@@ -601,7 +617,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
               </div>
               <div>
                 <h4 className="text-xs font-bold text-gray-805">Advanced Settings</h4>
-                <p className="text-[9px] text-gray-400 mt-0.5 leading-tight">Visibility, results, duration & challenge behavior</p>
+                <p className="text-[9px] text-gray-500 mt-0.5 leading-tight">Visibility, results, duration & challenge behavior</p>
               </div>
             </div>
             <ChevronRight size={14} className="text-gray-400" />
@@ -800,7 +816,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                 <div className="flex items-center justify-between">
                   <div className="flex flex-col text-left">
                     <span className="text-xs font-bold text-gray-800">Allow comments</span>
-                    <span className="text-[10px] text-gray-400">Enable user comments on the challenge</span>
+                    <span className="text-[10px] text-gray-500">Enable user comments on the challenge</span>
                   </div>
                   <button
                     type="button"
@@ -814,7 +830,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                 <div className="flex items-center justify-between">
                   <div className="flex flex-col text-left">
                     <span className="text-xs font-bold text-gray-800">Random matchups</span>
-                    <span className="text-[10px] text-gray-400">Randomize how challenge items are paired</span>
+                    <span className="text-[10px] text-gray-500">Randomize how challenge items are paired</span>
                   </div>
                   <button
                     type="button"
@@ -828,7 +844,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                 <div className="flex items-center justify-between">
                   <div className="flex flex-col text-left">
                     <span className="text-xs font-bold text-gray-800">Force anonymous</span>
-                    <span className="text-[10px] text-gray-400">Keep all participants identity completely anonymous</span>
+                    <span className="text-[10px] text-gray-500">Keep all participants identity completely anonymous</span>
                   </div>
                   <button
                     type="button"
