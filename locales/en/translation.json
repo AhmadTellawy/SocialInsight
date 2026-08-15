@@ -32,7 +32,9 @@
     },
     "carousel": {
       "previous": "Previous image",
-      "next": "Next image"
+      "next": "Next image",
+      "label": "Post images",
+      "goTo": "Go to image {{index}}"
     }
   },
   "settings": {

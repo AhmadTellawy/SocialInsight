@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Search, User, Globe, Calendar, Filter, MoreVertical, Download } from 'lucide-react';
 import { api } from '../services/api';
 import { UserProfile } from '../types';
+import { UserAvatar } from './UserAvatar';
 
 interface UsersTableScreenProps {
     onBack: () => void;
@@ -115,7 +116,7 @@ export const UsersTableScreen: React.FC<UsersTableScreenProps> = ({ onBack, onUs
                                     >
                                         <td className="px-4 py-4 whitespace-nowrap">
                                             <div className="flex items-center gap-3">
-                                                <img className="h-10 w-10 rounded-xl object-cover border border-gray-100" src={user.avatar || 'https://picsum.photos/40/40'} alt="" />
+                                                <UserAvatar src={user.avatar} name={user.name} alt={user.name || 'User'} size={40} className="!rounded-xl border border-gray-100" />
                                                 <div>
                                                     <div className="text-sm font-bold text-gray-900">{user.name}</div>
                                                     <div className="text-[10px] text-gray-400 font-medium">@{user.handle}</div>

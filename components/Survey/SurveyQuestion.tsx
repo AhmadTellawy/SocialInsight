@@ -3,6 +3,7 @@ import { CheckCircle2, X, XCircle, Maximize2, ImageIcon, Star } from 'lucide-rea
 import { Survey, SurveyType, Option } from '../../types';
 import { useTranslation } from 'react-i18next';
 import { getPercentage } from '../../utils/formatters';
+import { MediaImage } from '../media/MediaImage';
 
 interface SurveyQuestionProps {
   sourceSurvey: Survey;
@@ -20,7 +21,7 @@ interface SurveyQuestionProps {
   followUpAnswers: Record<string, string>;
   onOptionClick: (optionId: string) => void;
   onFollowUpChange: (optionId: string, value: string) => void;
-  onImageExpand: (imageUrl: string) => void;
+  onImageExpand: (option: Option) => void;
   onDetectOrientation: (imageUrl: string, e: React.SyntheticEvent<HTMLImageElement>) => void;
 }
 
@@ -47,25 +48,29 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
   const isQuiz = sourceSurvey.type === SurveyType.QUIZ;
   const firstQuestion = sourceSurvey.sections?.[0]?.questions?.[0];
   const isTextOnlyPoll = !hasImages;
+  const hasOptionImage = (option: Option): boolean => Boolean(option.imageMediaId || option.imageMedia || option.image);
+  const optionImageKey = (option: Option): string => option.imageMediaId || option.image || option.id;
 
   const renderHorizontal = () => (
     <div className="flex overflow-x-auto snap-x snap-mandatory hide-scrollbar gap-3 pb-4 px-1" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
       {(options || []).map((option) => {
         const isSelected = selectedOptions.includes(option.id);
         const percentage = shouldShowResults ? getPercentage(option.votes || 0, totalVotes) : 0;
-        const isPortrait = option.image && portraitImages.has(option.image);
+        const imageKey = optionImageKey(option);
+        const isPortrait = hasOptionImage(option) && portraitImages.has(imageKey);
         const isCorrect = isQuiz && option.isCorrect;
         const isWrongSelection = isQuiz && isSelected && !isCorrect;
 
         return (
           <div key={option.id} className={`flex-shrink-0 relative w-[65%] sm:w-[250px] rounded-xl border snap-center overflow-hidden flex flex-col transition-all duration-300 bg-white shadow-sm ${shouldShowResults && isCorrect ? 'border-green-500 ring-2 ring-green-500 bg-green-50' : shouldShowResults && isWrongSelection ? 'border-red-500 ring-2 ring-red-500 bg-red-50' : isSelected ? 'ring-2 ring-blue-500 border-blue-500' : 'border-gray-200'}`}>
             <div className="w-full aspect-square bg-gray-100 relative group/opt-img">
-              {option.image ? (
+              {hasOptionImage(option) ? (
                 <>
-                  <img
-                    src={option.image}
-                    crossOrigin="anonymous"
-                    onLoad={(e) => onDetectOrientation(option.image!, e)}
+                  <MediaImage
+                    media={option.imageMedia}
+                    mediaId={option.imageMediaId}
+                    fallbackSrc={option.image}
+                    onLoad={(e) => onDetectOrientation(imageKey, e)}
                     alt={option.text}
                     className="w-full h-full object-cover"
                   />
@@ -74,7 +79,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
                       className="absolute inset-0 bg-black/10 opacity-0 group-hover/opt-img:opacity-100 flex items-center justify-center transition-opacity cursor-zoom-in"
                       onClick={(e) => {
                         e.stopPropagation();
-                        onImageExpand(option.image!);
+                        onImageExpand(option);
                       }}
                     >
                       <Maximize2 size={24} className="text-white drop-shadow-md" />
@@ -166,7 +171,8 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
         const isSelected = selectedOptions.includes(option.id);
         const percentage = shouldShowResults ? getPercentage(option.votes || 0, totalVotes) : 0;
         const optionVotes = option.votes || 0;
-        const isPortrait = option.image && portraitImages.has(option.image);
+        const imageKey = optionImageKey(option);
+        const isPortrait = hasOptionImage(option) && portraitImages.has(imageKey);
         const isCorrect = isQuiz && option.isCorrect;
         const isWrongSelection = isQuiz && isSelected && !isCorrect;
         
@@ -309,16 +315,17 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
                       onClick={(e) => {
                         if (isPortrait) {
                           e.stopPropagation();
-                          onImageExpand(option.image!);
+                          onImageExpand(option);
                         }
                       }}
                     >
-                      {option.image ? (
+                      {hasOptionImage(option) ? (
                         <>
-                          <img
-                            src={option.image}
-                            crossOrigin="anonymous"
-                            onLoad={(e) => onDetectOrientation(option.image!, e)}
+                          <MediaImage
+                            media={option.imageMedia}
+                            mediaId={option.imageMediaId}
+                            fallbackSrc={option.image}
+                            onLoad={(e) => onDetectOrientation(imageKey, e)}
                             alt=""
                             className="w-full h-full object-cover transition-transform group-hover/opt-img:scale-110"
                           />
@@ -376,9 +383,9 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
 
   return (
     <div className={isTextOnlyPoll ? "mb-2" : "mb-4"}>
-      {isQuiz && firstQuestion?.image && (
+      {isQuiz && (firstQuestion?.imageMediaId || firstQuestion?.imageMedia || firstQuestion?.image) && (
         <div className="w-full rounded-xl overflow-hidden mb-3 bg-gray-100">
-          <img src={firstQuestion.image} crossOrigin="anonymous" className="w-full max-h-[500px] object-cover block" alt="Question context" />
+          <MediaImage media={firstQuestion.imageMedia} mediaId={firstQuestion.imageMediaId} fallbackSrc={firstQuestion.image} className="w-full max-h-[500px] object-cover block" alt="Question context" />
         </div>
       )}
       {isHorizontal ? renderHorizontal() : renderVertical()}

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { api } from '../services/api';
+import { UserAvatar } from './UserAvatar';
 
 interface RichMentionInputProps {
   value: string;
@@ -137,15 +138,7 @@ export const RichMentionInput: React.FC<RichMentionInputProps> = ({
                     onMouseDown={(e) => { e.preventDefault(); insertMention(user.handle); }}
                     className="w-full flex items-center gap-3 p-3 hover:bg-blue-50 transition-colors text-left"
                   >
-                    <div className="w-8 h-8 rounded-full bg-gray-200 overflow-hidden shrink-0">
-                        {user.avatar ? (
-                          <img src={user.avatar} alt={user.name} className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center bg-blue-100 text-blue-500 font-bold text-xs uppercase">
-                            {user.name.charAt(0)}
-                          </div>
-                        )}
-                    </div>
+                    <UserAvatar src={user.avatar} name={user.name} alt={user.name || 'User'} size={32} />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-bold text-gray-900 truncate">{user.name}</p>
                       <p className="text-xs text-blue-500 font-medium truncate">@{user.handle}</p>

@@ -8,6 +8,7 @@ import {
 import { Survey, SurveyType, SurveyQuestion } from '../types';
 import { BottomSheet } from './BottomSheet';
 import { api } from '../services/api';
+import { UserAvatar } from './UserAvatar';
 
 interface PostAnalysisProps {
   survey: Survey;
@@ -382,11 +383,7 @@ export const PostAnalysis: React.FC<PostAnalysisProps> = ({ survey, isAccessDeni
         <div className="p-5">
           <div className="flex items-start justify-between gap-4 mb-4">
             <div className="flex items-center gap-3">
-              <img 
-                src={sourceSurvey.author.avatar || 'https://picsum.photos/40/40'} 
-                alt={sourceSurvey.author.name} 
-                className="w-12 h-12 rounded-full object-cover border border-gray-100"
-              />
+              <UserAvatar src={sourceSurvey.author.avatar} name={sourceSurvey.author.name} alt={sourceSurvey.author.name} size={48} className="border border-gray-100" />
               <div className="flex flex-col">
                 <h3 className="font-bold text-gray-900 text-sm">{sourceSurvey.author.name}</h3>
                 <div className="flex items-center flex-wrap gap-y-1 gap-x-1.5 text-[10px] text-gray-500 font-medium mt-0.5">

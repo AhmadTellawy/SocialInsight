@@ -8,6 +8,7 @@ import {
 import { Survey, SurveyType } from '../types';
 import { UserAvatar } from './UserAvatar';
 import { api } from '../services/api';
+import { MediaImage } from './media/MediaImage';
 
 interface SearchScreenProps {
   surveys: Survey[]; // Kept for interface compatibility or fallback
@@ -407,11 +408,15 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                       {(activeFilter === 'All' ? searchResults.groups.slice(0, 3) : searchResults.groups).map((group, i) => (
                         <div key={i} className="flex items-center justify-between p-4 hover:bg-gray-50 transition-colors">
                           <div className="flex items-center gap-3 min-w-0 flex-1 mr-3">
-                            <img 
-                              src={group.image || `https://ui-avatars.com/api/?name=${encodeURIComponent(group.name)}&background=random&color=fff&size=200`} 
-                              alt={group.name} 
-                              className="w-10 h-10 rounded-xl object-cover border border-gray-100 shrink-0" 
-                            />
+                            <div className="w-10 h-10 rounded-xl overflow-hidden border border-gray-100 shrink-0">
+                              <MediaImage
+                                mediaId={group.imageMediaId}
+                                fallbackSrc={group.image?.includes('ui-avatars') ? undefined : group.image}
+                                fallback={<span role="img" aria-label={group.name} className="flex h-full w-full items-center justify-center bg-gray-100 text-sm font-bold text-gray-500">{group.name.trim().charAt(0).toUpperCase()}</span>}
+                                alt={group.name}
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
                             <div className="min-w-0 flex-1">
                               <div className="text-sm font-bold text-gray-900 truncate">
                                 <HighlightedText text={group.name} highlight={debouncedQuery} />
@@ -459,14 +464,14 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                                 <HighlightedText text={survey.description} highlight={debouncedQuery} />
                               </p>
                             </div>
-                            {survey.coverImage && (
-                              <img src={survey.coverImage} className="w-16 h-16 rounded-lg object-cover ml-3 bg-gray-100 shrink-0" alt="" />
+                            {(survey.media?.length || survey.coverImage) && (
+                              <MediaImage media={survey.media?.[0]} fallbackSrc={survey.coverImage} sizes="64px" className="w-16 h-16 rounded-lg object-cover ml-3 bg-gray-100 shrink-0" alt="" />
                             )}
                           </div>
 
                           <div className="flex items-center justify-between pt-2 border-t border-gray-50 mt-1">
                             <div className="flex items-center gap-2 text-xs text-gray-500">
-                              <img src={survey.author?.avatar || 'https://picsum.photos/100'} className="w-4 h-4 rounded-full" alt="" />
+                              <UserAvatar src={survey.author?.avatar} name={survey.author?.name} alt={survey.author?.name || 'Author'} size={16} />
                               <span>{survey.author?.name}</span>
                             </div>
                             <div className="flex items-center gap-3 text-xs text-gray-400 font-medium">

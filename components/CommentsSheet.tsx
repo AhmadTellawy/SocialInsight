@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { Send, ThumbsUp, Reply, User as UserIcon, Edit2, Trash2, X } from 'lucide-react';
+import { Send, ThumbsUp, Reply, Edit2, Trash2, X } from 'lucide-react';
 import { Analytics } from '../utils/analytics';
 import { Comment, UserProfile } from '../types';
 import { MOCK_COMMENTS } from '../services/mockData';
 import { LikersSheet } from './LikersSheet';
 import { RichMentionInput } from './RichMentionInput';
 import { RichTextRenderer } from './RichTextRenderer';
+import { UserAvatar } from './UserAvatar';
 
 interface CommentsSheetProps {
   surveyId: string;
@@ -62,12 +63,9 @@ const CommentItem: React.FC<CommentItemProps> = ({ comment, isReply = false, par
 
   return (
   <div className={`flex gap-3 mb-4 ${isReply ? 'ml-11 mt-2' : ''}`}>
-    <img
-      src={comment.author.avatar}
-      alt={comment.author.name}
-      className="w-8 h-8 rounded-full object-cover shrink-0 cursor-pointer hover:opacity-80 select-none"
-      onClick={() => onAuthorClick && onAuthorClick(comment.author)}
-    />
+    <button type="button" onClick={() => onAuthorClick && onAuthorClick(comment.author)} className="shrink-0 cursor-pointer hover:opacity-80" aria-label={comment.author.name}>
+      <UserAvatar src={comment.author.avatar} name={comment.author.name} alt={comment.author.name} size={32} className="select-none" />
+    </button>
     <div className="flex-1">
       <div 
         className="bg-gray-100 rounded-2xl px-3 py-2 inline-block transition-colors active:bg-gray-200 select-none cursor-pointer"
@@ -318,13 +316,7 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
           </div>
         )}
         <div className="flex items-center gap-3">
-          {userProfile?.avatar ? (
-            <img src={userProfile.avatar} alt="You" className="w-8 h-8 rounded-full border border-gray-200 object-cover" />
-          ) : (
-            <div className="w-8 h-8 rounded-full border border-gray-200 bg-gray-100 flex items-center justify-center">
-              <UserIcon size={16} className="text-gray-400" strokeWidth={2} />
-            </div>
-          )}
+          <UserAvatar src={userProfile?.avatar} name={userProfile?.name} alt="You" size={32} className="border border-gray-200" />
           <div className="flex-1 flex items-center bg-gray-100 rounded-2xl px-4 py-2 transition-all focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100 border border-transparent focus-within:border-blue-200">
             <RichMentionInput
               value={newComment}

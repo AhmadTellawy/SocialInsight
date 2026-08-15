@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PostAnswerPayload, Survey, SurveyType, Option, LogicRule, UserProfile } from '../types';
+import { PostAnswerPayload, Survey, SurveyType, Option, LogicRule, UserProfile, MediaPresentation } from '../types';
 import { Clock, Users, TrendingUp, MoreHorizontal, Share2, CheckCircle2, Flag, Eye, EyeOff, Bookmark, Link as LinkIcon, UserMinus, ThumbsUp, MessageCircle, FileText, PieChart, HelpCircle, Globe, Lock, Plus, AlertCircle, ImageIcon, ChevronLeft, ChevronRight, Check, ArrowRight, XCircle, Trophy, Target, X, ListChecks, Zap, Timer, Play, Repeat, UserPlus, PlusCircle, Shield, Shuffle, Heart, Search, Send, Star, Maximize2, BarChart3, Trash2, Edit3 } from 'lucide-react';
 import { Analytics } from '../utils/analytics';
 import { BottomSheet } from './BottomSheet';
@@ -16,6 +16,8 @@ import { useTranslation } from 'react-i18next';
 import { SurveyActions } from './Survey/SurveyActions';
 import { SurveyQuestion } from './Survey/SurveyQuestion';
 import { usePostViewTracker } from '../hooks/usePostViewTracker';
+import { MediaCarousel } from './media/MediaCarousel';
+import { MediaImage } from './media/MediaImage';
 
 interface SurveyCardProps {
   survey: Survey;
@@ -43,6 +45,8 @@ interface FlatQuestion {
   type: 'text' | 'multiple_choice' | 'true_false';
   options?: Option[];
   image?: string;
+  imageMediaId?: string;
+  imageMedia?: MediaPresentation;
   imageLayout?: 'vertical' | 'horizontal';
   sectionTitle: string;
   sectionId: string;
@@ -221,7 +225,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const [isShareSheetOpen, setIsShareSheetOpen] = useState(false);
   const [isParticipantsOpen, setIsParticipantsOpen] = useState(false);
   const [isAnonInfoOpen, setIsAnonInfoOpen] = useState(false);
-  const [expandedImageUrl, setExpandedImageUrl] = useState<string | null>(null);
+  const [expandedImage, setExpandedImage] = useState<Option | null>(null);
   const [portraitImages, setPortraitImages] = useState<Set<string>>(new Set());
   const [isLikersSheetOpen, setIsLikersSheetOpen] = useState(false);
   const [isRepostMenuOpen, setIsRepostMenuOpen] = useState(false);
@@ -378,7 +382,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     setIsShareSheetOpen(false);
     setIsParticipantsOpen(false);
     setIsAnonInfoOpen(false);
-    setExpandedImageUrl(null);
+    setExpandedImage(null);
     setFollowUpAnswers(sourceSurface === 'SHARE_CAPTURE' ? {} : (survey.userProgress?.followUpAnswers || {}));
     setSurveyAnswers(sourceSurface === 'SHARE_CAPTURE' ? {} : (survey.userProgress?.answers || {}));
     setHistoryStack(sourceSurface === 'SHARE_CAPTURE' ? [] : (survey.userProgress?.historyStack || []));
@@ -811,16 +815,19 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       setPortraitImages(prev => new Set(prev).add(url));
     }
   };
+  const hasOptionImage = (option: Option): boolean => Boolean(option.imageMediaId || option.imageMedia || option.image);
+  const optionImageKey = (option: Option): string => option.imageMediaId || option.image || option.id;
 
   const isMultiple = sourceSurvey.allowMultipleSelection || false;
   const isRating = sourceSurvey.pollChoiceType === 'rating';
-  const hasImages = (localOptions || []).some(opt => opt.image);
+  const hasImages = (localOptions || []).some(hasOptionImage);
   const isPollType = sourceSurvey.type === SurveyType.POLL || sourceSurvey.type === SurveyType.TRENDING;
   const isTextOnlyPoll = isPollType && !isRating && !hasImages;
   const hasDescription = !!sourceSurvey.description?.trim();
 
   // Premium cover-image poll card: polls with a coverImage but no option images (rating included)
-  const isCoverImagePollCard = !!sourceSurvey.coverImage && isPollType && !hasImages;
+  const hasPostMedia = Boolean(sourceSurvey.media?.length || sourceSurvey.coverImage);
+  const isCoverImagePollCard = hasPostMedia && isPollType && !hasImages;
 
   // Integer percentage for a single option
   const getOptionPercentage = (optionId: string): number => {
@@ -1100,7 +1107,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const isMyPost = !!userProfile?.id && survey.author?.id === userProfile.id;
   const isMySource = !!userProfile?.id && sourceSurvey.author?.id === userProfile.id;
   const authorName = isMySource ? userProfile?.name : (sourceSurvey.author?.name || t('Anonymous'));
-  const authorAvatar = isMySource ? userProfile?.avatar : (sourceSurvey.author?.avatar || 'https://picsum.photos/40/40');
+  const authorAvatar = isMySource ? userProfile?.avatar : sourceSurvey.author?.avatar;
 
 
 
@@ -1117,7 +1124,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           <p className="text-[10px] font-bold text-amber-600 uppercase tracking-widest mb-6">{t('Challenge Completed')}</p>
 
           <div className="bg-white p-4 rounded-xl border border-amber-200 shadow-sm flex items-center gap-4 text-left">
-            {winner.image && <img src={winner.image} crossOrigin="anonymous" className="w-16 h-16 rounded-lg object-cover" alt="" />}
+            {hasOptionImage(winner) && <MediaImage media={winner.imageMedia} mediaId={winner.imageMediaId} fallbackSrc={winner.image} className="w-16 h-16 rounded-lg object-cover" alt="" />}
             <div className="flex-1">
               <h4 className="font-bold text-gray-900 leading-tight">{winner.text}</h4>
               <div className="flex items-center gap-1.5 mt-1 text-green-600 font-bold text-[10px] uppercase">
@@ -1149,7 +1156,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           {pairOptions.map((opt) => {
             if (!opt) return null;
             const isLeaving = isChallengeTransitioning === opt.id;
-            const isPortrait = opt.image && portraitImages.has(opt.image);
+            const imageKey = optionImageKey(opt);
+            const isPortrait = hasOptionImage(opt) && portraitImages.has(imageKey);
             return (
               <button
                 key={opt.id}
@@ -1158,12 +1166,13 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 className={`relative flex flex-col items-stretch text-left group overflow-hidden rounded-2xl border bg-white transition-all duration-300 ${isLeaving ? 'scale-90 opacity-0 -translate-y-4' : 'hover:border-amber-400 hover:shadow-md active:scale-95 border-gray-100 shadow-sm animate-in zoom-in fade-in'}`}
               >
                 <div className="aspect-[4/5] w-full bg-gray-50 relative overflow-hidden">
-                  {opt.image ? (
+                  {hasOptionImage(opt) ? (
                     <>
-                      <img
-                        src={opt.image}
-                        crossOrigin="anonymous"
-                        onLoad={(e) => handleDetectOrientation(opt.image!, e)}
+                      <MediaImage
+                        media={opt.imageMedia}
+                        mediaId={opt.imageMediaId}
+                        fallbackSrc={opt.image}
+                        onLoad={(e) => handleDetectOrientation(imageKey, e)}
                         className="w-full h-full object-cover transition-transform group-hover:scale-110"
                         alt=""
                       />
@@ -1172,7 +1181,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                           className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-zoom-in"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setExpandedImageUrl(opt.image!);
+                            setExpandedImage(opt);
                           }}
                         >
                           <Maximize2 size={24} className="text-white drop-shadow-md" />
@@ -1292,9 +1301,9 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         <div className="relative overflow-hidden">
           <div key={currentQuestion.id} className={`w-full flex flex-col ${slideDirection === 'next' ? 'animate-in slide-in-from-right-10 fade-in duration-500' : 'animate-in slide-in-from-left-10 fade-in duration-500'}`}>
             <div className="p-5 pb-8 no-scrollbar scroll-smooth">
-              {currentQuestion.image && (
+              {(currentQuestion.imageMediaId || currentQuestion.imageMedia || currentQuestion.image) && (
                 <div className="w-full rounded-xl overflow-hidden mb-3 bg-gray-100">
-                  <img src={currentQuestion.image} crossOrigin="anonymous" className="w-full max-h-[500px] object-cover block" alt="Question context" />
+                  <MediaImage media={currentQuestion.imageMedia} mediaId={currentQuestion.imageMediaId} fallbackSrc={currentQuestion.image} className="w-full max-h-[500px] object-cover block" alt="Question context" />
                 </div>
               )}
               <div className="flex items-start justify-between gap-4 mb-3">
@@ -1315,25 +1324,28 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                       const isCorrect = isQuiz && currentCorrectOptionIds.includes(opt.id);
                       const isWrongSelection = isQuiz && isSelected && !isCorrect;
                       const isMaxReached = !isTF && currentQuestion.maxSelection && (currentQuestion.maxSelection || 1) > 1 && selectedIds.length >= (currentQuestion.maxSelection || 1) && !isSelected;
-                      const isPortrait = opt.image && portraitImages.has(opt.image);
+                      const optionHasImage = hasOptionImage(opt);
+                      const imageKey = optionImageKey(opt);
+                      const isPortrait = optionHasImage && portraitImages.has(imageKey);
 
                       return (
                         <div key={opt.id} className={`group relative ${isHorizontal && !isTF ? 'min-w-[51%] snap-center' : ''}`}>
-                          <button onClick={() => handleSurveyAnswer(opt.id)} disabled={(isMaxReached || (hasVotedCurrent && isQuiz)) as boolean} className={`w-full text-left p-3 rounded-xl border transition-all duration-200 flex items-center justify-between active:scale-[0.99] h-auto ${hasVotedCurrent && isQuiz ? (isCorrect ? 'border-green-500 bg-green-50 text-green-700 ring-1 ring-green-500/20 shadow-sm' : isWrongSelection ? 'border-red-500 bg-red-50 text-red-700 ring-1 ring-red-500/20 shadow-sm' : 'border-gray-100 bg-gray-50 opacity-50') : isSelected ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-sm' : isMaxReached ? 'opacity-50 border-gray-100 bg-gray-50' : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/30 active:scale-[0.99]'} ${isTF ? 'flex-col gap-2 items-center text-center justify-center py-6' : ''} ${isHorizontal && opt.image ? 'flex-col items-stretch p-1 pb-3' : ''}`}>
-                            {opt.image && (
+                          <button onClick={() => handleSurveyAnswer(opt.id)} disabled={(isMaxReached || (hasVotedCurrent && isQuiz)) as boolean} className={`w-full text-left p-3 rounded-xl border transition-all duration-200 flex items-center justify-between active:scale-[0.99] h-auto ${hasVotedCurrent && isQuiz ? (isCorrect ? 'border-green-500 bg-green-50 text-green-700 ring-1 ring-green-500/20 shadow-sm' : isWrongSelection ? 'border-red-500 bg-red-50 text-red-700 ring-1 ring-red-500/20 shadow-sm' : 'border-gray-100 bg-gray-50 opacity-50') : isSelected ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-sm' : isMaxReached ? 'opacity-50 border-gray-100 bg-gray-50' : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/30 active:scale-[0.99]'} ${isTF ? 'flex-col gap-2 items-center text-center justify-center py-6' : ''} ${isHorizontal && optionHasImage ? 'flex-col items-stretch p-1 pb-3' : ''}`}>
+                            {optionHasImage && (
                               <div
                                 className={`${isHorizontal ? 'w-full aspect-square mb-3' : 'w-14 h-14 shrink-0 mr-3'} rounded-lg overflow-hidden border border-gray-100 bg-gray-50 relative group/img`}
                                 onClick={(e) => {
                                   if (isPortrait) {
                                     e.stopPropagation();
-                                    setExpandedImageUrl(opt.image!);
+                                    setExpandedImage(opt);
                                   }
                                 }}
                               >
-                                <img
-                                  src={opt.image}
-                                  crossOrigin="anonymous"
-                                  onLoad={(e) => handleDetectOrientation(opt.image!, e)}
+                                <MediaImage
+                                  media={opt.imageMedia}
+                                  mediaId={opt.imageMediaId}
+                                  fallbackSrc={opt.image}
+                                  onLoad={(e) => handleDetectOrientation(imageKey, e)}
                                   className="w-full h-full object-cover transition-transform group-hover/img:scale-105"
                                   alt=""
                                 />
@@ -1344,8 +1356,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                                 )}
                               </div>
                             )}
-                            <div className={`flex items-center ${isTF || (isHorizontal && opt.image) ? 'flex-col' : 'gap-3'} flex-1`}>
-                              {!isTF && !(isHorizontal && opt.image) && !opt.isRating && <span className={`w-6 h-6 rounded-md text-xs font-bold flex items-center justify-center shrink-0 transition-colors ${isSelected ? 'bg-blue-200 text-blue-700' : 'bg-gray-100 text-gray-500 group-hover:bg-white'}`}>{idx + 1}.</span>}
+                            <div className={`flex items-center ${isTF || (isHorizontal && optionHasImage) ? 'flex-col' : 'gap-3'} flex-1`}>
+                              {!isTF && !(isHorizontal && optionHasImage) && !opt.isRating && <span className={`w-6 h-6 rounded-md text-xs font-bold flex items-center justify-center shrink-0 transition-colors ${isSelected ? 'bg-blue-200 text-blue-700' : 'bg-gray-100 text-gray-500 group-hover:bg-white'}`}>{idx + 1}.</span>}
 
                               {hasVotedCurrent && isQuiz && isCorrect && <CheckCircle2 size={18} className="text-green-600 shrink-0" />}
                               {hasVotedCurrent && isQuiz && isWrongSelection && <X size={18} className="text-red-600 shrink-0" />}
@@ -1358,7 +1370,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                                   </div>
                                 </div>
                               ) : (
-                                <span className={`font-bold ${isTF ? 'text-base' : 'text-sm'} leading-snug break-words uppercase tracking-wide flex-1 ${isHorizontal && opt.image ? 'text-center px-2' : ''}`}>{opt.text}</span>
+                                <span className={`font-bold ${isTF ? 'text-base' : 'text-sm'} leading-snug break-words uppercase tracking-wide flex-1 ${isHorizontal && optionHasImage ? 'text-center px-2' : ''}`}>{opt.text}</span>
                               )}
                             </div>
                           </button>
@@ -1421,7 +1433,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           followUpAnswers={followUpAnswers}
           onOptionClick={handlePollOptionClick}
           onFollowUpChange={handleFollowUpChange}
-          onImageExpand={(url) => setExpandedImageUrl(url)}
+          onImageExpand={(option) => setExpandedImage(option)}
           onDetectOrientation={handleDetectOrientation}
         />
 
@@ -1578,17 +1590,24 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     return (
       <>
         {/* Cover image - clean, no overlays */}
-        <div
-          onClick={onContentClick}
-          className={`w-full rounded-xl overflow-hidden mb-2 bg-gray-100${onContentClick ? ' cursor-pointer hover:opacity-95 transition-opacity' : ''}`}
-        >
-          <img
-            src={sourceSurvey.coverImage!}
-            crossOrigin="anonymous"
-            alt="Cover"
-            className="w-full max-h-[500px] object-cover block"
+        {sourceSurvey.media?.length ? (
+          <MediaCarousel
+            media={sourceSurvey.media}
+            onClick={onContentClick}
+            className={`mb-2 max-h-[500px] rounded-xl${onContentClick ? ' cursor-pointer hover:opacity-95 transition-opacity' : ''}`}
           />
-        </div>
+        ) : (
+          <div
+            onClick={onContentClick}
+            className={`w-full rounded-xl overflow-hidden mb-2 bg-gray-100${onContentClick ? ' cursor-pointer hover:opacity-95 transition-opacity' : ''}`}
+          >
+            <MediaImage
+              fallbackSrc={sourceSurvey.coverImage}
+              alt="Cover"
+              className="w-full max-h-[500px] object-cover block"
+            />
+          </div>
+        )}
 
         {/* Chips directly below the image */}
         <div className="mb-1">
@@ -1934,7 +1953,9 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
               {/* Cover image / chips block */}
               {isCoverImagePollCard
                 ? renderCoverImagePollCard()
-                : (sourceSurvey.coverImage && <div onClick={onContentClick} className={`w-full rounded-xl overflow-hidden mb-3 bg-gray-100 ${onContentClick ? 'cursor-pointer hover:opacity-95 transition-opacity' : ''}`}><img src={sourceSurvey.coverImage} crossOrigin="anonymous" alt="Cover" className="w-full max-h-[500px] object-cover block" /></div>)
+                : sourceSurvey.media?.length
+                  ? <MediaCarousel media={sourceSurvey.media} onClick={onContentClick} className={`mb-3 max-h-[500px] rounded-xl ${onContentClick ? 'cursor-pointer hover:opacity-95 transition-opacity' : ''}`} />
+                  : (sourceSurvey.coverImage && <div onClick={onContentClick} className={`w-full rounded-xl overflow-hidden mb-3 bg-gray-100 ${onContentClick ? 'cursor-pointer hover:opacity-95 transition-opacity' : ''}`}><MediaImage fallbackSrc={sourceSurvey.coverImage} alt="Cover" className="w-full max-h-[500px] object-cover block" /></div>)
               }
 
               {hasDescription && (
@@ -2031,18 +2052,19 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
       {/* Lightbox for option images - only for portrait images */}
       {
-        expandedImageUrl && (
+        expandedImage && (
           <div className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-sm flex flex-col items-center justify-center p-4 animate-in fade-in duration-300">
             <button
-              onClick={() => setExpandedImageUrl(null)}
+              onClick={() => setExpandedImage(null)}
               className="absolute top-6 right-6 p-3 bg-white/10 hover:bg-white/20 text-white rounded-full transition-all active:scale-90"
             >
               <X size={28} strokeWidth={3} />
             </button>
             <div className="w-full max-w-sm aspect-square relative animate-in zoom-in-95 duration-500">
-              <img
-                src={expandedImageUrl}
-                crossOrigin="anonymous"
+              <MediaImage
+                media={expandedImage.imageMedia}
+                mediaId={expandedImage.imageMediaId}
+                fallbackSrc={expandedImage.image}
                 className="w-full h-full object-contain rounded-2xl shadow-2xl"
                 alt="Expanded Preview"
               />

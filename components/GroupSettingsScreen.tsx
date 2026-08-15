@@ -8,6 +8,7 @@ import { Group, MediaDraft, Survey } from '../types';
 import { useGroupMembers, useGroupPendingRequests, useGroupPendingPosts } from '../hooks/useGroup';
 import { MediaPicker } from './media/MediaPicker';
 import { createPersistedMediaDraftFromId, mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds } from '../utils/mediaDrafts';
+import { UserAvatar } from './UserAvatar';
 
 export type JoinPolicy = 'OPEN' | 'REQUEST' | 'INVITE_ONLY';
 export type PostingPerms = 'AdminsOnly' | 'AllMembers' | 'ApprovalNeeded';
@@ -69,11 +70,7 @@ const PendingPostRow: React.FC<{
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1.5">
-            <img
-              src={post.author?.avatar || 'https://picsum.photos/100'}
-              className="w-5 h-5 rounded-full border border-gray-100"
-              alt=""
-            />
+            <UserAvatar src={post.author?.avatar} name={post.author?.name} alt={post.author?.name || 'Anonymous'} size={20} className="border border-gray-100" />
             <span className="text-[10px] font-bold text-gray-500">{post.author?.name || 'Anonymous'}</span>
           </div>
           <h4 className="text-sm font-bold text-gray-900 leading-snug">{post.title}</h4>
@@ -615,12 +612,7 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
               ) : requests.map(req => (
                 <div key={req.id} className="p-4 flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <img
-                      src={req.avatar || 'https://picsum.photos/100'}
-                      className="w-10 h-10 rounded-full border border-gray-200"
-                      alt=""
-                      onError={(e) => (e.currentTarget.src = 'https://picsum.photos/100')}
-                    />
+                    <UserAvatar src={req.avatar} name={req.name} alt={req.name || 'User'} size={40} className="border border-gray-200" />
                     <div>
                       <p className="text-sm font-bold text-gray-900">{req.name}</p>
                       <p className="text-[10px] text-gray-400">@{req.handle}</p>
@@ -710,12 +702,7 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
               return (
                 <div key={member.id} className="p-4 flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <img
-                      src={member.avatar || 'https://picsum.photos/100'}
-                      className="w-10 h-10 rounded-full border border-gray-200"
-                      alt=""
-                      onError={(e) => (e.currentTarget.src = 'https://picsum.photos/100')}
-                    />
+                    <UserAvatar src={member.avatar} name={member.name} alt={member.name || 'Member'} size={40} className="border border-gray-200" />
                     <div>
                       <p className="text-sm font-bold text-gray-900">
                         {member.name} {isMe && '(You)'}
@@ -795,12 +782,7 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
                 ) : bannedMembers.map(member => (
                   <div key={member.id} className="p-4 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <img
-                        src={member.avatar || 'https://picsum.photos/100'}
-                        className="w-9 h-9 rounded-full border border-gray-200 grayscale"
-                        alt=""
-                        onError={(e) => (e.currentTarget.src = 'https://picsum.photos/100')}
-                      />
+                      <UserAvatar src={member.avatar} name={member.name} alt={member.name || 'Member'} size={36} className="border border-gray-200 grayscale" />
                       <div>
                         <p className="text-sm font-bold text-gray-700">{member.name}</p>
                         <span className="text-[9px] font-black uppercase tracking-wider text-red-500">Banned</span>
