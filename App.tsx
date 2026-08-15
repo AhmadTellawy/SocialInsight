@@ -1542,9 +1542,10 @@ const App: React.FC = () => {
                 currentUserId={viewerProfile.id || ''}
                 onBack={() => window.history.length > 2 ? navigate(-1) : navigate(`/group/${activeGroup.id}`, { replace: true })}
                 onUpdateGroup={async (id, updates) => {
-                  await api.updateGroup(id, updates);
-                  setActiveGroup(prev => prev && prev.id === id ? { ...prev, ...updates } : prev);
-                  setUserGroups(prev => prev.map(g => g.id === id ? { ...g, ...updates } : g));
+                  const updatedGroup = await api.updateGroup(id, updates);
+                  setActiveGroup(prev => prev && prev.id === id ? { ...prev, ...updatedGroup } : prev);
+                  setUserGroups(prev => prev.map(g => g.id === id ? { ...g, ...updatedGroup } : g));
+                  return updatedGroup;
                 }}
                 onDeleteGroup={async (id) => {
                   await api.deleteGroup(id);

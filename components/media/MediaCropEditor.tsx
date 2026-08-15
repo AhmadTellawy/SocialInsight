@@ -8,6 +8,7 @@ type MediaCropEditorProps = {
   imageSrc: string;
   purpose: MediaPurpose;
   initialAspectRatio?: number;
+  lockedAspectRatio?: number;
   initialCrop?: MediaCropSelection;
   onApply: (selection: MediaCropSelection) => void;
   onCancel: () => void;
@@ -23,13 +24,14 @@ export const MediaCropEditor: React.FC<MediaCropEditorProps> = ({
   imageSrc,
   purpose,
   initialAspectRatio,
+  lockedAspectRatio,
   initialCrop,
   onApply,
   onCancel
 }) => {
   const { t } = useTranslation();
   const closeButtonRef = useRef<HTMLButtonElement>(null);
-  const fixedRatio = fixedRatioForPurpose(purpose);
+  const fixedRatio = fixedRatioForPurpose(purpose) || lockedAspectRatio;
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [originalRatio, setOriginalRatio] = useState(initialAspectRatio || 1);
@@ -51,7 +53,11 @@ export const MediaCropEditor: React.FC<MediaCropEditorProps> = ({
   }, [onCancel]);
 
   const presets = useMemo(() => {
-    if (fixedRatio) return [{ id: 'square', label: '1:1', ratio: 1 }];
+    if (fixedRatio) return [{
+      id: 'fixed',
+      label: Math.abs(fixedRatio - 1) < 0.001 ? '1:1' : fixedRatio.toFixed(2),
+      ratio: fixedRatio
+    }];
     return [
       { id: 'original', label: t('media.crop.original', { defaultValue: 'Original' }), ratio: originalRatio },
       { id: 'square', label: '1:1', ratio: 1 },
@@ -105,6 +111,7 @@ export const MediaCropEditor: React.FC<MediaCropEditorProps> = ({
           maxZoom={4}
           zoomSpeed={0.2}
           showGrid
+          cropShape={purpose === 'PROFILE_AVATAR' ? 'round' : 'rect'}
           restrictPosition
           onCropChange={setCrop}
           onZoomChange={setZoom}

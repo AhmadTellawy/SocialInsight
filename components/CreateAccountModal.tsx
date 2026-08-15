@@ -2,8 +2,10 @@
 import React, { useState, useEffect } from 'react';
 import { X, Users, Building2, ChevronRight, Globe as GlobeIcon, Plus, Shield, MapPin, Briefcase, Info, ArrowLeft, Camera, LayoutGrid, Check, Lock } from 'lucide-react';
 import { BottomSheet } from './BottomSheet';
-import { Group, UserProfile } from '../types';
+import { Group, MediaDraft, UserProfile } from '../types';
 import { api } from '../services/api';
+import { MediaPicker } from './media/MediaPicker';
+import { mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds } from '../utils/mediaDrafts';
 
 interface CreateAccountModalProps {
   isOpen: boolean;
@@ -28,6 +30,7 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({ isOpen, 
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [entityMedia, setEntityMedia] = useState<MediaDraft[]>([]);
 
   useEffect(() => {
     if (isOpen) {
@@ -40,6 +43,7 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({ isOpen, 
       }
       setIsSuccess(false);
       setIsSubmitting(false);
+      setEntityMedia([]);
       setFormData({
         name: '',
         category: 'Hobby & Interests',
@@ -80,6 +84,7 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({ isOpen, 
           description: formData.description || (type === 'company' ? `Official page for ${formData.name}` : ''),
           category: type === 'company' ? formData.industry : formData.category,
           isPublic: type === 'company' ? true : formData.isPublic,
+          imageMediaId: readyMediaAssetIds(entityMedia)[0],
           creatorId: userProfile.id
         });
 
@@ -161,14 +166,31 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({ isOpen, 
   const renderGroupForm = () => (
     <form onSubmit={handleSubmit} className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300 pb-10">
       <div className="flex flex-col items-center mb-6">
-        <div className="relative group cursor-pointer">
-          <div className="w-20 h-20 rounded-[2rem] bg-gray-100 flex items-center justify-center text-gray-400 border-2 border-dashed border-gray-300 group-hover:border-blue-500 transition-colors">
-            <Camera size={24} />
-          </div>
-          <div className="absolute -bottom-1 -right-1 bg-white p-1.5 rounded-full shadow-sm border border-gray-100">
-            <Plus size={12} className="text-blue-600" />
-          </div>
-        </div>
+        <MediaPicker
+          purpose="GROUP_IMAGE"
+          value={entityMedia}
+          onChange={setEntityMedia}
+          renderContent={({ open, retry, busy }) => {
+            const current = entityMedia[0];
+            return (
+              <button
+                type="button"
+                onClick={() => current?.status === 'error' ? retry(current.clientId) : open()}
+                disabled={busy}
+                className="relative group cursor-pointer disabled:cursor-wait"
+                aria-label={current?.status === 'error' ? 'Retry group avatar upload' : 'Add group avatar'}
+                title={current?.status === 'error' ? 'Retry' : 'Add group avatar'}
+              >
+                <span className={`w-20 h-20 rounded-[2rem] bg-gray-100 flex items-center justify-center text-gray-400 border-2 border-dashed overflow-hidden group-hover:border-blue-500 transition-colors ${current?.status === 'error' ? 'border-red-400' : 'border-gray-300'}`}>
+                  {current?.previewUrl ? <img src={current.previewUrl} alt="" className="w-full h-full object-cover" /> : <Camera size={24} />}
+                </span>
+                <span className="absolute -bottom-1 -right-1 bg-white p-1.5 rounded-full shadow-sm border border-gray-100">
+                  <Plus size={12} className="text-blue-600" />
+                </span>
+              </button>
+            );
+          }}
+        />
         <span className="text-[10px] font-bold text-gray-400 uppercase mt-2">Group Avatar</span>
       </div>
 
@@ -251,7 +273,7 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({ isOpen, 
       <div className="px-2 pt-4">
         <button
           type="submit"
-          disabled={isSubmitting || !formData.name}
+          disabled={isSubmitting || !formData.name || !mediaDraftsAreReady(entityMedia) || mediaDraftsHaveErrors(entityMedia)}
           className="w-full bg-blue-600 text-white py-4 rounded-2xl font-bold text-sm shadow-xl shadow-blue-500/20 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
         >
           {isSubmitting ? (
@@ -265,14 +287,31 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({ isOpen, 
   const renderCompanyForm = () => (
     <form onSubmit={handleSubmit} className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300 pb-10">
       <div className="flex flex-col items-center mb-6">
-        <div className="relative group cursor-pointer">
-          <div className="w-24 h-16 rounded-xl bg-gray-100 flex items-center justify-center text-gray-400 border-2 border-dashed border-gray-300 group-hover:border-indigo-500 transition-colors">
-            <Building2 size={28} />
-          </div>
-          <div className="absolute -bottom-1 -right-1 bg-white p-1.5 rounded-full shadow-sm border border-gray-100">
-            <Plus size={12} className="text-indigo-600" />
-          </div>
-        </div>
+        <MediaPicker
+          purpose="GROUP_IMAGE"
+          value={entityMedia}
+          onChange={setEntityMedia}
+          renderContent={({ open, retry, busy }) => {
+            const current = entityMedia[0];
+            return (
+              <button
+                type="button"
+                onClick={() => current?.status === 'error' ? retry(current.clientId) : open()}
+                disabled={busy}
+                className="relative group cursor-pointer disabled:cursor-wait"
+                aria-label={current?.status === 'error' ? 'Retry business logo upload' : 'Add business logo'}
+                title={current?.status === 'error' ? 'Retry' : 'Add business logo'}
+              >
+                <span className={`w-24 h-16 rounded-xl bg-gray-100 flex items-center justify-center text-gray-400 border-2 border-dashed overflow-hidden group-hover:border-indigo-500 transition-colors ${current?.status === 'error' ? 'border-red-400' : 'border-gray-300'}`}>
+                  {current?.previewUrl ? <img src={current.previewUrl} alt="" className="w-full h-full object-cover" /> : <Building2 size={28} />}
+                </span>
+                <span className="absolute -bottom-1 -right-1 bg-white p-1.5 rounded-full shadow-sm border border-gray-100">
+                  <Plus size={12} className="text-indigo-600" />
+                </span>
+              </button>
+            );
+          }}
+        />
         <span className="text-[10px] font-bold text-gray-400 uppercase mt-2">Business Page Logo</span>
       </div>
 
@@ -351,7 +390,7 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({ isOpen, 
       <div className="px-2 pt-4">
         <button
           type="submit"
-          disabled={isSubmitting || !formData.name}
+          disabled={isSubmitting || !formData.name || !mediaDraftsAreReady(entityMedia) || mediaDraftsHaveErrors(entityMedia)}
           className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-bold text-sm shadow-xl shadow-indigo-500/20 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
         >
           {isSubmitting ? (

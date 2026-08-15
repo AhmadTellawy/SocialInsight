@@ -1,17 +1,20 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { X, Plus, Trash2, Globe, Users, ChevronDown, Clock, Calendar, Type, ListChecks, ImageIcon, Settings, Info, ArrowRight, Camera, Lock, AlertCircle, ChevronRight, ChevronLeft, MoreVertical, Layout, Terminal, Navigation, Sparkles, GripVertical, Save, FileText, BarChart3, UserCircle, Heart, Fingerprint, MapPin, Briefcase, Check, GraduationCap, Home, Smile, Building2, User, MessageSquare, ShieldCheck, Link2, Target, MoreHorizontal, ArrowUp, ArrowDown, Star, List, LayoutGrid, CornerDownRight, PowerOff } from 'lucide-react';
-import { Survey, SurveyType, SurveySection, SurveyQuestion, Option, UserProfile, Group } from '../types';
-import { ImageCropper } from './ImageCropper';
+import { Survey, SurveyType, UserProfile, Group, MediaDraft } from '../types';
 import { BottomSheet } from './BottomSheet';
 import { RichMentionInput } from './RichMentionInput';
 import { api } from '../services/api';
+import { MediaPicker, MediaPickerHandle } from './media/MediaPicker';
+import { MediaImage } from './media/MediaImage';
+import { cancelTemporaryMediaDrafts, createPersistedMediaDraft, mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds } from '../utils/mediaDrafts';
+import { collectSectionMedia, hydrateSections, serializeSections, SurveyOptionDraft, SurveyQuestionDraft, SurveySectionDraft } from '../utils/sectionMediaDrafts';
 
 interface CreateSurveyModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (surveyData: Partial<Survey>) => void;
-  onSaveDraft?: (surveyData: Partial<Survey>) => void;
+  onSubmit: (surveyData: Partial<Survey>) => void | Promise<void>;
+  onSaveDraft?: (surveyData: Partial<Survey>) => void | Promise<void>;
   userProfile: UserProfile;
   draft?: Survey;
   userGroups?: Group[];
@@ -39,7 +42,7 @@ const DEMOGRAPHIC_OPTIONS = [
   { id: 'occupation', label: 'Occupation', desc: 'Analyze response differences by occupation' },
 ];
 
-const INITIAL_SECTIONS: SurveySection[] = [
+const INITIAL_SECTIONS: SurveySectionDraft[] = [
   {
     id: `sec-init`,
     title: '',
@@ -51,9 +54,10 @@ const INITIAL_SECTIONS: SurveySection[] = [
         maxSelection: 1,
         isRequired: true,
         imageLayout: 'vertical',
+        mediaDrafts: [],
         options: [
-          { id: `opt-init-1`, text: '', votes: 0, withFollowUp: false, followUpLabel: '' },
-          { id: `opt-init-2`, text: '', votes: 0, withFollowUp: false, followUpLabel: '' }
+          { id: `opt-init-1`, text: '', votes: 0, mediaDrafts: [], withFollowUp: false, followUpLabel: '' },
+          { id: `opt-init-2`, text: '', votes: 0, mediaDrafts: [], withFollowUp: false, followUpLabel: '' }
         ]
       }
     ]
@@ -81,11 +85,14 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
   const [forceAnonymous, setForceAnonymous] = useState(false);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [coverImage, setCoverImage] = useState<string | null>(null);
+  const [legacyCoverImage, setLegacyCoverImage] = useState<string | null>(null);
+  const [postMedia, setPostMedia] = useState<MediaDraft[]>([]);
+  const [mediaAspectRatio, setMediaAspectRatio] = useState<number | undefined>(undefined);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
-  const [sections, setSections] = useState<SurveySection[]>(INITIAL_SECTIONS);
+  const [sections, setSections] = useState<SurveySectionDraft[]>(INITIAL_SECTIONS);
 
   const totalQuestions = useMemo(() => {
     return sections.reduce((sum, sec) => sum + (sec.questions?.length || 0), 0);
@@ -123,14 +130,11 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
     }
   };
 
-  const [croppingImage, setCroppingImage] = useState<string | null>(null);
-  const [activeCropTarget, setActiveCropTarget] = useState<{ type: 'cover' | 'question' | 'option', secId?: string, qId?: string, optId?: string } | null>(null);
-
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [errors, setErrors] = useState<{ [key: string]: boolean | string }>({});
   const [focusedOptionId, setFocusedOptionId] = useState<string | null>(null);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const postMediaPickerRef = useRef<MediaPickerHandle>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const activeSection = sections.find(s => s.id === activeSectionId);
@@ -155,9 +159,12 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
       setResultsTiming(draft.resultsTiming || 'AnyTime');
       setAllowComments(draft.allowComments !== undefined ? draft.allowComments : true);
       setForceAnonymous(draft.forceAnonymous || false);
-      setCoverImage(draft.coverImage || null);
+      const persistedPostMedia = (draft.media || []).map((media) => createPersistedMediaDraft(media, 'POST', draft.coverImage));
+      setPostMedia(persistedPostMedia);
+      setMediaAspectRatio(draft.mediaAspectRatio || persistedPostMedia[0]?.aspectRatio);
+      setLegacyCoverImage(persistedPostMedia.length > 0 ? null : (draft.coverImage || null));
       if (draft.sections && draft.sections.length > 0) {
-        setSections(draft.sections);
+        setSections(hydrateSections(draft.sections));
         setActiveSectionId(draft.sections[0].id);
         if (draft.sections[0].questions.length > 0) {
           setActiveQuestionId(draft.sections[0].questions[0].id);
@@ -173,6 +180,10 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
   }, [draft]);
 
   const handleDiscard = async () => {
+    await Promise.all([
+      cancelTemporaryMediaDrafts(postMedia),
+      cancelTemporaryMediaDrafts(collectSectionMedia(sections))
+    ]);
     if (!userProfile?.id) {
       onClose();
       return;
@@ -226,13 +237,13 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
     if (title.trim() !== '') return true;
     if (description.trim() !== '') return true;
     if (category !== '') return true;
-    if (coverImage !== null) return true;
+    if (postMedia.length > 0 || legacyCoverImage !== null) return true;
     if (sections.length > 1) return true;
     const firstQ = sections[0].questions[0];
     if (firstQ.text.trim() !== '') return true;
     if (sections[0].questions.length > 1) return true;
     return false;
-  }, [title, description, category, coverImage, sections]);
+  }, [title, description, category, postMedia, legacyCoverImage, sections]);
 
   useEffect(() => {
     if (sections.length > 0 && !activeSectionId) {
@@ -339,6 +350,9 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
   const errorInfo = useMemo(() => {
     return validateSurvey('publish');
   }, [userProfile, title, category, visibility, selectedGroups, sections, totalQuestions]);
+  const allMediaDrafts = useMemo(() => [...postMedia, ...collectSectionMedia(sections)], [postMedia, sections]);
+  const mediaReady = mediaDraftsAreReady(allMediaDrafts) && !mediaDraftsHaveErrors(allMediaDrafts);
+  const canPublish = errorInfo.isValid && mediaReady && !isSubmitting;
 
   const getExpiresAt = () => {
     const now = new Date();
@@ -349,7 +363,8 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
     return new Date(now.getTime() + mins * 60000).toISOString();
   };
 
-  const handlePost = (isDraft: boolean = false) => {
+  const handlePost = async (isDraft: boolean = false) => {
+    if (isSubmitting) return;
     if (!userProfile?.id) {
       onClose();
       return;
@@ -361,6 +376,11 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
     setErrors(newErrors);
 
     if (!isValid) return;
+    const allMedia = [...postMedia, ...collectSectionMedia(sections)];
+    if (!mediaDraftsAreReady(allMedia) || mediaDraftsHaveErrors(allMedia)) {
+      setErrors((current) => ({ ...current, media: 'Please finish or remove image uploads.' }));
+      return;
+    }
 
     const computedTitle = title.trim() || 'Untitled Survey';
 
@@ -370,8 +390,10 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
       description,
       type: SurveyType.SURVEY,
       category,
-      sections,
-      coverImage: coverImage || undefined,
+      sections: serializeSections(sections),
+      coverImage: postMedia.length > 0 ? undefined : (legacyCoverImage || undefined),
+      mediaAssetIds: readyMediaAssetIds(postMedia),
+      mediaAspectRatio: postMedia.length > 0 ? mediaAspectRatio : undefined,
       targetAudience: visibility as any,
       targetGroups: visibility === 'Groups' ? selectedGroups : undefined,
       resultsWho,
@@ -387,73 +409,20 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
       currentStep: 1
     };
 
-    if (isDraft && onSaveDraft) {
-      onSaveDraft(surveyData);
-    } else {
-      onSubmit(surveyData);
+    try {
+      setIsSubmitting(true);
+      if (isDraft && onSaveDraft) {
+        await onSaveDraft(surveyData);
+      } else {
+        await onSubmit(surveyData);
+      }
+      onClose();
+    } catch (error) {
+      console.error('Failed to save survey:', error);
+      alert('Failed to save survey. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
-    onClose();
-  };
-
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const img = new Image();
-      const objUrl = URL.createObjectURL(file);
-      img.onload = () => {
-        const MAX_DIMENSION = 1200;
-        let width = img.width;
-        let height = img.height;
-
-        if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
-            const ratio = Math.min(MAX_DIMENSION / width, MAX_DIMENSION / height);
-            width = Math.round(width * ratio);
-            height = Math.round(height * ratio);
-        }
-
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-            ctx.drawImage(img, 0, 0, width, height);
-            setCroppingImage(canvas.toDataURL('image/jpeg', 0.8));
-        } else {
-            const reader = new FileReader();
-            reader.onloadend = () => setCroppingImage(reader.result as string);
-            reader.readAsDataURL(file);
-        }
-        URL.revokeObjectURL(objUrl);
-        e.target.value = '';
-      };
-      img.src = objUrl;
-    }
-  };
-
-  const handleCropComplete = (croppedImg: string) => {
-    if (!activeCropTarget) return;
-
-    if (activeCropTarget.type === 'cover') {
-      setCoverImage(croppedImg);
-    } else if (activeCropTarget.type === 'question') {
-      updateQuestion(activeCropTarget.secId!, activeCropTarget.qId!, { image: croppedImg });
-    } else if (activeCropTarget.type === 'option') {
-      setSections(sections.map(s => {
-        if (s.id !== activeCropTarget.secId) return s;
-        return {
-          ...s,
-          questions: s.questions.map(q => {
-            if (q.id !== activeCropTarget.qId || !q.options) return q;
-            return {
-              ...q,
-              options: q.options.map(o => o.id === activeCropTarget.optId ? { ...o, image: croppedImg } : o)
-            };
-          })
-        };
-      }));
-    }
-    setCroppingImage(null);
-    setActiveCropTarget(null);
   };
 
   const addSection = () => {
@@ -469,9 +438,10 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
         maxSelection: 1,
         isRequired: true,
         imageLayout: 'vertical',
+        mediaDrafts: [],
         options: [
-          { id: `o1-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0, withFollowUp: false, followUpLabel: '' },
-          { id: `o2-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0, withFollowUp: false, followUpLabel: '' }
+          { id: `o1-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0, mediaDrafts: [], withFollowUp: false, followUpLabel: '' },
+          { id: `o2-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0, mediaDrafts: [], withFollowUp: false, followUpLabel: '' }
         ]
       }]
     }]);
@@ -481,7 +451,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
 
   const handleAddSurveyOption = (secId: string, qId: string) => {
     const newOptId = `o-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const newOpt = { id: newOptId, text: '', votes: 0, withFollowUp: false, followUpLabel: '' };
+    const newOpt: SurveyOptionDraft = { id: newOptId, text: '', votes: 0, mediaDrafts: [], withFollowUp: false, followUpLabel: '' };
     const section = sections.find(s => s.id === secId);
     const question = section?.questions.find(qu => qu.id === qId);
     if (question) {
@@ -490,32 +460,44 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
     }
   };
 
-  const updateQuestion = (secId: string, qId: string, updates: Partial<SurveyQuestion>) => {
-    setSections(sections.map(s => s.id === secId ? { ...s, questions: s.questions.map(q => q.id === qId ? { ...q, ...updates } : q) } : s));
+  const updateQuestion = (secId: string, qId: string, updates: Partial<SurveyQuestionDraft>) => {
+    setSections((current) => current.map(s => s.id === secId ? { ...s, questions: s.questions.map(q => q.id === qId ? { ...q, ...updates } : q) } : s));
+  };
+
+  const updateOption = (secId: string, qId: string, optId: string, updates: Partial<SurveyOptionDraft>) => {
+    setSections((current) => current.map((section) => section.id !== secId ? section : {
+      ...section,
+      questions: section.questions.map((question) => question.id !== qId || !question.options ? question : {
+        ...question,
+        options: question.options.map((option) => option.id === optId ? { ...option, ...updates } : option)
+      })
+    }));
   };
 
   const handleChoiceTypeChange = (secId: string, qId: string, choiceType: 'multiple' | 'rating' | 'text') => {
     let newType: 'multiple_choice' | 'text' = 'multiple_choice';
-    let newOptions: Option[] = [];
+    let newOptions: SurveyOptionDraft[] = [];
 
     if (choiceType === 'rating') {
       newOptions = [
-        { id: `rate-5-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '5', votes: 0, isRating: true, ratingValue: 5 },
-        { id: `rate-4-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '4', votes: 0, isRating: true, ratingValue: 4 },
-        { id: `rate-3-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '3', votes: 0, isRating: true, ratingValue: 3 },
-        { id: `rate-2-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '2', votes: 0, isRating: true, ratingValue: 2 },
-        { id: `rate-1-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '1', votes: 0, isRating: true, ratingValue: 1 },
+        { id: `rate-5-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '5', votes: 0, mediaDrafts: [], isRating: true, ratingValue: 5 },
+        { id: `rate-4-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '4', votes: 0, mediaDrafts: [], isRating: true, ratingValue: 4 },
+        { id: `rate-3-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '3', votes: 0, mediaDrafts: [], isRating: true, ratingValue: 3 },
+        { id: `rate-2-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '2', votes: 0, mediaDrafts: [], isRating: true, ratingValue: 2 },
+        { id: `rate-1-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '1', votes: 0, mediaDrafts: [], isRating: true, ratingValue: 1 },
       ];
     } else if (choiceType === 'text') {
       newType = 'text';
       newOptions = [];
     } else {
       newOptions = [
-        { id: `o1-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0 },
-        { id: `o2-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0 }
+        { id: `o1-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0, mediaDrafts: [] },
+        { id: `o2-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0, mediaDrafts: [] }
       ];
     }
 
+    const currentQuestion = sections.find((section) => section.id === secId)?.questions.find((question) => question.id === qId);
+    if (currentQuestion) void cancelTemporaryMediaDrafts((currentQuestion.options || []).flatMap((option) => option.mediaDrafts));
     updateQuestion(secId, qId, { type: newType, options: newOptions, maxSelection: 1 });
   };
 
@@ -670,13 +652,34 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
           }`}>
              <div className="flex items-center justify-between">
                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide">The Survey Header <span className="text-red-500">*</span></label>
-               <button onClick={() => { setActiveCropTarget({ type: 'cover' }); fileInputRef.current?.click(); }} className={`p-1.5 rounded-full transition-colors ${coverImage ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-50'}`}><ImageIcon size={20} /></button>
+               <button
+                 type="button"
+                 onClick={() => postMediaPickerRef.current?.open()}
+                 disabled={postMedia.length >= 8}
+                 className={`p-1.5 rounded-full transition-colors disabled:opacity-40 ${postMedia.length > 0 || legacyCoverImage ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-50'}`}
+                 aria-label="Add survey images"
+                 title="Add images"
+               ><ImageIcon size={20} /></button>
              </div>
-             {coverImage && (
+             <MediaPicker
+               ref={postMediaPickerRef}
+               purpose="POST"
+               value={postMedia}
+               onChange={(next) => {
+                 setPostMedia(next);
+                 if (next.some((media) => media.status === 'ready')) setLegacyCoverImage(null);
+               }}
+               maxFiles={8}
+               multiple
+               aspectRatio={mediaAspectRatio}
+               onAspectRatioChange={setMediaAspectRatio}
+               showAddButton={false}
+             />
+             {legacyCoverImage && postMedia.length === 0 && (
                <div className="mb-2">
                  <div className="relative w-20 h-20 rounded-xl overflow-hidden shadow-sm group animate-in zoom-in-95">
-                   <img src={coverImage} className="w-full h-full object-cover" alt="Cover" />
-                   <button onClick={() => setCoverImage(null)} className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={10} /></button>
+                   <img src={legacyCoverImage} className="w-full h-full object-cover" alt="Cover" />
+                   <button type="button" onClick={() => setLegacyCoverImage(null)} className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Remove image" title="Remove image"><X size={10} /></button>
                  </div>
                </div>
              )}
@@ -791,9 +794,10 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                           type: 'multiple_choice',
                           isRequired: true,
                           imageLayout: 'vertical',
+                          mediaDrafts: [],
                           options: [
-                            { id: `o1-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0, withFollowUp: false, followUpLabel: '' },
-                            { id: `o2-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0, withFollowUp: false, followUpLabel: '' }
+                            { id: `o1-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0, mediaDrafts: [], withFollowUp: false, followUpLabel: '' },
+                            { id: `o2-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0, mediaDrafts: [], withFollowUp: false, followUpLabel: '' }
                           ]
                         }]
                       } : s));
@@ -824,14 +828,54 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                     <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-4 shadow-sm">
                       <div className="flex items-start gap-2">
                         <div className="flex-1 flex flex-col gap-2">
-                          {q.image && (
+                          {(q.image || q.mediaDrafts.length > 0) && (
                             <div className="relative w-24 h-24 rounded-xl overflow-hidden shadow-sm group animate-in zoom-in-95">
-                              <img src={q.image} className="w-full h-full object-cover" alt="" />
-                              <button onClick={() => updateQuestion(activeSection.id, q.id, { image: undefined })} className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={10} /></button>
+                              {q.mediaDrafts[0]?.previewUrl ? (
+                                <img src={q.mediaDrafts[0].previewUrl} className="w-full h-full object-cover" alt="" />
+                              ) : q.mediaDrafts[0]?.presentation ? (
+                                <MediaImage media={q.mediaDrafts[0].presentation} className="w-full h-full object-cover" />
+                              ) : q.image ? (
+                                <img src={q.image} className="w-full h-full object-cover" alt="" />
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void cancelTemporaryMediaDrafts(q.mediaDrafts);
+                                  updateQuestion(activeSection.id, q.id, { image: undefined, imageMediaId: undefined, mediaDrafts: [] });
+                                }}
+                                className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                                aria-label="Remove question image"
+                                title="Remove question image"
+                              ><X size={10} /></button>
                             </div>
                           )}
                           <div className="flex items-center gap-2">
-                            <button onClick={() => { setActiveCropTarget({ type: 'question', secId: activeSection.id, qId: q.id }); fileInputRef.current?.click(); }} className={`p-1.5 rounded-full transition-colors ${q.image ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-50'}`}><Camera size={20} /></button>
+                            <MediaPicker
+                              purpose="QUESTION_IMAGE"
+                              value={q.mediaDrafts}
+                              onChange={(mediaDrafts) => updateQuestion(activeSection.id, q.id, {
+                                mediaDrafts,
+                                image: mediaDrafts.some((media) => media.status === 'ready') ? undefined : q.image,
+                                imageMediaId: readyMediaAssetIds(mediaDrafts)[0]
+                              })}
+                              className="shrink-0"
+                              renderContent={({ open, retry, busy }) => {
+                                const current = q.mediaDrafts[0];
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => current?.status === 'error' ? retry(current.clientId) : open()}
+                                    disabled={busy}
+                                    className={`relative p-1.5 rounded-full transition-colors disabled:cursor-wait ${q.image || current ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-50'}`}
+                                    aria-label={current?.status === 'error' ? 'Retry question image upload' : 'Add question image'}
+                                    title={current?.status === 'error' ? 'Retry' : 'Add question image'}
+                                  >
+                                    <Camera size={20} />
+                                    {busy && <span className="absolute bottom-0 right-0 h-2 w-2 rounded-full bg-blue-500" />}
+                                  </button>
+                                );
+                              }}
+                            />
                             <textarea
                               value={q.text}
                               onChange={(e) => updateQuestion(activeSection.id, q.id, { text: e.target.value })}
@@ -904,13 +948,41 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                               <div className="flex items-center gap-2">
                                 <div className="flex-1 flex items-center bg-gray-50 rounded-xl px-1 py-1 border border-transparent focus-within:border-blue-200 focus-within:bg-white transition-all shadow-sm">
                                   {currentChoiceType === 'multiple' && (
-                                    <button
-                                      onClick={() => { setActiveCropTarget({ type: 'option', secId: activeSection.id, qId: q.id, optId: opt.id }); fileInputRef.current?.click(); }}
-                                      className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-dashed transition-all mr-1 ${opt.image ? 'border-blue-500' : 'border-gray-200 text-gray-400 hover:text-blue-500'
-                                        }`}
-                                    >
-                                      {opt.image ? <img src={opt.image} className="w-full h-full object-cover" alt="" /> : <Camera size={16} />}
-                                    </button>
+                                    <MediaPicker
+                                      purpose="OPTION_IMAGE"
+                                      value={opt.mediaDrafts}
+                                      onChange={(mediaDrafts) => updateOption(activeSection.id, q.id, opt.id, {
+                                        mediaDrafts,
+                                        image: mediaDrafts.some((media) => media.status === 'ready') ? undefined : opt.image,
+                                        imageMediaId: readyMediaAssetIds(mediaDrafts)[0]
+                                      })}
+                                      className="mr-1 shrink-0"
+                                      renderContent={({ open, retry, busy }) => {
+                                        const current = opt.mediaDrafts[0];
+                                        const hasImage = Boolean(current || opt.image);
+                                        return (
+                                          <button
+                                            type="button"
+                                            onClick={() => current?.status === 'error' ? retry(current.clientId) : open()}
+                                            disabled={busy}
+                                            className={`relative w-10 h-10 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-dashed transition-all disabled:cursor-wait ${hasImage ? 'border-blue-500' : 'border-gray-200 text-gray-400 hover:text-blue-500'}`}
+                                            aria-label={current?.status === 'error' ? 'Retry option image upload' : `Add image to option ${oIdx + 1}`}
+                                            title={current?.status === 'error' ? 'Retry' : 'Add option image'}
+                                          >
+                                            {current?.previewUrl ? (
+                                              <img src={current.previewUrl} className="w-full h-full object-cover" alt="" />
+                                            ) : current?.presentation ? (
+                                              <MediaImage media={current.presentation} className="w-full h-full object-cover" />
+                                            ) : opt.image ? (
+                                              <img src={opt.image} className="w-full h-full object-cover" alt="" />
+                                            ) : (
+                                              <Camera size={16} />
+                                            )}
+                                            {busy && <span className="absolute inset-x-0 bottom-0 h-1 bg-blue-500" />}
+                                          </button>
+                                        );
+                                      }}
+                                    />
                                   )}
                                   {isRating ? (
                                     <div className="flex-1 px-3 py-2 flex items-center gap-2">
@@ -944,11 +1016,17 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                         className="flex-1 text-xs font-semibold p-2 bg-transparent focus:outline-none placeholder-gray-400"
                                       />
                                       <span className="text-[9px] text-gray-500 mr-1.5 whitespace-nowrap">{opt.text.length}/80</span>
-                                      {opt.image && (
-                                        <button onClick={() => {
-                                          const updated = q.options?.map(o => o.id === opt.id ? { ...o, image: undefined } : o);
-                                          updateQuestion(activeSection.id, q.id, { options: updated });
-                                        }} className="p-3 text-gray-300 hover:text-red-500 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]"><X size={12} /></button>
+                                      {(opt.image || opt.mediaDrafts.length > 0) && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            void cancelTemporaryMediaDrafts(opt.mediaDrafts);
+                                            updateOption(activeSection.id, q.id, opt.id, { image: undefined, imageMediaId: undefined, mediaDrafts: [] });
+                                          }}
+                                          className="p-3 text-gray-300 hover:text-red-500 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]"
+                                          aria-label={`Remove image from option ${oIdx + 1}`}
+                                          title="Remove option image"
+                                        ><X size={12} /></button>
                                       )}
                                     </div>
                                   )}
@@ -1156,28 +1234,21 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
         </div>
       </div>
 
-      <input
-        type="file"
-        ref={fileInputRef}
-        className="hidden"
-        accept="image/*"
-        onChange={handleImageUpload}
-      />
-
       {/* Sticky Footer */}
       <div className="border-t border-gray-100 bg-white/95 backdrop-blur-md px-4 py-3 sticky bottom-0 z-40 safe-bottom shrink-0 flex gap-3">
         <button
           onClick={() => handlePost(true)}
+          disabled={!mediaReady || isSubmitting}
           className="flex-1 py-3 bg-gray-100 text-gray-700 rounded-2xl font-black uppercase tracking-wider text-[11px] hover:bg-gray-200 transition-all active:scale-[0.98]"
         >
           Save Draft
         </button>
         <button
           onClick={() => handlePost(false)}
-          disabled={!errorInfo.isValid}
-          aria-disabled={!errorInfo.isValid}
+          disabled={!canPublish}
+          aria-disabled={!canPublish}
           className={`flex-1 py-3 text-white rounded-2xl font-black uppercase tracking-wider text-[11px] transition-all ${
-            errorInfo.isValid
+            canPublish
               ? 'bg-blue-600 hover:bg-blue-700 active:scale-[0.98] shadow-lg shadow-blue-200'
               : 'bg-gray-300 shadow-none cursor-not-allowed'
           }`}
@@ -1507,6 +1578,8 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                       <button
                         disabled={optCount <= 2}
                         onClick={() => {
+                          const removed = q?.options?.find(o => o.id === settingsOptionId.optId);
+                          if (removed) void cancelTemporaryMediaDrafts(removed.mediaDrafts);
                           const updated = q?.options?.filter(o => o.id !== settingsOptionId.optId);
                           updateQuestion(settingsOptionId.secId, settingsOptionId.qId, { options: updated });
                           setSettingsOptionId(null);
@@ -1726,6 +1799,11 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                     <button
                       disabled={count <= 1}
                       onClick={() => {
+                        const removed = activeSection.questions.find(q => q.id === activeQuestionId);
+                        if (removed) void cancelTemporaryMediaDrafts([
+                          ...removed.mediaDrafts,
+                          ...(removed.options || []).flatMap((option) => option.mediaDrafts)
+                        ]);
                         const updatedQs = activeSection.questions.filter(q => q.id !== activeQuestionId);
                         setSections(sections.map(s => s.id === activeSection.id ? { ...s, questions: updatedQs } : s));
                         setActiveQuestionId(updatedQs[0]?.id || null);
@@ -1792,6 +1870,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
               <button
                 disabled={sections.length <= 1}
                 onClick={() => {
+                  void cancelTemporaryMediaDrafts(collectSectionMedia([activeSection]));
                   const updatedSections = sections.filter(s => s.id !== activeSection.id);
                   setSections(updatedSections);
                   setActiveSectionId(updatedSections[0]?.id || null);
@@ -1830,7 +1909,6 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
         </div>
       )}
 
-      {croppingImage && <ImageCropper imageSrc={croppingImage} onCrop={handleCropComplete} onCancel={() => { setCroppingImage(null); setActiveCropTarget(null); }} />}
     </div>
   );
 };

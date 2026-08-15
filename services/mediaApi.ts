@@ -105,7 +105,12 @@ export const mediaApi = {
     onProgress: (progress: number) => void,
     signal?: AbortSignal
   ) => {
+    if (signal?.aborted) throw new DOMException('Upload canceled.', 'AbortError');
     const session = await mediaApi.startUpload(file, purpose, crop.altText);
+    if (signal?.aborted) {
+      await mediaApi.cancel(session.assetId).catch(() => undefined);
+      throw new DOMException('Upload canceled.', 'AbortError');
+    }
     try {
       await uploadToSignedUrl(session, file, onProgress, signal);
     } catch (error) {
