@@ -34,7 +34,7 @@ export const followUser = async (req: Request, res: Response) => {
 
         const targetUser = await prisma.user.findUnique({
             where: { id: userId },
-            select: { isPrivate: true }
+            select: { isPrivate: true, mediaPrivacyTarget: true }
         });
 
         if (!targetUser) {
@@ -71,7 +71,7 @@ export const followUser = async (req: Request, res: Response) => {
             });
         } else {
             // Follow
-            const status = targetUser.isPrivate ? 'PENDING' : 'ACTIVE';
+            const status = targetUser.isPrivate || targetUser.mediaPrivacyTarget === true ? 'PENDING' : 'ACTIVE';
             const now = new Date();
 
             const follow = await prisma.follow.create({

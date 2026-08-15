@@ -5,16 +5,27 @@ import { notify } from '../services/notificationService';
 import { processBase64Image } from '../utils/imageProcessor';
 import { GroupPermissionService } from '../services/groupPermissionService';
 import { MEMBERSHIP_STATUS, POST_STATUS } from '../utils/constants';
+import {
+    commitPreparedMedia,
+    getStoredMediaPresentation,
+    prepareMediaAttachments,
+    rollbackPreparedMedia,
+    scheduleMediaDeletion
+} from '../services/mediaService';
+import { requestMediaPrivacyTransition } from '../services/mediaPrivacyTransitionService';
+import { MediaValidationError } from '../services/mediaProcessor';
 
 const SAFE_USER_SELECT = {
     id: true,
     name: true,
     handle: true,
     avatar: true,
+    avatarMediaId: true,
     bio: true,
     location: true,
     website: true,
     isPrivate: true,
+    mediaPrivacyTarget: true,
     groupPrivacy: true,
     verifiedBadge: true, // Renamed from isVerified
     followersCount: true,
@@ -223,21 +234,52 @@ export const updateUser = async (req: Request, res: Response) => {
     const data = req.body;
 
     try {
-        if (data.avatar) {
+        if (data.avatar && data.avatarMediaId === undefined) {
             data.avatar = await processBase64Image(data.avatar);
         }
 
-        const allowedFields = ['name', 'handle', 'avatar', 'bio', 'location', 'website', 'language', 'isPrivate', 'country', 'groupPrivacy'];
+        const allowedFields = ['name', 'handle', 'avatar', 'bio', 'location', 'website', 'language', 'country', 'groupPrivacy'];
         const updateData: any = {};
         allowedFields.forEach(field => {
             if (data[field] !== undefined) updateData[field] = data[field];
         });
 
-        const user = await prisma.user.update({
-            where: { id: id as string },
-            data: updateData,
-            select: SAFE_USER_SELECT
-        });
+        const currentUser = await prisma.user.findUnique({ where: { id }, select: { avatarMediaId: true } });
+        let oldAvatarMediaId: string | null | undefined;
+        if (data.avatarMediaId !== undefined) {
+            oldAvatarMediaId = currentUser?.avatarMediaId;
+            if (data.avatarMediaId === null) {
+                updateData.avatarMediaId = null;
+                updateData.avatar = null;
+            } else {
+                const prepared = await prepareMediaAttachments(id, [{ id: data.avatarMediaId, purpose: 'PROFILE_AVATAR' }], 'PUBLIC');
+                try {
+                    const presentation = await getStoredMediaPresentation(data.avatarMediaId);
+                    if (!presentation?.src) throw new MediaValidationError('MEDIA_NOT_READY', 'Avatar variants are unavailable.', 409);
+                    updateData.avatarMediaId = data.avatarMediaId;
+                    updateData.avatar = presentation.src;
+                    await prisma.$transaction(async (tx) => {
+                        await tx.user.update({ where: { id }, data: updateData });
+                        await commitPreparedMedia(tx, prepared);
+                    });
+                } catch (error) {
+                    await rollbackPreparedMedia(prepared);
+                    throw error;
+                }
+            }
+        }
+
+        if (data.avatarMediaId === undefined || data.avatarMediaId === null) {
+            await prisma.user.update({ where: { id }, data: updateData });
+        }
+
+        if (oldAvatarMediaId && oldAvatarMediaId !== data.avatarMediaId) {
+            await scheduleMediaDeletion([oldAvatarMediaId]);
+        }
+
+        if (typeof data.isPrivate === 'boolean') {
+            await requestMediaPrivacyTransition(id, data.isPrivate);
+        }
 
         // Auto-accept pending requests when switching to Public
         if (data.isPrivate === false) {
@@ -324,8 +366,10 @@ export const updateUser = async (req: Request, res: Response) => {
             })
         ]);
 
+        const user = await prisma.user.findUniqueOrThrow({ where: { id }, select: SAFE_USER_SELECT });
         res.json({
             ...user,
+            isPrivate: user.mediaPrivacyTarget === true || user.isPrivate,
             demographics,
             stats: {
                 followers: user.followersCount,
@@ -336,6 +380,12 @@ export const updateUser = async (req: Request, res: Response) => {
         });
     } catch (error) {
         console.error("Update User Error:", error);
+        if (error instanceof MediaValidationError) {
+            return res.status(error.statusCode).json({ error: error.message, code: error.code });
+        }
+        if (error instanceof Error && error.message.includes('privacy transition')) {
+            return res.status(409).json({ error: error.message, code: 'PRIVACY_TRANSITION_IN_PROGRESS' });
+        }
         res.status(500).json({ error: 'Failed to update user' });
     }
 };
@@ -758,6 +808,10 @@ export const deleteAccount = async (req: Request, res: Response) => {
         return res.status(403).json({ error: 'Forbidden: You can only delete your own account' });
     }
     try {
+        const ownedMediaIds = (await prisma.mediaAsset.findMany({
+            where: { ownerId: id, status: { not: 'DELETED' } },
+            select: { id: true }
+        })).map((asset) => asset.id);
         await prisma.$transaction(async (tx) => {
             // Nullify user PII and soft delete
             await tx.user.update({
@@ -771,6 +825,7 @@ export const deleteAccount = async (req: Request, res: Response) => {
                     phone: null,
                     passwordHash: null,
                     avatar: null,
+                    avatarMediaId: null,
                     bio: null,
                     location: null,
                     website: null,
@@ -802,6 +857,8 @@ export const deleteAccount = async (req: Request, res: Response) => {
             
             // Leave posts, comments, responses intact to preserve survey integrity
         });
+
+        await scheduleMediaDeletion(ownedMediaIds);
 
         res.json({ success: true, message: 'Account deleted and anonymized successfully' });
     } catch (error) {

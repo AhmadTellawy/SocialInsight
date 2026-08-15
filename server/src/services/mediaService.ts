@@ -58,6 +58,24 @@ export type MediaPresentation = {
   sources?: Array<{ src: string; width: number; height: number }>;
 };
 
+export type MediaAttachmentRequirement = {
+  id: string;
+  purpose: MediaPurpose;
+};
+
+export type PreparedMediaAttachment = {
+  assetIds: string[];
+  scope: MediaAccessScope;
+  promotedAssetIds: string[];
+};
+
+export type PreparedMediaScopeChange = {
+  assetIds: string[];
+  scope: MediaAccessScope;
+  promoted: Array<{ id: string; previousScope: MediaAccessScope }>;
+  demoteAfterCommit: string[];
+};
+
 const publicPresentation = (
   asset: MediaAsset & { variants: MediaVariant[] }
 ): MediaPresentation | null => {
@@ -262,7 +280,8 @@ export const promoteMediaAsset = async (assetId: string): Promise<void> => {
     const records: Prisma.MediaVariantCreateManyInput[] = [];
     for (const variant of privateVariants) {
       const key = variantKey(asset, 'public', variant.width);
-      await getMediaStorage().copy(variant.storageBucket, variant.storageKey, MEDIA_CONFIG.buckets.public, key);
+      const body = await getMediaStorage().download(variant.storageBucket, variant.storageKey);
+      await getMediaStorage().upload(MEDIA_CONFIG.buckets.public, key, body, variant.mime, '300');
       copied.push(key);
       records.push({
         mediaAssetId: asset.id,
@@ -284,6 +303,178 @@ export const promoteMediaAsset = async (assetId: string): Promise<void> => {
     await getMediaStorage().remove(MEDIA_CONFIG.buckets.public, copied).catch(() => undefined);
     throw error;
   }
+};
+
+export const prepareMediaAttachments = async (
+  ownerId: string,
+  requirements: MediaAttachmentRequirement[],
+  scope: MediaAccessScope
+): Promise<PreparedMediaAttachment> => {
+  const uniqueRequirements = Array.from(new Map(requirements.map((requirement) => [requirement.id, requirement])).values());
+  if (uniqueRequirements.length !== requirements.length) {
+    throw new MediaValidationError('DUPLICATE_MEDIA', 'The same image cannot be attached more than once.', 409);
+  }
+  if (requirements.length === 0) return { assetIds: [], scope, promotedAssetIds: [] };
+
+  const assets = await prisma.mediaAsset.findMany({
+    where: { id: { in: requirements.map((requirement) => requirement.id) }, ownerId, status: 'READY' },
+    select: { id: true, purpose: true }
+  });
+  if (assets.length !== requirements.length) {
+    throw new MediaValidationError('MEDIA_NOT_READY', 'One or more images are unavailable, already used, or still processing.', 409);
+  }
+  const purposeById = new Map(assets.map((asset) => [asset.id, asset.purpose]));
+  if (requirements.some((requirement) => purposeById.get(requirement.id) !== requirement.purpose)) {
+    throw new MediaValidationError('MEDIA_PURPOSE_MISMATCH', 'An image was uploaded for a different content type.', 409);
+  }
+
+  const promotedAssetIds: string[] = [];
+  if (scope === 'PUBLIC') {
+    try {
+      for (const requirement of requirements) {
+        await promoteMediaAsset(requirement.id);
+        promotedAssetIds.push(requirement.id);
+      }
+    } catch (error) {
+      await rollbackPreparedMedia({ assetIds: requirements.map(({ id }) => id), scope, promotedAssetIds });
+      throw error;
+    }
+  }
+  return { assetIds: requirements.map(({ id }) => id), scope, promotedAssetIds };
+};
+
+export const commitPreparedMedia = async (
+  tx: Prisma.TransactionClient,
+  prepared: PreparedMediaAttachment
+): Promise<void> => {
+  if (prepared.assetIds.length === 0) return;
+  const result = await tx.mediaAsset.updateMany({
+    where: { id: { in: prepared.assetIds }, status: 'READY' },
+    data: { status: 'ATTACHED', accessScope: prepared.scope, expiresAt: null }
+  });
+  if (result.count !== prepared.assetIds.length) {
+    throw new MediaValidationError('MEDIA_ATTACHMENT_CONFLICT', 'An image was attached by another request.', 409);
+  }
+};
+
+export const rollbackPreparedMedia = async (prepared: PreparedMediaAttachment): Promise<void> => {
+  for (const assetId of prepared.promotedAssetIds) {
+    await restrictMediaAsset(assetId, 'OWNER_ONLY').catch(() => undefined);
+  }
+};
+
+export const prepareMediaScopeChange = async (
+  assetIds: string[],
+  scope: MediaAccessScope
+): Promise<PreparedMediaScopeChange> => {
+  const ids = Array.from(new Set(assetIds));
+  const assets = ids.length === 0 ? [] : await prisma.mediaAsset.findMany({
+    where: { id: { in: ids }, status: 'ATTACHED' },
+    select: { id: true, accessScope: true }
+  });
+  if (assets.length !== ids.length) {
+    throw new MediaValidationError('MEDIA_ATTACHMENT_CONFLICT', 'Existing media attachments are inconsistent.', 409);
+  }
+  const prepared: PreparedMediaScopeChange = {
+    assetIds: ids,
+    scope,
+    promoted: [],
+    demoteAfterCommit: assets.filter((asset) => asset.accessScope === 'PUBLIC' && scope !== 'PUBLIC').map((asset) => asset.id)
+  };
+  if (scope === 'PUBLIC') {
+    try {
+      for (const asset of assets) {
+        if (asset.accessScope === 'PUBLIC') continue;
+        await promoteMediaAsset(asset.id);
+        prepared.promoted.push({ id: asset.id, previousScope: asset.accessScope });
+      }
+    } catch (error) {
+      await rollbackMediaScopeChange(prepared);
+      throw error;
+    }
+  }
+  return prepared;
+};
+
+export const commitMediaScopeChange = async (
+  tx: Prisma.TransactionClient,
+  prepared: PreparedMediaScopeChange
+): Promise<void> => {
+  if (prepared.assetIds.length === 0) return;
+  await tx.mediaAsset.updateMany({
+    where: { id: { in: prepared.assetIds }, status: 'ATTACHED' },
+    data: { accessScope: prepared.scope }
+  });
+};
+
+export const rollbackMediaScopeChange = async (prepared: PreparedMediaScopeChange): Promise<void> => {
+  for (const asset of prepared.promoted) {
+    await restrictMediaAsset(asset.id, asset.previousScope).catch(() => undefined);
+  }
+};
+
+export const finalizeMediaScopeChange = async (prepared: PreparedMediaScopeChange): Promise<void> => {
+  for (const assetId of prepared.demoteAfterCommit) {
+    await restrictMediaAsset(assetId, prepared.scope).catch(() => undefined);
+  }
+};
+
+export const scheduleMediaDeletion = async (assetIds: Array<string | null | undefined>): Promise<void> => {
+  const ids = Array.from(new Set(assetIds.filter((id): id is string => Boolean(id))));
+  if (ids.length === 0) return;
+  try {
+    await prisma.mediaAsset.updateMany({
+      where: { id: { in: ids }, status: { in: ['READY', 'ATTACHED', 'FAILED'] } },
+      data: { status: 'PENDING_DELETE' }
+    });
+  } catch (error) {
+    console.error('Could not schedule exact media cleanup:', error instanceof Error ? error.message : 'unknown error');
+    return;
+  }
+  for (const id of ids) {
+    await purgeMediaAsset(id).catch(() => undefined);
+  }
+};
+
+export const resolvePostMediaScope = async (
+  authorId: string,
+  status: string,
+  targetGroupIds: string[]
+): Promise<MediaAccessScope> => {
+  if (status !== 'PUBLISHED') return 'OWNER_ONLY';
+  if (targetGroupIds.length > 0) return 'INHERITED_GROUP';
+  const author = await prisma.user.findUnique({
+    where: { id: authorId },
+    select: { isPrivate: true, mediaPrivacyTarget: true }
+  });
+  return author && (author.isPrivate || author.mediaPrivacyTarget === true) ? 'RESTRICTED' : 'PUBLIC';
+};
+
+export const validatePostMediaSet = async (
+  ownerId: string,
+  assetIds: string[],
+  requestedAspectRatio?: number
+): Promise<number | null> => {
+  if (assetIds.length === 0) return null;
+  if (assetIds.length > MEDIA_CONFIG.maxPostImages) {
+    throw new MediaValidationError('TOO_MANY_POST_IMAGES', `A post can contain up to ${MEDIA_CONFIG.maxPostImages} images.`);
+  }
+  const assets = await prisma.mediaAsset.findMany({
+    where: { id: { in: assetIds }, ownerId, purpose: 'POST', status: { in: ['READY', 'ATTACHED'] } },
+    select: { id: true, aspectRatio: true }
+  });
+  if (assets.length !== assetIds.length || assets.some((asset) => !asset.aspectRatio)) {
+    throw new MediaValidationError('MEDIA_NOT_READY', 'One or more post images are unavailable or still processing.', 409);
+  }
+  const ratioById = new Map(assets.map((asset) => [asset.id, asset.aspectRatio!]));
+  const establishedRatio = ratioById.get(assetIds[0])!;
+  if (assetIds.some((id) => Math.abs(ratioById.get(id)! - establishedRatio) / establishedRatio > 0.01)) {
+    throw new MediaValidationError('MEDIA_RATIO_MISMATCH', 'All post images must use the same frame ratio.', 409);
+  }
+  if (requestedAspectRatio !== undefined && Math.abs(requestedAspectRatio - establishedRatio) / establishedRatio > 0.01) {
+    throw new MediaValidationError('MEDIA_RATIO_MISMATCH', 'The post frame ratio does not match its images.', 409);
+  }
+  return establishedRatio;
 };
 
 export const restrictMediaAsset = async (assetId: string, scope: MediaAccessScope = 'RESTRICTED'): Promise<void> => {
@@ -407,6 +598,23 @@ export const getStoredMediaPresentation = async (assetId?: string | null): Promi
   };
 };
 
+export const serializeMediaAsset = (
+  asset?: (MediaAsset & { variants: MediaVariant[] }) | null
+): MediaPresentation | null => {
+  if (!asset || !asset.aspectRatio) return null;
+  if (asset.accessScope === 'PUBLIC') return publicPresentation(asset);
+  const largest = asset.variants.filter((variant) => !variant.isPublic && variant.kind !== 'MASTER').sort((a, b) => b.width - a.width)[0];
+  if (!largest) return null;
+  return {
+    id: asset.id,
+    access: 'RESTRICTED',
+    aspectRatio: asset.aspectRatio,
+    altText: asset.altText,
+    width: largest.width,
+    height: largest.height
+  };
+};
+
 export const deleteMediaAsset = async (ownerId: string, assetId: string): Promise<void> => {
   const asset = await prisma.mediaAsset.findUnique({ where: { id: assetId }, include: { variants: true } });
   if (!asset || asset.ownerId !== ownerId) {
@@ -438,6 +646,17 @@ export const purgeMediaAsset = async (assetId: string): Promise<void> => {
 
 export const cleanupExpiredMedia = async (limit = 100): Promise<number> => {
   if (!isMediaStorageConfigured()) return 0;
+  const stalePublicAssets = await prisma.mediaAsset.findMany({
+    where: {
+      accessScope: { not: 'PUBLIC' },
+      variants: { some: { isPublic: true } }
+    },
+    take: Math.min(limit, 25),
+    select: { id: true, accessScope: true }
+  });
+  for (const asset of stalePublicAssets) {
+    await restrictMediaAsset(asset.id, asset.accessScope).catch(() => undefined);
+  }
   const assets = await prisma.mediaAsset.findMany({
     where: {
       OR: [
