@@ -5,6 +5,22 @@ import { processBase64Image } from '../utils/imageProcessor';
 import { PrivacyService } from '../services/privacyService';
 import { GroupPermissionService } from '../services/groupPermissionService';
 import { POST_STATUS, MEMBERSHIP_STATUS, GROUP_ROLES } from '../utils/constants';
+import {
+    commitPreparedMedia,
+    commitMediaScopeChange,
+    finalizeMediaScopeChange,
+    getStoredMediaPresentation,
+    prepareMediaAttachments,
+    prepareMediaScopeChange,
+    resolvePostMediaScope,
+    rollbackMediaScopeChange,
+    rollbackPreparedMedia,
+    scheduleMediaDeletion,
+    serializeMediaAsset,
+    validatePostMediaSet
+} from '../services/mediaService';
+import { MediaValidationError } from '../services/mediaProcessor';
+import { MediaAttachmentRequirement } from '../services/mediaService';
 
 export const SAFE_USER_SELECT = {
     id: true,
@@ -48,6 +64,45 @@ export const normalizePostType = (type?: string): string | undefined => {
 const OPTION_POST_TYPES = ['Poll', 'Challenge', 'Prediction', 'Debate'];
 const SECTION_POST_TYPES = ['Quiz', 'Survey'];
 const EDIT_WINDOW_MS = 5 * 60 * 1000;
+
+const getPostMediaAssetIds = (data: any): string[] => {
+    if (!Array.isArray(data?.mediaAssetIds)) return [];
+    return data.mediaAssetIds.filter((id: unknown): id is string => typeof id === 'string' && id.length > 0);
+};
+
+const getMediaAttachmentRequirements = (data: any): MediaAttachmentRequirement[] => {
+    const requirements: MediaAttachmentRequirement[] = getPostMediaAssetIds(data).map((id) => ({ id, purpose: 'POST' }));
+    for (const option of Array.isArray(data?.options) ? data.options : []) {
+        if (typeof option?.imageMediaId === 'string') requirements.push({ id: option.imageMediaId, purpose: 'OPTION_IMAGE' });
+    }
+    for (const section of Array.isArray(data?.sections) ? data.sections : []) {
+        for (const question of Array.isArray(section?.questions) ? section.questions : []) {
+            if (typeof question?.imageMediaId === 'string') requirements.push({ id: question.imageMediaId, purpose: 'QUESTION_IMAGE' });
+            for (const option of Array.isArray(question?.options) ? question.options : []) {
+                if (typeof option?.imageMediaId === 'string') requirements.push({ id: option.imageMediaId, purpose: 'OPTION_IMAGE' });
+            }
+        }
+    }
+    return requirements;
+};
+
+const POST_MEDIA_INCLUDE = {
+    orderBy: { sortOrder: 'asc' as const },
+    include: { mediaAsset: { include: { variants: true } } }
+};
+
+const serializePostMediaRecord = (post: any): any => {
+    if (!post) return post;
+    const media = Array.isArray(post.media)
+        ? post.media.map((attachment: any) => serializeMediaAsset(attachment.mediaAsset)).filter(Boolean)
+        : [];
+    return {
+        ...post,
+        media,
+        coverImage: media[0]?.src || post.image,
+        sharedFrom: post.sharedFrom ? serializePostMediaRecord(post.sharedFrom) : post.sharedFrom
+    };
+};
 
 const mapTargetGroups = (post: any): string[] => {
     return Array.isArray(post?.targetedGroups) ? post.targetedGroups.map((g: any) => g.id) : [];
@@ -161,6 +216,7 @@ export const getPosts = async (req: Request, res: Response) => {
                 },
                 questions: { include: { options: { orderBy: { order: 'asc' } } } },
                 sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                media: POST_MEDIA_INCLUDE,
                 targetedGroups: true,
                 responses: (userId || guestId) ? { 
                     where: userId ? { userId } : { guestId }, 
@@ -183,6 +239,7 @@ export const getPosts = async (req: Request, res: Response) => {
                         },
                         questions: { include: { options: { orderBy: { order: 'asc' } } } },
                         sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                        media: POST_MEDIA_INCLUDE,
                         targetedGroups: true,
                         responses: (userId || guestId) ? { 
                             where: userId ? { userId } : { guestId }, 
@@ -198,7 +255,8 @@ export const getPosts = async (req: Request, res: Response) => {
             orderBy: { createdAt: 'desc' }
         });
 
-        const mappedPosts = posts.map((s: any) => {
+        const mappedPosts = posts.map((rawPost: any) => {
+            const s = serializePostMediaRecord(rawPost);
             const actualResponse = s.sharedFrom ? s.sharedFrom.responses?.[0] : s.responses?.[0];
             const userAnswers = actualResponse?.answers || [];
             
@@ -230,7 +288,7 @@ export const getPosts = async (req: Request, res: Response) => {
                 likes: s.likesCount,
                 repostCount: s.sharesCount || 0,
                 participants: s.responseCount,
-                coverImage: s.image,
+                coverImage: s.coverImage,
                 hasParticipated: (userId || guestId) ? !!actualResponse : false,
                 userSelectedOptions: mapAnswerOptionIds(userAnswers),
                 userProgress: buildUserProgress(userAnswers),
@@ -297,7 +355,8 @@ export const getTrends = async (req: Request, res: Response) => {
                             { location: { contains: country, mode: 'insensitive' } }
                         ]
                     }
-                } : {})
+                } : {}),
+                ...PrivacyService.getPostPrivacyWhereClause(userId)
             },
             include: {
                 author: {
@@ -310,13 +369,15 @@ export const getTrends = async (req: Request, res: Response) => {
                         country: true,
                         followersCount: true
                     }
-                }
+                },
+                media: POST_MEDIA_INCLUDE
             }
         });
 
         // Map and rank candidates in-memory
         const nowMs = Date.now();
-        const scoredPosts = posts.map(post => {
+        const scoredPosts = posts.map(rawPost => {
+            const post = serializePostMediaRecord(rawPost);
             const votes = post.responseCount || 0;
             const comments = post.commentsCount || 0;
             const likes = post.likesCount || 0;
@@ -346,7 +407,7 @@ export const getTrends = async (req: Request, res: Response) => {
                 description: post.description,
                 type: post.type,
                 category: post.category,
-                coverImage: post.image,
+                coverImage: post.coverImage,
                 likesCount: post.likesCount,
                 commentsCount: post.commentsCount,
                 participants: post.responseCount,
@@ -395,6 +456,7 @@ export const getPostById = async (req: Request, res: Response) => {
                 },
                 questions: { include: { options: { orderBy: { order: 'asc' } } } },
                 sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                media: POST_MEDIA_INCLUDE,
                 targetedGroups: true,
                 responses: (userId || guestId) ? { 
                     where: userId ? { userId } : { guestId }, 
@@ -423,6 +485,7 @@ export const getPostById = async (req: Request, res: Response) => {
                         },
                         questions: { include: { options: { orderBy: { order: 'asc' } } } },
                         sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                        media: POST_MEDIA_INCLUDE,
                         targetedGroups: true,
                         responses: (userId || guestId) ? { 
                             where: userId ? { userId } : { guestId }, 
@@ -442,20 +505,20 @@ export const getPostById = async (req: Request, res: Response) => {
             return;
         }
 
-        const p = post as any;
+        const p = serializePostMediaRecord(post as any);
         const canViewPost = await GroupPermissionService.canViewPost(id, userId);
         if (!canViewPost) {
             res.status(403).json({ error: 'Forbidden' });
             return;
         }
 
-        const canViewAuthorContent = await PrivacyService.canViewUserContent(userId, p.authorId);
+        const targetGroupIds = mapTargetGroups(p);
+        const canViewAuthorContent = targetGroupIds.length > 0 || await PrivacyService.canViewUserContent(userId, p.authorId);
         if (!canViewAuthorContent) {
             res.status(403).json({ error: 'Forbidden' });
             return;
         }
 
-        const targetGroupIds = mapTargetGroups(p);
         const isAuthor = !!userId && p.authorId === userId;
         if (!isAuthor && (p.targetAudience === 'Groups' || targetGroupIds.length > 0)) {
             if (!userId) {
@@ -502,7 +565,7 @@ export const getPostById = async (req: Request, res: Response) => {
             likes: p.likesCount,
                 repostCount: p.sharesCount || 0,
             participants: p.responseCount,
-            coverImage: p.image,
+            coverImage: p.coverImage,
             hasParticipated: (userId || guestId) ? !!actualResponse : false,
             userSelectedOptions: mapAnswerOptionIds(userAnswers),
             userProgress: buildUserProgress(userAnswers),
@@ -528,22 +591,24 @@ export const getPostById = async (req: Request, res: Response) => {
 
 export const createPost = async (req: Request, res: Response) => {
     const data = req.body;
-    console.log(`[CREATE POST] Received payload:`, JSON.stringify({ ...data, coverImage: undefined, image: undefined }, null, 2));
-    console.log(`[CREATE POST] allowAnonymous received:`, data.allowAnonymous);
+    console.log('[CREATE POST] Request received:', JSON.stringify({
+        type: data.type,
+        status: data.status,
+        optionCount: Array.isArray(data.options) ? data.options.length : 0,
+        sectionCount: Array.isArray(data.sections) ? data.sections.length : 0,
+        mediaCount: Array.isArray(data.mediaAssetIds) ? data.mediaAssetIds.length : 0
+    }));
     try {
-        let authorId = req.user?.userId || data.userId || data.authorId || data.author?.id;
-        if (!authorId) {
-            const defaultUser = await prisma.user.findFirst();
-            authorId = defaultUser?.id;
-        }
+        const authorId = req.user!.userId;
+        const postMediaAssetIds = getPostMediaAssetIds(data);
 
         // --- PRE-PROCESS IMAGES ---
-        if (data.coverImage) data.coverImage = await processBase64Image(data.coverImage);
-        if (data.image) data.image = await processBase64Image(data.image);
+        if (postMediaAssetIds.length === 0 && data.coverImage) data.coverImage = await processBase64Image(data.coverImage);
+        if (postMediaAssetIds.length === 0 && data.image) data.image = await processBase64Image(data.image);
 
         if (data.options && Array.isArray(data.options)) {
             for (let opt of data.options) {
-                if (opt.image) opt.image = await processBase64Image(opt.image);
+                if (opt.image && !opt.imageMediaId) opt.image = await processBase64Image(opt.image);
             }
         }
 
@@ -551,10 +616,10 @@ export const createPost = async (req: Request, res: Response) => {
             for (let sec of data.sections) {
                 if (sec.questions && Array.isArray(sec.questions)) {
                     for (let q of sec.questions) {
-                        if (q.image) q.image = await processBase64Image(q.image);
+                        if (q.image && !q.imageMediaId) q.image = await processBase64Image(q.image);
                         if (q.options && Array.isArray(q.options)) {
                             for (let opt of q.options) {
-                                if (opt.image) opt.image = await processBase64Image(opt.image);
+                                if (opt.image && !opt.imageMediaId) opt.image = await processBase64Image(opt.image);
                             }
                         }
                     }
@@ -597,6 +662,7 @@ export const createPost = async (req: Request, res: Response) => {
             return;
         }
 
+        const targetGroupIds = Array.isArray(data.targetGroups) ? data.targetGroups : [];
         const postData: any = {
             title: data.title || "Untitled",
             description: data.description || "",
@@ -606,7 +672,7 @@ export const createPost = async (req: Request, res: Response) => {
                 ? data.targetGroups[0] 
                 : null,
             category: data.category,
-            image: data.coverImage || data.image,
+            image: postMediaAssetIds.length > 0 ? null : (data.coverImage || data.image),
             expiresAt: data.expiresAt ? new Date(data.expiresAt) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
             pollChoiceType: data.pollChoiceType,
             imageLayout: data.imageLayout,
@@ -628,7 +694,18 @@ export const createPost = async (req: Request, res: Response) => {
             status: needsApproval ? POST_STATUS.PENDING_APPROVAL : (data.status === 'DRAFT' ? POST_STATUS.DRAFT : POST_STATUS.PUBLISHED)
         };
 
-        const { post, createdOptions, createdSections } = await prisma.$transaction(async (tx) => {
+        const mediaAspectRatio = await validatePostMediaSet(authorId, postMediaAssetIds, data.mediaAspectRatio);
+        if (mediaAspectRatio) postData.mediaAspectRatio = mediaAspectRatio;
+        const requirements = getMediaAttachmentRequirements(data);
+        const mediaScope = await resolvePostMediaScope(authorId, postData.status, targetGroupIds);
+        const prepared = await prepareMediaAttachments(authorId, requirements, mediaScope);
+
+        let transactionResult;
+        try {
+            if (postMediaAssetIds.length > 0 && mediaScope === 'PUBLIC') {
+                postData.image = (await getStoredMediaPresentation(postMediaAssetIds[0]))?.src || null;
+            }
+            transactionResult = await prisma.$transaction(async (tx) => {
             const newPost = await tx.post.create({
                 data: postData,
                 include: {
@@ -641,6 +718,16 @@ export const createPost = async (req: Request, res: Response) => {
             let sectionsList: any[] = [];
             const typeStr = normalizePostType(data.type) || '';
 
+            if (postMediaAssetIds.length > 0) {
+                await tx.postMedia.createMany({
+                    data: postMediaAssetIds.map((mediaAssetId, sortOrder) => ({
+                        postId: newPost.id,
+                        mediaAssetId,
+                        sortOrder
+                    }))
+                });
+            }
+
             if (OPTION_POST_TYPES.includes(typeStr) && data.options) {
                 const question = await tx.question.create({
                     data: { text: data.title || "Poll Question", type: 'SingleChoice', postId: newPost.id }
@@ -649,6 +736,7 @@ export const createPost = async (req: Request, res: Response) => {
                     data: data.options.map((opt: any, index: number) => ({
                         text: opt.text,
                         image: opt.image,
+                        imageMediaId: opt.imageMediaId || null,
                         questionId: question.id,
                         isRating: opt.isRating || false,
                         ratingValue: opt.ratingValue || 0,
@@ -674,6 +762,7 @@ export const createPost = async (req: Request, res: Response) => {
                                 text: q.text,
                                 type: typeStr === 'Quiz' ? 'multiple_choice' : (q.type || 'multiple_choice'),
                                 image: q.image,
+                                imageMediaId: q.imageMediaId || null,
                                 order: q.order !== undefined ? q.order : qIdx,
                                 isRequired: q.isRequired !== undefined ? q.isRequired : true,
                                 postId: newPost.id,
@@ -686,6 +775,7 @@ export const createPost = async (req: Request, res: Response) => {
                                 data: q.options.map((opt: any, index: number) => ({
                                     text: opt.text,
                                     image: opt.image,
+                                    imageMediaId: opt.imageMediaId || null,
                                     isCorrect: q.correctOptionId === opt.id,
                                     isRating: opt.isRating || false,
                                     ratingValue: opt.ratingValue || 0,
@@ -708,39 +798,43 @@ export const createPost = async (req: Request, res: Response) => {
                 }
             }
 
+            await commitPreparedMedia(tx, prepared);
             return { post: newPost, createdOptions: optionsList, createdSections: sectionsList };
-        });
+            });
+        } catch (error) {
+            await rollbackPreparedMedia(prepared);
+            throw error;
+        }
+        const { post, createdOptions, createdSections } = transactionResult;
 
         console.log(`[CREATE POST] Saved to DB:`, JSON.stringify({ id: post.id, allowAnonymous: postData.allowAnonymous, forceAnonymous: postData.forceAnonymous }));
 
-        if (postData.status === POST_STATUS.PUBLISHED) {
-            const fullText = `${post.title} ${post.description}`;
-            await extractAndNotifyMentions(fullText, authorId, 'survey', post.id);
-        } else if (postData.status === POST_STATUS.PENDING_APPROVAL) {
-            // Notify target group owners & admins
-            const targetGroupId = data.targetGroups[0];
-            const group = await prisma.group.findUnique({ where: { id: targetGroupId }, select: { name: true } });
-            const managers = await prisma.groupMember.findMany({
-                where: { groupId: targetGroupId, role: { in: [GROUP_ROLES.OWNER, GROUP_ROLES.ADMIN] }, status: MEMBERSHIP_STATUS.JOINED }
-            });
-            for (const manager of managers) {
-                await notify(
-                    authorId,
-                    manager.userId,
-                    'group_post_pending',
-                    `A new post in "${group?.name || 'group'}" is pending approval.`,
-                    'group',
-                    targetGroupId
-                );
+        try {
+            if (postData.status === POST_STATUS.PUBLISHED) {
+                const fullText = `${post.title} ${post.description}`;
+                await extractAndNotifyMentions(fullText, authorId, 'survey', post.id);
+            } else if (postData.status === POST_STATUS.PENDING_APPROVAL) {
+                const targetGroupId = data.targetGroups[0];
+                const group = await prisma.group.findUnique({ where: { id: targetGroupId }, select: { name: true } });
+                const managers = await prisma.groupMember.findMany({
+                    where: { groupId: targetGroupId, role: { in: [GROUP_ROLES.OWNER, GROUP_ROLES.ADMIN] }, status: MEMBERSHIP_STATUS.JOINED }
+                });
+                for (const manager of managers) {
+                    await notify(authorId, manager.userId, 'group_post_pending', `A new post in "${group?.name || 'group'}" is pending approval.`, 'group', targetGroupId);
+                }
             }
+        } catch (notificationError) {
+            console.error('Post created, but notifications failed:', notificationError instanceof Error ? notificationError.message : 'unknown error');
         }
 
+        const media = (await Promise.all(postMediaAssetIds.map((id) => getStoredMediaPresentation(id)))).filter(Boolean);
         const mappedPost = {
             ...post,
             likes: post.likesCount,
                 repostCount: post.sharesCount || 0,
             participants: post.responseCount,
-            coverImage: post.image,
+            coverImage: media[0]?.src || post.image,
+            media,
             options: createdOptions,
             sections: createdSections.length > 0 ? createdSections : undefined,
             allowAnonymous: post.allowAnonymous,
@@ -753,6 +847,10 @@ export const createPost = async (req: Request, res: Response) => {
         res.json(mappedPost);
     } catch (error) {
         console.error(error);
+        if (error instanceof MediaValidationError) {
+            res.status(error.statusCode).json({ error: error.message, code: error.code });
+            return;
+        }
         res.status(500).json({ error: 'Failed to create post' });
     }
 };
@@ -760,10 +858,15 @@ export const createPost = async (req: Request, res: Response) => {
 export const updatePost = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const data = req.body;
-    console.log(`[UPDATE POST] ID: ${id} | Received payload:`, JSON.stringify({ ...data, coverImage: undefined, image: undefined }, null, 2));
-    console.log(`[UPDATE POST] allowAnonymous received:`, data.allowAnonymous);
+    console.log('[UPDATE POST] Request received:', JSON.stringify({
+        id,
+        status: data.status,
+        hasOptions: data.options !== undefined,
+        hasSections: data.sections !== undefined,
+        mediaCount: Array.isArray(data.mediaAssetIds) ? data.mediaAssetIds.length : undefined
+    }));
     try {
-        const trustedUserId = req.user?.userId || data.userId;
+        const trustedUserId = req.user!.userId;
         const existingPost = await prisma.post.findUnique({
             where: { id },
             select: {
@@ -773,7 +876,11 @@ export const updatePost = async (req: Request, res: Response) => {
                 isDeleted: true,
                 responseCount: true,
                 groupId: true,
-                targetedGroups: { select: { id: true } }
+                mediaAspectRatio: true,
+                targetedGroups: { select: { id: true } },
+                media: { orderBy: { sortOrder: 'asc' }, select: { mediaAssetId: true } },
+                questions: { where: { sectionId: null }, include: { options: true } },
+                sections: { include: { questions: { include: { options: true } } } }
             }
         });
 
@@ -782,7 +889,7 @@ export const updatePost = async (req: Request, res: Response) => {
             return;
         }
 
-        if (!trustedUserId || existingPost.authorId !== trustedUserId) {
+        if (existingPost.authorId !== trustedUserId) {
             res.status(403).json({ error: 'Unauthorized to update this post' });
             return;
         }
@@ -798,12 +905,13 @@ export const updatePost = async (req: Request, res: Response) => {
         }
 
         // --- PRE-PROCESS IMAGES ---
-        if (data.coverImage) data.coverImage = await processBase64Image(data.coverImage);
-        if (data.image) data.image = await processBase64Image(data.image);
+        const submittedPostMediaIds = Array.isArray(data.mediaAssetIds) ? getPostMediaAssetIds(data) : undefined;
+        if (submittedPostMediaIds === undefined && data.coverImage) data.coverImage = await processBase64Image(data.coverImage);
+        if (submittedPostMediaIds === undefined && data.image) data.image = await processBase64Image(data.image);
 
         if (data.options && Array.isArray(data.options)) {
             for (let opt of data.options) {
-                if (opt.image) opt.image = await processBase64Image(opt.image);
+                if (opt.image && !opt.imageMediaId) opt.image = await processBase64Image(opt.image);
             }
         }
 
@@ -811,10 +919,10 @@ export const updatePost = async (req: Request, res: Response) => {
             for (let sec of data.sections) {
                 if (sec.questions && Array.isArray(sec.questions)) {
                     for (let q of sec.questions) {
-                        if (q.image) q.image = await processBase64Image(q.image);
+                        if (q.image && !q.imageMediaId) q.image = await processBase64Image(q.image);
                         if (q.options && Array.isArray(q.options)) {
                             for (let opt of q.options) {
-                                if (opt.image) opt.image = await processBase64Image(opt.image);
+                                if (opt.image && !opt.imageMediaId) opt.image = await processBase64Image(opt.image);
                             }
                         }
                     }
@@ -917,174 +1025,221 @@ export const updatePost = async (req: Request, res: Response) => {
             }
         }
 
-        const post = await prisma.post.update({
-            where: { id },
-            data: updateData,
-            include: {
-                author: { select: SAFE_USER_SELECT },
-                targetedGroups: true
-            }
-        });
-        console.log(`[UPDATE POST] Saved to DB:`, JSON.stringify({ id: post.id, allowAnonymous: updateData.allowAnonymous }));
-
-        if (existingPost.status !== POST_STATUS.PUBLISHED && post.status === POST_STATUS.PUBLISHED) {
-            const fullText = `${post.title} ${post.description}`;
-            await extractAndNotifyMentions(fullText, trustedUserId, 'survey', post.id);
-        } else if (post.status === POST_STATUS.PENDING_APPROVAL && existingPost.status !== POST_STATUS.PENDING_APPROVAL) {
-            // Notify target group owners & admins of resubmitted post
-            const targetGroupId = post.groupId || (post.targetedGroups.length > 0 ? post.targetedGroups[0].id : null);
-            if (targetGroupId) {
-                const group = await prisma.group.findUnique({ where: { id: targetGroupId }, select: { name: true } });
-                const managers = await prisma.groupMember.findMany({
-                    where: { groupId: targetGroupId, role: { in: [GROUP_ROLES.OWNER, GROUP_ROLES.ADMIN] }, status: MEMBERSHIP_STATUS.JOINED }
-                });
-                for (const manager of managers) {
-                    await notify(
-                        trustedUserId,
-                        manager.userId,
-                        'group_post_pending',
-                        `A rejected post in "${group?.name || 'group'}" was resubmitted and is pending approval.`,
-                        'group',
-                        targetGroupId
-                    );
-                }
-            }
+        const oldRequirements: MediaAttachmentRequirement[] = [
+            ...existingPost.media.map(({ mediaAssetId }) => ({ id: mediaAssetId, purpose: 'POST' as const })),
+            ...existingPost.questions.flatMap((question) => [
+                ...(question.imageMediaId ? [{ id: question.imageMediaId, purpose: 'QUESTION_IMAGE' as const }] : []),
+                ...question.options.flatMap((option) => option.imageMediaId ? [{ id: option.imageMediaId, purpose: 'OPTION_IMAGE' as const }] : [])
+            ]),
+            ...existingPost.sections.flatMap((section) => section.questions.flatMap((question) => [
+                ...(question.imageMediaId ? [{ id: question.imageMediaId, purpose: 'QUESTION_IMAGE' as const }] : []),
+                ...question.options.flatMap((option) => option.imageMediaId ? [{ id: option.imageMediaId, purpose: 'OPTION_IMAGE' as const }] : [])
+            ]))
+        ];
+        const oldPurposeById = new Map(oldRequirements.map((requirement) => [requirement.id, requirement.purpose]));
+        const finalPostMediaIds = submittedPostMediaIds || existingPost.media.map(({ mediaAssetId }) => mediaAssetId);
+        const incomingRequirements: MediaAttachmentRequirement[] = [
+            ...finalPostMediaIds.map((mediaId) => ({ id: mediaId, purpose: 'POST' as const })),
+            ...(data.options !== undefined
+                ? getMediaAttachmentRequirements({ options: data.options })
+                : oldRequirements.filter((requirement) => requirement.purpose === 'OPTION_IMAGE' && existingPost.questions.some((question) => question.options.some((option) => option.imageMediaId === requirement.id)))),
+            ...(data.sections !== undefined
+                ? getMediaAttachmentRequirements({ sections: data.sections })
+                : oldRequirements.filter((requirement) => existingPost.sections.some((section) => section.questions.some((question) =>
+                    question.imageMediaId === requirement.id || question.options.some((option) => option.imageMediaId === requirement.id)
+                ))))
+        ];
+        if (new Set(incomingRequirements.map(({ id: mediaId }) => mediaId)).size !== incomingRequirements.length) {
+            throw new MediaValidationError('DUPLICATE_MEDIA', 'The same image cannot be attached more than once.', 409);
+        }
+        if (incomingRequirements.some((requirement) => oldPurposeById.has(requirement.id) && oldPurposeById.get(requirement.id) !== requirement.purpose)) {
+            throw new MediaValidationError('MEDIA_PURPOSE_MISMATCH', 'An existing image cannot move to a different media role.', 409);
         }
 
-        let finalOptions: any[] = [];
-        let finalSections: any[] = [];
-        const typeStr = normalizePostType(post.type) || '';
+        const oldIds = new Set(oldRequirements.map(({ id: mediaId }) => mediaId));
+        const incomingIds = new Set(incomingRequirements.map(({ id: mediaId }) => mediaId));
+        const retainedIds = Array.from(incomingIds).filter((mediaId) => oldIds.has(mediaId));
+        const removedIds = Array.from(oldIds).filter((mediaId) => !incomingIds.has(mediaId));
+        const newRequirements = incomingRequirements.filter((requirement) => !oldIds.has(requirement.id));
+        const finalStatus = updateData.status || existingPost.status;
+        const mediaScope = await resolvePostMediaScope(trustedUserId, finalStatus, effectiveTargetGroups);
+        const ratio = await validatePostMediaSet(trustedUserId, finalPostMediaIds, data.mediaAspectRatio || existingPost.mediaAspectRatio || undefined);
+        if (ratio) updateData.mediaAspectRatio = ratio;
+        else if (submittedPostMediaIds) updateData.mediaAspectRatio = null;
 
-        if (OPTION_POST_TYPES.includes(typeStr) && data.options) {
-            let question = await prisma.question.findFirst({ where: { postId: id } });
-            if (!question) {
-                question = await prisma.question.create({
-                    data: { text: data.title || "Poll Question", type: 'SingleChoice', postId: id }
-                });
-            }
+        const preparedNew = await prepareMediaAttachments(trustedUserId, newRequirements, mediaScope);
+        let preparedRetained;
+        try {
+            preparedRetained = await prepareMediaScopeChange(retainedIds, mediaScope);
+        } catch (error) {
+            await rollbackPreparedMedia(preparedNew);
+            throw error;
+        }
 
-            const incomingOptions = data.options;
-            const existingOptions = await prisma.option.findMany({ where: { questionId: question.id } });
-            const existingIds = existingOptions.map(o => o.id);
-            const incomingIds = incomingOptions.map((o: any) => o.id);
-
-            const idsToDelete = existingIds.filter(optId => !incomingIds.includes(optId));
-            if (idsToDelete.length > 0) {
-                await prisma.option.deleteMany({ where: { id: { in: idsToDelete } } });
-            }
-
-            for (let i = 0; i < incomingOptions.length; i++) {
-                const opt = incomingOptions[i];
-                if (existingIds.includes(opt.id)) {
-                    await prisma.option.update({
-                        where: { id: opt.id },
-                        data: {
-                            text: opt.text,
-                            image: opt.image,
-                            isRating: opt.isRating || false,
-                            ratingValue: opt.ratingValue || 0,
-                            withFollowUp: parseBoolean(opt.withFollowUp),
-                            followUpLabel: opt.followUpLabel || null,
-                            order: i
-                        }
-                    });
-                } else {
-                    await prisma.option.create({
-                        data: {
-                            text: opt.text,
-                            image: opt.image,
-                            questionId: question.id,
-                            isRating: opt.isRating || false,
-                            ratingValue: opt.ratingValue || 0,
-                            withFollowUp: parseBoolean(opt.withFollowUp),
-                            followUpLabel: opt.followUpLabel || null,
-                            order: i
-                        }
-                    });
+        const legacyUrlById = new Map<string, string>();
+        try {
+            if (mediaScope === 'PUBLIC') {
+                for (const requirement of incomingRequirements) {
+                    const presentation = await getStoredMediaPresentation(requirement.id);
+                    if (presentation?.src) legacyUrlById.set(requirement.id, presentation.src);
                 }
             }
-            finalOptions = await prisma.option.findMany({ where: { questionId: question.id }, orderBy: { order: 'asc' } });
-        } else if (OPTION_POST_TYPES.includes(typeStr)) {
-            const question = await prisma.question.findFirst({ where: { postId: id } });
-            if (question) {
-                finalOptions = await prisma.option.findMany({ where: { questionId: question.id }, orderBy: { order: 'asc' } });
-            }
-        } else if (SECTION_POST_TYPES.includes(typeStr) && data.sections) {
-            const oldSections = await prisma.section.findMany({ where: { postId: id }, include: { questions: true } });
-            const oldSectionIds = oldSections.map(s => s.id);
-            const oldQuestionIds = oldSections.flatMap(s => s.questions.map(q => q.id));
+        } catch (error) {
+            await rollbackPreparedMedia(preparedNew);
+            await rollbackMediaScopeChange(preparedRetained);
+            throw error;
+        }
+        if (submittedPostMediaIds !== undefined || (finalPostMediaIds.length > 0 && mediaScope !== 'PUBLIC')) {
+            updateData.image = finalPostMediaIds.length > 0 ? (legacyUrlById.get(finalPostMediaIds[0]) || null) : null;
+        }
 
-            if (oldQuestionIds.length > 0) {
-                await prisma.option.deleteMany({ where: { questionId: { in: oldQuestionIds } } });
-                await prisma.question.deleteMany({ where: { id: { in: oldQuestionIds } } });
-            }
-            if (oldSectionIds.length > 0) {
-                await prisma.section.deleteMany({ where: { id: { in: oldSectionIds } } });
-            }
-
-            for (const [sIdx, sec] of data.sections.entries()) {
-                const section = await prisma.section.create({
-                    data: {
-                        title: sec.title || `Section ${sIdx + 1}`,
-                        order: sec.order !== undefined ? sec.order : sIdx,
-                        postId: post.id
-                    }
+        let transactionResult;
+        try {
+            transactionResult = await prisma.$transaction(async (tx) => {
+                const post = await tx.post.update({
+                    where: { id },
+                    data: updateData,
+                    include: { author: { select: SAFE_USER_SELECT }, targetedGroups: true }
                 });
 
-                for (const [qIdx, q] of (sec.questions || []).entries()) {
-                    const question = await prisma.question.create({
-                        data: {
-                            text: q.text,
-                            type: typeStr === 'Quiz' ? 'multiple_choice' : (q.type || 'multiple_choice'),
-                            image: q.image,
-                            order: q.order !== undefined ? q.order : qIdx,
-                            isRequired: q.isRequired !== undefined ? q.isRequired : true,
-                            postId: post.id,
-                            sectionId: section.id
-                        }
-                    });
+                if (submittedPostMediaIds !== undefined) {
+                    await tx.postMedia.deleteMany({ where: { postId: id } });
+                    if (finalPostMediaIds.length > 0) {
+                        await tx.postMedia.createMany({
+                            data: finalPostMediaIds.map((mediaAssetId, sortOrder) => ({ postId: id, mediaAssetId, sortOrder }))
+                        });
+                    }
+                }
 
-                    if (q.options?.length) {
-                        await prisma.option.createMany({
-                            data: q.options.map((opt: any, index: number) => ({
-                                text: opt.text,
-                                image: opt.image,
-                                isCorrect: q.correctOptionId === opt.id,
-                                isRating: opt.isRating || false,
-                                ratingValue: opt.ratingValue || 0,
-                                withFollowUp: parseBoolean(opt.withFollowUp),
-                                followUpLabel: opt.followUpLabel || null,
-                                questionId: question.id,
+                const typeStr = normalizePostType(post.type) || '';
+                if (OPTION_POST_TYPES.includes(typeStr) && data.options !== undefined) {
+                    let question = await tx.question.findFirst({ where: { postId: id, sectionId: null } });
+                    if (!question) {
+                        question = await tx.question.create({ data: { text: data.title || 'Poll Question', type: 'SingleChoice', postId: id } });
+                    }
+                    await tx.option.deleteMany({ where: { questionId: question.id } });
+                    if (data.options.length > 0) {
+                        await tx.option.createMany({
+                            data: data.options.map((option: any, index: number) => ({
+                                text: option.text,
+                                image: option.imageMediaId ? (legacyUrlById.get(option.imageMediaId) || null) : option.image,
+                                imageMediaId: option.imageMediaId || null,
+                                questionId: question!.id,
+                                isRating: option.isRating || false,
+                                ratingValue: option.ratingValue || 0,
+                                withFollowUp: parseBoolean(option.withFollowUp),
+                                followUpLabel: option.followUpLabel || null,
                                 order: index
                             }))
                         });
                     }
+                } else if (SECTION_POST_TYPES.includes(typeStr) && data.sections !== undefined) {
+                    const oldSections = await tx.section.findMany({ where: { postId: id }, include: { questions: true } });
+                    const oldSectionIds = oldSections.map((section) => section.id);
+                    const oldQuestionIds = oldSections.flatMap((section) => section.questions.map((question) => question.id));
+                    if (oldQuestionIds.length > 0) {
+                        await tx.option.deleteMany({ where: { questionId: { in: oldQuestionIds } } });
+                        await tx.question.deleteMany({ where: { id: { in: oldQuestionIds } } });
+                    }
+                    if (oldSectionIds.length > 0) await tx.section.deleteMany({ where: { id: { in: oldSectionIds } } });
+
+                    for (const [sectionIndex, sectionInput] of data.sections.entries()) {
+                        const section = await tx.section.create({
+                            data: {
+                                title: sectionInput.title || `Section ${sectionIndex + 1}`,
+                                order: sectionInput.order !== undefined ? sectionInput.order : sectionIndex,
+                                postId: id
+                            }
+                        });
+                        for (const [questionIndex, questionInput] of (sectionInput.questions || []).entries()) {
+                            const question = await tx.question.create({
+                                data: {
+                                    text: questionInput.text,
+                                    type: typeStr === 'Quiz' ? 'multiple_choice' : (questionInput.type || 'multiple_choice'),
+                                    image: questionInput.imageMediaId ? (legacyUrlById.get(questionInput.imageMediaId) || null) : questionInput.image,
+                                    imageMediaId: questionInput.imageMediaId || null,
+                                    order: questionInput.order !== undefined ? questionInput.order : questionIndex,
+                                    isRequired: questionInput.isRequired !== undefined ? questionInput.isRequired : true,
+                                    postId: id,
+                                    sectionId: section.id
+                                }
+                            });
+                            if (questionInput.options?.length) {
+                                await tx.option.createMany({
+                                    data: questionInput.options.map((option: any, index: number) => ({
+                                        text: option.text,
+                                        image: option.imageMediaId ? (legacyUrlById.get(option.imageMediaId) || null) : option.image,
+                                        imageMediaId: option.imageMediaId || null,
+                                        isCorrect: questionInput.correctOptionId === option.id,
+                                        isRating: option.isRating || false,
+                                        ratingValue: option.ratingValue || 0,
+                                        withFollowUp: parseBoolean(option.withFollowUp),
+                                        followUpLabel: option.followUpLabel || null,
+                                        questionId: question.id,
+                                        order: index
+                                    }))
+                                });
+                            }
+                        }
+                    }
+                }
+
+                await commitPreparedMedia(tx, preparedNew);
+                await commitMediaScopeChange(tx, preparedRetained);
+
+                const finalOptions = OPTION_POST_TYPES.includes(typeStr)
+                    ? await tx.option.findMany({ where: { question: { postId: id, sectionId: null } }, orderBy: { order: 'asc' } })
+                    : [];
+                const finalSections = SECTION_POST_TYPES.includes(typeStr)
+                    ? await tx.section.findMany({
+                        where: { postId: id },
+                        orderBy: { order: 'asc' },
+                        include: { questions: { orderBy: { order: 'asc' }, include: { options: { orderBy: { order: 'asc' } } } } }
+                    })
+                    : [];
+                return { post, finalOptions, finalSections };
+            });
+        } catch (error) {
+            await rollbackPreparedMedia(preparedNew);
+            await rollbackMediaScopeChange(preparedRetained);
+            throw error;
+        }
+
+        await finalizeMediaScopeChange(preparedRetained);
+        await scheduleMediaDeletion(removedIds);
+        const { post, finalOptions, finalSections } = transactionResult;
+        console.log('[UPDATE POST] Saved to DB:', JSON.stringify({ id: post.id, mediaCount: finalPostMediaIds.length }));
+
+        try {
+            if (existingPost.status !== POST_STATUS.PUBLISHED && post.status === POST_STATUS.PUBLISHED) {
+                await extractAndNotifyMentions(`${post.title} ${post.description}`, trustedUserId, 'survey', post.id);
+            } else if (post.status === POST_STATUS.PENDING_APPROVAL && existingPost.status !== POST_STATUS.PENDING_APPROVAL) {
+                const targetGroupId = post.groupId || post.targetedGroups[0]?.id;
+                if (targetGroupId) {
+                    const [group, managers] = await Promise.all([
+                        prisma.group.findUnique({ where: { id: targetGroupId }, select: { name: true } }),
+                        prisma.groupMember.findMany({
+                            where: { groupId: targetGroupId, role: { in: [GROUP_ROLES.OWNER, GROUP_ROLES.ADMIN] }, status: MEMBERSHIP_STATUS.JOINED }
+                        })
+                    ]);
+                    for (const manager of managers) {
+                        await notify(trustedUserId, manager.userId, 'group_post_pending', `A rejected post in "${group?.name || 'group'}" was resubmitted and is pending approval.`, 'group', targetGroupId);
+                    }
                 }
             }
-
-            const fullyPopulatedPost = await prisma.post.findUnique({
-                where: { id: post.id },
-                include: { sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } } }
-            });
-            if (fullyPopulatedPost?.sections) {
-                finalSections = fullyPopulatedPost.sections;
-            }
-        } else if (SECTION_POST_TYPES.includes(typeStr)) {
-            const fullyPopulatedPost = await prisma.post.findUnique({
-                where: { id: post.id },
-                include: { sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } } }
-            });
-            if (fullyPopulatedPost?.sections) {
-                finalSections = fullyPopulatedPost.sections;
-            }
+        } catch (notificationError) {
+            console.error('Post updated, but notifications failed:', notificationError instanceof Error ? notificationError.message : 'unknown error');
         }
+
+        const media = (await Promise.all(finalPostMediaIds.map((mediaId) => getStoredMediaPresentation(mediaId)))).filter(Boolean);
 
         const mappedPost = {
             ...post,
             likes: post.likesCount,
                 repostCount: post.sharesCount || 0,
             participants: post.responseCount,
-            coverImage: post.image,
+            coverImage: media[0]?.src || post.image,
+            media,
             options: finalOptions,
             sections: finalSections.length > 0 ? finalSections : undefined,
             allowAnonymous: post.allowAnonymous,
@@ -1096,6 +1251,11 @@ export const updatePost = async (req: Request, res: Response) => {
 
         res.json(mappedPost);
     } catch (error) {
+        console.error('Failed to update post:', error);
+        if (error instanceof MediaValidationError) {
+            res.status(error.statusCode).json({ error: error.message, code: error.code });
+            return;
+        }
         res.status(500).json({ error: 'Failed to update post' });
     }
 };
@@ -1108,25 +1268,29 @@ export const getDrafts = async (req: Request, res: Response) => {
             include: {
                 questions: { include: { options: { orderBy: { order: 'asc' } } } },
                 sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                media: POST_MEDIA_INCLUDE,
                 targetedGroups: true,
                 author: { select: SAFE_USER_SELECT }
             },
             orderBy: { updatedAt: 'desc' }
         });
-        const mappedDrafts = drafts.map((d: any) => ({
-            ...d,
-            likes: d.likesCount,
+        const mappedDrafts = drafts.map((rawDraft: any) => {
+            const d = serializePostMediaRecord(rawDraft);
+            return {
+                ...d,
+                likes: d.likesCount,
                 repostCount: d.sharesCount || 0,
-            participants: d.responseCount,
-            coverImage: d.image,
-            options: OPTION_POST_TYPES.includes(normalizePostType(d.type) || '') && d.questions.length > 0 ? d.questions[0].options : [],
-            sections: d.sections,
-            allowAnonymous: d.allowAnonymous,
-            forceAnonymous: d.forceAnonymous,
-            randomPairing: d.randomPairing,
-            demographics: parseJsonArray(d.demographics),
-            targetGroups: mapTargetGroups(d)
-        }));
+                participants: d.responseCount,
+                coverImage: d.coverImage,
+                options: OPTION_POST_TYPES.includes(normalizePostType(d.type) || '') && d.questions.length > 0 ? d.questions[0].options : [],
+                sections: d.sections,
+                allowAnonymous: d.allowAnonymous,
+                forceAnonymous: d.forceAnonymous,
+                randomPairing: d.randomPairing,
+                demographics: parseJsonArray(d.demographics),
+                targetGroups: mapTargetGroups(d)
+            };
+        });
         res.json(mappedDrafts);
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch drafts' });
@@ -1151,6 +1315,7 @@ export const getSavedPosts = async (req: Request, res: Response) => {
                         author: { select: SAFE_USER_SELECT },
                         questions: { include: { options: { orderBy: { order: 'asc' } } } },
                         sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                        media: POST_MEDIA_INCLUDE,
                         targetedGroups: true,
                         responses: userId ? { where: { userId }, take: 1, include: { answers: true } } : false,
                         likes: userId ? { where: { userId }, take: 1 } : false
@@ -1160,7 +1325,7 @@ export const getSavedPosts = async (req: Request, res: Response) => {
             orderBy: { createdAt: 'desc' }
         });
         const posts = saved.map((s: any) => {
-            const p: any = s.post;
+            const p: any = serializePostMediaRecord(s.post);
             const userResponse = p.responses?.[0];
             const userAnswers = userResponse?.answers || [];
             return {
@@ -1168,7 +1333,7 @@ export const getSavedPosts = async (req: Request, res: Response) => {
                 likes: p.likesCount,
                 repostCount: p.sharesCount || 0,
                 participants: p.responseCount,
-                coverImage: p.image,
+                coverImage: p.coverImage,
                 hasParticipated: userId ? !!userResponse : false,
                 userSelectedOptions: mapAnswerOptionIds(userAnswers),
                 userProgress: buildUserProgress(userAnswers),
@@ -2042,7 +2207,8 @@ export const reportPost = async (req: Request, res: Response) => {
 
 export const sharePost = async (req: Request, res: Response) => {
     const id = req.params.id as string;
-    const { userId, caption } = req.body;
+    const userId = req.user!.userId;
+    const { caption } = req.body;
     try {
         const originalPost = await prisma.post.findUnique({
             where: { id },
@@ -2100,7 +2266,7 @@ export const sharePost = async (req: Request, res: Response) => {
                 type: originalPost.type,
                 authorId: userId,
                 expiresAt: originalPost.expiresAt,
-                image: originalPost.image,
+                image: null,
                 category: originalPost.category,
                 targetAudience: originalPost.targetAudience,
                 pollChoiceType: originalPost.pollChoiceType,
@@ -2134,6 +2300,7 @@ export const sharePost = async (req: Request, res: Response) => {
                 author: { select: SAFE_USER_SELECT },
                 questions: { include: { options: { orderBy: { order: 'asc' } } } },
                 sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                media: POST_MEDIA_INCLUDE,
                 targetedGroups: true,
                 sharedFrom: {
                     include: {
@@ -2148,6 +2315,7 @@ export const sharePost = async (req: Request, res: Response) => {
                         },
                         questions: { include: { options: { orderBy: { order: 'asc' } } } },
                         sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                        media: POST_MEDIA_INCLUDE,
                         targetedGroups: true,
                     }
                 }
@@ -2159,7 +2327,7 @@ export const sharePost = async (req: Request, res: Response) => {
             return;
         }
 
-        const p = createdPost as any;
+        const p = serializePostMediaRecord(createdPost as any);
         
         let mappedSharedFrom: any = undefined;
         if (p.sharedFrom) {
@@ -2190,7 +2358,7 @@ export const sharePost = async (req: Request, res: Response) => {
             likes: p.likesCount || 0,
             repostCount: p.sharesCount || 0,
             participants: p.responseCount || 0,
-            coverImage: p.image,
+            coverImage: p.coverImage,
             options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(p.type) || '') && p.questions && p.questions.length > 0 ? p.questions[0].options : [],
             author: {
                 ...p.author,
@@ -2287,9 +2455,15 @@ export const deleteComment = async (req: Request, res: Response) => {
 
 export const deletePost = async (req: Request, res: Response) => {
     const id = req.params.id as string;
-    const { userId } = req.body;
+    const userId = req.user!.userId;
     try {
-        const post = await prisma.post.findUnique({ where: { id } });
+        const post = await prisma.post.findUnique({
+            where: { id },
+            include: {
+                media: { select: { mediaAssetId: true } },
+                questions: { include: { options: { select: { imageMediaId: true } } } }
+            }
+        });
         if (!post) {
             res.status(404).json({ error: 'Post not found' });
             return;
@@ -2298,6 +2472,14 @@ export const deletePost = async (req: Request, res: Response) => {
             res.status(403).json({ error: 'Unauthorized to delete this post' });
             return;
         }
+
+        const mediaAssetIds = [
+            ...post.media.map(({ mediaAssetId }) => mediaAssetId),
+            ...post.questions.flatMap((question) => [
+                question.imageMediaId,
+                ...question.options.map((option) => option.imageMediaId)
+            ])
+        ];
 
         // Hard Delete cascade via manual transaction
         await prisma.$transaction(async (tx) => {
@@ -2344,6 +2526,8 @@ export const deletePost = async (req: Request, res: Response) => {
                 });
             }
         });
+
+        await scheduleMediaDeletion(mediaAssetIds);
 
         res.json({ success: true, message: 'Post permanently deleted' });
     } catch (error) {

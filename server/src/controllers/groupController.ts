@@ -4,6 +4,14 @@ import { GROUP_ROLES, MEMBERSHIP_STATUS, JOIN_POLICIES, POSTING_PERMISSIONS, POS
 import { GroupPermissionService } from '../services/groupPermissionService';
 import { notify } from '../services/notificationService';
 import { processBase64Image } from '../utils/imageProcessor';
+import {
+    commitPreparedMedia,
+    getStoredMediaPresentation,
+    prepareMediaAttachments,
+    rollbackPreparedMedia,
+    scheduleMediaDeletion
+} from '../services/mediaService';
+import { MediaValidationError } from '../services/mediaProcessor';
 
 // Helper to update active member count on Group model
 export const updateGroupMemberCount = async (groupId: string) => {
@@ -19,7 +27,7 @@ export const updateGroupMemberCount = async (groupId: string) => {
 const softDeleteGroupAndCleanPosts = async (tx: any, groupId: string) => {
     await tx.group.update({
         where: { id: groupId },
-        data: { isDeleted: true, deletedAt: new Date() }
+        data: { isDeleted: true, deletedAt: new Date(), image: null, imageMediaId: null }
     });
 
     const posts = await tx.post.findMany({
@@ -149,7 +157,7 @@ export const getGroupById = async (req: Request, res: Response) => {
 };
 
 export const createGroup = async (req: Request, res: Response) => {
-    const { name, description, category, image, isPublic } = req.body;
+    const { name, description, category, image, imageMediaId, isPublic } = req.body;
     const creatorId = req.user?.userId;
 
     if (!name || !creatorId) {
@@ -187,45 +195,65 @@ export const createGroup = async (req: Request, res: Response) => {
     const finalCategory = allowedCategories.includes(category) ? category : 'Other';
 
     try {
-        let processedImage = null;
-        if (image) {
+        let processedImage: string | null = null;
+        let prepared = null;
+        if (imageMediaId) {
+            prepared = await prepareMediaAttachments(creatorId, [{ id: imageMediaId, purpose: 'GROUP_IMAGE' }], 'PUBLIC');
+        } else if (image) {
             if (image.startsWith('data:image/') && image.length > 3000000) {
                 res.status(400).json({ error: 'Image size exceeds the 2MB limit.' });
                 return;
             }
             processedImage = await processBase64Image(image);
-        } else {
-            processedImage = `https://ui-avatars.com/api/?name=${encodeURIComponent(trimmedName)}&background=random&color=fff&size=200`;
         }
 
-        const newGroup = await prisma.group.create({
-            data: {
-                name: trimmedName,
-                description: trimmedDesc,
-                category: finalCategory,
-                image: processedImage,
-                isPublic: isPublic !== false,
-                memberCount: 1,
-                members: {
-                    create: {
-                        userId: creatorId,
-                        role: GROUP_ROLES.OWNER,
-                        status: MEMBERSHIP_STATUS.JOINED
-                    }
-                }
+        try {
+            if (imageMediaId) {
+                const presentation = await getStoredMediaPresentation(imageMediaId);
+                if (!presentation?.src) throw new MediaValidationError('MEDIA_NOT_READY', 'Group image variants are unavailable.', 409);
+                processedImage = presentation.src;
             }
-        });
+            const newGroup = await prisma.$transaction(async (tx) => {
+                const group = await tx.group.create({
+                    data: {
+                        name: trimmedName,
+                        description: trimmedDesc,
+                        category: finalCategory,
+                        image: processedImage,
+                        imageMediaId: imageMediaId || null,
+                        isPublic: isPublic !== false,
+                        memberCount: 1,
+                        members: {
+                            create: {
+                                userId: creatorId,
+                                role: GROUP_ROLES.OWNER,
+                                status: MEMBERSHIP_STATUS.JOINED
+                            }
+                        }
+                    }
+                });
+                if (prepared) await commitPreparedMedia(tx, prepared);
+                return group;
+            });
 
-        res.status(201).json(newGroup);
+            res.status(201).json(newGroup);
+        } catch (error) {
+            if (prepared) await rollbackPreparedMedia(prepared);
+            throw error;
+        }
     } catch (error) {
         console.error('Failed to create group:', error);
+        if (error instanceof MediaValidationError) {
+            res.status(error.statusCode).json({ error: error.message, code: error.code });
+            return;
+        }
         res.status(500).json({ error: 'Failed to create group' });
     }
 };
 
 export const updateGroup = async (req: Request, res: Response) => {
     const id = req.params.id as string;
-    const { name, description, category, image, isPublic, joinPolicy, postingPermissions, rules } = req.body;
+    const { name, description, category, image, imageMediaId, isPublic, joinPolicy, postingPermissions, rules } = req.body;
     const currentUserId = req.user?.userId;
 
     if (!currentUserId) {
@@ -297,7 +325,17 @@ export const updateGroup = async (req: Request, res: Response) => {
             updateData.postingPermissions = postingPermissions;
         }
 
-        if (image !== undefined) {
+        let prepared = null;
+        let previousImageMediaId: string | null = group.imageMediaId;
+        if (imageMediaId !== undefined) {
+            if (imageMediaId === null) {
+                updateData.imageMediaId = null;
+                updateData.image = null;
+            } else {
+                prepared = await prepareMediaAttachments(currentUserId, [{ id: imageMediaId, purpose: 'GROUP_IMAGE' }], 'PUBLIC');
+                updateData.imageMediaId = imageMediaId;
+            }
+        } else if (image !== undefined) {
             if (image && image.startsWith('data:image/') && image.length > 3000000) {
                 res.status(400).json({ error: 'Image size exceeds the 2MB limit.' });
                 return;
@@ -305,14 +343,34 @@ export const updateGroup = async (req: Request, res: Response) => {
             updateData.image = image ? await processBase64Image(image) : null;
         }
 
-        const updated = await prisma.group.update({
-            where: { id },
-            data: updateData
-        });
+        let updated;
+        try {
+            if (prepared && imageMediaId) {
+                const presentation = await getStoredMediaPresentation(imageMediaId);
+                if (!presentation?.src) throw new MediaValidationError('MEDIA_NOT_READY', 'Group image variants are unavailable.', 409);
+                updateData.image = presentation.src;
+            }
+            updated = await prisma.$transaction(async (tx) => {
+                const result = await tx.group.update({ where: { id }, data: updateData });
+                if (prepared) await commitPreparedMedia(tx, prepared);
+                return result;
+            });
+        } catch (error) {
+            if (prepared) await rollbackPreparedMedia(prepared);
+            throw error;
+        }
+
+        if (imageMediaId !== undefined && previousImageMediaId && previousImageMediaId !== imageMediaId) {
+            await scheduleMediaDeletion([previousImageMediaId]);
+        }
 
         res.json(updated);
     } catch (error) {
         console.error('Failed to update group settings:', error);
+        if (error instanceof MediaValidationError) {
+            res.status(error.statusCode).json({ error: error.message, code: error.code });
+            return;
+        }
         res.status(500).json({ error: 'Failed to update group settings.' });
     }
 };
@@ -342,6 +400,15 @@ export const deleteGroup = async (req: Request, res: Response) => {
             return;
         }
 
+        const candidatePosts = await prisma.post.findMany({
+            where: { OR: [{ groupId: id }, { targetedGroups: { some: { id } } }] },
+            select: {
+                id: true,
+                media: { select: { mediaAssetId: true } },
+                questions: { select: { imageMediaId: true, options: { select: { imageMediaId: true } } } }
+            }
+        });
+
         await prisma.$transaction(async (tx) => {
             await softDeleteGroupAndCleanPosts(tx, id);
             await tx.groupMember.updateMany({
@@ -349,6 +416,21 @@ export const deleteGroup = async (req: Request, res: Response) => {
                 data: { status: MEMBERSHIP_STATUS.REMOVED }
             });
         });
+
+        const deletedPostIds = new Set((await prisma.post.findMany({
+            where: { id: { in: candidatePosts.map((post) => post.id) }, isDeleted: true },
+            select: { id: true }
+        })).map((post) => post.id));
+        const deletedPostMedia = candidatePosts
+            .filter((post) => deletedPostIds.has(post.id))
+            .flatMap((post) => [
+                ...post.media.map(({ mediaAssetId }) => mediaAssetId),
+                ...post.questions.flatMap((question) => [
+                    question.imageMediaId,
+                    ...question.options.map((option) => option.imageMediaId)
+                ])
+            ]);
+        await scheduleMediaDeletion([group.imageMediaId, ...deletedPostMedia]);
 
         res.json({ success: true, message: 'Group soft deleted successfully.' });
     } catch (error) {

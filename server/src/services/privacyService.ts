@@ -9,9 +9,9 @@ export class PrivacyService {
     if (!viewerId) {
       const owner = await prisma.user.findUnique({
         where: { id: ownerId },
-        select: { isPrivate: true }
+        select: { isPrivate: true, mediaPrivacyTarget: true }
       });
-      return !owner?.isPrivate;
+      return owner !== null && !(owner.isPrivate || owner.mediaPrivacyTarget === true);
     }
 
     if (viewerId === ownerId) {
@@ -33,14 +33,14 @@ export class PrivacyService {
 
     const owner = await prisma.user.findUnique({
       where: { id: ownerId },
-      select: { isPrivate: true }
+      select: { isPrivate: true, mediaPrivacyTarget: true }
     });
 
     if (!owner) {
       return false; 
     }
 
-    if (!owner.isPrivate) {
+    if (!owner.isPrivate && owner.mediaPrivacyTarget !== true) {
       return true; 
     }
 
@@ -76,7 +76,8 @@ export class PrivacyService {
       // Guests only see public content
       return {
         author: {
-          isPrivate: false
+          isPrivate: false,
+          NOT: { mediaPrivacyTarget: true }
         }
       };
     }
@@ -86,7 +87,7 @@ export class PrivacyService {
         {
           OR: [
             { authorId: viewerId },
-            { author: { isPrivate: false } },
+            { author: { isPrivate: false, NOT: { mediaPrivacyTarget: true } } },
             { author: { following: { some: { followerId: viewerId, status: 'ACTIVE' } } } }
           ]
         },
