@@ -11,11 +11,50 @@ export enum SurveyType {
 
 export type AccountType = 'Personal' | 'Business' | 'Group';
 
+export type MediaAccess = 'PUBLIC' | 'RESTRICTED';
+
+export interface MediaPresentation {
+  id: string;
+  access: MediaAccess;
+  aspectRatio: number;
+  altText?: string | null;
+  width: number;
+  height: number;
+  src?: string;
+  srcSet?: string;
+  sources?: Array<{ src: string; width: number; height: number }>;
+}
+
+export type MediaPurpose = 'POST' | 'PROFILE_AVATAR' | 'GROUP_IMAGE' | 'QUESTION_IMAGE' | 'OPTION_IMAGE';
+
+export interface MediaCropSelection {
+  aspectRatio: number;
+  crop: { x: number; y: number; width: number; height: number };
+  focalX: number;
+  focalY: number;
+  altText?: string;
+}
+
+export interface MediaDraft {
+  clientId: string;
+  file: File | null;
+  previewUrl: string;
+  purpose: MediaPurpose;
+  status: 'editing' | 'queued' | 'uploading' | 'processing' | 'ready' | 'error';
+  progress: number;
+  aspectRatio: number;
+  crop?: MediaCropSelection;
+  assetId?: string;
+  presentation?: MediaPresentation;
+  error?: string;
+}
+
 export interface UserProfile {
   id?: string; // Added id
   name: string;
   handle: string;
   avatar: string;
+  avatarMediaId?: string;
   bio: string;
   location: string;
   website: string;
@@ -72,6 +111,7 @@ export interface Group {
   role: 'Owner' | 'Admin' | 'Member';
   permissions?: GroupPermissions; // Added for new permission checks
   image?: string;
+  imageMediaId?: string;
   createdAt: string;
   rules?: string;
   // Settings
@@ -90,6 +130,8 @@ export interface Option {
   text: string;
   votes: number;
   image?: string; // URL for the option image
+  imageMediaId?: string;
+  imageMedia?: MediaPresentation;
 
   // Quiz Specific
   isCorrect?: boolean;
@@ -135,6 +177,8 @@ export interface SurveyQuestion {
   type: 'text' | 'multiple_choice' | 'true_false';
   options?: Option[];
   image?: string; // Question-level image
+  imageMediaId?: string;
+  imageMedia?: MediaPresentation;
   imageLayout?: 'vertical' | 'horizontal';
 
   // Constraints
@@ -207,6 +251,8 @@ export interface Survey {
   isSaved?: boolean;
   coverImage?: string; // Normalized UI field
   image?: string; // Legacy API field mapping
+  media?: MediaPresentation[];
+  mediaAspectRatio?: number;
   targetAudience?: 'Public' | 'Followers' | 'Groups' | 'Custom Audience' | 'Custom Domain';
   targetGroups?: string[]; // IDs of groups if 'Groups' is selected
 
@@ -273,7 +319,7 @@ export const normalizeSurvey = (raw: any): Survey => {
   if (!raw) return raw as Survey;
 
   // 1) Cover image mapping
-  const coverImage = raw.coverImage ?? raw.image ?? undefined;
+  const coverImage = raw.media?.[0]?.src ?? raw.coverImage ?? raw.image ?? undefined;
 
   // 2) Author identity mapping safely
   const author = raw.author ? {

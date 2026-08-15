@@ -1,0 +1,85 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { ImageOff } from 'lucide-react';
+import { MediaPresentation } from '../../types';
+import { mediaApi } from '../../services/mediaApi';
+
+type MediaImageProps = Omit<React.ImgHTMLAttributes<HTMLImageElement>, 'src' | 'srcSet' | 'width' | 'height'> & {
+  media?: MediaPresentation | null;
+  mediaId?: string | null;
+  fallbackSrc?: string | null;
+  fallback?: React.ReactNode;
+  eager?: boolean;
+};
+
+export const MediaImage: React.FC<MediaImageProps> = ({
+  media,
+  mediaId,
+  fallbackSrc,
+  fallback,
+  eager = false,
+  alt = '',
+  sizes,
+  onError,
+  ...imageProps
+}) => {
+  const id = media?.id || mediaId || undefined;
+  const identity = `${id || ''}:${media?.src || ''}:${fallbackSrc || ''}`;
+  const initial = useMemo<MediaPresentation | null>(() => {
+    if (media) return media;
+    if (!fallbackSrc) return null;
+    return { id: '', access: 'PUBLIC', aspectRatio: 1, width: 1, height: 1, src: fallbackSrc };
+  }, [identity]);
+  const [resolved, setResolved] = useState<MediaPresentation | null>(initial);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setResolved(initial);
+    setFailed(false);
+    if (id && !initial?.src) {
+      mediaApi.get(id).then((result) => {
+        if (active) setResolved(result);
+      }).catch(() => {
+        if (active) setFailed(true);
+      });
+    }
+    return () => { active = false; };
+  }, [identity, id, initial]);
+
+  const refresh = async (): Promise<void> => {
+    if (!id) {
+      setFailed(true);
+      return;
+    }
+    try {
+      setResolved(await mediaApi.get(id));
+      setFailed(false);
+    } catch {
+      setFailed(true);
+    }
+  };
+
+  if (failed || !resolved?.src) {
+    return <>{fallback || <span className="flex h-full w-full items-center justify-center bg-gray-100 text-gray-400"><ImageOff size={20} aria-hidden="true" /></span>}</>;
+  }
+
+  return (
+    <img
+      {...imageProps}
+      src={resolved.src}
+      srcSet={resolved.srcSet}
+      sizes={sizes}
+      width={resolved.width || undefined}
+      height={resolved.height || undefined}
+      alt={alt || resolved.altText || ''}
+      loading={eager ? 'eager' : 'lazy'}
+      fetchPriority={eager ? 'high' : 'auto'}
+      decoding="async"
+      crossOrigin="anonymous"
+      onError={(event) => {
+        onError?.(event);
+        void refresh();
+      }}
+    />
+  );
+};

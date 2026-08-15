@@ -7,6 +7,34 @@
     "messages": "Messages",
     "profile": "Profile"
   },
+  "common": {
+    "cancel": "Cancel",
+    "apply": "Apply",
+    "retry": "Retry",
+    "edit": "Edit",
+    "remove": "Remove"
+  },
+  "media": {
+    "add": "Add image",
+    "reorder": "Reorder image",
+    "processing": "Processing image",
+    "invalidType": "Use a JPEG, PNG, or WebP image.",
+    "tooLarge": "Images must be 15 MB or smaller.",
+    "invalidImage": "This image could not be opened.",
+    "uploadFailed": "Image upload failed.",
+    "processingFailed": "Image processing failed.",
+    "crop": {
+      "title": "Crop image",
+      "original": "Original",
+      "reset": "Reset crop",
+      "zoom": "Zoom",
+      "aspect": "Aspect ratio"
+    },
+    "carousel": {
+      "previous": "Previous image",
+      "next": "Next image"
+    }
+  },
   "settings": {
     "title": "Settings",
     "account": "Account",
