@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { X, Image as ImageIcon, Plus, Trash2, Globe, Users, AlertCircle, Clock, Calendar, ChevronDown, List, GalleryHorizontalEnd, Info, Lock, Camera, Save, BarChart3, Check, ChevronRight, UserCircle, Target, Link2, LayoutGrid, Settings2, Star, MoreHorizontal, ArrowUp, ArrowDown, MessageSquare, ArrowLeft, Tag } from 'lucide-react';
+import { X, Image as ImageIcon, Plus, Trash2, Globe, Users, AlertCircle, Clock, Calendar, ChevronDown, List, Info, Lock, Camera, Save, BarChart3, Check, ChevronRight, UserCircle, Target, Link2, LayoutGrid, Settings2, Star, MoreHorizontal, ArrowUp, ArrowDown, MessageSquare, ArrowLeft, Tag } from 'lucide-react';
 import { Survey, SurveyType, UserProfile, Option, Group, DraftOption } from '../types';
 import { ImageCropper } from './ImageCropper';
 import { BottomSheet } from './BottomSheet';
@@ -530,6 +530,14 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   };
 
   const selectedOptionForSettings = options.find(o => o.id === settingsOptionId);
+  const isPostReady = Boolean(
+    userProfile?.id &&
+    title.trim() &&
+    (pollChoiceType === 'rating' || options.filter(o => o.text.trim() !== '').length >= 2) &&
+    category &&
+    (category !== 'Other' || otherCategoryText.trim()) &&
+    (visibility !== 'Groups' || selectedGroups.length > 0)
+  );
 
   return (
     <div className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-right duration-350">
@@ -539,7 +547,16 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
           <ArrowLeft size={24} />
         </button>
         <h1 className="text-sm font-black text-gray-800">New Poll</h1>
-        <button onClick={handleSubmit} className="text-white font-black text-[11px] px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 transition-all uppercase tracking-widest shadow-md active:scale-95 shadow-blue-200/50">
+        <button
+          onClick={handleSubmit}
+          disabled={!isPostReady}
+          aria-disabled={!isPostReady}
+          className={`text-white font-black text-[11px] px-5 py-2.5 rounded-full transition-all uppercase tracking-widest ${
+            isPostReady
+              ? 'bg-blue-600 hover:bg-blue-700 shadow-md active:scale-95 shadow-blue-200/50'
+              : 'bg-gray-300 text-white shadow-none cursor-not-allowed'
+          }`}
+        >
           Post
         </button>
       </div>
@@ -561,7 +578,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   value={title}
                   onChange={(val) => { setTitle(val); if (errors.title) setErrors(prev => ({ ...prev, title: false })) }}
                   placeholder="Ask a question..."
-                  className={`text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-300 min-h-[44px] ${errors.title ? 'border-red-300 text-red-500' : 'text-gray-900'}`}
+                  className={`text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] ${errors.title ? 'border-red-300 text-red-500' : 'text-gray-900'}`}
                   minRows={1}
                   autoFocus
                 />
@@ -584,38 +601,9 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               </div>
             )}
 
-            {/* Category and Poll Type Grid */}
+            {/* Poll Type and Category Grid */}
             <div className="grid grid-cols-2 gap-4 pt-3 mt-3 border-t border-gray-55/50">
-              {/* Left Column: Category */}
-              <div className="space-y-1.5 text-left min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <div className="p-1.5 bg-gray-50 rounded-lg text-gray-500 border border-gray-100 shrink-0">
-                    <Tag size={12} />
-                  </div>
-                  <span className="text-xs font-bold text-gray-800">Category</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsCategorySheetOpen(true)}
-                  className={`w-full flex items-center justify-between border rounded-xl px-3 py-2 text-[8px] font-semibold transition-all active:scale-[0.98] min-w-0 ${
-                    category
-                      ? 'bg-blue-50 border-blue-200 text-blue-700 font-semibold'
-                      : hasAttemptedSubmit && !category
-                      ? 'bg-red-50 border-red-200 text-red-600 font-bold'
-                      : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-55'
-                  }`}
-                >
-                  <div className="flex items-center min-w-0 mr-1">
-                    <span className="truncate">{category || 'Select category'}</span>
-                  </div>
-                  <ChevronDown size={14} className="text-gray-400 shrink-0" />
-                </button>
-                {errors.category && !category && (
-                  <p className="text-[10px] font-semibold text-red-600 px-1 mt-1">Please select a category.</p>
-                )}
-              </div>
-
-              {/* Right Column: Poll Type */}
+              {/* Left Column: Poll Type */}
               <div className="space-y-1.5 text-left font-sans">
                 <div className="flex items-center gap-2 mb-1">
                   <div className="p-1.5 bg-gray-50 rounded-lg text-gray-500 border border-gray-100 shrink-0">
@@ -648,6 +636,35 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   </button>
                 </div>
               </div>
+
+              {/* Right Column: Category */}
+              <div className="space-y-1.5 text-left min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="p-1.5 bg-gray-50 rounded-lg text-gray-500 border border-gray-100 shrink-0">
+                    <Tag size={12} />
+                  </div>
+                  <span className="text-xs font-bold text-gray-800">Category</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsCategorySheetOpen(true)}
+                  className={`w-full flex items-center justify-between border rounded-xl px-3 py-2 text-[8px] font-semibold transition-all active:scale-[0.98] min-w-0 ${
+                    category
+                      ? 'bg-blue-50 border-blue-200 text-blue-700 font-semibold'
+                      : hasAttemptedSubmit && !category
+                      ? 'bg-red-50 border-red-200 text-red-600 font-bold'
+                      : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-55'
+                  }`}
+                >
+                  <div className="flex items-center min-w-0 mr-1">
+                    <span className="truncate">{category || 'Select category'}</span>
+                  </div>
+                  <ChevronDown size={14} className="text-gray-400 shrink-0" />
+                </button>
+                {errors.category && !category && (
+                  <p className="text-[10px] font-semibold text-red-600 px-1 mt-1">Please select a category.</p>
+                )}
+              </div>
             </div>
           </section>
 
@@ -664,7 +681,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
 
               {pollChoiceType === 'multiple' && (
                 <div className="flex items-center gap-1.5 shrink-0">
-                  <span className="text-[10px] font-bold text-gray-400">Option Layout</span>
+                  <span className="text-[10px] font-bold text-gray-500">Option Layout</span>
                   <button
                     type="button"
                     onClick={() => setShowLayoutInfo(!showLayoutInfo)}
@@ -674,8 +691,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   </button>
                   <div className="flex gap-1">
                     {[
-                      { id: 'vertical', icon: List },
-                      { id: 'horizontal', icon: GalleryHorizontalEnd }
+                      { id: 'vertical', label: 'List', icon: List },
+                      { id: 'horizontal', label: 'Grid', icon: LayoutGrid }
                     ].map((layout) => {
                       const Icon = layout.icon;
                       const isActive = imageLayout === layout.id;
@@ -689,7 +706,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                               ? 'bg-blue-600 text-white border-blue-600 shadow-sm shadow-blue-100'
                               : 'bg-white text-gray-400 border-gray-200 hover:bg-gray-50'
                           }`}
-                          title={layout.id}
+                          title={layout.label}
+                          aria-label={`${layout.label} option layout`}
                         >
                           <Icon size={15} />
                         </button>
@@ -754,7 +772,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                             if (focusedOptionId === option.id) setFocusedOptionId(null);
                           }}
                           placeholder={`Option ${idx + 1}`}
-                          className="flex-1 px-2.5 py-1.5 bg-transparent text-sm font-semibold focus:outline-none text-gray-900"
+                          className="flex-1 px-2.5 py-1.5 bg-transparent text-sm font-semibold focus:outline-none text-gray-900 placeholder-gray-400"
                         />
                       )}
 
@@ -802,7 +820,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                       <input
                         type="text"
                         placeholder="Add option..."
-                        className="flex-1 px-2.5 py-1.5 bg-transparent text-sm font-semibold focus:outline-none text-gray-400 cursor-pointer"
+                        className="flex-1 px-2.5 py-1.5 bg-transparent text-sm font-semibold focus:outline-none text-gray-500 placeholder-gray-500 cursor-pointer"
                         onFocus={handleAddOption}
                       />
                     </div>
@@ -833,7 +851,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               </div>
               <div>
                 <h4 className="text-xs font-bold text-gray-805">Advanced Settings</h4>
-                <p className="text-[9px] text-gray-400 mt-0.5 leading-tight">Visibility, results, duration & comments</p>
+                <p className="text-[9px] text-gray-500 mt-0.5 leading-tight">Visibility, results, duration & comments</p>
               </div>
             </div>
             <ChevronRight size={14} className="text-gray-400" />
@@ -1053,7 +1071,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                 <div className="flex items-center justify-between">
                   <div className="flex flex-col text-left">
                     <span className="text-xs font-bold text-gray-800">Allow comments</span>
-                    <span className="text-[10px] text-gray-400">Enable user comments on the post</span>
+                    <span className="text-[10px] text-gray-500">Enable user comments on the post</span>
                   </div>
                   <button
                     type="button"
@@ -1069,7 +1087,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                     <div className="flex items-center justify-between">
                       <div className="flex flex-col text-left">
                         <span className="text-xs font-bold text-gray-800">Multiple selection</span>
-                        <span className="text-[10px] text-gray-400">Allow participants to choose more than one option</span>
+                        <span className="text-[10px] text-gray-500">Allow participants to choose more than one option</span>
                       </div>
                       <button
                         type="button"
@@ -1083,7 +1101,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                     <div className="flex items-center justify-between">
                       <div className="flex flex-col text-left">
                         <span className="text-xs font-bold text-gray-800">Allow user options</span>
-                        <span className="text-[10px] text-gray-400">Allow participants to add new options</span>
+                        <span className="text-[10px] text-gray-500">Allow participants to add new options</span>
                       </div>
                       <button
                         type="button"
@@ -1099,7 +1117,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                 <div className="flex items-center justify-between">
                   <div className="flex flex-col text-left">
                     <span className="text-xs font-bold text-gray-800">Force anonymous</span>
-                    <span className="text-[10px] text-gray-400">Keep all participants identity completely anonymous</span>
+                    <span className="text-[10px] text-gray-500">Keep all participants identity completely anonymous</span>
                   </div>
                   <button
                     type="button"
