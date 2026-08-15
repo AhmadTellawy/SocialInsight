@@ -8,7 +8,8 @@
         "build": "prisma generate && tsc",
         "db:push": "prisma db push --accept-data-loss",
         "db:sync-groups": "ts-node src/scripts/syncGroupsCLI.ts",
-        "render-build": "prisma generate && prisma db push --accept-data-loss && tsc",
+        "render-build": "prisma generate && prisma migrate deploy && tsc",
+        "media:provision": "ts-node src/scripts/provisionMediaStorage.ts",
         "start": "node dist/app.js",
         "test": "echo \"Error: no test specified\" && exit 1"
     },
@@ -17,6 +18,7 @@
     "license": "ISC",
     "dependencies": {
         "@prisma/client": "^6.3.1",
+        "@supabase/supabase-js": "2.49.8",
         "@types/node-fetch": "^2.6.13",
         "bcryptjs": "^3.0.3",
         "cors": "^2.8.5",

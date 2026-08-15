@@ -18,6 +18,7 @@ model User {
   passwordHash      String?   @map("password_hash") // Nullable for migration
   passwordUpdatedAt DateTime? @map("password_updated_at")
   avatar            String?
+  avatarMediaId     String?   @unique @map("avatar_media_id")
   bio               String?
   location          String?
   website           String?
@@ -25,6 +26,7 @@ model User {
   language          String?   @default("en")
   country           String?
   isPrivate         Boolean   @default(false) @map("is_private")
+  mediaPrivacyTarget Boolean? @map("media_privacy_target")
   groupPrivacy      String    @default("Public") @map("group_privacy")
 
   // Verification & Status
@@ -62,6 +64,9 @@ model User {
   pushSubscriptions PushSubscription[]
   blocking          UserBlock[]        @relation("UserBlocks")
   blockedBy         UserBlock[]        @relation("UserBlocked")
+  avatarMedia       MediaAsset?        @relation("UserAvatarMedia", fields: [avatarMediaId], references: [id], onDelete: SetNull)
+  ownedMedia        MediaAsset[]       @relation("MediaOwner")
+  mediaPrivacyTransitions MediaPrivacyTransition[]
 
   @@map("users")
 }
@@ -119,6 +124,7 @@ model Group {
   description        String
   category           String
   image              String?
+  imageMediaId       String?       @unique
   isPublic           Boolean       @default(true)
   joinPolicy         String        @default("OPEN")
   postingPermissions String        @default("AllMembers")
@@ -131,6 +137,7 @@ model Group {
   members            GroupMember[]
   posts              Post[]        @relation("PrimaryGroup")
   targetedPosts      Post[]        @relation("PostTargetGroups")
+  imageMedia         MediaAsset?   @relation("GroupImageMedia", fields: [imageMediaId], references: [id], onDelete: SetNull)
 
   @@index([isDeleted])
 }
@@ -157,6 +164,7 @@ model Post {
   isTrending     Boolean    @default(false)
   expiresAt      DateTime
   image          String?
+  mediaAspectRatio Float?
   likesCount     Int        @default(0)
   commentsCount  Int        @default(0)
   responseCount  Int        @default(0)
@@ -175,6 +183,7 @@ model Post {
   sections       Section[]
   author         User       @relation(fields: [authorId], references: [id])
   likes          UserLike[]
+  media          PostMedia[]
 
   // Sharing/Reposting fields
   sharedFromId           String?
@@ -236,6 +245,7 @@ model Question {
   text       String
   type       String
   image      String?
+  imageMediaId String? @unique
   postId     String?
   sectionId  String?
   order      Int      @default(0)
@@ -244,12 +254,14 @@ model Question {
   answers    Answer[]
   section    Section? @relation(fields: [sectionId], references: [id])
   post       Post?    @relation(fields: [postId], references: [id])
+  imageMedia   MediaAsset? @relation("QuestionImageMedia", fields: [imageMediaId], references: [id], onDelete: SetNull)
 }
 
 model Option {
   id             String   @id @default(uuid())
   text           String
   image          String?
+  imageMediaId   String? @unique
   votes          Int      @default(0)
   questionId     String
   isCorrect      Boolean?
@@ -263,6 +275,143 @@ model Option {
   addedByGuestId String?
   question       Question @relation(fields: [questionId], references: [id])
   answers        Answer[]
+  imageMedia     MediaAsset? @relation("OptionImageMedia", fields: [imageMediaId], references: [id], onDelete: SetNull)
+}
+
+enum MediaPurpose {
+  POST
+  PROFILE_AVATAR
+  GROUP_IMAGE
+  QUESTION_IMAGE
+  OPTION_IMAGE
+}
+
+enum MediaStatus {
+  TEMPORARY
+  PROCESSING
+  READY
+  ATTACHED
+  PENDING_DELETE
+  DELETED
+  FAILED
+}
+
+enum MediaAccessScope {
+  OWNER_ONLY
+  PUBLIC
+  RESTRICTED
+  INHERITED_GROUP
+}
+
+enum MediaVariantKind {
+  MASTER
+  THUMBNAIL
+  SMALL
+  MEDIUM
+  LARGE
+  XLARGE
+}
+
+enum MediaTransitionStatus {
+  PENDING
+  RUNNING
+  COMPLETE
+  FAILED
+}
+
+model MediaAsset {
+  id                 String           @id @default(uuid())
+  ownerId            String
+  purpose            MediaPurpose
+  status             MediaStatus      @default(TEMPORARY)
+  accessScope        MediaAccessScope @default(OWNER_ONLY)
+  sourceMime         String?
+  sourceWidth        Int?
+  sourceHeight       Int?
+  sourceByteSize     Int?
+  checksum           String?
+  aspectRatio        Float?
+  cropX              Float?
+  cropY              Float?
+  cropWidth          Float?
+  cropHeight         Float?
+  focalX             Float?
+  focalY             Float?
+  altText            String?
+  uploadBucket       String?
+  uploadKey          String?
+  errorCode          String?
+  moderationStatus   String           @default("NOT_REVIEWED")
+  moderationMetadata Json?
+  expiresAt          DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  deletedAt          DateTime?
+
+  owner          User           @relation("MediaOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  variants       MediaVariant[]
+  postAttachment PostMedia?
+  avatarFor      User?          @relation("UserAvatarMedia")
+  groupFor       Group?         @relation("GroupImageMedia")
+  questionFor    Question?      @relation("QuestionImageMedia")
+  optionFor      Option?        @relation("OptionImageMedia")
+
+  @@index([ownerId, status])
+  @@index([status, expiresAt])
+  @@index([purpose, createdAt])
+}
+
+model MediaVariant {
+  id            String           @id @default(uuid())
+  mediaAssetId  String
+  kind          MediaVariantKind
+  storageBucket String
+  storageKey    String
+  width         Int
+  height        Int
+  mime          String
+  byteSize      Int
+  isPublic      Boolean          @default(false)
+  createdAt     DateTime         @default(now())
+
+  mediaAsset MediaAsset @relation(fields: [mediaAssetId], references: [id], onDelete: Cascade)
+
+  @@unique([storageBucket, storageKey])
+  @@unique([mediaAssetId, kind, width, isPublic])
+  @@index([mediaAssetId, isPublic, width])
+}
+
+model PostMedia {
+  id           String   @id @default(uuid())
+  postId       String
+  mediaAssetId String   @unique
+  sortOrder    Int
+  createdAt    DateTime @default(now())
+
+  post       Post       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  mediaAsset MediaAsset @relation(fields: [mediaAssetId], references: [id], onDelete: Restrict)
+
+  @@unique([postId, sortOrder])
+  @@index([postId])
+}
+
+model MediaPrivacyTransition {
+  id              String                @id @default(uuid())
+  userId          String
+  targetIsPrivate Boolean
+  status          MediaTransitionStatus @default(PENDING)
+  cursorAssetId   String?
+  processedCount  Int                   @default(0)
+  failureReason   String?
+  createdAt       DateTime              @default(now())
+  startedAt       DateTime?
+  completedAt     DateTime?
+  updatedAt       DateTime              @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([userId, status])
 }
 
 model Response {
