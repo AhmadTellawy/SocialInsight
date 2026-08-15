@@ -19,6 +19,8 @@ import { requireAuth } from './middleware/authMiddleware';
 import { getNotificationSettings, updateNotificationSettings } from './controllers/userController';
 import { initCronJobs } from './services/cronService';
 import { initSocket } from './services/socketService';
+import { isMediaStorageConfigured } from './services/mediaStorage';
+import prisma from './prisma';
 
 dotenv.config();
 
@@ -67,6 +69,17 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/push', pushRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/media', mediaRoutes);
+
+app.get('/api/health', async (_req, res) => {
+    const mediaStorage = isMediaStorageConfigured() ? 'configured' : 'not_configured';
+
+    try {
+        await prisma.$queryRaw`SELECT 1`;
+        res.json({ status: 'ok', database: 'connected', mediaStorage });
+    } catch {
+        res.status(503).json({ status: 'error', database: 'unavailable', mediaStorage });
+    }
+});
 
 app.get('/api/notification-settings', requireAuth, getNotificationSettings);
 app.put('/api/notification-settings', requireAuth, updateNotificationSettings);
