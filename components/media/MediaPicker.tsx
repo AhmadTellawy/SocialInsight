@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
   DragEndEvent,
@@ -22,7 +22,22 @@ import { useTranslation } from 'react-i18next';
 import { MediaCropSelection, MediaDraft, MediaPurpose } from '../../types';
 import { MediaUploadError, mediaApi } from '../../services/mediaApi';
 import { mediaUploadScheduler } from '../../utils/mediaUploadScheduler';
+import { mediaUploadRegistry } from '../../utils/mediaUploadRegistry';
 import { MediaCropEditor } from './MediaCropEditor';
+import { MediaImage } from './MediaImage';
+
+export type MediaPickerHandle = {
+  open: () => void;
+};
+
+export type MediaPickerControls = {
+  open: () => void;
+  edit: (clientId: string) => void;
+  retry: (clientId: string) => void;
+  remove: (clientId: string) => void;
+  canSelect: boolean;
+  busy: boolean;
+};
 
 type MediaPickerProps = {
   purpose: MediaPurpose;
@@ -34,6 +49,8 @@ type MediaPickerProps = {
   onAspectRatioChange?: (ratio: number) => void;
   disabled?: boolean;
   className?: string;
+  showAddButton?: boolean;
+  renderContent?: (controls: MediaPickerControls) => React.ReactNode;
 };
 
 const MAX_INPUT_BYTES = 15 * 1024 * 1024;
@@ -61,7 +78,13 @@ const SortableTile: React.FC<SortableTileProps> = ({ draft, index, sortable, onE
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: draft.clientId, disabled: !sortable });
   return (
     <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={`relative h-28 w-28 shrink-0 overflow-hidden rounded-md border bg-gray-100 ${isDragging ? 'z-10 border-blue-500 opacity-80 shadow-lg' : 'border-gray-200'}`}>
-      <img src={draft.previewUrl} alt="" className="h-full w-full object-cover" />
+      {draft.previewUrl ? (
+        <img src={draft.previewUrl} alt="" className="h-full w-full object-cover" />
+      ) : draft.presentation ? (
+        <MediaImage media={draft.presentation} className="h-full w-full object-cover" />
+      ) : (
+        <div className="h-full w-full bg-gray-100" />
+      )}
       <span className="absolute start-1.5 top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-black/60 px-1 text-[10px] font-semibold text-white">{index + 1}</span>
       {sortable && (
         <button type="button" {...attributes} {...listeners} className="absolute end-1 top-1 flex h-7 w-7 touch-none items-center justify-center rounded-full bg-black/60 text-white" aria-label={t('media.reorder', { defaultValue: 'Reorder image' })} title={t('media.reorder', { defaultValue: 'Reorder image' })}>
@@ -86,7 +109,7 @@ const SortableTile: React.FC<SortableTileProps> = ({ draft, index, sortable, onE
   );
 };
 
-export const MediaPicker: React.FC<MediaPickerProps> = ({
+export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
   purpose,
   value,
   onChange,
@@ -95,13 +118,15 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({
   aspectRatio,
   onAspectRatioChange,
   disabled = false,
-  className = ''
-}) => {
+  className = '',
+  showAddButton = true,
+  renderContent
+}, ref) => {
   const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement>(null);
   const valuesRef = useRef(value);
-  const abortControllers = useRef(new Map<string, AbortController>());
   const previewUrls = useRef(new Set<string>());
+  const replacedPersistedDrafts = useRef<MediaDraft[] | null>(null);
   const [activeEditorId, setActiveEditorId] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   const sensors = useSensors(
@@ -110,12 +135,22 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  useEffect(() => { valuesRef.current = value; }, [value]);
-  useEffect(() => () => {
-    abortControllers.current.forEach((controller) => controller.abort());
-    previewUrls.current.forEach((url) => URL.revokeObjectURL(url));
-  }, []);
+  useImperativeHandle(ref, () => ({
+    open: () => {
+      if (!disabled) inputRef.current?.click();
+    }
+  }), [disabled]);
 
+  useEffect(() => { valuesRef.current = value; }, [value]);
+  useEffect(() => {
+    const retainedUrls = new Set(value.map((draft) => draft.previewUrl).filter(Boolean));
+    previewUrls.current.forEach((url) => {
+      if (!retainedUrls.has(url)) {
+        URL.revokeObjectURL(url);
+        previewUrls.current.delete(url);
+      }
+    });
+  }, [value]);
   const publish = (next: MediaDraft[]): void => {
     valuesRef.current = next;
     onChange(next);
@@ -132,19 +167,24 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({
 
   const startUpload = (draft: MediaDraft, crop: MediaCropSelection): void => {
     if (!draft.file) return;
-    const controller = new AbortController();
-    abortControllers.current.set(draft.clientId, controller);
+    const controller = mediaUploadRegistry.create(draft.clientId);
     patchDraft(draft.clientId, { status: 'queued', progress: 0, crop, error: undefined });
     void mediaUploadScheduler.schedule(async () => {
+      if (!mediaUploadRegistry.isActive(draft.clientId, controller)) return;
       patchDraft(draft.clientId, { status: 'uploading' });
       try {
         const result = await mediaApi.upload(
           draft.file!,
           draft.purpose,
           crop,
-          (progress) => patchDraft(draft.clientId, { progress, status: progress >= 100 ? 'processing' : 'uploading' }),
+          (progress) => {
+            if (mediaUploadRegistry.isActive(draft.clientId, controller)) {
+              patchDraft(draft.clientId, { progress, status: progress >= 100 ? 'processing' : 'uploading' });
+            }
+          },
           controller.signal
         );
+        if (!mediaUploadRegistry.isActive(draft.clientId, controller)) return;
         patchDraft(draft.clientId, {
           status: 'ready',
           progress: 100,
@@ -160,20 +200,30 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({
         });
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') return;
+        if (!mediaUploadRegistry.isActive(draft.clientId, controller)) return;
         patchDraft(draft.clientId, {
           status: 'error',
           assetId: error instanceof MediaUploadError ? error.assetId : undefined,
           error: error instanceof Error ? error.message : t('media.uploadFailed', { defaultValue: 'Image upload failed.' })
         });
       } finally {
-        abortControllers.current.delete(draft.clientId);
+        mediaUploadRegistry.finish(draft.clientId, controller);
       }
     });
   };
 
+  const releaseTransientDraft = (draft: MediaDraft): void => {
+    mediaUploadRegistry.cancel(draft.clientId);
+    if (draft.assetId && !draft.persisted) void mediaApi.cancel(draft.assetId).catch(() => undefined);
+    if (draft.previewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(draft.previewUrl);
+      previewUrls.current.delete(draft.previewUrl);
+    }
+  };
+
   const addFiles = async (files: File[]): Promise<void> => {
     setValidationError(null);
-    const capacity = Math.max(0, maxFiles - valuesRef.current.length);
+    const capacity = multiple ? Math.max(0, maxFiles - valuesRef.current.length) : 1;
     const accepted = files.slice(0, capacity).filter((file) => {
       if (!ALLOWED_TYPES.has(file.type)) {
         setValidationError(t('media.invalidType', { defaultValue: 'Use a JPEG, PNG, or WebP image.' }));
@@ -187,15 +237,19 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({
     });
 
     const drafts: MediaDraft[] = [];
+    let establishedPostRatio = aspectRatio || valuesRef.current[0]?.aspectRatio;
     for (const file of accepted) {
       const previewUrl = URL.createObjectURL(file);
       previewUrls.current.add(previewUrl);
       try {
         const sourceRatio = await loadImageRatio(previewUrl);
+        if (purpose === 'POST' && !establishedPostRatio) {
+          establishedPostRatio = Math.min(1.91, Math.max(0.8, sourceRatio));
+        }
         const established = FIXED_RATIO_PURPOSES.has(purpose)
           ? 1
-          : purpose === 'POST' && (aspectRatio || valuesRef.current[0]?.aspectRatio)
-            ? (aspectRatio || valuesRef.current[0].aspectRatio)
+          : purpose === 'POST'
+            ? establishedPostRatio!
             : Math.min(1.91, Math.max(0.8, sourceRatio));
         drafts.push({
           clientId: crypto.randomUUID(),
@@ -214,19 +268,24 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({
     }
     if (drafts.length === 0) return;
     if (purpose === 'POST' && valuesRef.current.length === 0) onAspectRatioChange?.(drafts[0].aspectRatio);
-    publish([...valuesRef.current, ...drafts]);
+    if (multiple) {
+      publish([...valuesRef.current, ...drafts]);
+    } else {
+      if (!replacedPersistedDrafts.current) {
+        const persisted = valuesRef.current.filter((draft) => draft.persisted);
+        replacedPersistedDrafts.current = persisted.length > 0 ? persisted : null;
+      }
+      valuesRef.current.filter((draft) => !draft.persisted).forEach(releaseTransientDraft);
+      publish([drafts[0]]);
+    }
     setActiveEditorId(drafts[0].clientId);
   };
 
-  const removeDraft = (draft: MediaDraft): void => {
-    abortControllers.current.get(draft.clientId)?.abort();
-    abortControllers.current.delete(draft.clientId);
-    if (draft.assetId) void mediaApi.cancel(draft.assetId).catch(() => undefined);
-    if (previewUrls.current.has(draft.previewUrl)) {
-      URL.revokeObjectURL(draft.previewUrl);
-      previewUrls.current.delete(draft.previewUrl);
-    }
-    publish(valuesRef.current.filter((item) => item.clientId !== draft.clientId));
+  const removeDraft = (draft: MediaDraft, restoreReplacement = false): void => {
+    if (!draft.persisted) releaseTransientDraft(draft);
+    const replacement = !multiple && restoreReplacement ? replacedPersistedDrafts.current : null;
+    publish(replacement || valuesRef.current.filter((item) => item.clientId !== draft.clientId));
+    if (!replacement || restoreReplacement) replacedPersistedDrafts.current = null;
     if (activeEditorId === draft.clientId) continueEditing(draft.clientId);
   };
 
@@ -236,10 +295,12 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({
       return;
     }
     if (draft.assetId) {
+      const controller = mediaUploadRegistry.create(draft.clientId);
       patchDraft(draft.clientId, { status: 'processing', error: undefined });
       void mediaUploadScheduler.schedule(async () => {
         try {
           const result = await mediaApi.retryFinalize(draft.assetId!, draft.crop!);
+          if (!mediaUploadRegistry.isActive(draft.clientId, controller)) return;
           patchDraft(draft.clientId, {
             status: 'ready',
             progress: 100,
@@ -247,7 +308,10 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({
             presentation: { id: result.id, access: 'RESTRICTED', aspectRatio: result.aspectRatio, width: result.width, height: result.height }
           });
         } catch (error) {
+          if (!mediaUploadRegistry.isActive(draft.clientId, controller)) return;
           patchDraft(draft.clientId, { status: 'error', error: error instanceof Error ? error.message : t('media.processingFailed', { defaultValue: 'Image processing failed.' }) });
+        } finally {
+          mediaUploadRegistry.finish(draft.clientId, controller);
         }
       });
       return;
@@ -257,6 +321,21 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({
 
   const activeDraft = useMemo(() => value.find((draft) => draft.clientId === activeEditorId), [value, activeEditorId]);
   const canAdd = !disabled && value.length < maxFiles;
+  const canSelect = !disabled && (multiple ? value.length < maxFiles : true);
+  const controls: MediaPickerControls = {
+    open: () => inputRef.current?.click(),
+    edit: (clientId) => setActiveEditorId(clientId),
+    retry: (clientId) => {
+      const draft = valuesRef.current.find((item) => item.clientId === clientId);
+      if (draft) retry(draft);
+    },
+    remove: (clientId) => {
+      const draft = valuesRef.current.find((item) => item.clientId === clientId);
+      if (draft) removeDraft(draft, Boolean(!draft.persisted && replacedPersistedDrafts.current));
+    },
+    canSelect,
+    busy: value.some((draft) => ['editing', 'queued', 'uploading', 'processing'].includes(draft.status))
+  };
 
   const handleDragEnd = ({ active, over }: DragEndEvent): void => {
     if (!over || active.id === over.id) return;
@@ -267,28 +346,30 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({
 
   return (
     <div className={className}>
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <SortableContext items={value.map((draft) => draft.clientId)} strategy={horizontalListSortingStrategy}>
-          <div className="flex min-h-28 gap-2 overflow-x-auto pb-1">
-            {value.map((draft, index) => (
-              <SortableTile
-                key={draft.clientId}
-                draft={draft}
-                index={index}
-                sortable={multiple && value.length > 1}
-                onEdit={() => setActiveEditorId(draft.clientId)}
-                onRetry={() => retry(draft)}
-                onRemove={() => removeDraft(draft)}
-              />
-            ))}
-            {canAdd && (
-              <button type="button" onClick={() => inputRef.current?.click()} className="flex h-28 w-28 shrink-0 items-center justify-center rounded-md border border-dashed border-gray-300 bg-gray-50 text-gray-500 hover:border-blue-400 hover:text-blue-600" aria-label={t('media.add', { defaultValue: 'Add image' })} title={t('media.add', { defaultValue: 'Add image' })}>
-                <ImagePlus size={24} />
-              </button>
-            )}
-          </div>
-        </SortableContext>
-      </DndContext>
+      {renderContent ? renderContent(controls) : (value.length > 0 || (showAddButton && canAdd)) ? (
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={value.map((draft) => draft.clientId)} strategy={horizontalListSortingStrategy}>
+            <div className="flex min-h-28 gap-2 overflow-x-auto pb-1">
+              {value.map((draft, index) => (
+                <SortableTile
+                  key={draft.clientId}
+                  draft={draft}
+                  index={index}
+                  sortable={multiple && value.length > 1}
+                  onEdit={() => setActiveEditorId(draft.clientId)}
+                  onRetry={() => retry(draft)}
+                  onRemove={() => removeDraft(draft)}
+                />
+              ))}
+              {showAddButton && canAdd && (
+                <button type="button" onClick={() => inputRef.current?.click()} className="flex h-28 w-28 shrink-0 items-center justify-center rounded-md border border-dashed border-gray-300 bg-gray-50 text-gray-500 hover:border-blue-400 hover:text-blue-600" aria-label={t('media.add', { defaultValue: 'Add image' })} title={t('media.add', { defaultValue: 'Add image' })}>
+                  <ImagePlus size={24} />
+                </button>
+              )}
+            </div>
+          </SortableContext>
+        </DndContext>
+      ) : null}
 
       {validationError && <p role="alert" className="mt-1 text-xs text-red-600">{validationError}</p>}
       {value.some((draft) => draft.status === 'error' && draft.error) && (
@@ -312,17 +393,27 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({
 
       {activeDraft?.file && (
         <MediaCropEditor
+          key={activeDraft.clientId}
           imageSrc={activeDraft.previewUrl}
           purpose={purpose}
           initialAspectRatio={activeDraft.aspectRatio}
+          lockedAspectRatio={purpose === 'POST' && (activeDraft.clientId !== value[0]?.clientId || activeDraft.status !== 'editing') ? aspectRatio : undefined}
           initialCrop={activeDraft.crop}
           onCancel={() => {
-            if (activeDraft.status === 'editing' && !activeDraft.crop) removeDraft(activeDraft);
+            if (activeDraft.status === 'editing' && !activeDraft.crop) removeDraft(activeDraft, true);
             else setActiveEditorId(null);
           }}
           onApply={(crop) => {
-            patchDraft(activeDraft.clientId, { crop, aspectRatio: crop.aspectRatio });
-            if (purpose === 'POST' && value[0]?.clientId === activeDraft.clientId) onAspectRatioChange?.(crop.aspectRatio);
+            if (purpose === 'POST' && value[0]?.clientId === activeDraft.clientId) {
+              publish(valuesRef.current.map((draft) => draft.clientId === activeDraft.clientId
+                ? { ...draft, crop, aspectRatio: crop.aspectRatio }
+                : draft.status === 'editing'
+                  ? { ...draft, aspectRatio: crop.aspectRatio }
+                  : draft));
+              onAspectRatioChange?.(crop.aspectRatio);
+            } else {
+              patchDraft(activeDraft.clientId, { crop, aspectRatio: crop.aspectRatio });
+            }
             startUpload({ ...activeDraft, crop, aspectRatio: crop.aspectRatio }, crop);
             continueEditing(activeDraft.clientId);
           }}
@@ -330,4 +421,6 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({
       )}
     </div>
   );
-};
+});
+
+MediaPicker.displayName = 'MediaPicker';

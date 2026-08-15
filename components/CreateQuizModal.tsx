@@ -1,17 +1,20 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { X, Plus, Trash2, Globe, Users, ChevronDown, Clock, Calendar, Type, ListChecks, ImageIcon, Settings, Info, ArrowRight, Camera, Lock, AlertCircle, ChevronRight, ChevronLeft, MoreHorizontal, Layout, Terminal, Navigation, Sparkles, GripVertical, Save, FileText, BarChart3, UserCircle, Heart, Fingerprint, MapPin, Briefcase, Check, GraduationCap, Home, Smile, Building2, User, MessageSquare, ShieldCheck, Link2, Target, MoreHorizontal as MoreHorizontalIcon, ArrowUp, ArrowDown, Star, List, GalleryHorizontalEnd, CornerDownRight, PowerOff, CheckCircle2, ArrowLeft, Tag } from 'lucide-react';
-import { Survey, SurveyType, SurveySection, SurveyQuestion, Option, UserProfile, Group } from '../types';
-import { ImageCropper } from './ImageCropper';
+import { Survey, SurveyType, UserProfile, Group, MediaDraft } from '../types';
 import { BottomSheet } from './BottomSheet';
 import { RichMentionInput } from './RichMentionInput';
 import { api } from '../services/api';
+import { MediaPicker, MediaPickerHandle } from './media/MediaPicker';
+import { MediaImage } from './media/MediaImage';
+import { cancelTemporaryMediaDrafts, createPersistedMediaDraft, mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds } from '../utils/mediaDrafts';
+import { collectSectionMedia, hydrateSections, serializeSections, SurveyOptionDraft, SurveyQuestionDraft, SurveySectionDraft } from '../utils/sectionMediaDrafts';
 
 interface CreateQuizModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (surveyData: Partial<Survey>) => void;
-  onSaveDraft?: (surveyData: Partial<Survey>) => void;
+  onSubmit: (surveyData: Partial<Survey>) => void | Promise<void>;
+  onSaveDraft?: (surveyData: Partial<Survey>) => void | Promise<void>;
   userProfile: UserProfile;
   draft?: Survey;
   userGroups?: Group[];
@@ -38,7 +41,7 @@ const DEMOGRAPHIC_OPTIONS = [
   { id: 'occupation', label: 'Occupation', desc: 'Analyze response differences by occupation' },
 ];
 
-const INITIAL_SECTIONS: SurveySection[] = [
+const INITIAL_SECTIONS: SurveySectionDraft[] = [
   {
     id: `sec-quiz-init`,
     title: '',
@@ -50,9 +53,10 @@ const INITIAL_SECTIONS: SurveySection[] = [
         isRequired: true,
         weight: 10,
         imageLayout: 'vertical',
+        mediaDrafts: [],
         options: [
-          { id: `opt-quiz-init-1`, text: '', votes: 0 },
-          { id: `opt-quiz-init-2`, text: '', votes: 0 }
+          { id: `opt-quiz-init-1`, text: '', votes: 0, mediaDrafts: [] },
+          { id: `opt-quiz-init-2`, text: '', votes: 0, mediaDrafts: [] }
         ]
       }
     ]
@@ -80,11 +84,14 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
   const [forceAnonymous, setForceAnonymous] = useState(false);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [coverImage, setCoverImage] = useState<string | null>(null);
+  const [legacyCoverImage, setLegacyCoverImage] = useState<string | null>(null);
+  const [postMedia, setPostMedia] = useState<MediaDraft[]>([]);
+  const [mediaAspectRatio, setMediaAspectRatio] = useState<number | undefined>(undefined);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
-  const [sections, setSections] = useState<SurveySection[]>(INITIAL_SECTIONS);
+  const [sections, setSections] = useState<SurveySectionDraft[]>(INITIAL_SECTIONS);
 
   const totalQuestions = useMemo(() => {
     return sections.reduce((sum, sec) => sum + (sec.questions?.length || 0), 0);
@@ -138,14 +145,11 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
     }
   };
 
-  const [croppingImage, setCroppingImage] = useState<string | null>(null);
-  const [activeCropTarget, setActiveCropTarget] = useState<{ type: 'cover' | 'question' | 'option', secId?: string, qId?: string, optId?: string } | null>(null);
-
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [errors, setErrors] = useState<{ [key: string]: boolean | string }>({});
   const [focusedOptionId, setFocusedOptionId] = useState<string | null>(null);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const postMediaPickerRef = useRef<MediaPickerHandle>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const activeSection = sections.find(s => s.id === activeSectionId);
@@ -165,9 +169,12 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
       setResultsTiming(draft.resultsTiming || 'AnyTime');
       setAllowComments(draft.allowComments !== undefined ? draft.allowComments : true);
       setForceAnonymous(draft.forceAnonymous || false);
-      setCoverImage(draft.coverImage || null);
+      const persistedPostMedia = (draft.media || []).map((media) => createPersistedMediaDraft(media, 'POST', draft.coverImage));
+      setPostMedia(persistedPostMedia);
+      setMediaAspectRatio(draft.mediaAspectRatio || persistedPostMedia[0]?.aspectRatio);
+      setLegacyCoverImage(persistedPostMedia.length > 0 ? null : (draft.coverImage || null));
       if (draft.sections && draft.sections.length > 0) {
-        setSections(draft.sections);
+        setSections(hydrateSections(draft.sections));
       }
       if (draft.demographics) {
         setSelectedDemographics(draft.demographics);
@@ -213,13 +220,13 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
     if (title.trim() !== '') return true;
     if (description.trim() !== '') return true;
     if (category !== '') return true;
-    if (coverImage !== null) return true;
+    if (postMedia.length > 0 || legacyCoverImage !== null) return true;
     if (sections.length > 1) return true;
     const firstQ = sections[0].questions[0];
     if (firstQ.text.trim() !== '') return true;
     if (sections[0].questions.length > 1) return true;
     return false;
-  }, [title, description, category, coverImage, sections, draft]);
+  }, [title, description, category, postMedia, legacyCoverImage, sections, draft]);
 
   useEffect(() => {
     if (sections.length > 0 && !activeSectionId) {
@@ -254,6 +261,10 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
   };
 
   const handleDiscard = async () => {
+    await Promise.all([
+      cancelTemporaryMediaDrafts(postMedia),
+      cancelTemporaryMediaDrafts(collectSectionMedia(sections))
+    ]);
     if (!userProfile?.id) {
       onClose();
       return;
@@ -320,9 +331,15 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
     };
   };
 
-  const handleSaveDraft = () => {
+  const handleSaveDraft = async () => {
+    if (isSubmitting) return;
     if (!userProfile?.id) {
       onClose();
+      return;
+    }
+    const allMedia = [...postMedia, ...collectSectionMedia(sections)];
+    if (!mediaDraftsAreReady(allMedia) || mediaDraftsHaveErrors(allMedia)) {
+      setErrors((current) => ({ ...current, media: 'Please finish or remove image uploads.' }));
       return;
     }
     if (onSaveDraft) {
@@ -335,8 +352,10 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
         description,
         type: SurveyType.QUIZ,
         category,
-        sections,
-        coverImage: coverImage || undefined,
+        sections: serializeSections(sections),
+        coverImage: postMedia.length > 0 ? undefined : (legacyCoverImage || undefined),
+        mediaAssetIds: readyMediaAssetIds(postMedia),
+        mediaAspectRatio: postMedia.length > 0 ? mediaAspectRatio : undefined,
         targetAudience: visibility as any,
         targetGroups: visibility === 'Groups' ? selectedGroups : undefined,
         resultsWho,
@@ -350,7 +369,17 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
         isDraft: true,
         currentStep: 1
       };
-      onSaveDraft(draftData);
+      try {
+        setIsSubmitting(true);
+        await onSaveDraft(draftData);
+        onClose();
+      } catch (error) {
+        console.error('Failed to save quiz draft:', error);
+        alert('Failed to save quiz draft. Please try again.');
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
     }
     onClose();
   };
@@ -364,87 +393,50 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
     return new Date(now.getTime() + mins * 60000).toISOString();
   };
 
-  const handlePost = () => {
+  const handlePost = async () => {
+    if (isSubmitting) return;
     setHasAttemptedSubmit(true);
     const { isValid, newErrors } = validateQuiz();
     setErrors(newErrors);
     if (!isValid) return;
+    const allMedia = [...postMedia, ...collectSectionMedia(sections)];
+    if (!mediaDraftsAreReady(allMedia) || mediaDraftsHaveErrors(allMedia)) {
+      setErrors((current) => ({ ...current, media: 'Please finish or remove image uploads.' }));
+      return;
+    }
 
     const firstQuestion = sections[0]?.questions[0];
     const computedTitle = title.trim() || firstQuestion?.text.trim() || 'Untitled Quiz';
 
-    onSubmit({
-      title: computedTitle,
-      description,
-      type: SurveyType.QUIZ,
-      category,
-      sections,
-      coverImage: coverImage || undefined,
-      targetAudience: visibility as any,
-      targetGroups: visibility === 'Groups' ? selectedGroups : undefined,
-      resultsWho,
-      resultsTiming,
-      allowAnonymous: true,
-      forceAnonymous: forceAnonymous,
-      expiresAt: getExpiresAt(),
-      demographics: selectedDemographics,
-      author: { id: userProfile.id || "", name: userProfile.name, avatar: userProfile.avatar },
-      createdAt: new Date().toISOString()
-    });
-    onClose();
-  };
-
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const img = new Image();
-      const objUrl = URL.createObjectURL(file);
-      img.onload = () => {
-        const MAX_DIMENSION = 1200;
-        let width = img.width;
-        let height = img.height;
-
-        if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
-            const ratio = Math.min(MAX_DIMENSION / width, MAX_DIMENSION / height);
-            width = Math.round(width * ratio);
-            height = Math.round(height * ratio);
-        }
-
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-            ctx.drawImage(img, 0, 0, width, height);
-            setCroppingImage(canvas.toDataURL('image/jpeg', 0.8));
-        } else {
-            const reader = new FileReader();
-            reader.onloadend = () => setCroppingImage(reader.result as string);
-            reader.readAsDataURL(file);
-        }
-        URL.revokeObjectURL(objUrl);
-        // Clear value so the same file can be selected again
-        e.target.value = '';
-      };
-      img.src = objUrl;
+    try {
+      setIsSubmitting(true);
+      await onSubmit({
+        title: computedTitle,
+        description,
+        type: SurveyType.QUIZ,
+        category,
+        sections: serializeSections(sections),
+        coverImage: postMedia.length > 0 ? undefined : (legacyCoverImage || undefined),
+        mediaAssetIds: readyMediaAssetIds(postMedia),
+        mediaAspectRatio: postMedia.length > 0 ? mediaAspectRatio : undefined,
+        targetAudience: visibility as any,
+        targetGroups: visibility === 'Groups' ? selectedGroups : undefined,
+        resultsWho,
+        resultsTiming,
+        allowAnonymous: true,
+        forceAnonymous: forceAnonymous,
+        expiresAt: getExpiresAt(),
+        demographics: selectedDemographics,
+        author: { id: userProfile.id || "", name: userProfile.name, avatar: userProfile.avatar },
+        createdAt: new Date().toISOString()
+      });
+      onClose();
+    } catch (error) {
+      console.error('Failed to publish quiz:', error);
+      alert('Failed to publish quiz. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
-  };
-
-  const handleCropComplete = (croppedImg: string) => {
-    if (!activeCropTarget) return;
-    if (activeCropTarget.type === 'cover') setCoverImage(croppedImg);
-    else if (activeCropTarget.type === 'question') updateQuestion(activeCropTarget.secId!, activeCropTarget.qId!, { image: croppedImg });
-    else if (activeCropTarget.type === 'option') {
-      setSections(sections.map(s => s.id === activeCropTarget.secId ? {
-        ...s,
-        questions: s.questions.map(q => q.id === activeCropTarget.qId && q.options ? {
-          ...q,
-          options: q.options.map(o => o.id === activeCropTarget.optId ? { ...o, image: croppedImg } : o)
-        } : q)
-      } : s));
-    }
-    setCroppingImage(null);
-    setActiveCropTarget(null);
   };
 
   const addSection = () => {
@@ -454,7 +446,8 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
       id: newId, title: '',
       questions: [{
         id: newQId, text: '', type: 'multiple_choice', isRequired: true, weight: 10, imageLayout: 'vertical',
-        options: [{ id: `o1-${Date.now()}`, text: '', votes: 0 }, { id: `o2-${Date.now()}`, text: '', votes: 0 }]
+        mediaDrafts: [],
+        options: [{ id: `o1-${Date.now()}`, text: '', votes: 0, mediaDrafts: [] }, { id: `o2-${Date.now()}`, text: '', votes: 0, mediaDrafts: [] }]
       }]
     }]);
     setActiveSectionId(newId);
@@ -463,7 +456,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
 
   const handleAddQuizOption = (secId: string, qId: string) => {
     const newOptId = `o-${Date.now()}`;
-    const newOpt = { id: newOptId, text: '', votes: 0 };
+    const newOpt: SurveyOptionDraft = { id: newOptId, text: '', votes: 0, mediaDrafts: [] };
     const section = sections.find(s => s.id === secId);
     const question = section?.questions.find(qu => qu.id === qId);
     if (question) {
@@ -472,8 +465,18 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
     }
   };
 
-  const updateQuestion = (secId: string, qId: string, updates: Partial<SurveyQuestion>) => {
-    setSections(sections.map(s => s.id === secId ? { ...s, questions: s.questions.map(q => q.id === qId ? { ...q, ...updates } : q) } : s));
+  const updateQuestion = (secId: string, qId: string, updates: Partial<SurveyQuestionDraft>) => {
+    setSections((current) => current.map(s => s.id === secId ? { ...s, questions: s.questions.map(q => q.id === qId ? { ...q, ...updates } : q) } : s));
+  };
+
+  const updateOption = (secId: string, qId: string, optId: string, updates: Partial<SurveyOptionDraft>) => {
+    setSections((current) => current.map((section) => section.id !== secId ? section : {
+      ...section,
+      questions: section.questions.map((question) => question.id !== qId || !question.options ? question : {
+        ...question,
+        options: question.options.map((option) => option.id === optId ? { ...option, ...updates } : option)
+      })
+    }));
   };
 
 
@@ -528,7 +531,9 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
   }, [settingsOptionId, sections]);
 
   const errorInfo = validateQuiz();
-  const isPublishReady = errorInfo.isValid;
+  const allMediaDrafts = [...postMedia, ...collectSectionMedia(sections)];
+  const mediaReady = mediaDraftsAreReady(allMediaDrafts) && !mediaDraftsHaveErrors(allMediaDrafts);
+  const isPublishReady = errorInfo.isValid && mediaReady && !isSubmitting;
 
   return (
     <div className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-bottom duration-300">
@@ -541,7 +546,8 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
         <div className="flex items-center gap-2">
           <button
             onClick={handleSaveDraft}
-            className="text-purple-600 border border-purple-200 font-black text-[9px] px-3.5 py-2 rounded-full bg-purple-50 hover:bg-purple-100 transition-all uppercase tracking-widest active:scale-95"
+            disabled={!mediaReady || isSubmitting}
+            className="text-purple-600 border border-purple-200 font-black text-[9px] px-3.5 py-2 rounded-full bg-purple-50 hover:bg-purple-100 transition-all uppercase tracking-widest active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Save Draft
           </button>
@@ -592,16 +598,33 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
               </div>
               <button
                 type="button"
-                onClick={() => { setActiveCropTarget({ type: 'cover' }); fileInputRef.current?.click(); }}
-                className={`p-1.5 rounded-full transition-colors shrink-0 mt-1 ${coverImage ? 'text-purple-600 bg-purple-50' : 'text-gray-400 hover:text-purple-500 hover:bg-gray-50'}`}
+                onClick={() => postMediaPickerRef.current?.open()}
+                disabled={postMedia.length >= 8}
+                className={`p-1.5 rounded-full transition-colors shrink-0 mt-1 disabled:opacity-40 ${postMedia.length > 0 || legacyCoverImage ? 'text-purple-600 bg-purple-50' : 'text-gray-400 hover:text-purple-500 hover:bg-gray-50'}`}
+                aria-label="Add quiz images"
+                title="Add images"
               >
                 <Camera size={20} />
               </button>
             </div>
-            {coverImage && (
+            <MediaPicker
+              ref={postMediaPickerRef}
+              purpose="POST"
+              value={postMedia}
+              onChange={(next) => {
+                setPostMedia(next);
+                if (next.some((media) => media.status === 'ready')) setLegacyCoverImage(null);
+              }}
+              maxFiles={8}
+              multiple
+              aspectRatio={mediaAspectRatio}
+              onAspectRatioChange={setMediaAspectRatio}
+              showAddButton={false}
+            />
+            {legacyCoverImage && postMedia.length === 0 && (
               <div className="relative w-24 h-24 rounded-xl overflow-hidden border border-gray-100 shadow-sm group animate-in zoom-in-95 mt-2">
-                <img src={coverImage} className="w-full h-full object-cover" alt="Cover" />
-                <button onClick={() => setCoverImage(null)} className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={10} /></button>
+                <img src={legacyCoverImage} className="w-full h-full object-cover" alt="Cover" />
+                <button type="button" onClick={() => setLegacyCoverImage(null)} className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Remove image" title="Remove image"><X size={10} /></button>
               </div>
             )}
 
@@ -676,9 +699,10 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                           isRequired: true,
                           weight: 10,
                           imageLayout: 'vertical',
+                          mediaDrafts: [],
                           options: [
-                            { id: `o1-${Date.now()}`, text: '', votes: 0 },
-                            { id: `o2-${Date.now()}`, text: '', votes: 0 }
+                            { id: `o1-${Date.now()}`, text: '', votes: 0, mediaDrafts: [] },
+                            { id: `o2-${Date.now()}`, text: '', votes: 0, mediaDrafts: [] }
                           ]
                         }]
                       } : s));
@@ -699,14 +723,54 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                     <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-4 shadow-sm">
                       <div className="flex items-start gap-2">
                         <div className="flex-1 flex flex-col gap-2">
-                          {q.image && (
+                          {(q.image || q.mediaDrafts.length > 0) && (
                             <div className="relative w-24 h-24 rounded-xl overflow-hidden shadow-sm group animate-in zoom-in-95">
-                              <img src={q.image} className="w-full h-full object-cover" alt="" />
-                              <button onClick={() => updateQuestion(activeSection.id, q.id, { image: undefined })} className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={10} /></button>
+                              {q.mediaDrafts[0]?.previewUrl ? (
+                                <img src={q.mediaDrafts[0].previewUrl} className="w-full h-full object-cover" alt="" />
+                              ) : q.mediaDrafts[0]?.presentation ? (
+                                <MediaImage media={q.mediaDrafts[0].presentation} className="w-full h-full object-cover" />
+                              ) : q.image ? (
+                                <img src={q.image} className="w-full h-full object-cover" alt="" />
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void cancelTemporaryMediaDrafts(q.mediaDrafts);
+                                  updateQuestion(activeSection.id, q.id, { image: undefined, imageMediaId: undefined, mediaDrafts: [] });
+                                }}
+                                className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                                aria-label="Remove question image"
+                                title="Remove question image"
+                              ><X size={10} /></button>
                             </div>
                           )}
                           <div className="flex items-center gap-2">
-                            <button onClick={() => { setActiveCropTarget({ type: 'question', secId: activeSection.id, qId: q.id }); fileInputRef.current?.click(); }} className={`p-1.5 rounded-full transition-colors ${q.image ? 'text-purple-600 bg-purple-50' : 'text-gray-400 hover:text-purple-500 hover:bg-gray-50'}`}><Camera size={20} /></button>
+                            <MediaPicker
+                              purpose="QUESTION_IMAGE"
+                              value={q.mediaDrafts}
+                              onChange={(mediaDrafts) => updateQuestion(activeSection.id, q.id, {
+                                mediaDrafts,
+                                image: mediaDrafts.some((media) => media.status === 'ready') ? undefined : q.image,
+                                imageMediaId: readyMediaAssetIds(mediaDrafts)[0]
+                              })}
+                              className="shrink-0"
+                              renderContent={({ open, retry, busy }) => {
+                                const current = q.mediaDrafts[0];
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => current?.status === 'error' ? retry(current.clientId) : open()}
+                                    disabled={busy}
+                                    className={`relative p-1.5 rounded-full transition-colors disabled:cursor-wait ${q.image || current ? 'text-purple-600 bg-purple-50' : 'text-gray-400 hover:text-purple-500 hover:bg-gray-50'}`}
+                                    aria-label={current?.status === 'error' ? 'Retry question image upload' : 'Add question image'}
+                                    title={current?.status === 'error' ? 'Retry' : 'Add question image'}
+                                  >
+                                    <Camera size={20} />
+                                    {busy && <span className="absolute bottom-0 right-0 h-2 w-2 rounded-full bg-purple-500" />}
+                                  </button>
+                                );
+                              }}
+                            />
                             <textarea
                               value={q.text}
                               onChange={(e) => updateQuestion(activeSection.id, q.id, { text: e.target.value })}
@@ -738,9 +802,41 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                                     <CheckCircle2 size={18} strokeWidth={3} />
                                   </button>
                                   <div className={`flex-1 flex items-center bg-gray-50 rounded-xl px-1 py-1 border transition-all shadow-sm ${isCorrect ? 'border-green-200 ring-2 ring-green-50 bg-green-50/20' : 'border-transparent focus-within:border-purple-200 focus-within:bg-white'}`}>
-                                    <button onClick={() => { setActiveCropTarget({ type: 'option', secId: activeSection.id, qId: q.id, optId: opt.id }); fileInputRef.current?.click(); }} className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-dashed transition-all mr-1 ${opt.image ? 'border-purple-500' : 'border-gray-200 text-gray-400 hover:text-purple-500'}`}>
-                                      {opt.image ? <img src={opt.image} className="w-full h-full object-cover" alt="" /> : <Camera size={16} />}
-                                    </button>
+                                    <MediaPicker
+                                      purpose="OPTION_IMAGE"
+                                      value={opt.mediaDrafts}
+                                      onChange={(mediaDrafts) => updateOption(activeSection.id, q.id, opt.id, {
+                                        mediaDrafts,
+                                        image: mediaDrafts.some((media) => media.status === 'ready') ? undefined : opt.image,
+                                        imageMediaId: readyMediaAssetIds(mediaDrafts)[0]
+                                      })}
+                                      className="mr-1 shrink-0"
+                                      renderContent={({ open, retry, busy }) => {
+                                        const current = opt.mediaDrafts[0];
+                                        const hasImage = Boolean(current || opt.image);
+                                        return (
+                                          <button
+                                            type="button"
+                                            onClick={() => current?.status === 'error' ? retry(current.clientId) : open()}
+                                            disabled={busy}
+                                            className={`relative w-10 h-10 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-dashed transition-all disabled:cursor-wait ${hasImage ? 'border-purple-500' : 'border-gray-200 text-gray-400 hover:text-purple-500'}`}
+                                            aria-label={current?.status === 'error' ? 'Retry option image upload' : `Add image to option ${oIdx + 1}`}
+                                            title={current?.status === 'error' ? 'Retry' : 'Add option image'}
+                                          >
+                                            {current?.previewUrl ? (
+                                              <img src={current.previewUrl} className="w-full h-full object-cover" alt="" />
+                                            ) : current?.presentation ? (
+                                              <MediaImage media={current.presentation} className="w-full h-full object-cover" />
+                                            ) : opt.image ? (
+                                              <img src={opt.image} className="w-full h-full object-cover" alt="" />
+                                            ) : (
+                                              <Camera size={16} />
+                                            )}
+                                            {busy && <span className="absolute inset-x-0 bottom-0 h-1 bg-purple-500" />}
+                                          </button>
+                                        );
+                                      }}
+                                    />
                                     <input
                                       type="text"
                                       value={opt.text}
@@ -760,6 +856,18 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                                       className="flex-1 text-xs font-semibold p-2 bg-transparent focus:outline-none placeholder-gray-400"
                                     />
                                     <span className="text-[9px] text-gray-500 mr-1.5 whitespace-nowrap">{opt.text.length}/80</span>
+                                    {(opt.image || opt.mediaDrafts.length > 0) && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          void cancelTemporaryMediaDrafts(opt.mediaDrafts);
+                                          updateOption(activeSection.id, q.id, opt.id, { image: undefined, imageMediaId: undefined, mediaDrafts: [] });
+                                        }}
+                                        className="p-3 text-gray-300 hover:text-red-500 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]"
+                                        aria-label={`Remove image from option ${oIdx + 1}`}
+                                        title="Remove option image"
+                                      ><X size={12} /></button>
+                                    )}
                                     <button onClick={() => setSettingsOptionId({ secId: activeSection.id, qId: q.id, optId: opt.id })} className="p-3 text-gray-400 hover:text-gray-600 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"><MoreHorizontalIcon size={18} /></button>
                                   </div>
                                 </div>
@@ -1281,6 +1389,8 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                 onClick={() => {
                   const q = sections.find(s => s.id === settingsOptionId.secId)?.questions.find(q => q.id === settingsOptionId.qId);
                   if (q && q.options) {
+                    const removed = q.options.find(o => o.id === settingsOptionId.optId);
+                    if (removed) void cancelTemporaryMediaDrafts(removed.mediaDrafts);
                     const updated = q.options.filter(o => o.id !== settingsOptionId.optId);
                     updateQuestion(settingsOptionId.secId, settingsOptionId.qId, {
                       options: updated,
@@ -1314,7 +1424,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
           <div className="space-y-4 py-4 px-2">
             <button disabled={activeSection.questions.findIndex(q => q.id === activeQuestionId) === 0} onClick={() => { moveQuestion(activeSection.id, activeQuestionId, 'up'); setIsQuestionSettingsSheetOpen(false); }} className="w-full flex items-center gap-4 p-4 rounded-2xl border hover:bg-gray-50 disabled:opacity-30"><div className="p-2.5 rounded-xl bg-gray-100 text-gray-500"><ArrowUp size={20} /></div><span className="font-bold text-sm">Move Up</span></button>
             <button disabled={activeSection.questions.findIndex(q => q.id === activeQuestionId) === activeSection.questions.length - 1} onClick={() => { moveQuestion(activeSection.id, activeQuestionId, 'down'); setIsQuestionSettingsSheetOpen(false); }} className="w-full flex items-center gap-4 p-4 rounded-2xl border hover:bg-gray-50 disabled:opacity-30"><div className="p-2.5 rounded-xl bg-gray-100 text-gray-500"><ArrowDown size={20} /></div><span className="font-bold text-sm">Move Down</span></button>
-            <button disabled={activeSection.questions.length <= 1} onClick={() => { setSections(sections.map(s => s.id === activeSection.id ? { ...s, questions: s.questions.filter(q => q.id !== activeQuestionId) } : s)); setIsQuestionSettingsSheetOpen(false); }} className="w-full flex items-center gap-4 p-4 rounded-2xl border border-red-100 bg-red-50/30 text-red-600 disabled:opacity-30"><div className="p-2.5 rounded-xl bg-red-100 text-red-600"><Trash2 size={20} /></div><span className="font-bold text-sm">Delete Question</span></button>
+            <button disabled={activeSection.questions.length <= 1} onClick={() => { const removed = activeSection.questions.find(q => q.id === activeQuestionId); if (removed) void cancelTemporaryMediaDrafts([...removed.mediaDrafts, ...(removed.options || []).flatMap((option) => option.mediaDrafts)]); setSections(sections.map(s => s.id === activeSection.id ? { ...s, questions: s.questions.filter(q => q.id !== activeQuestionId) } : s)); setIsQuestionSettingsSheetOpen(false); }} className="w-full flex items-center gap-4 p-4 rounded-2xl border border-red-100 bg-red-50/30 text-red-600 disabled:opacity-30"><div className="p-2.5 rounded-xl bg-red-100 text-red-600"><Trash2 size={20} /></div><span className="font-bold text-sm">Delete Question</span></button>
             <button onClick={() => setIsQuestionSettingsSheetOpen(false)} className="w-full mt-4 py-4 bg-gray-900 text-white rounded-2xl font-black uppercase tracking-widest text-[10px]">Done</button>
           </div>
         )}
@@ -1326,7 +1436,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
           <div className="space-y-4 py-4 px-2">
             <button disabled={activeSectionIndex === 0} onClick={() => { moveSection(activeSection.id, 'up'); setIsSectionSettingsSheetOpen(false); }} className="w-full flex items-center gap-4 p-4 rounded-2xl border hover:bg-gray-50 disabled:opacity-30"><div className="p-2.5 rounded-xl bg-gray-100 text-gray-500"><ArrowUp size={20} /></div><span className="font-bold text-sm">Move Up</span></button>
             <button disabled={activeSectionIndex === sections.length - 1} onClick={() => { moveSection(activeSection.id, 'down'); setIsSectionSettingsSheetOpen(false); }} className="w-full flex items-center gap-4 p-4 rounded-2xl border hover:bg-gray-50 disabled:opacity-30"><div className="p-2.5 rounded-xl bg-gray-100 text-gray-500"><ArrowDown size={20} /></div><span className="font-bold text-sm">Move Down</span></button>
-            <button disabled={sections.length <= 1} onClick={() => { setSections(sections.filter(s => s.id !== activeSection.id)); setIsSectionSettingsSheetOpen(false); }} className="w-full flex items-center gap-4 p-4 rounded-2xl border border-red-100 bg-red-50/30 text-red-600 disabled:opacity-30"><div className="p-2.5 rounded-xl bg-red-100 text-red-600"><Trash2 size={20} /></div><span className="font-bold text-sm">Delete Section</span></button>
+            <button disabled={sections.length <= 1} onClick={() => { void cancelTemporaryMediaDrafts(collectSectionMedia([activeSection])); setSections(sections.filter(s => s.id !== activeSection.id)); setIsSectionSettingsSheetOpen(false); }} className="w-full flex items-center gap-4 p-4 rounded-2xl border border-red-100 bg-red-50/30 text-red-600 disabled:opacity-30"><div className="p-2.5 rounded-xl bg-red-100 text-red-600"><Trash2 size={20} /></div><span className="font-bold text-sm">Delete Section</span></button>
             <button onClick={() => setIsSectionSettingsSheetOpen(false)} className="w-full mt-4 py-4 bg-gray-900 text-white rounded-2xl font-black uppercase tracking-widest text-[10px]">Done</button>
           </div>
         )}
@@ -1347,8 +1457,6 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
         </div>
       )}
 
-      {croppingImage && <ImageCropper imageSrc={croppingImage} onCrop={handleCropComplete} onCancel={() => { setCroppingImage(null); setActiveCropTarget(null); }} />}
-      <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleImageUpload} />
     </div>
   );
 };

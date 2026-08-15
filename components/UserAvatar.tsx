@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { User } from 'lucide-react';
 
 interface UserAvatarProps {
@@ -17,6 +17,17 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
     name
 }) => {
     const [imgError, setImgError] = useState(false);
+    const initials = (name || alt || '')
+        .trim()
+        .split(/\s+/)
+        .slice(0, 2)
+        .map((part) => part.charAt(0))
+        .join('')
+        .toUpperCase();
+
+    useEffect(() => {
+        setImgError(false);
+    }, [src]);
 
     if (src && !imgError) {
         return (
@@ -30,15 +41,14 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
         );
     }
 
-    // Professional initials fallback via ui-avatars
-    const fallbackSrc = `https://ui-avatars.com/api/?name=${encodeURIComponent(name || alt || 'User')}&background=f3f4f6&color=9ca3af&size=200`;
-
     return (
-        <img
-            src={fallbackSrc}
-            alt={alt}
-            className={`rounded-full object-cover ${className}`}
-            style={{ width: size, height: size }}
-        />
+        <span
+            role="img"
+            aria-label={alt}
+            className={`rounded-full bg-gray-100 text-gray-500 flex shrink-0 items-center justify-center font-bold ${className}`}
+            style={{ width: size, height: size, fontSize: Math.max(10, Math.round(size * 0.34)) }}
+        >
+            {initials || <User size={Math.max(14, Math.round(size * 0.5))} aria-hidden="true" />}
+        </span>
     );
 };

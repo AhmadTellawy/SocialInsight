@@ -7,16 +7,18 @@ import {
   UserCircle, Target, Link2, Shuffle, Zap, MoreHorizontal,
   ArrowUp, ArrowDown, MessageSquare, Settings2, ArrowLeft, Tag
 } from 'lucide-react';
-import { Survey, SurveyType, UserProfile, Option, Group } from '../types';
-import { ImageCropper } from './ImageCropper';
+import { Survey, SurveyType, UserProfile, Group, MediaDraft } from '../types';
 import { BottomSheet } from './BottomSheet';
 import { RichMentionInput } from './RichMentionInput';
 import { api } from '../services/api';
+import { MediaPicker, MediaPickerHandle } from './media/MediaPicker';
+import { MediaImage } from './media/MediaImage';
+import { cancelTemporaryMediaDrafts, createPersistedMediaDraft, createPersistedMediaDraftFromId, mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds } from '../utils/mediaDrafts';
 
 interface CreateChallengeScreenProps {
   onClose: () => void;
-  onSubmit: (surveyData: Partial<Survey>) => void;
-  onSaveDraft?: (surveyData: Partial<Survey>) => void;
+  onSubmit: (surveyData: Partial<Survey>) => void | Promise<void>;
+  onSaveDraft?: (surveyData: Partial<Survey>) => void | Promise<void>;
   userProfile: UserProfile;
   draft?: Survey;
   userGroups?: Group[];
@@ -53,6 +55,15 @@ const DURATION_OPTIONS = [
 ];
 
 type VisibilityType = 'Groups' | 'Custom Audience' | 'Custom Domain';
+type ChallengeDraftOption = {
+  id: string;
+  text: string;
+  image: string | null;
+  imageMediaId?: string;
+  mediaDrafts: MediaDraft[];
+  withFollowUp?: boolean;
+  followUpLabel?: string;
+};
 
 export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ onClose, onSubmit, onSaveDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
   const [visibility, setVisibility] = useState<VisibilityType>('Groups');
@@ -65,14 +76,15 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   const [resultsTiming, setResultsTiming] = useState<'AnyTime' | 'Immediately' | 'AfterEnd'>('AnyTime');
 
   const [category, setCategory] = useState<string>('');
-  const [coverImage, setCoverImage] = useState<string | null>(null);
-  const [croppingImage, setCroppingImage] = useState<string | null>(null);
-  const [activeCropId, setActiveCropId] = useState<string | null>(null);
+  const [legacyCoverImage, setLegacyCoverImage] = useState<string | null>(null);
+  const [postMedia, setPostMedia] = useState<MediaDraft[]>([]);
+  const [mediaAspectRatio, setMediaAspectRatio] = useState<number | undefined>(undefined);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleExit = () => {
-    if (title.trim() || options.some(o => o.text.trim()) || coverImage) {
+    if (title.trim() || options.some(o => o.text.trim()) || postMedia.length > 0 || legacyCoverImage) {
       setShowExitConfirm(true);
     } else {
       onClose();
@@ -80,6 +92,10 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   };
 
   const handleDiscard = async () => {
+    await Promise.all([
+      cancelTemporaryMediaDrafts(postMedia),
+      ...options.map((option) => cancelTemporaryMediaDrafts(option.mediaDrafts))
+    ]);
     if (!userProfile?.id) {
       onClose();
       return;
@@ -94,9 +110,14 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
     onClose();
   };
 
-  const handleSaveDraft = () => {
+  const handleSaveDraft = async () => {
     if (!userProfile?.id) {
       onClose();
+      return;
+    }
+    const allMedia = [...postMedia, ...options.flatMap((option) => option.mediaDrafts)];
+    if (!mediaDraftsAreReady(allMedia) || mediaDraftsHaveErrors(allMedia)) {
+      alert('Please finish or remove image uploads before saving.');
       return;
     }
     if (onSaveDraft) {
@@ -110,11 +131,14 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
           id: o.id,
           text: o.text,
           votes: 0,
-          image: o.image || undefined,
+          image: o.mediaDrafts.length > 0 ? undefined : (o.image || undefined),
+          imageMediaId: readyMediaAssetIds(o.mediaDrafts)[0],
           withFollowUp: o.withFollowUp,
           followUpLabel: o.followUpLabel
         })),
-        coverImage: coverImage || undefined,
+        coverImage: postMedia.length > 0 ? undefined : (legacyCoverImage || undefined),
+        mediaAssetIds: readyMediaAssetIds(postMedia),
+        mediaAspectRatio: postMedia.length > 0 ? mediaAspectRatio : undefined,
         targetAudience: visibility as any,
         targetGroups: visibility === 'Groups' ? selectedGroups : undefined,
         resultsWho,
@@ -131,15 +155,15 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
         isDraft: true,
         currentStep: 1
       };
-      onSaveDraft(draftData);
+      await onSaveDraft(draftData);
     }
     onClose();
   };
 
   const [title, setTitle] = useState('');
-  const [options, setOptions] = useState<{ id: string; text: string; image: string | null; withFollowUp?: boolean; followUpLabel?: string }[]>([
-    { id: '1', text: '', image: null },
-    { id: '2', text: '', image: null }
+  const [options, setOptions] = useState<ChallengeDraftOption[]>([
+    { id: '1', text: '', image: null, mediaDrafts: [] },
+    { id: '2', text: '', image: null, mediaDrafts: [] }
   ]);
 
   const [settingsOptionId, setSettingsOptionId] = useState<string | null>(null);
@@ -190,7 +214,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
     }
   };
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const postMediaPickerRef = useRef<MediaPickerHandle>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -204,7 +228,19 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
       setAllowComments(draft.allowComments !== undefined ? draft.allowComments : true);
       setForceAnonymous(draft.forceAnonymous || false);
       setRandomPairing(draft.randomPairing !== undefined ? draft.randomPairing : true);
-      if (draft.options) setOptions(draft.options.map(o => ({ id: o.id, text: o.text, image: o.image || null, withFollowUp: o.withFollowUp, followUpLabel: o.followUpLabel })));
+      const persistedPostMedia = (draft.media || []).map((media) => createPersistedMediaDraft(media, 'POST', draft.coverImage));
+      setPostMedia(persistedPostMedia);
+      setMediaAspectRatio(draft.mediaAspectRatio || persistedPostMedia[0]?.aspectRatio);
+      setLegacyCoverImage(persistedPostMedia.length > 0 ? null : (draft.coverImage || null));
+      if (draft.options) setOptions(draft.options.map(o => ({
+        id: o.id,
+        text: o.text,
+        image: o.image || null,
+        imageMediaId: o.imageMediaId,
+        mediaDrafts: o.imageMediaId ? [createPersistedMediaDraftFromId(o.imageMediaId, 'OPTION_IMAGE', o.image, 1)] : [],
+        withFollowUp: o.withFollowUp,
+        followUpLabel: o.followUpLabel
+      })));
       if (draft.demographics) setSelectedDemographics(draft.demographics);
       if (draft.targetGroups) setSelectedGroups(draft.targetGroups);
     }
@@ -246,12 +282,15 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
 
   const handleAddOption = () => {
     const newOptId = Date.now().toString();
-    setOptions([...options, { id: newOptId, text: '', image: null }]);
+    setOptions([...options, { id: newOptId, text: '', image: null, mediaDrafts: [] }]);
     setFocusedOptionId(newOptId);
   };
 
   const handleRemoveOption = (id: string) => {
-    if (options.length > 2) setOptions(options.filter(o => o.id !== id));
+    if (options.length <= 2) return;
+    const removed = options.find((option) => option.id === id);
+    if (removed) void cancelTemporaryMediaDrafts(removed.mediaDrafts);
+    setOptions(options.filter(o => o.id !== id));
   };
 
   const handleOptionChange = (id: string, text: string) => {
@@ -268,52 +307,6 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
     setSelectedGroups(prev =>
       prev.includes(groupId) ? prev.filter(id => id !== groupId) : [...prev, groupId]
     );
-  };
-
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const img = new Image();
-      const objUrl = URL.createObjectURL(file);
-      img.onload = () => {
-        const MAX_DIMENSION = 1200;
-        let width = img.width;
-        let height = img.height;
-
-        if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
-            const ratio = Math.min(MAX_DIMENSION / width, MAX_DIMENSION / height);
-            width = Math.round(width * ratio);
-            height = Math.round(height * ratio);
-        }
-
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-            ctx.drawImage(img, 0, 0, width, height);
-            setCroppingImage(canvas.toDataURL('image/jpeg', 0.8));
-        } else {
-            // fallback
-            const reader = new FileReader();
-            reader.onloadend = () => setCroppingImage(reader.result as string);
-            reader.readAsDataURL(file);
-        }
-        URL.revokeObjectURL(objUrl);
-        if (fileInputRef.current) fileInputRef.current.value = '';
-      };
-      img.src = objUrl;
-    }
-  };
-
-  const handleCropComplete = (croppedImg: string) => {
-    if (activeCropId === 'cover') {
-      setCoverImage(croppedImg);
-    } else if (activeCropId) {
-      setOptions(options.map(o => o.id === activeCropId ? { ...o, image: croppedImg } : o));
-    }
-    setCroppingImage(null);
-    setActiveCropId(null);
   };
 
   const validate = () => {
@@ -356,7 +349,8 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
     return new Date(now.getTime() + mins * 60000).toISOString();
   };
 
-  const handleFinalPost = () => {
+  const handleFinalPost = async () => {
+    if (isSubmitting) return;
     if (!userProfile?.id) {
       alert('Please log in to create a post');
       onClose();
@@ -364,45 +358,58 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
     }
     setHasAttemptedSubmit(true);
     if (!validate()) return;
-    onSubmit({
-      title,
-      description: '',
-      type: SurveyType.CHALLENGE,
-      author: { id: userProfile.id, name: userProfile.name, avatar: userProfile.avatar },
-      options: options.map(o => ({
-        id: o.id,
-        text: o.text,
-        votes: 0,
-        image: o.image || undefined,
-        withFollowUp: o.withFollowUp,
-        followUpLabel: o.followUpLabel
-      })),
-      coverImage: coverImage || undefined,
-      targetAudience: visibility as any,
-      targetGroups: visibility === 'Groups' ? selectedGroups : undefined,
-      resultsWho,
-      resultsTiming,
-      category,
-      allowComments,
-      allowAnonymous: true,
-      forceAnonymous: forceAnonymous,
-      randomPairing,
-      demographics: selectedDemographics,
-      expiresAt: getExpiresAt(),
-      createdAt: new Date().toISOString()
-    });
-
-    // Close the creation screen and return to home
-    onClose();
+    try {
+      setIsSubmitting(true);
+      await onSubmit({
+        title,
+        description: '',
+        type: SurveyType.CHALLENGE,
+        author: { id: userProfile.id, name: userProfile.name, avatar: userProfile.avatar },
+        options: options.map(o => ({
+          id: o.id,
+          text: o.text,
+          votes: 0,
+          image: o.mediaDrafts.length > 0 ? undefined : (o.image || undefined),
+          imageMediaId: readyMediaAssetIds(o.mediaDrafts)[0],
+          withFollowUp: o.withFollowUp,
+          followUpLabel: o.followUpLabel
+        })),
+        coverImage: postMedia.length > 0 ? undefined : (legacyCoverImage || undefined),
+        mediaAssetIds: readyMediaAssetIds(postMedia),
+        mediaAspectRatio: postMedia.length > 0 ? mediaAspectRatio : undefined,
+        targetAudience: visibility as any,
+        targetGroups: visibility === 'Groups' ? selectedGroups : undefined,
+        resultsWho,
+        resultsTiming,
+        category,
+        allowComments,
+        allowAnonymous: true,
+        forceAnonymous: forceAnonymous,
+        randomPairing,
+        demographics: selectedDemographics,
+        expiresAt: getExpiresAt(),
+        createdAt: new Date().toISOString()
+      });
+      onClose();
+    } catch (error) {
+      console.error('Failed to create challenge:', error);
+      alert('Failed to create challenge. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const selectedOptionForSettings = options.find(o => o.id === settingsOptionId);
+  const allMediaDrafts = [...postMedia, ...options.flatMap((option) => option.mediaDrafts)];
   const isPostReady = Boolean(
+    !isSubmitting &&
     userProfile?.id &&
     title.trim() &&
     options.filter(o => o.text.trim() !== '').length >= 2 &&
     category &&
-    (visibility !== 'Groups' || selectedGroups.length > 0)
+    (visibility !== 'Groups' || selectedGroups.length > 0) &&
+    mediaDraftsAreReady(allMediaDrafts) &&
+    !mediaDraftsHaveErrors(allMediaDrafts)
   );
 
   return (
@@ -451,18 +458,35 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
               </div>
               <button
                 type="button"
-                onClick={() => { setActiveCropId('cover'); fileInputRef.current?.click(); }}
-                className={`p-1.5 rounded-full transition-colors shrink-0 mt-1 ${coverImage ? 'text-amber-600 bg-amber-50' : 'text-gray-400 hover:text-amber-500 hover:bg-gray-50'}`}
+                onClick={() => postMediaPickerRef.current?.open()}
+                disabled={postMedia.length >= 8}
+                className={`p-1.5 rounded-full transition-colors shrink-0 mt-1 disabled:opacity-40 ${postMedia.length > 0 || legacyCoverImage ? 'text-amber-600 bg-amber-50' : 'text-gray-400 hover:text-amber-500 hover:bg-gray-50'}`}
+                aria-label="Add challenge images"
+                title="Add images"
               >
                 <Camera size={20} />
               </button>
             </div>
 
-            {/* Cover Media Preview */}
-            {coverImage && (
+            <MediaPicker
+              ref={postMediaPickerRef}
+              purpose="POST"
+              value={postMedia}
+              onChange={(next) => {
+                setPostMedia(next);
+                if (next.some((media) => media.status === 'ready')) setLegacyCoverImage(null);
+              }}
+              maxFiles={8}
+              multiple
+              aspectRatio={mediaAspectRatio}
+              onAspectRatioChange={setMediaAspectRatio}
+              showAddButton={false}
+            />
+
+            {legacyCoverImage && postMedia.length === 0 && (
               <div className="relative w-24 h-24 rounded-xl overflow-hidden border border-gray-100 shadow-sm group animate-in zoom-in-95 mt-2">
-                <img src={coverImage} className="w-full h-full object-cover" alt="Cover" />
-                <button onClick={() => setCoverImage(null)} className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={10} /></button>
+                <img src={legacyCoverImage} className="w-full h-full object-cover" alt="Cover" />
+                <button type="button" onClick={() => setLegacyCoverImage(null)} className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Remove image" title="Remove image"><X size={10} /></button>
               </div>
             )}
 
@@ -515,20 +539,42 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                   <span className="text-xs font-black text-gray-300 w-4 text-center shrink-0">{idx + 1}</span>
                   <div className="flex-1 flex flex-col gap-1.5">
                     <div className="flex items-center w-full bg-gray-55/5 border border-gray-200 rounded-xl px-2 py-0.5 focus-within:border-amber-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-amber-100 transition-all shadow-xs">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActiveCropId(option.id);
-                            fileInputRef.current?.click();
+                        <MediaPicker
+                          purpose="OPTION_IMAGE"
+                          value={option.mediaDrafts}
+                          onChange={(mediaDrafts) => setOptions((current) => current.map((item) => item.id === option.id ? {
+                            ...item,
+                            mediaDrafts,
+                            image: mediaDrafts.some((media) => media.status === 'ready') ? null : item.image,
+                            imageMediaId: readyMediaAssetIds(mediaDrafts)[0]
+                          } : item))}
+                          className="shrink-0"
+                          renderContent={({ open, retry, busy }) => {
+                            const current = option.mediaDrafts[0];
+                            const hasImage = Boolean(current || option.image);
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => current?.status === 'error' ? retry(current.clientId) : open()}
+                                disabled={busy}
+                                className={`relative w-8 h-8 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-dashed transition-all disabled:cursor-wait ${hasImage ? 'border-amber-500' : 'border-gray-200 text-gray-400 hover:text-amber-500'}`}
+                                aria-label={current?.status === 'error' ? 'Retry option image upload' : `Add image to challenge item ${idx + 1}`}
+                                title={current?.status === 'error' ? 'Retry' : 'Add item image'}
+                              >
+                                {current?.previewUrl ? (
+                                  <img src={current.previewUrl} className="w-full h-full object-cover" alt="" />
+                                ) : current?.presentation ? (
+                                  <MediaImage media={current.presentation} className="w-full h-full object-cover" />
+                                ) : option.image ? (
+                                  <img src={option.image} className="w-full h-full object-cover" alt="" />
+                                ) : (
+                                  <Camera size={14} />
+                                )}
+                                {busy && <span className="absolute inset-x-0 bottom-0 h-1 bg-amber-500" />}
+                              </button>
+                            );
                           }}
-                          className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-dashed transition-all ${option.image ? 'border-amber-500' : 'border-gray-200 text-gray-400 hover:text-amber-500'}`}
-                        >
-                          {option.image ? (
-                            <img src={option.image} className="w-full h-full object-cover" alt="" />
-                          ) : (
-                            <Camera size={14} />
-                          )}
-                        </button>
+                        />
 
                         <input
                           type="text"
@@ -551,11 +597,16 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
 
                         <span className="text-[9px] text-gray-450 mr-1.5 whitespace-nowrap">{option.text.length}/80</span>
 
-                      {option.image && (
+                      {(option.image || option.mediaDrafts.length > 0) && (
                         <button
                           type="button"
-                          onClick={() => setOptions(options.map(o => o.id === option.id ? { ...o, image: null } : o))}
+                          onClick={() => {
+                            void cancelTemporaryMediaDrafts(option.mediaDrafts);
+                            setOptions((current) => current.map((item) => item.id === option.id ? { ...item, image: null, imageMediaId: undefined, mediaDrafts: [] } : item));
+                          }}
                           className="p-1.5 text-gray-300 hover:text-red-500 rounded-full flex items-center justify-center transition-colors mr-1"
+                          aria-label={`Remove image from challenge item ${idx + 1}`}
+                          title="Remove item image"
                         >
                           <X size={14} strokeWidth={3} />
                         </button>
@@ -1106,9 +1157,6 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
           </div>
         )}
       </BottomSheet>
-
-      {croppingImage && <ImageCropper imageSrc={croppingImage} onCrop={handleCropComplete} onCancel={() => { setCroppingImage(null); setActiveCropId(null); }} />}
-      <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleImageUpload} />
 
       {showExitConfirm && (
         <div className="fixed inset-0 z-[110] bg-black/60 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-200">

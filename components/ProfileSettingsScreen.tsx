@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, User, Mail, Globe, Lock, Eye, Search, Activity,
@@ -8,12 +8,13 @@ import {
   Languages, Type, MessageSquare, UserPlus, Camera, Edit3, Save,
   X, Briefcase, GraduationCap, Heart, UserCircle, MapPin, Hash
 } from 'lucide-react';
-import { ImageCropper } from './ImageCropper';
 import { BottomSheet } from './BottomSheet';
-import { UserProfile } from '../types';
+import { MediaDraft, UserProfile } from '../types';
 import { NotificationSettingsScreen } from './NotificationSettingsScreen';
 import { api } from '../services/api';
 import { useTranslation } from 'react-i18next';
+import { MediaPicker } from './media/MediaPicker';
+import { createPersistedMediaDraftFromId, mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds } from '../utils/mediaDrafts';
 
 interface ProfileSettingsScreenProps {
   userProfile: UserProfile;
@@ -74,9 +75,9 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   const [isDeleting, setIsDeleting] = useState(false);
   const [showFollowRequests, setShowFollowRequests] = useState(false);
 
-  // Image Flow State
-  const [croppingImage, setCroppingImage] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [avatarMedia, setAvatarMedia] = useState<MediaDraft[]>(() => userProfile.avatarMediaId
+    ? [createPersistedMediaDraftFromId(userProfile.avatarMediaId, 'PROFILE_AVATAR', userProfile.avatar)]
+    : []);
 
   const [activeDemographicSelector, setActiveDemographicSelector] = useState<{
     id: keyof NonNullable<UserProfile['demographics']>;
@@ -129,6 +130,9 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
         nationality: ''
       }
     });
+    setAvatarMedia(userProfile.avatarMediaId
+      ? [createPersistedMediaDraftFromId(userProfile.avatarMediaId, 'PROFILE_AVATAR', userProfile.avatar)]
+      : []);
   }, [userProfile]);
 
   const filteredNationalities = useMemo(() => {
@@ -168,8 +172,10 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
     try {
       if (!userProfile.id) return;
 
+      const nextAvatarMediaId = readyMediaAssetIds(avatarMedia)[0];
+      const avatarMediaChanged = nextAvatarMediaId !== userProfile.avatarMediaId;
       const payload = deepStripUndefined({
-        avatar: profileForm.avatar,
+        ...(avatarMediaChanged ? { avatarMediaId: nextAvatarMediaId || null } : {}),
         name: profileForm.name,
         bio: profileForm.bio,
         language: profileForm.language,
@@ -185,15 +191,16 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
         }
       });
 
-      await api.updateUser(userProfile.id, payload);
+      const updatedProfile = await api.updateUser(userProfile.id, payload);
 
-      // Update parent with merged object (not the payload only)
       const merged: UserProfile = {
         ...userProfile,
-        ...payload,
-        demographics: payload.demographics
+        ...profileForm,
+        ...updatedProfile,
+        demographics: updatedProfile.demographics || payload.demographics
       };
 
+      setProfileForm(merged);
       onUpdateProfile(merged);
     } catch (error) {
       console.error("Failed to update profile", error);
@@ -219,47 +226,6 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
       setIsDeleting(false);
       setShowDeleteModal(false);
     }
-  };
-
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const img = new Image();
-      const objUrl = URL.createObjectURL(file);
-      img.onload = () => {
-        const MAX_DIMENSION = 1200;
-        let width = img.width;
-        let height = img.height;
-
-        if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
-            const ratio = Math.min(MAX_DIMENSION / width, MAX_DIMENSION / height);
-            width = Math.round(width * ratio);
-            height = Math.round(height * ratio);
-        }
-
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-            ctx.drawImage(img, 0, 0, width, height);
-            setCroppingImage(canvas.toDataURL('image/jpeg', 0.8));
-        } else {
-            // fallback
-            const reader = new FileReader();
-            reader.onloadend = () => setCroppingImage(reader.result as string);
-            reader.readAsDataURL(file);
-        }
-        URL.revokeObjectURL(objUrl);
-        if (fileInputRef.current) fileInputRef.current.value = '';
-      };
-      img.src = objUrl;
-    }
-  };
-
-  const handleCropComplete = (croppedImg: string) => {
-    setProfileForm(prev => ({ ...prev, avatar: croppedImg }));
-    setCroppingImage(null);
   };
 
   const toggleSetting = (key: keyof typeof settings) => {
@@ -345,7 +311,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
       {showSave && (
         <button
           onClick={handleSave}
-          disabled={isSaving}
+          disabled={isSaving || (currentSubPage === 'edit-profile' && (!mediaDraftsAreReady(avatarMedia) || mediaDraftsHaveErrors(avatarMedia)))}
           className="bg-blue-600 text-white px-5 py-1.5 rounded-full text-xs font-black uppercase tracking-widest shadow-md shadow-blue-200 active:scale-95 transition-all disabled:opacity-50"
         >
           {isSaving ? '...' : 'Save'}
@@ -535,24 +501,38 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
         <PageHeader title="Edit Profile" />
         <div className="flex-1 overflow-y-auto px-5 py-6 space-y-6">
           <div className="flex flex-col items-center">
-            <div className="relative">
-              <div className="w-24 h-24 rounded-full border-4 border-white shadow-sm overflow-hidden bg-gray-100">
-                <img src={profileForm.avatar} alt="Profile" className="w-full h-full object-cover" />
-              </div>
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="absolute bottom-0 right-0 p-2 bg-blue-600 text-white rounded-full border-2 border-white shadow-md active:scale-90 transition-transform"
-              >
-                <Camera size={14} />
-              </button>
-              <input
-                type="file"
-                ref={fileInputRef}
-                className="hidden"
-                accept="image/*"
-                onChange={handleImageUpload}
-              />
-            </div>
+            <MediaPicker
+              purpose="PROFILE_AVATAR"
+              value={avatarMedia}
+              onChange={setAvatarMedia}
+              renderContent={({ open, retry, busy }) => {
+                const current = avatarMedia[0];
+                const previewUrl = current?.previewUrl || profileForm.avatar;
+                return (
+                  <div className="relative">
+                    <div className={`w-24 h-24 rounded-full border-4 border-white shadow-sm overflow-hidden bg-gray-100 ${current?.status === 'error' ? 'ring-2 ring-red-400' : ''}`}>
+                      {previewUrl ? (
+                        <img src={previewUrl} alt={profileForm.name || 'Profile'} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-xl font-bold text-gray-500">
+                          {(profileForm.name || 'U').trim().charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => current?.status === 'error' ? retry(current.clientId) : open()}
+                      disabled={busy}
+                      className="absolute bottom-0 right-0 p-2 bg-blue-600 text-white rounded-full border-2 border-white shadow-md active:scale-90 transition-transform disabled:opacity-60"
+                      aria-label={current?.status === 'error' ? t('common.retry', { defaultValue: 'Retry' }) : t('media.add', { defaultValue: 'Add image' })}
+                      title={current?.status === 'error' ? t('common.retry', { defaultValue: 'Retry' }) : t('media.add', { defaultValue: 'Add image' })}
+                    >
+                      <Camera size={14} />
+                    </button>
+                  </div>
+                );
+              }}
+            />
           </div>
 
           <div className="space-y-4">
@@ -576,13 +556,6 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
             </div>
           </div>
         </div>
-        {croppingImage && (
-          <ImageCropper
-            imageSrc={croppingImage}
-            onCrop={handleCropComplete}
-            onCancel={() => setCroppingImage(null)}
-          />
-        )}
       </div>
     );
   }

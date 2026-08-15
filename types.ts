@@ -46,6 +46,7 @@ export interface MediaDraft {
   crop?: MediaCropSelection;
   assetId?: string;
   presentation?: MediaPresentation;
+  persisted?: boolean;
   error?: string;
 }
 
@@ -252,6 +253,7 @@ export interface Survey {
   coverImage?: string; // Normalized UI field
   image?: string; // Legacy API field mapping
   media?: MediaPresentation[];
+  mediaAssetIds?: string[];
   mediaAspectRatio?: number;
   targetAudience?: 'Public' | 'Followers' | 'Groups' | 'Custom Audience' | 'Custom Domain';
   targetGroups?: string[]; // IDs of groups if 'Groups' is selected

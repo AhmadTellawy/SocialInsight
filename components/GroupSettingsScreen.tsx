@@ -4,8 +4,10 @@ import {
   MessageSquare, Trash2, AlertTriangle, Check, UserMinus,
   Globe, Info, UserCheck, X, Ban
 } from 'lucide-react';
-import { Group, Survey } from '../types';
+import { Group, MediaDraft, Survey } from '../types';
 import { useGroupMembers, useGroupPendingRequests, useGroupPendingPosts } from '../hooks/useGroup';
+import { MediaPicker } from './media/MediaPicker';
+import { createPersistedMediaDraftFromId, mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds } from '../utils/mediaDrafts';
 
 export type JoinPolicy = 'OPEN' | 'REQUEST' | 'INVITE_ONLY';
 export type PostingPerms = 'AdminsOnly' | 'AllMembers' | 'ApprovalNeeded';
@@ -17,6 +19,7 @@ export interface GroupUpdatePayload {
   description?: string;
   category?: string;
   image?: string;
+  imageMediaId?: string | null;
   rules?: string;
 }
 
@@ -26,7 +29,7 @@ interface GroupSettingsScreenProps {
   group: Group;
   currentUserId: string;
   onBack: () => void;
-  onUpdateGroup: (id: string, updates: GroupUpdatePayload) => Promise<void>;
+  onUpdateGroup: (id: string, updates: GroupUpdatePayload) => Promise<Group | void>;
   onDeleteGroup: (id: string) => Promise<void>;
   onManageRoles?: (memberId: string, newRole: GroupRole) => Promise<void>;
   onInviteManager?: () => void;
@@ -158,11 +161,12 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
   const [name, setName] = useState(group.name || '');
   const [description, setDescription] = useState(group.description || '');
   const [category, setCategory] = useState(group.category || 'Other');
-  const [image, setImage] = useState<string | null>(group.image || null);
+  const [groupMedia, setGroupMedia] = useState<MediaDraft[]>(() => group.imageMediaId
+    ? [createPersistedMediaDraftFromId(group.imageMediaId, 'GROUP_IMAGE', group.image)]
+    : []);
   const [rules, setRules] = useState(group.rules || '');
   const [isSavingInfo, setIsSavingInfo] = useState(false);
   const [memberSearch, setMemberSearch] = useState('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setActiveJoinPolicy((group.joinPolicy as JoinPolicy) || 'OPEN');
@@ -170,9 +174,11 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
     setName(group.name || '');
     setDescription(group.description || '');
     setCategory(group.category || 'Other');
-    setImage(group.image || null);
+    setGroupMedia(group.imageMediaId
+      ? [createPersistedMediaDraftFromId(group.imageMediaId, 'GROUP_IMAGE', group.image)]
+      : []);
     setRules(group.rules || '');
-  }, [group.id, group.joinPolicy, group.postingPermissions, group.name, group.description, group.category, group.image, group.rules]);
+  }, [group.id, group.joinPolicy, group.postingPermissions, group.name, group.description, group.category, group.image, group.imageMediaId, group.rules]);
 
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [confirmName, setConfirmName] = useState('');
@@ -362,22 +368,6 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
     }
   };
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 2 * 1024 * 1024) {
-      showToast('Image size exceeds 2MB limit', 'error');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      if (typeof event.target?.result === 'string') {
-        setImage(event.target.result);
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-
   const handleSaveDetails = async () => {
     if (!name.trim()) {
       showToast('Group name is required', 'error');
@@ -385,13 +375,20 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
     }
     try {
       setIsSavingInfo(true);
-      await onUpdateGroup(group.id, {
+      const nextImageMediaId = readyMediaAssetIds(groupMedia)[0];
+      const mediaChanged = nextImageMediaId !== group.imageMediaId;
+      const updated = await onUpdateGroup(group.id, {
         name: name.trim(),
         description: description.trim(),
         category,
-        image: image || undefined,
+        ...(mediaChanged ? { imageMediaId: nextImageMediaId || null } : {}),
         rules: rules.trim()
       });
+      if (updated?.imageMediaId) {
+        setGroupMedia([createPersistedMediaDraftFromId(updated.imageMediaId, 'GROUP_IMAGE', updated.image)]);
+      } else if (updated && !updated.imageMediaId) {
+        setGroupMedia([]);
+      }
       showToast('Group profile updated successfully');
     } catch (e: any) {
       showToast(e.message || 'Failed to update group profile', 'error');
@@ -431,29 +428,39 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
             <div className="bg-white rounded-2xl border border-gray-100 p-4 flex flex-col gap-4">
               {/* Image Uploader */}
               <div className="flex items-center gap-4">
-                <div 
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-16 h-16 rounded-2xl bg-gray-50 border border-gray-100 overflow-hidden relative cursor-pointer group shrink-0"
-                >
-                  <img 
-                    src={image || `https://ui-avatars.com/api/?name=${encodeURIComponent(name || 'G')}&background=random&color=fff&size=200`} 
-                    alt="Group Avatar" 
-                    className="w-full h-full object-cover"
-                  />
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-[10px] font-bold">
-                    Change
-                  </div>
-                </div>
-                <input 
-                  type="file" 
-                  ref={fileInputRef} 
-                  onChange={handleImageChange} 
-                  accept="image/*" 
-                  className="hidden" 
+                <MediaPicker
+                  purpose="GROUP_IMAGE"
+                  value={groupMedia}
+                  onChange={setGroupMedia}
+                  renderContent={({ open, retry, busy }) => {
+                    const current = groupMedia[0];
+                    const previewUrl = current?.previewUrl || group.image;
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => current?.status === 'error' ? retry(current.clientId) : open()}
+                        disabled={busy}
+                        className={`w-16 h-16 rounded-2xl bg-gray-50 border overflow-hidden relative cursor-pointer group shrink-0 disabled:cursor-wait ${current?.status === 'error' ? 'border-red-400' : 'border-gray-100'}`}
+                        aria-label={current?.status === 'error' ? 'Retry group image upload' : 'Change group avatar'}
+                        title={current?.status === 'error' ? 'Retry' : 'Change group avatar'}
+                      >
+                        {previewUrl ? (
+                          <img src={previewUrl} alt="Group Avatar" className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="w-full h-full flex items-center justify-center bg-blue-50 text-blue-700 text-lg font-black">
+                            {(name || 'G').trim().charAt(0).toUpperCase()}
+                          </span>
+                        )}
+                        <span className={`absolute inset-0 bg-black/40 flex items-center justify-center transition-opacity text-white text-[10px] font-bold ${busy ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                          {busy ? '...' : 'Change'}
+                        </span>
+                      </button>
+                    );
+                  }}
                 />
                 <div className="flex-1">
                   <p className="text-xs font-bold text-gray-900">Group Avatar</p>
-                  <p className="text-[10px] text-gray-400 leading-normal mt-0.5">JPEG or PNG. Max size 2MB.</p>
+                  <p className="text-[10px] text-gray-400 leading-normal mt-0.5">JPEG, PNG, or WebP. Max size 15MB.</p>
                 </div>
               </div>
 
@@ -522,7 +529,7 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
 
               <button
                 onClick={handleSaveDetails}
-                disabled={isSavingInfo}
+                disabled={isSavingInfo || !mediaDraftsAreReady(groupMedia) || mediaDraftsHaveErrors(groupMedia)}
                 className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-200 transition-all flex items-center justify-center disabled:opacity-50"
               >
                 {isSavingInfo ? 'Saving Changes...' : 'Save Profile Details'}
