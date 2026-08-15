@@ -56,6 +56,7 @@ export interface UserProfile {
   handle: string;
   avatar: string;
   avatarMediaId?: string;
+  avatarMedia?: MediaPresentation;
   bio: string;
   location: string;
   website: string;
@@ -113,6 +114,7 @@ export interface Group {
   permissions?: GroupPermissions; // Added for new permission checks
   image?: string;
   imageMediaId?: string;
+  imageMedia?: MediaPresentation;
   createdAt: string;
   rules?: string;
   // Settings
@@ -164,6 +166,8 @@ export interface Comment {
     id?: string;
     name: string;
     avatar: string;
+    avatarMediaId?: string;
+    avatarMedia?: MediaPresentation;
   };
   text: string;
   timestamp: string;
@@ -236,6 +240,8 @@ export interface Survey {
     name: string;
     handle?: string; // Added handle
     avatar: string;
+    avatarMediaId?: string;
+    avatarMedia?: MediaPresentation;
     type?: AccountType;
     isFollowing?: boolean; // Added isFollowing
     isPrivate?: boolean;
@@ -304,6 +310,8 @@ export interface Notification {
     id?: string;
     name: string;
     avatar?: string;
+    avatarMediaId?: string;
+    avatarMedia?: MediaPresentation;
   };
   message: string;
   timestamp: string;
@@ -329,6 +337,8 @@ export const normalizeSurvey = (raw: any): Survey => {
     name: raw.author.name ?? 'Unknown',
     handle: raw.author.handle,
     avatar: raw.author.avatar ?? '',
+    avatarMediaId: raw.author.avatarMediaId,
+    avatarMedia: raw.author.avatarMedia,
     type: raw.author.type,
     isFollowing: raw.author.isFollowing,
     isPrivate: raw.author.isPrivate

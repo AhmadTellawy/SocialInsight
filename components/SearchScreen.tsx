@@ -377,6 +377,9 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                           <div className="flex items-center gap-3">
                             <UserAvatar 
                               src={person.avatar} 
+                              mediaId={person.avatarMediaId}
+                              media={person.avatarMedia}
+                              name={person.name}
                               alt={person.name} 
                               size={40} 
                               className="border border-gray-100" 
@@ -410,6 +413,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                           <div className="flex items-center gap-3 min-w-0 flex-1 mr-3">
                             <div className="w-10 h-10 rounded-xl overflow-hidden border border-gray-100 shrink-0">
                               <MediaImage
+                                media={group.imageMedia}
                                 mediaId={group.imageMediaId}
                                 fallbackSrc={group.image?.includes('ui-avatars') ? undefined : group.image}
                                 fallback={<span role="img" aria-label={group.name} className="flex h-full w-full items-center justify-center bg-gray-100 text-sm font-bold text-gray-500">{group.name.trim().charAt(0).toUpperCase()}</span>}
@@ -471,7 +475,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
 
                           <div className="flex items-center justify-between pt-2 border-t border-gray-50 mt-1">
                             <div className="flex items-center gap-2 text-xs text-gray-500">
-                              <UserAvatar src={survey.author?.avatar} name={survey.author?.name} alt={survey.author?.name || 'Author'} size={16} />
+                              <UserAvatar src={survey.author?.avatar} mediaId={survey.author?.avatarMediaId} media={survey.author?.avatarMedia} name={survey.author?.name} alt={survey.author?.name || 'Author'} size={16} />
                               <span>{survey.author?.name}</span>
                             </div>
                             <div className="flex items-center gap-3 text-xs text-gray-400 font-medium">

@@ -52,7 +52,7 @@ export const ParticipantsSheet: React.FC<ParticipantsSheetProps> = ({ survey, on
                       <UserCircle2 size={24} />
                     </div>
                   ) : (
-                    <UserAvatar src={p.avatar} name={p.name} alt={p.name || 'Participant'} size={40} className="border border-gray-100" />
+                    <UserAvatar src={p.avatar} mediaId={p.avatarMediaId} media={p.avatarMedia} name={p.name} alt={p.name || 'Participant'} size={40} className="border border-gray-100" />
                   )}
                   <div>
                     <h4 className={`text-sm font-bold ${p.isAnonymous ? 'text-gray-500 italic' : 'text-gray-900'}`}>{p.name}</h4>

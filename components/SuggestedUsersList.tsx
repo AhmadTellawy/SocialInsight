@@ -74,7 +74,7 @@ export const SuggestedUsersList: React.FC<SuggestedUsersListProps> = ({ users, o
                            className="w-[72px] h-[72px] rounded-full mb-3 overflow-hidden cursor-pointer shadow-sm pointer-events-auto ring-2 ring-transparent group-hover:ring-gray-200 transition-all duration-300"
                            onClick={() => onUserClick && onUserClick(user)}
                         >
-                            <UserAvatar src={user.avatar?.includes('ui-avatars') ? undefined : user.avatar} name={user.name} alt={user.name} size={72} />
+                            <UserAvatar src={user.avatar} mediaId={user.avatarMediaId} media={user.avatarMedia} name={user.name} alt={user.name} size={72} />
                         </div>
                         <h4 
                           className="font-bold text-[14px] text-gray-900 line-clamp-1 w-full cursor-pointer hover:underline decoration-gray-400 decoration-1 underline-offset-2"

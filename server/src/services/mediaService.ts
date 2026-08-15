@@ -76,6 +76,20 @@ export type PreparedMediaScopeChange = {
   demoteAfterCommit: string[];
 };
 
+export const PUBLIC_AVATAR_MEDIA_SELECT = {
+  avatarMediaId: true,
+  avatarMedia: { include: { variants: true } }
+} as const;
+
+export const PUBLIC_GROUP_MEDIA_INCLUDE = {
+  imageMedia: { include: { variants: true } }
+} as const;
+
+export const POST_MEDIA_INCLUDE = {
+  orderBy: { sortOrder: 'asc' as const },
+  include: { mediaAsset: { include: { variants: true } } }
+} as const;
+
 const publicPresentation = (
   asset: MediaAsset & { variants: MediaVariant[] }
 ): MediaPresentation | null => {
@@ -439,15 +453,29 @@ export const scheduleMediaDeletion = async (assetIds: Array<string | null | unde
 export const resolvePostMediaScope = async (
   authorId: string,
   status: string,
-  targetGroupIds: string[]
+  targetGroupIds: string[],
+  targetAudience?: string | null
 ): Promise<MediaAccessScope> => {
-  if (status !== 'PUBLISHED') return 'OWNER_ONLY';
-  if (targetGroupIds.length > 0) return 'INHERITED_GROUP';
+  const withoutAccountPrivacy = resolvePostMediaScopeFromState(status, targetGroupIds, targetAudience, false);
+  if (withoutAccountPrivacy !== 'PUBLIC') return withoutAccountPrivacy;
   const author = await prisma.user.findUnique({
     where: { id: authorId },
     select: { isPrivate: true, mediaPrivacyTarget: true }
   });
   return author && (author.isPrivate || author.mediaPrivacyTarget === true) ? 'RESTRICTED' : 'PUBLIC';
+};
+
+export const resolvePostMediaScopeFromState = (
+  status: string,
+  targetGroupIds: string[],
+  targetAudience: string | null | undefined,
+  authorIsPrivate: boolean
+): MediaAccessScope => {
+  if (status !== 'PUBLISHED') return 'OWNER_ONLY';
+  if (targetGroupIds.length > 0) return 'INHERITED_GROUP';
+  const normalizedAudience = targetAudience?.trim().toLowerCase();
+  if (normalizedAudience && normalizedAudience !== 'public') return 'RESTRICTED';
+  return authorIsPrivate ? 'RESTRICTED' : 'PUBLIC';
 };
 
 export const validatePostMediaSet = async (
@@ -502,7 +530,7 @@ export const markMediaAttached = async (assetIds: string[], scope: MediaAccessSc
   }
 };
 
-const resolveAssetPost = (asset: any): { id: string; authorId: string; groupId: string | null } | null => {
+const resolveAssetPost = (asset: any): { id: string; authorId: string; groupId: string | null; targetedGroups?: Array<{ id: string }> } | null => {
   const direct = asset.postAttachment?.post;
   const question = asset.questionFor?.post || asset.questionFor?.section?.post;
   const optionQuestion = asset.optionFor?.question;
@@ -515,11 +543,11 @@ const canReadRestrictedAsset = async (asset: any, viewerId?: string): Promise<bo
   const post = resolveAssetPost(asset);
   if (!post) return false;
   const canViewPost = await GroupPermissionService.canViewPost(post.id, viewerId);
-  if (!canViewPost || post.groupId) return canViewPost;
+  if (!canViewPost || post.groupId || post.targetedGroups?.length) return canViewPost;
   return PrivacyService.canViewUserContent(viewerId, post.authorId);
 };
 
-const POST_ACCESS_SELECT = { id: true, authorId: true, groupId: true } as const;
+const POST_ACCESS_SELECT = { id: true, authorId: true, groupId: true, targetedGroups: { select: { id: true } } } as const;
 
 const assetWithAccessContext = (assetId: string) => prisma.mediaAsset.findUnique({
   where: { id: assetId },
@@ -615,6 +643,70 @@ export const serializeMediaAsset = (
   };
 };
 
+export const serializeUserMediaRecord = <T extends Record<string, any>>(user?: T | null): T | null | undefined => {
+  if (!user) return user;
+  const { avatarMedia, ...rest } = user;
+  const presentation = serializeMediaAsset(avatarMedia);
+  const legacyAvatar = typeof user.avatar === 'string' && /(?:ui-avatars\.com|api\.dicebear\.com|picsum\.photos|randomuser\.me)/i.test(user.avatar)
+    ? null
+    : user.avatar;
+  return {
+    ...rest,
+    avatar: presentation?.src || (!user.avatarMediaId && legacyAvatar ? legacyAvatar : ''),
+    avatarMedia: presentation
+  } as unknown as T;
+};
+
+export const serializeGroupMediaRecord = <T extends Record<string, any>>(group?: T | null): T | null | undefined => {
+  if (!group) return group;
+  const { imageMedia, ...rest } = group;
+  const presentation = serializeMediaAsset(imageMedia);
+  return {
+    ...rest,
+    image: presentation?.src || (group.imageMediaId ? null : group.image),
+    imageMedia: presentation
+  } as unknown as T;
+};
+
+export const serializePostMediaRecord = (post: any): any => {
+  if (!post) return post;
+  const media = Array.isArray(post.media)
+    ? post.media.map((attachment: any) => serializeMediaAsset(attachment.mediaAsset)).filter(Boolean)
+    : [];
+  const serializeOption = (option: any): any => {
+    const presentation = serializeMediaAsset(option?.imageMedia);
+    const { imageMedia, ...rest } = option || {};
+    return {
+      ...rest,
+      image: presentation?.src || (option?.imageMediaId ? undefined : option?.image),
+      imageMedia: presentation
+    };
+  };
+  const serializeQuestion = (question: any): any => {
+    const presentation = serializeMediaAsset(question?.imageMedia);
+    const { imageMedia, ...rest } = question || {};
+    return {
+      ...rest,
+      image: presentation?.src || (question?.imageMediaId ? undefined : question?.image),
+      imageMedia: presentation,
+      options: Array.isArray(question?.options) ? question.options.map(serializeOption) : question?.options
+    };
+  };
+  return {
+    ...post,
+    author: serializeUserMediaRecord(post.author),
+    image: media.length > 0 ? undefined : post.image,
+    media,
+    coverImage: media.length > 0 ? media[0]?.src : post.image,
+    questions: Array.isArray(post.questions) ? post.questions.map(serializeQuestion) : post.questions,
+    sections: Array.isArray(post.sections) ? post.sections.map((section: any) => ({
+      ...section,
+      questions: Array.isArray(section.questions) ? section.questions.map(serializeQuestion) : section.questions
+    })) : post.sections,
+    sharedFrom: post.sharedFrom ? serializePostMediaRecord(post.sharedFrom) : post.sharedFrom
+  };
+};
+
 export const deleteMediaAsset = async (ownerId: string, assetId: string): Promise<void> => {
   const asset = await prisma.mediaAsset.findUnique({ where: { id: assetId }, include: { variants: true } });
   if (!asset || asset.ownerId !== ownerId) {
@@ -646,6 +738,27 @@ export const purgeMediaAsset = async (assetId: string): Promise<void> => {
 
 export const cleanupExpiredMedia = async (limit = 100): Promise<number> => {
   if (!isMediaStorageConfigured()) return 0;
+  const staleSourceUploads = await prisma.mediaAsset.findMany({
+    where: {
+      status: { in: ['READY', 'ATTACHED'] },
+      uploadBucket: { not: null },
+      uploadKey: { not: null }
+    },
+    take: Math.min(limit, 25),
+    select: { id: true, uploadBucket: true, uploadKey: true }
+  });
+  for (const asset of staleSourceUploads) {
+    if (!asset.uploadBucket || !asset.uploadKey) continue;
+    try {
+      await getMediaStorage().remove(asset.uploadBucket, [asset.uploadKey]);
+      await prisma.mediaAsset.updateMany({
+        where: { id: asset.id, uploadBucket: asset.uploadBucket, uploadKey: asset.uploadKey },
+        data: { uploadBucket: null, uploadKey: null }
+      });
+    } catch {
+      // Retry the same exact object during the next scheduled cleanup.
+    }
+  }
   const stalePublicAssets = await prisma.mediaAsset.findMany({
     where: {
       accessScope: { not: 'PUBLIC' },

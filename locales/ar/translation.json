@@ -20,6 +20,7 @@
     "processing": "جارٍ تجهيز الصورة",
     "invalidType": "استخدم صورة بصيغة JPEG أو PNG أو WebP.",
     "tooLarge": "يجب ألا يتجاوز حجم الصورة 15 ميجابايت.",
+    "tooMany": "يمكنك إضافة ما يصل إلى {{max}} صور.",
     "invalidImage": "تعذر فتح هذه الصورة.",
     "uploadFailed": "فشل رفع الصورة.",
     "processingFailed": "فشل تجهيز الصورة.",
@@ -28,7 +29,9 @@
       "original": "الأصلية",
       "reset": "إعادة ضبط القص",
       "zoom": "التكبير",
-      "aspect": "نسبة الأبعاد"
+      "aspect": "نسبة الأبعاد",
+      "altText": "وصف الصورة",
+      "altTextPlaceholder": "وصف الصورة (اختياري)"
     },
     "carousel": {
       "previous": "الصورة السابقة",

@@ -113,9 +113,9 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
     }
   };
 
-  const getIcon = (type: Notification['type'], avatar?: string, name?: string) => {
-    if (avatar && type !== 'group_invite' && type !== 'milestone') {
-      return <UserAvatar src={avatar} name={name} alt={name || 'User'} size={40} className="border border-gray-100" />;
+  const getIcon = (type: Notification['type'], actor?: Notification['actor']) => {
+    if ((actor?.avatar || actor?.avatarMediaId || actor?.avatarMedia) && type !== 'group_invite' && type !== 'milestone') {
+      return <UserAvatar src={actor.avatar} mediaId={actor.avatarMediaId} media={actor.avatarMedia} name={actor.name} alt={actor.name || 'User'} size={40} className="border border-gray-100" />;
     }
 
     let icon;
@@ -200,8 +200,8 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                   }`}
               >
                 <div className="shrink-0 relative">
-                  {getIcon(notification.type, notification.actor?.avatar, notification.actor?.name)}
-                  {notification.actor?.avatar && (
+                  {getIcon(notification.type, notification.actor)}
+                  {(notification.actor?.avatar || notification.actor?.avatarMediaId || notification.actor?.avatarMedia) && (
                     <div className="absolute -bottom-1 -right-1 bg-white rounded-full p-0.5 shadow-sm">
                       {notification.type === 'vote' && <div className="bg-green-100 text-green-600 rounded-full p-0.5"><PieChart size={10} /></div>}
                       {notification.type === 'response' && <div className="bg-blue-100 text-blue-600 rounded-full p-0.5"><FileText size={10} /></div>}

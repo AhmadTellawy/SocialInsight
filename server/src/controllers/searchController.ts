@@ -1,9 +1,19 @@
 import { Request, Response } from 'express';
 import prisma from '../prisma';
 import { POST_STATUS } from '../utils/constants';
+import { PrivacyService } from '../services/privacyService';
+import {
+    POST_MEDIA_INCLUDE,
+    PUBLIC_AVATAR_MEDIA_SELECT,
+    PUBLIC_GROUP_MEDIA_INCLUDE,
+    serializeGroupMediaRecord,
+    serializePostMediaRecord,
+    serializeUserMediaRecord
+} from '../services/mediaService';
 
 export const searchAll = async (req: Request, res: Response) => {
     const query = (req.query.q as string || '').trim().toLowerCase();
+    const viewerId = req.user?.userId;
 
     if (!query || query.length < 2) {
         res.json({ surveys: [], people: [], groups: [], categories: [] });
@@ -17,6 +27,7 @@ export const searchAll = async (req: Request, res: Response) => {
                 where: {
                     isDeleted: false,
                     status: POST_STATUS.PUBLISHED,
+                    ...PrivacyService.getPostPrivacyWhereClause(viewerId),
                     OR: [
                         { title: { contains: query, mode: 'insensitive' } },
                         { description: { contains: query, mode: 'insensitive' } },
@@ -25,7 +36,8 @@ export const searchAll = async (req: Request, res: Response) => {
                 },
                 take: 20,
                 include: {
-                    author: { select: { id: true, name: true, avatar: true, handle: true } }
+                    author: { select: { id: true, name: true, avatar: true, handle: true, ...PUBLIC_AVATAR_MEDIA_SELECT } },
+                    media: POST_MEDIA_INCLUDE
                 }
             }),
 
@@ -42,7 +54,8 @@ export const searchAll = async (req: Request, res: Response) => {
                     id: true,
                     name: true,
                     handle: true,
-                    avatar: true
+                    avatar: true,
+                    ...PUBLIC_AVATAR_MEDIA_SELECT
                 }
             }),
 
@@ -57,7 +70,8 @@ export const searchAll = async (req: Request, res: Response) => {
                         { category: { contains: query, mode: 'insensitive' } }
                     ]
                 },
-                take: 10
+                take: 10,
+                include: PUBLIC_GROUP_MEDIA_INCLUDE
             })
         ]);
 
@@ -68,9 +82,9 @@ export const searchAll = async (req: Request, res: Response) => {
         });
 
         res.json({
-            surveys: posts,
-            people: users,
-            groups: groups,
+            surveys: posts.map(serializePostMediaRecord),
+            people: users.map((user) => serializeUserMediaRecord(user)),
+            groups: groups.map((group) => serializeGroupMediaRecord(group)),
             categories: Array.from(categoriesSet)
         });
     } catch (error) {

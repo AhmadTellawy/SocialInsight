@@ -610,7 +610,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                       if (onAuthorClick) onAuthorClick({ id: person.id, name: person.name, avatar: person.avatar, handle: person.handle });
                     }}
                   >
-                    <UserAvatar src={person.avatar} name={person.name} alt={person.name || 'User'} size={48} className="border border-gray-100" />
+                    <UserAvatar src={person.avatar} mediaId={person.avatarMediaId} media={person.avatarMedia} name={person.name} alt={person.name || 'User'} size={48} className="border border-gray-100" />
                     <div className="min-w-0">
                       <h4 className="font-bold text-gray-900 text-sm truncate">{person.name}</h4>
                       <p className="text-xs text-gray-400">@{person.handle}</p>
@@ -843,6 +843,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               >
                 <div className="w-14 h-14 rounded-2xl overflow-hidden border border-gray-50 shadow-sm shrink-0">
                   <MediaImage
+                    media={group.imageMedia}
                     mediaId={group.imageMediaId}
                     fallbackSrc={group.image?.includes('ui-avatars') ? undefined : group.image}
                     fallback={<span role="img" aria-label={group.name} className="flex h-full w-full items-center justify-center bg-gray-100 text-lg font-bold text-gray-500">{group.name.trim().charAt(0).toUpperCase()}</span>}

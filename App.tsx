@@ -28,6 +28,7 @@ import { AuthScreen } from './components/AuthScreen';
 import { UsersTableScreen } from './components/UsersTableScreen';
 import { PrivacyPolicyScreen } from './components/PrivacyPolicyScreen';
 import { PostAnswerPayload, Survey, Option, Notification, SurveyType, Group, UserProfile } from './types';
+import { readMediaSafeJson, writeMediaSafeJson } from './utils/mediaSafeStorage';
 import {
   BarChart3, PieChart, Activity, ArrowLeft, Users, MessageCircle,
   Share2, MoreVertical, Globe, ShieldCheck, ChevronRight, BarChart,
@@ -110,7 +111,7 @@ const App: React.FC = () => {
     if (authToken) {
       localStorage.setItem('si_token', authToken);
     }
-    localStorage.setItem('si_user', JSON.stringify(profile));
+    writeMediaSafeJson('si_user', profile);
     setUserProfile(profile);
     setIsAuthenticated(true);
     setAuthBootstrapped(true);
@@ -248,11 +249,10 @@ const App: React.FC = () => {
 
   const [surveys, setSurveys] = useState<Survey[]>(() => {
     try {
-      const savedUser = localStorage.getItem('si_user');
-      const user = savedUser ? JSON.parse(savedUser) : null;
-      const cached = localStorage.getItem(getFeedCacheKey(user?.id));
+      const user = readMediaSafeJson<UserProfile>('si_user');
+      const cached = readMediaSafeJson<any[]>(getFeedCacheKey(user?.id));
       if (cached) {
-        return JSON.parse(cached).map((s: any) => normalizeSurvey(s, user));
+        return cached.map((s: any) => normalizeSurvey(s, user));
       }
     } catch (e) {
       console.error("Failed to parse initial feed cache", e);
@@ -261,8 +261,7 @@ const App: React.FC = () => {
   });
   const [isFeedLoading, setIsFeedLoading] = useState<boolean>(() => {
     try {
-      const savedUser = localStorage.getItem('si_user');
-      const user = savedUser ? JSON.parse(savedUser) : null;
+      const user = readMediaSafeJson<UserProfile>('si_user');
       return !localStorage.getItem(getFeedCacheKey(user?.id));
     } catch (e) {
       return true;
@@ -287,7 +286,7 @@ const App: React.FC = () => {
       const surveysData = res.data;
 
       try {
-        localStorage.setItem(getFeedCacheKey(currentUserId), JSON.stringify(surveysData.slice(0, 10)));
+        writeMediaSafeJson(getFeedCacheKey(currentUserId), surveysData.slice(0, 10));
       } catch (storageError) {
         console.warn('Failed to cache feed to localStorage due to quota limits');
       }
@@ -382,10 +381,10 @@ const App: React.FC = () => {
   const lastFetchedUserIdRef = useRef<string | null>(null);
 
   React.useEffect(() => {
-    const savedUser = localStorage.getItem('si_user');
+    const savedUser = readMediaSafeJson<UserProfile>('si_user');
     if (savedUser) {
       try {
-        const user = JSON.parse(savedUser);
+        const user = savedUser;
         setUserProfile(user);
         setIsAuthenticated(true);
         setAuthBootstrapped(true);
@@ -393,7 +392,7 @@ const App: React.FC = () => {
         // Refresh the cached profile in the background without blocking first paint.
         api.getUser(user.id).then(freshUser => {
           setUserProfile(freshUser);
-          localStorage.setItem('si_user', JSON.stringify(freshUser));
+          writeMediaSafeJson('si_user', freshUser);
         }).catch(err => {
           console.error("Failed to refresh user profile, invalidating session", err);
           localStorage.removeItem('si_user');
@@ -752,7 +751,7 @@ const App: React.FC = () => {
       }
     };
     setUserProfile(updatedProfile);
-    localStorage.setItem('si_user', JSON.stringify(updatedProfile));
+    writeMediaSafeJson('si_user', updatedProfile);
 
     // 2. Server Update
     try {
@@ -1325,7 +1324,7 @@ const App: React.FC = () => {
           if (!userProfile) return <div className="flex-1 flex items-center justify-center p-8 text-center"><h2 className="text-xl font-bold">Please log in to view settings.</h2></div>;
           return (
             <ErrorBoundary>
-              <ProfileSettingsScreen userProfile={userProfile} onUpdateProfile={(prof) => { setUserProfile(prof); localStorage.setItem('si_user', JSON.stringify(prof)); }} onBack={() => window.history.length > 2 ? navigate(-1) : navigate('/profile', { replace: true })} onLogout={handleLogout} />
+              <ProfileSettingsScreen userProfile={userProfile} onUpdateProfile={(prof) => { setUserProfile(prof); writeMediaSafeJson('si_user', prof); }} onBack={() => window.history.length > 2 ? navigate(-1) : navigate('/profile', { replace: true })} onLogout={handleLogout} />
             </ErrorBoundary>
           );
         }

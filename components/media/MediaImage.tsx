@@ -61,7 +61,7 @@ export const MediaImage: React.FC<MediaImageProps> = ({
     }
     setLoading(true);
     try {
-      setResolved(await mediaApi.get(id));
+      setResolved(await mediaApi.get(id, true));
       setFailed(false);
     } catch {
       setFailed(true);

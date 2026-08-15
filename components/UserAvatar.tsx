@@ -1,8 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { User } from 'lucide-react';
+import { MediaPresentation } from '../types';
+import { MediaImage } from './media/MediaImage';
 
 interface UserAvatarProps {
     src?: string | null;
+    mediaId?: string | null;
+    media?: MediaPresentation | null;
     alt?: string;
     size?: number;
     className?: string;
@@ -11,12 +15,15 @@ interface UserAvatarProps {
 
 export const UserAvatar: React.FC<UserAvatarProps> = ({
     src,
+    mediaId,
+    media,
     alt = 'User',
     size = 40,
     className = '',
     name
 }) => {
     const [imgError, setImgError] = useState(false);
+    const usableSrc = src && !/(?:ui-avatars\.com|api\.dicebear\.com|picsum\.photos|randomuser\.me)/i.test(src) ? src : null;
     const initials = (name || alt || '')
         .trim()
         .split(/\s+/)
@@ -27,21 +34,9 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
 
     useEffect(() => {
         setImgError(false);
-    }, [src]);
+    }, [usableSrc]);
 
-    if (src && !imgError) {
-        return (
-            <img
-                src={src}
-                alt={alt}
-                onError={() => setImgError(true)}
-                className={`rounded-full object-cover ${className}`}
-                style={{ width: size, height: size }}
-            />
-        );
-    }
-
-    return (
+    const fallback = (
         <span
             role="img"
             aria-label={alt}
@@ -51,4 +46,33 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
             {initials || <User size={Math.max(14, Math.round(size * 0.5))} aria-hidden="true" />}
         </span>
     );
+
+    if (media || mediaId) {
+        return (
+            <MediaImage
+                media={media}
+                mediaId={mediaId}
+                fallbackSrc={usableSrc}
+                fallback={fallback}
+                alt={alt}
+                sizes={`${size}px`}
+                className={`rounded-full object-cover ${className}`}
+                style={{ width: size, height: size }}
+            />
+        );
+    }
+
+    if (usableSrc && !imgError) {
+        return (
+            <img
+                src={usableSrc}
+                alt={alt}
+                onError={() => setImgError(true)}
+                className={`rounded-full object-cover ${className}`}
+                style={{ width: size, height: size }}
+            />
+        );
+    }
+
+    return fallback;
 };

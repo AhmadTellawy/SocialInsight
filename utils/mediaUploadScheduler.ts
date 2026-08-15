@@ -4,11 +4,14 @@ type QueueItem<T> = {
   reject: (reason: unknown) => void;
 };
 
-class MediaUploadScheduler {
+export class MediaUploadScheduler {
   private active = 0;
   private readonly queue: QueueItem<unknown>[] = [];
+  private readonly concurrency: number;
 
-  constructor(private readonly concurrency = 3) {}
+  constructor(concurrency = 3) {
+    this.concurrency = concurrency;
+  }
 
   schedule<T>(task: () => Promise<T>): Promise<T> {
     return new Promise<T>((resolve, reject) => {

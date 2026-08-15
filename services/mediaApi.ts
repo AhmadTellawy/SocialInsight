@@ -28,6 +28,33 @@ export class MediaUploadError extends Error {
   }
 }
 
+const presentationCache = new Map<string, { value: MediaPresentation; expiresAt: number }>();
+const PRESENTATION_CACHE_LIMIT = 200;
+const PUBLIC_PRESENTATION_TTL_MS = 10 * 60 * 1000;
+const RESTRICTED_PRESENTATION_TTL_MS = 4 * 60 * 1000;
+let presentationCacheAuthToken: string | null | undefined;
+
+const synchronizePresentationCacheIdentity = (): void => {
+  const authToken = typeof localStorage === 'undefined' ? null : localStorage.getItem('si_token');
+  if (presentationCacheAuthToken !== undefined && presentationCacheAuthToken !== authToken) {
+    presentationCache.clear();
+  }
+  presentationCacheAuthToken = authToken;
+};
+
+const cachePresentation = (assetId: string, value: MediaPresentation): void => {
+  presentationCache.delete(assetId);
+  presentationCache.set(assetId, {
+    value,
+    expiresAt: Date.now() + (value.access === 'RESTRICTED' ? RESTRICTED_PRESENTATION_TTL_MS : PUBLIC_PRESENTATION_TTL_MS)
+  });
+  while (presentationCache.size > PRESENTATION_CACHE_LIMIT) {
+    const oldest = presentationCache.keys().next().value;
+    if (!oldest) break;
+    presentationCache.delete(oldest);
+  }
+};
+
 const parseError = async (response: Response, fallback: string): Promise<Error> => {
   try {
     const payload = await response.json();
@@ -43,18 +70,10 @@ const uploadToSignedUrl = (
   onProgress: (progress: number) => void,
   signal?: AbortSignal
 ): Promise<void> => new Promise((resolve, reject) => {
-  const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
-  if (!publishableKey) {
-    reject(new Error('Supabase upload key is not configured.'));
-    return;
-  }
-
   const xhr = new XMLHttpRequest();
   const abort = () => xhr.abort();
   signal?.addEventListener('abort', abort, { once: true });
   xhr.open('PUT', session.signedUrl);
-  xhr.setRequestHeader('apikey', publishableKey);
-  xhr.setRequestHeader('Authorization', `Bearer ${publishableKey}`);
   xhr.setRequestHeader('x-upsert', 'false');
   xhr.upload.onprogress = (event) => {
     if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
@@ -127,10 +146,16 @@ export const mediaApi = {
 
   retryFinalize: (assetId: string, crop: MediaCropSelection) => mediaApi.finalize(assetId, crop),
 
-  get: async (assetId: string): Promise<MediaPresentation> => {
+  get: async (assetId: string, forceRefresh = false): Promise<MediaPresentation> => {
+    synchronizePresentationCacheIdentity();
+    const cached = presentationCache.get(assetId);
+    if (!forceRefresh && cached && cached.expiresAt > Date.now()) return cached.value;
+    presentationCache.delete(assetId);
     const response = await authFetch(`/api/media/${assetId}`);
     if (!response.ok) throw await parseError(response, 'Image is unavailable.');
-    return response.json();
+    const presentation = await response.json() as MediaPresentation;
+    cachePresentation(assetId, presentation);
+    return presentation;
   },
 
   cancel: async (assetId: string): Promise<void> => {

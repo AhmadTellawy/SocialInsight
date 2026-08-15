@@ -227,6 +227,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               <div className="absolute top-3 left-3 flex -space-x-2" aria-hidden="true">
                 <UserAvatar
                   src={survey.author?.avatar}
+                  mediaId={survey.author?.avatarMediaId}
+                  media={survey.author?.avatarMedia}
                   name={survey.author?.name}
                   alt={survey.author?.name || 'Author'}
                   size={32}

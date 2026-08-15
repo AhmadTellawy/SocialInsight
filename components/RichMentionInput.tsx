@@ -138,7 +138,7 @@ export const RichMentionInput: React.FC<RichMentionInputProps> = ({
                     onMouseDown={(e) => { e.preventDefault(); insertMention(user.handle); }}
                     className="w-full flex items-center gap-3 p-3 hover:bg-blue-50 transition-colors text-left"
                   >
-                    <UserAvatar src={user.avatar} name={user.name} alt={user.name || 'User'} size={32} />
+                    <UserAvatar src={user.avatar} mediaId={user.avatarMediaId} media={user.avatarMedia} name={user.name} alt={user.name || 'User'} size={32} />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-bold text-gray-900 truncate">{user.name}</p>
                       <p className="text-xs text-blue-500 font-medium truncate">@{user.handle}</p>
