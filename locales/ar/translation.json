@@ -7,6 +7,34 @@
     "messages": "الرسائل",
     "profile": "الملف الشخصي"
   },
+  "common": {
+    "cancel": "إلغاء",
+    "apply": "تطبيق",
+    "retry": "إعادة المحاولة",
+    "edit": "تعديل",
+    "remove": "إزالة"
+  },
+  "media": {
+    "add": "إضافة صورة",
+    "reorder": "إعادة ترتيب الصورة",
+    "processing": "جارٍ تجهيز الصورة",
+    "invalidType": "استخدم صورة بصيغة JPEG أو PNG أو WebP.",
+    "tooLarge": "يجب ألا يتجاوز حجم الصورة 15 ميجابايت.",
+    "invalidImage": "تعذر فتح هذه الصورة.",
+    "uploadFailed": "فشل رفع الصورة.",
+    "processingFailed": "فشل تجهيز الصورة.",
+    "crop": {
+      "title": "قص الصورة",
+      "original": "الأصلية",
+      "reset": "إعادة ضبط القص",
+      "zoom": "التكبير",
+      "aspect": "نسبة الأبعاد"
+    },
+    "carousel": {
+      "previous": "الصورة السابقة",
+      "next": "الصورة التالية"
+    }
+  },
   "settings": {
     "title": "الإعدادات",
     "account": "الحساب",
