@@ -2,6 +2,7 @@ import React from 'react';
 import { UserPlus } from 'lucide-react';
 import { UserProfile } from '../types';
 import { useTranslation } from 'react-i18next';
+import { UserAvatar } from './UserAvatar';
 
 interface SuggestedUser extends UserProfile {
     suggestionReason?: string;
@@ -73,11 +74,7 @@ export const SuggestedUsersList: React.FC<SuggestedUsersListProps> = ({ users, o
                            className="w-[72px] h-[72px] rounded-full mb-3 overflow-hidden cursor-pointer shadow-sm pointer-events-auto ring-2 ring-transparent group-hover:ring-gray-200 transition-all duration-300"
                            onClick={() => onUserClick && onUserClick(user)}
                         >
-                            <img 
-                                src={user.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.name || 'U')}&background=0A0A0A&color=fff`} 
-                                alt={user.name} 
-                                className="w-full h-full object-cover"
-                            />
+                            <UserAvatar src={user.avatar?.includes('ui-avatars') ? undefined : user.avatar} name={user.name} alt={user.name} size={72} />
                         </div>
                         <h4 
                           className="font-bold text-[14px] text-gray-900 line-clamp-1 w-full cursor-pointer hover:underline decoration-gray-400 decoration-1 underline-offset-2"

@@ -6,6 +6,8 @@ import { SuggestedUsersList } from './SuggestedUsersList';
 
 import { useTranslation } from 'react-i18next';
 import { api } from '../services/api';
+import { MediaImage } from './media/MediaImage';
+import { UserAvatar } from './UserAvatar';
 
 interface HomeScreenProps {
   surveys: Survey[];
@@ -212,32 +214,23 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               aria-label={`Open trending: ${survey.title}`}
               className="relative min-w-[130px] w-[130px] aspect-[4/5] rounded-[2rem] overflow-hidden shadow-md active:scale-95 transition-all cursor-pointer group text-left"
             >
-              <img
-                src={survey.coverImage || 'https://images.unsplash.com/photo-1557683316-973673baf926?auto=format&fit=crop&q=80&w=400'}
+              <MediaImage
+                media={survey.media?.[0]}
+                fallbackSrc={survey.coverImage}
+                fallback={<span className="absolute inset-0 bg-gray-500" aria-hidden="true" />}
                 alt=""
-                data-fallback-applied="false"
-                onError={(e) => {
-                  if (e.currentTarget.getAttribute('data-fallback-applied') !== 'true') {
-                    e.currentTarget.setAttribute('data-fallback-applied', 'true');
-                    e.currentTarget.src = 'https://images.unsplash.com/photo-1557683316-973673baf926?auto=format&fit=crop&q=80&w=400';
-                  }
-                }}
+                sizes="130px"
                 className="absolute inset-0 w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" aria-hidden="true" />
 
               <div className="absolute top-3 left-3 flex -space-x-2" aria-hidden="true">
-                <img
-                  src={survey.author?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${survey.author?.name || 'user'}`}
-                  className="w-8 h-8 rounded-full border-2 border-white shadow-sm"
-                  alt=""
-                  data-fallback-applied="false"
-                  onError={(e) => {
-                    if (e.currentTarget.getAttribute('data-fallback-applied') !== 'true') {
-                      e.currentTarget.setAttribute('data-fallback-applied', 'true');
-                      e.currentTarget.src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${survey.author?.name || 'user'}`;
-                    }
-                  }}
+                <UserAvatar
+                  src={survey.author?.avatar}
+                  name={survey.author?.name}
+                  alt={survey.author?.name || 'Author'}
+                  size={32}
+                  className="border-2 border-white shadow-sm"
                 />
                 {i % 2 === 0 && <div className="w-8 h-8 rounded-full bg-blue-500 border-2 border-white flex items-center justify-center text-[10px] text-white font-bold">+12</div>}
               </div>

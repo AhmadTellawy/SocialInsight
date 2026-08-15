@@ -1,17 +1,18 @@
 
 import React, { useState } from 'react';
 import { ArrowLeft, Search, MoreHorizontal, Edit3, CheckCircle2, Users, MessageSquare } from 'lucide-react';
+import { UserAvatar } from './UserAvatar';
 
 interface MessagesScreenProps {
   onBack: () => void;
 }
 
 const MOCK_CHATS = [
-  { id: '1', name: 'Sarah Miller', avatar: 'https://randomuser.me/api/portraits/women/44.jpg', lastMsg: 'I really liked your latest poll on remote work!', time: '12:45 PM', unread: 2, online: true },
-  { id: '2', name: 'Product Designers SF', avatar: 'https://images.unsplash.com/photo-1558655146-d09347e92766?w=100&h=100&fit=crop', lastMsg: 'Alex: New survey results are out.', time: 'Yesterday', unread: 0, online: false, isGroup: true },
-  { id: '3', name: 'David Chen', avatar: 'https://randomuser.me/api/portraits/men/32.jpg', lastMsg: 'Thanks for the feedback on the coffee survey.', time: 'Tue', unread: 0, online: true },
-  { id: '4', name: 'Tech Insider', avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&h=200&fit=crop', lastMsg: 'Collaboration invite: 2024 Tech Trends', time: 'Mon', unread: 0, online: false },
-  { id: '5', name: 'Emily Wilson', avatar: 'https://randomuser.me/api/portraits/women/68.jpg', lastMsg: 'Sent a photo', time: 'Last week', unread: 0, online: false },
+  { id: '1', name: 'Sarah Miller', avatar: '', lastMsg: 'I really liked your latest poll on remote work!', time: '12:45 PM', unread: 2, online: true },
+  { id: '2', name: 'Product Designers SF', avatar: '', lastMsg: 'Alex: New survey results are out.', time: 'Yesterday', unread: 0, online: false, isGroup: true },
+  { id: '3', name: 'David Chen', avatar: '', lastMsg: 'Thanks for the feedback on the coffee survey.', time: 'Tue', unread: 0, online: true },
+  { id: '4', name: 'Tech Insider', avatar: '', lastMsg: 'Collaboration invite: 2024 Tech Trends', time: 'Mon', unread: 0, online: false },
+  { id: '5', name: 'Emily Wilson', avatar: '', lastMsg: 'Sent a photo', time: 'Last week', unread: 0, online: false },
 ];
 
 export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onBack }) => {
@@ -74,7 +75,7 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({ onBack }) => {
               >
                 {/* Avatar with Status */}
                 <div className="relative shrink-0">
-                  <img src={chat.avatar} alt={chat.name} className={`w-14 h-14 rounded-full object-cover border border-gray-100 ${chat.isGroup ? 'rounded-2xl' : ''}`} />
+                  <UserAvatar src={chat.avatar} name={chat.name} alt={chat.name} size={56} className={`border border-gray-100 ${chat.isGroup ? '!rounded-2xl' : ''}`} />
                   {chat.online && !chat.isGroup && (
                     <div className="absolute bottom-0 right-0 w-4 h-4 bg-green-500 border-2 border-white rounded-full" />
                   )}

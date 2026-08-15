@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { User, CheckCircle2, UserCircle2, Loader2 } from 'lucide-react';
 import { Survey } from '../types';
 import { api } from '../services/api';
+import { UserAvatar } from './UserAvatar';
 
 interface ParticipantsSheetProps {
   survey: Survey;
@@ -51,7 +52,7 @@ export const ParticipantsSheet: React.FC<ParticipantsSheetProps> = ({ survey, on
                       <UserCircle2 size={24} />
                     </div>
                   ) : (
-                    <img src={p.avatar || 'https://picsum.photos/40/40'} alt="" className="w-10 h-10 rounded-full object-cover border border-gray-100" />
+                    <UserAvatar src={p.avatar} name={p.name} alt={p.name || 'Participant'} size={40} className="border border-gray-100" />
                   )}
                   <div>
                     <h4 className={`text-sm font-bold ${p.isAnonymous ? 'text-gray-500 italic' : 'text-gray-900'}`}>{p.name}</h4>

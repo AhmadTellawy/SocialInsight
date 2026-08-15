@@ -8,19 +8,8 @@ import { Group, PostAnswerPayload, Survey, UserProfile } from '../types';
 import { SurveyCard } from './SurveyCard';
 import { useGroupMembership, useGroupPosts, useGroupStats, useGroupMembers } from '../hooks/useGroup';
 import { api } from '../services/api';
-
-const SafeImage = ({ src, fallback, alt, className }: { src?: string; fallback: string; alt?: string; className?: string }) => {
-  return (
-    <img
-      src={src || fallback}
-      alt={alt || ''}
-      className={className}
-      onError={(e) => {
-        if (e.currentTarget.src !== fallback) e.currentTarget.src = fallback;
-      }}
-    />
-  );
-};
+import { UserAvatar } from './UserAvatar';
+import { MediaImage } from './media/MediaImage';
 
 const CREATE_CHIPS = [
   { type: 'Poll' as const,      color: '#3B82F6', bg: '#EFF6FF', border: '#BFDBFE', icon: BarChart2 },
@@ -388,10 +377,12 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
             {isJoined && permissions.canPost && (
               <div className="bg-white mx-4 mt-4 mb-2 p-3.5 rounded-2xl border border-gray-100 shadow-sm">
                 <div className="flex items-center gap-3 flex-wrap">
-                  <SafeImage
+                  <UserAvatar
                     src={userProfile?.avatar}
-                    fallback="https://picsum.photos/100"
-                    className="w-8 h-8 rounded-full object-cover shrink-0 border border-gray-100"
+                    name={userProfile?.name}
+                    alt={userProfile?.name || 'You'}
+                    size={32}
+                    className="border border-gray-100"
                   />
                   <span className="text-xs font-bold text-gray-400 shrink-0">Create:</span>
                   <div className="flex gap-2 flex-wrap">
@@ -580,7 +571,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
               <div className="flex flex-col">
                 {members.map((member: any) => (
                   <div key={member.id} className="flex items-center gap-3 p-4 border-b border-gray-50 bg-white">
-                    <SafeImage src={member.avatar} fallback="https://picsum.photos/100" className="w-10 h-10 rounded-full border border-gray-100" />
+                    <UserAvatar src={member.avatar} name={member.name} alt={member.name || 'Member'} size={40} className="border border-gray-100" />
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-bold text-gray-900 truncate">{member.name}</div>
                       <div className="text-xs text-gray-400">@{member.handle || '—'}</div>
@@ -720,7 +711,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
                         </div>
                       )}
 
-                      <SafeImage src={user.avatar} fallback="https://picsum.photos/100" className="w-10 h-10 rounded-full object-cover shrink-0" />
+                      <UserAvatar src={user.avatar} name={user.name} alt={user.name || 'User'} size={40} />
                       <div className="flex-1 min-w-0" onClick={() => !isInvited && toggleSelectUser(user.id)}>
                         <p className="text-sm font-bold text-gray-900 truncate">{user.name}</p>
                         <p className="text-xs text-gray-400">@{user.handle}</p>
@@ -760,9 +751,11 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
       {/* Header Image & Actions */}
       <div className="relative h-48 shrink-0">
         <div className="absolute inset-0 bg-gradient-to-br from-blue-600 to-indigo-700">
-          <SafeImage
-            src={group.image?.includes('ui-avatars') ? undefined : group.image}
-            fallback="https://images.unsplash.com/photo-1557682250-33bd709cbe85?auto=format&fit=crop&w=800&q=80"
+          <MediaImage
+            mediaId={group.imageMediaId}
+            fallbackSrc={group.image?.includes('ui-avatars') ? undefined : group.image}
+            fallback={<span className="block h-full w-full" aria-hidden="true" />}
+            alt=""
             className="w-full h-full object-cover opacity-60"
           />
         </div>
@@ -812,7 +805,13 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
         <div className="absolute bottom-4 left-5 right-5 flex items-end justify-between">
           <div className="flex items-center gap-4">
             <div className="w-20 h-20 rounded-3xl bg-white p-1 shadow-xl border border-white/20">
-              <SafeImage src={group.image} fallback="https://picsum.photos/200/200" className="w-full h-full rounded-[1.25rem] object-cover" />
+              <MediaImage
+                mediaId={group.imageMediaId}
+                fallbackSrc={group.image?.includes('ui-avatars') ? undefined : group.image}
+                fallback={<span role="img" aria-label={group.name} className="flex h-full w-full items-center justify-center rounded-[1.25rem] bg-gray-100 text-2xl font-black text-gray-500">{group.name.trim().charAt(0).toUpperCase()}</span>}
+                alt={group.name}
+                className="w-full h-full rounded-[1.25rem] object-cover"
+              />
             </div>
             <div className="pb-1">
               <h1 className="text-xl font-black text-white leading-none mb-1.5 drop-shadow-md">{group.name}</h1>

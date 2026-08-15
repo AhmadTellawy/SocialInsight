@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ImageOff } from 'lucide-react';
 import { MediaPresentation } from '../../types';
 import { mediaApi } from '../../services/mediaApi';
@@ -31,17 +31,25 @@ export const MediaImage: React.FC<MediaImageProps> = ({
   }, [identity]);
   const [resolved, setResolved] = useState<MediaPresentation | null>(initial);
   const [failed, setFailed] = useState(false);
+  const [loading, setLoading] = useState(Boolean(id && !initial?.src));
+  const retriedSourceRef = useRef<string | null>(null);
 
   useEffect(() => {
     let active = true;
     setResolved(initial);
     setFailed(false);
+    setLoading(Boolean(id && !initial?.src));
+    retriedSourceRef.current = null;
     if (id && !initial?.src) {
       mediaApi.get(id).then((result) => {
         if (active) setResolved(result);
       }).catch(() => {
         if (active) setFailed(true);
+      }).finally(() => {
+        if (active) setLoading(false);
       });
+    } else {
+      setLoading(false);
     }
     return () => { active = false; };
   }, [identity, id, initial]);
@@ -51,16 +59,23 @@ export const MediaImage: React.FC<MediaImageProps> = ({
       setFailed(true);
       return;
     }
+    setLoading(true);
     try {
       setResolved(await mediaApi.get(id));
       setFailed(false);
     } catch {
       setFailed(true);
+    } finally {
+      setLoading(false);
     }
   };
 
+  if (loading) {
+    return <span aria-busy="true" className="flex h-full w-full animate-pulse items-center justify-center bg-gray-100 text-gray-300"><ImageOff size={20} aria-hidden="true" /></span>;
+  }
+
   if (failed || !resolved?.src) {
-    return <>{fallback || <span className="flex h-full w-full items-center justify-center bg-gray-100 text-gray-400"><ImageOff size={20} aria-hidden="true" /></span>}</>;
+    return <>{fallback || <span role="img" aria-label={alt || 'Image unavailable'} className="flex h-full w-full items-center justify-center bg-gray-100 text-gray-400"><ImageOff size={20} aria-hidden="true" /></span>}</>;
   }
 
   return (
@@ -78,6 +93,11 @@ export const MediaImage: React.FC<MediaImageProps> = ({
       crossOrigin="anonymous"
       onError={(event) => {
         onError?.(event);
+        if (!id || retriedSourceRef.current === resolved.src) {
+          setFailed(true);
+          return;
+        }
+        retriedSourceRef.current = resolved.src;
         void refresh();
       }}
     />

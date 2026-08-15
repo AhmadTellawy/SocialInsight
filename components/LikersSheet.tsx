@@ -3,6 +3,7 @@ import { UserProfile } from '../types';
 import { BottomSheet } from './BottomSheet';
 import { ThumbsUp, X } from 'lucide-react';
 import { api } from '../services/api';
+import { UserAvatar } from './UserAvatar';
 
 interface LikersSheetProps {
     isOpen: boolean;
@@ -83,7 +84,7 @@ export const LikersSheet: React.FC<LikersSheetProps> = ({ isOpen, onClose, targe
                                         onAuthorClick?.({ id: user.id || '', name: user.name || '', avatar: user.avatar || '' });
                                     }}
                                 >
-                                    <img src={user.avatar} className="w-10 h-10 rounded-full border border-gray-100 object-cover shrink-0" alt={user.name} />
+                                    <UserAvatar src={user.avatar} name={user.name} alt={user.name || 'User'} size={40} className="border border-gray-100" />
                                     <div className="min-w-0 flex-1">
                                         <h3 className="text-sm font-bold text-gray-900 truncate group-hover:text-blue-600 transition-colors">{user.name}</h3>
                                         {user.handle && <p className="text-[10px] text-gray-400 truncate uppercase font-bold tracking-widest">@{user.handle}</p>}

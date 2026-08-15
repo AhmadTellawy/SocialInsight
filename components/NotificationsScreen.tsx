@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { ArrowLeft, Trash2, User, PieChart, FileText, Users, Clock, Trophy, Bell, Heart, UserPlus } from 'lucide-react';
 import { Notification } from '../types';
 import { api } from '../services/api';
+import { UserAvatar } from './UserAvatar';
 
 interface NotificationsScreenProps {
   notifications: Notification[];
@@ -112,9 +113,9 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
     }
   };
 
-  const getIcon = (type: Notification['type'], avatar?: string) => {
+  const getIcon = (type: Notification['type'], avatar?: string, name?: string) => {
     if (avatar && type !== 'group_invite' && type !== 'milestone') {
-      return <img src={avatar} alt="" className="w-10 h-10 rounded-full object-cover border border-gray-100" />;
+      return <UserAvatar src={avatar} name={name} alt={name || 'User'} size={40} className="border border-gray-100" />;
     }
 
     let icon;
@@ -199,7 +200,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                   }`}
               >
                 <div className="shrink-0 relative">
-                  {getIcon(notification.type, notification.actor?.avatar)}
+                  {getIcon(notification.type, notification.actor?.avatar, notification.actor?.name)}
                   {notification.actor?.avatar && (
                     <div className="absolute -bottom-1 -right-1 bg-white rounded-full p-0.5 shadow-sm">
                       {notification.type === 'vote' && <div className="bg-green-100 text-green-600 rounded-full p-0.5"><PieChart size={10} /></div>}

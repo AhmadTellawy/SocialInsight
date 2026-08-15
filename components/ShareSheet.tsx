@@ -10,6 +10,7 @@ import { SurveyCard } from './SurveyCard';
 import html2canvas from 'html2canvas';
 import { Analytics } from '../utils/analytics';
 import { UserProfile } from '../types';
+import { UserAvatar } from './UserAvatar';
 
 interface ShareSheetProps {
   survey: Survey;
@@ -20,15 +21,6 @@ interface ShareSheetProps {
   sourceSurface?: string;
   initialStep?: 'menu' | 'contacts' | 'feed' | 'repost-editor';
 }
-
-const MOCK_PEOPLE = [
-  { id: '1', name: 'Alex', avatar: 'https://picsum.photos/50/50?random=101' },
-  { id: '2', name: 'Sarah', avatar: 'https://picsum.photos/50/50?random=102' },
-  { id: '3', name: 'Mike', avatar: 'https://picsum.photos/50/50?random=103' },
-  { id: '4', name: 'Jessica', avatar: 'https://picsum.photos/50/50?random=104' },
-  { id: '5', name: 'David', avatar: 'https://picsum.photos/50/50?random=105' },
-  { id: '6', name: 'Emma', avatar: 'https://picsum.photos/50/50?random=106' },
-];
 
 export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShareToFeed, userProfile, sourceSurface = 'FEED', initialStep = 'menu' }) => {
   const [step, setStep] = useState<'menu' | 'contacts' | 'feed' | 'repost-editor'>(initialStep);
@@ -194,7 +186,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
       </div>
 
       <div className="flex gap-3 mb-4">
-        <img src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&h=200&fit=crop" className="w-10 h-10 rounded-full object-cover shrink-0" alt="" />
+        <UserAvatar src={userProfile?.avatar} name={userProfile?.name} alt={userProfile?.name || 'You'} size={40} />
         <textarea
           autoFocus
           value={repostCaption}
@@ -206,7 +198,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
 
       <div className="border border-gray-200 rounded-2xl p-4 bg-gray-50/50 overflow-hidden">
         <div className="flex items-center gap-2 mb-2">
-          <img src={survey.author.avatar} className="w-5 h-5 rounded-full" alt="" />
+          <UserAvatar src={survey.author.avatar} name={survey.author.name} alt={survey.author.name || 'Author'} size={20} />
           <span className="text-[11px] font-bold text-gray-700">{survey.author.name}</span>
         </div>
         <h5 className="font-bold text-sm text-gray-900 line-clamp-1">{survey.title}</h5>

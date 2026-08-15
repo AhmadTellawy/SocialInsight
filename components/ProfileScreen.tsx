@@ -9,6 +9,8 @@ import { BottomSheet } from './BottomSheet';
 import { ProfileAnalysis } from './ProfileAnalysis';
 import { api } from '../services/api';
 import { useFollowState } from '../hooks/useFollowState';
+import { UserAvatar } from './UserAvatar';
+import { MediaImage } from './media/MediaImage';
 
 interface ProfileScreenProps {
   surveys: Survey[];
@@ -608,7 +610,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                       if (onAuthorClick) onAuthorClick({ id: person.id, name: person.name, avatar: person.avatar, handle: person.handle });
                     }}
                   >
-                    <img src={person.avatar} className="w-12 h-12 rounded-full object-cover border border-gray-100" alt="" />
+                    <UserAvatar src={person.avatar} name={person.name} alt={person.name || 'User'} size={48} className="border border-gray-100" />
                     <div className="min-w-0">
                       <h4 className="font-bold text-gray-900 text-sm truncate">{person.name}</h4>
                       <p className="text-xs text-gray-400">@{person.handle}</p>
@@ -839,7 +841,15 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 onClick={() => onGroupClick?.(group.id)}
                 className="w-full flex items-center gap-4 p-4 rounded-3xl bg-white border border-gray-100 hover:border-blue-200 transition-all text-left shadow-sm active:scale-[0.98]"
               >
-                <img src={group.image || 'https://picsum.photos/100/100'} className="w-14 h-14 rounded-2xl object-cover border border-gray-50 shadow-sm" alt="" />
+                <div className="w-14 h-14 rounded-2xl overflow-hidden border border-gray-50 shadow-sm shrink-0">
+                  <MediaImage
+                    mediaId={group.imageMediaId}
+                    fallbackSrc={group.image?.includes('ui-avatars') ? undefined : group.image}
+                    fallback={<span role="img" aria-label={group.name} className="flex h-full w-full items-center justify-center bg-gray-100 text-lg font-bold text-gray-500">{group.name.trim().charAt(0).toUpperCase()}</span>}
+                    alt={group.name}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
                 <div className="flex-1 min-w-0">
                   <h4 className="font-bold text-gray-900 text-sm truncate">{group.name}</h4>
                   <div className="flex items-center gap-2 mt-1 text-[9px] font-black uppercase tracking-widest text-gray-400">
@@ -922,13 +932,13 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         <div className="px-6 flex flex-col items-center pt-2">
           <div className="relative mb-6">
             <div className="w-28 h-28 rounded-[2.5rem] p-1 bg-white shadow-xl border border-gray-100 ring-4 ring-gray-50/50">
-              <img 
-                src={profileUser.avatar} 
-                alt="Profile" 
-                className="w-full h-full rounded-[2.25rem] object-cover" 
-                onError={(e) => {
-                  e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(profileUser.name || 'User')}&background=f3f4f6&color=9ca3af&size=200`;
-                }}
+              <MediaImage
+                mediaId={profileUser.avatarMediaId}
+                fallbackSrc={profileUser.avatar?.includes('ui-avatars') ? undefined : profileUser.avatar}
+                fallback={<span role="img" aria-label={profileUser.name || 'Profile'} className="flex h-full w-full items-center justify-center rounded-[2.25rem] bg-gray-100 text-3xl font-black text-gray-500">{(profileUser.name || 'U').trim().charAt(0).toUpperCase()}</span>}
+                alt={profileUser.name || 'Profile'}
+                sizes="112px"
+                className="w-full h-full rounded-[2.25rem] object-cover"
               />
             </div>
             {isMe && (
