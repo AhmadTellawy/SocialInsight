@@ -14,6 +14,7 @@ import otpRoutes from './routes/otpRoutes';
 import analyticsRoutes from './routes/analyticsRoutes';
 import pushRoutes from './routes/pushRoutes';
 import searchRoutes from './routes/searchRoutes';
+import mediaRoutes from './routes/mediaRoutes';
 import { requireAuth } from './middleware/authMiddleware';
 import { getNotificationSettings, updateNotificationSettings } from './controllers/userController';
 import { initCronJobs } from './services/cronService';
@@ -65,6 +66,7 @@ app.use('/api/otp', authLimiter, otpRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/push', pushRoutes);
 app.use('/api/search', searchRoutes);
+app.use('/api/media', mediaRoutes);
 
 app.get('/api/notification-settings', requireAuth, getNotificationSettings);
 app.put('/api/notification-settings', requireAuth, updateNotificationSettings);
