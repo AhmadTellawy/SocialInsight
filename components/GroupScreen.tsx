@@ -379,6 +379,8 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
                 <div className="flex items-center gap-3 flex-wrap">
                   <UserAvatar
                     src={userProfile?.avatar}
+                    mediaId={userProfile?.avatarMediaId}
+                    media={userProfile?.avatarMedia}
                     name={userProfile?.name}
                     alt={userProfile?.name || 'You'}
                     size={32}
@@ -571,7 +573,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
               <div className="flex flex-col">
                 {members.map((member: any) => (
                   <div key={member.id} className="flex items-center gap-3 p-4 border-b border-gray-50 bg-white">
-                    <UserAvatar src={member.avatar} name={member.name} alt={member.name || 'Member'} size={40} className="border border-gray-100" />
+                    <UserAvatar src={member.avatar} mediaId={member.avatarMediaId} media={member.avatarMedia} name={member.name} alt={member.name || 'Member'} size={40} className="border border-gray-100" />
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-bold text-gray-900 truncate">{member.name}</div>
                       <div className="text-xs text-gray-400">@{member.handle || '—'}</div>
@@ -711,7 +713,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
                         </div>
                       )}
 
-                      <UserAvatar src={user.avatar} name={user.name} alt={user.name || 'User'} size={40} />
+                      <UserAvatar src={user.avatar} mediaId={user.avatarMediaId} media={user.avatarMedia} name={user.name} alt={user.name || 'User'} size={40} />
                       <div className="flex-1 min-w-0" onClick={() => !isInvited && toggleSelectUser(user.id)}>
                         <p className="text-sm font-bold text-gray-900 truncate">{user.name}</p>
                         <p className="text-xs text-gray-400">@{user.handle}</p>
@@ -752,6 +754,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
       <div className="relative h-48 shrink-0">
         <div className="absolute inset-0 bg-gradient-to-br from-blue-600 to-indigo-700">
           <MediaImage
+            media={group.imageMedia}
             mediaId={group.imageMediaId}
             fallbackSrc={group.image?.includes('ui-avatars') ? undefined : group.image}
             fallback={<span className="block h-full w-full" aria-hidden="true" />}
@@ -806,6 +809,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
           <div className="flex items-center gap-4">
             <div className="w-20 h-20 rounded-3xl bg-white p-1 shadow-xl border border-white/20">
               <MediaImage
+                media={group.imageMedia}
                 mediaId={group.imageMediaId}
                 fallbackSrc={group.image?.includes('ui-avatars') ? undefined : group.image}
                 fallback={<span role="img" aria-label={group.name} className="flex h-full w-full items-center justify-center rounded-[1.25rem] bg-gray-100 text-2xl font-black text-gray-500">{group.name.trim().charAt(0).toUpperCase()}</span>}

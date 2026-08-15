@@ -156,7 +156,20 @@ export class GroupPermissionService {
             return !!groupManagerMembership;
         }
 
-        if (activeGroupIds.length === 0) return true;
+        if (activeGroupIds.length === 0) {
+            if (post.authorId === userId) return true;
+            const audience = post.targetAudience?.trim().toLowerCase();
+            if (!audience || audience === 'public') return true;
+            if (audience === 'followers') {
+                if (!userId) return false;
+                const follow = await prisma.follow.findUnique({
+                    where: { followerId_followingId: { followerId: userId, followingId: post.authorId } },
+                    select: { status: true }
+                });
+                return follow?.status === 'ACTIVE';
+            }
+            return false;
+        }
         if (post.authorId === userId) return true;
         if (Array.from(activeGroupsById.values()).some((group) => group.isPublic)) return true;
         if (!userId) return false;

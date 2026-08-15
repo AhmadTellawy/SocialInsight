@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '../middleware/authMiddleware';
 import { z } from 'zod';
+import { PUBLIC_AVATAR_MEDIA_SELECT, serializeUserMediaRecord } from '../services/mediaService';
 
 const GENERIC_LOGIN_ERROR = 'Invalid login credentials';
 const LEGACY_REGISTER_DISABLED_ERROR = 'Use the multi-step registration flow';
@@ -66,6 +67,7 @@ const SAFE_USER_SELECT = {
     name: true,
     handle: true,
     avatar: true,
+    ...PUBLIC_AVATAR_MEDIA_SELECT,
     country: true,
     bio: true,
     location: true,
@@ -100,7 +102,8 @@ export const login = async (req: Request, res: Response) => {
                     { email: { equals: identifier, mode: 'insensitive' } },
                     { handle: { equals: identifier, mode: 'insensitive' } }
                 ]
-            } as any
+            } as any,
+            include: { avatarMedia: { include: { variants: true } } }
         });
 
         if (!user) {
@@ -140,6 +143,7 @@ export const login = async (req: Request, res: Response) => {
         }
 
         const { password: _p, passwordHash: _ph, ...userWithoutPassword } = user;
+        const serializedUser = serializeUserMediaRecord(userWithoutPassword)!;
 
         // Fetch user demographics
         const demographics = await prisma.userDemographics.findUnique({
@@ -149,7 +153,7 @@ export const login = async (req: Request, res: Response) => {
         const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '90d' });
 
         res.json({
-            ...userWithoutPassword,
+            ...serializedUser,
             demographics: demographics || {},
             stats: {
                 followers: user.followersCount,
@@ -232,7 +236,7 @@ export const completeRegistration = async (req: Request, res: Response) => {
                     handle: pending.handle || 'user_' + Date.now(),
                     passwordHash: pending.password, // Store hashed password from pendingRegistration
                     authProvider: 'Email',
-                    avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(pending.fullName)}&background=6366f1&color=fff&bold=true&size=200`,
+                    avatar: null,
                     demographics: { create: { ageGroup: calculateAgeGroup(pending.dob) } }
                 },
                 select: SAFE_USER_SELECT

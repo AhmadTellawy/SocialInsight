@@ -358,6 +358,9 @@ export const TrendsScreen: React.FC<TrendsScreenProps> = ({ onSurveyClick }) => 
                       {/* Avatar */}
                       <UserAvatar 
                         src={item.author.avatar} 
+                        mediaId={item.author.avatarMediaId}
+                        media={item.author.avatarMedia}
+                        name={item.author.name}
                         alt={item.author.name} 
                         size={36} 
                         className="shrink-0 border border-gray-100" 

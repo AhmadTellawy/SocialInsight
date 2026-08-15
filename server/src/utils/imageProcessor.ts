@@ -1,16 +1,19 @@
 import sharp from 'sharp';
-import { v4 as uuidv4 } from 'uuid';
+import { MediaValidationError } from '../services/mediaProcessor';
 
 /**
  * Processes a base64 image string, compresses it, saves it to disk, and returns the URL.
- * If the input is not a base64 string (e.g. already a URL or empty), it returns the input as is.
+ * Existing remote values are accepted only when they exactly match the stored compatibility value.
  */
-export const processBase64Image = async (base64String: string | null | undefined): Promise<string | null> => {
+export const processBase64Image = async (
+    base64String: string | null | undefined,
+    existingValue?: string | null
+): Promise<string | null> => {
     if (!base64String) return null;
 
-    // Fast check to see if it's a data url
     if (!base64String.startsWith('data:image/')) {
-        return base64String;
+        if (existingValue && base64String === existingValue) return existingValue;
+        throw new MediaValidationError('REMOTE_MEDIA_NOT_ALLOWED', 'Remote image URLs are not accepted. Upload the image through the media service.');
     }
 
     try {
@@ -18,8 +21,7 @@ export const processBase64Image = async (base64String: string | null | undefined
         const matches = base64String.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
         
         if (!matches || matches.length !== 3) {
-            console.error('Invalid base64 image stringformat');
-            return base64String;
+            throw new MediaValidationError('INVALID_IMAGE', 'The legacy image data is invalid.');
         }
 
         const imageBuffer = Buffer.from(matches[2], 'base64');
@@ -34,7 +36,8 @@ export const processBase64Image = async (base64String: string | null | undefined
         return `data:image/webp;base64,${webpBuffer.toString('base64')}`;
         
     } catch (error) {
+        if (error instanceof MediaValidationError) throw error;
         console.error('Error processing base64 image:', error);
-        return null;
+        throw new MediaValidationError('INVALID_IMAGE', 'The legacy image could not be processed.');
     }
 };

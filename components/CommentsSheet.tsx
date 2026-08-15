@@ -64,7 +64,7 @@ const CommentItem: React.FC<CommentItemProps> = ({ comment, isReply = false, par
   return (
   <div className={`flex gap-3 mb-4 ${isReply ? 'ml-11 mt-2' : ''}`}>
     <button type="button" onClick={() => onAuthorClick && onAuthorClick(comment.author)} className="shrink-0 cursor-pointer hover:opacity-80" aria-label={comment.author.name}>
-      <UserAvatar src={comment.author.avatar} name={comment.author.name} alt={comment.author.name} size={32} className="select-none" />
+      <UserAvatar src={comment.author.avatar} mediaId={comment.author.avatarMediaId} media={comment.author.avatarMedia} name={comment.author.name} alt={comment.author.name} size={32} className="select-none" />
     </button>
     <div className="flex-1">
       <div 
@@ -316,7 +316,7 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
           </div>
         )}
         <div className="flex items-center gap-3">
-          <UserAvatar src={userProfile?.avatar} name={userProfile?.name} alt="You" size={32} className="border border-gray-200" />
+          <UserAvatar src={userProfile?.avatar} mediaId={userProfile?.avatarMediaId} media={userProfile?.avatarMedia} name={userProfile?.name} alt="You" size={32} className="border border-gray-200" />
           <div className="flex-1 flex items-center bg-gray-100 rounded-2xl px-4 py-2 transition-all focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100 border border-transparent focus-within:border-blue-200">
             <RichMentionInput
               value={newComment}

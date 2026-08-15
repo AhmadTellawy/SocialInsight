@@ -185,6 +185,9 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
           controller.signal
         );
         if (!mediaUploadRegistry.isActive(draft.clientId, controller)) return;
+        if (draft.assetId && !draft.persisted && draft.assetId !== result.id) {
+          void mediaApi.cancel(draft.assetId).catch(() => undefined);
+        }
         patchDraft(draft.clientId, {
           status: 'ready',
           progress: 100,
@@ -224,6 +227,9 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
   const addFiles = async (files: File[]): Promise<void> => {
     setValidationError(null);
     const capacity = multiple ? Math.max(0, maxFiles - valuesRef.current.length) : 1;
+    if (files.length > capacity) {
+      setValidationError(t('media.tooMany', { max: maxFiles, defaultValue: `You can add up to ${maxFiles} images.` }));
+    }
     const accepted = files.slice(0, capacity).filter((file) => {
       if (!ALLOWED_TYPES.has(file.type)) {
         setValidationError(t('media.invalidType', { defaultValue: 'Use a JPEG, PNG, or WebP image.' }));

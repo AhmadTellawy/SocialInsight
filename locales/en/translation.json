@@ -20,6 +20,7 @@
     "processing": "Processing image",
     "invalidType": "Use a JPEG, PNG, or WebP image.",
     "tooLarge": "Images must be 15 MB or smaller.",
+    "tooMany": "You can add up to {{max}} images.",
     "invalidImage": "This image could not be opened.",
     "uploadFailed": "Image upload failed.",
     "processingFailed": "Image processing failed.",
@@ -28,7 +29,9 @@
       "original": "Original",
       "reset": "Reset crop",
       "zoom": "Zoom",
-      "aspect": "Aspect ratio"
+      "aspect": "Aspect ratio",
+      "altText": "Image description",
+      "altTextPlaceholder": "Image description (optional)"
     },
     "carousel": {
       "previous": "Previous image",

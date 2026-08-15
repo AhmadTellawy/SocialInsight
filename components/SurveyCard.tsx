@@ -1879,6 +1879,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                     <div className="relative w-10 h-10 md:w-12 md:h-12 rounded-full overflow-hidden border border-gray-100 shrink-0 cursor-pointer bg-white">
                       <UserAvatar
                         src={authorAvatar}
+                        mediaId={isMySource ? userProfile?.avatarMediaId : sourceSurvey.author?.avatarMediaId}
+                        media={isMySource ? userProfile?.avatarMedia : sourceSurvey.author?.avatarMedia}
                         name={authorName}
                         size={48}
                         className="w-full h-full object-cover"

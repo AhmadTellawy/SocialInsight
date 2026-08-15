@@ -34,8 +34,9 @@ export const MediaCropEditor: React.FC<MediaCropEditorProps> = ({
   const fixedRatio = fixedRatioForPurpose(purpose) || lockedAspectRatio;
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
-  const [originalRatio, setOriginalRatio] = useState(initialAspectRatio || 1);
+  const [sourceRatio, setSourceRatio] = useState<number | null>(null);
   const [aspectRatio, setAspectRatio] = useState(fixedRatio || initialAspectRatio || 1);
+  const [altText, setAltText] = useState(initialCrop?.altText || '');
   const [croppedArea, setCroppedArea] = useState<Area | null>(initialCrop ? {
     x: initialCrop.crop.x * 100,
     y: initialCrop.crop.y * 100,
@@ -59,17 +60,19 @@ export const MediaCropEditor: React.FC<MediaCropEditorProps> = ({
       ratio: fixedRatio
     }];
     return [
-      { id: 'original', label: t('media.crop.original', { defaultValue: 'Original' }), ratio: originalRatio },
+      ...(sourceRatio !== null && sourceRatio >= MIN_RATIO && sourceRatio <= MAX_RATIO
+        ? [{ id: 'original', label: t('media.crop.original', { defaultValue: 'Original' }), ratio: sourceRatio }]
+        : []),
       { id: 'square', label: '1:1', ratio: 1 },
       { id: 'portrait', label: '4:5', ratio: 0.8 },
       { id: 'wide', label: '1.91:1', ratio: 1.91 }
     ];
-  }, [fixedRatio, originalRatio, t]);
+  }, [fixedRatio, sourceRatio, t]);
 
   const reset = (): void => {
     setCrop({ x: 0, y: 0 });
     setZoom(1);
-    setAspectRatio(fixedRatio || initialAspectRatio || originalRatio);
+    setAspectRatio(fixedRatio || initialAspectRatio || Math.min(MAX_RATIO, Math.max(MIN_RATIO, sourceRatio || 1)));
   };
 
   const apply = (): void => {
@@ -85,7 +88,7 @@ export const MediaCropEditor: React.FC<MediaCropEditorProps> = ({
       crop: normalized,
       focalX: normalized.x + normalized.width / 2,
       focalY: normalized.y + normalized.height / 2,
-      altText: initialCrop?.altText
+      altText: altText.trim() || undefined
     });
   };
 
@@ -113,13 +116,21 @@ export const MediaCropEditor: React.FC<MediaCropEditorProps> = ({
           showGrid
           cropShape={purpose === 'PROFILE_AVATAR' ? 'round' : 'rect'}
           restrictPosition
+          initialCroppedAreaPercentages={initialCrop ? {
+            x: initialCrop.crop.x * 100,
+            y: initialCrop.crop.y * 100,
+            width: initialCrop.crop.width * 100,
+            height: initialCrop.crop.height * 100
+          } : undefined}
           onCropChange={setCrop}
           onZoomChange={setZoom}
           onCropComplete={(area) => setCroppedArea(area)}
           onMediaLoaded={(size: MediaSize) => {
-            const ratio = Math.min(MAX_RATIO, Math.max(MIN_RATIO, size.naturalWidth / size.naturalHeight));
-            setOriginalRatio(ratio);
-            if (!fixedRatio && !initialAspectRatio) setAspectRatio(ratio);
+            const ratio = size.naturalWidth / size.naturalHeight;
+            setSourceRatio(ratio);
+            if (!fixedRatio && !initialAspectRatio) {
+              setAspectRatio(Math.min(MAX_RATIO, Math.max(MIN_RATIO, ratio)));
+            }
           }}
         />
       </div>
@@ -153,6 +164,18 @@ export const MediaCropEditor: React.FC<MediaCropEditorProps> = ({
               {preset.label}
             </button>
           ))}
+        </div>
+        <div className="mx-auto mt-3 max-w-lg">
+          <label htmlFor="media-alt-text" className="sr-only">{t('media.crop.altText', { defaultValue: 'Image description' })}</label>
+          <input
+            id="media-alt-text"
+            type="text"
+            value={altText}
+            maxLength={300}
+            onChange={(event) => setAltText(event.target.value)}
+            placeholder={t('media.crop.altTextPlaceholder', { defaultValue: 'Image description (optional)' })}
+            className="h-10 w-full rounded-md border border-white/20 bg-white/10 px-3 text-sm text-white placeholder:text-gray-400 outline-none focus:border-white/60"
+          />
         </div>
       </div>
     </div>

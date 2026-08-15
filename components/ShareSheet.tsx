@@ -22,6 +22,29 @@ interface ShareSheetProps {
   initialStep?: 'menu' | 'contacts' | 'feed' | 'repost-editor';
 }
 
+const waitForCaptureImages = async (root: HTMLElement, timeoutMs = 5000): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  while (root.querySelector('[aria-busy="true"]') && Date.now() < deadline) {
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+  }
+  const images = Array.from(root.querySelectorAll('img'));
+  images.forEach((image) => { image.loading = 'eager'; });
+  await Promise.all(images.map((image) => {
+    if (image.complete) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const timeout = window.setTimeout(done, timeoutMs);
+      function done(): void {
+        window.clearTimeout(timeout);
+        image.removeEventListener('load', done);
+        image.removeEventListener('error', done);
+        resolve();
+      }
+      image.addEventListener('load', done, { once: true });
+      image.addEventListener('error', done, { once: true });
+    });
+  }));
+};
+
 export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShareToFeed, userProfile, sourceSurface = 'FEED', initialStep = 'menu' }) => {
   const [step, setStep] = useState<'menu' | 'contacts' | 'feed' | 'repost-editor'>(initialStep);
   const [sentTo, setSentTo] = useState<string[]>([]);
@@ -68,6 +91,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
 
     try {
       await new Promise(r => setTimeout(r, 300)); // Wait for render
+      await waitForCaptureImages(posterRef.current);
 
       const canvas = await html2canvas(posterRef.current, {
         useCORS: true,
@@ -186,7 +210,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
       </div>
 
       <div className="flex gap-3 mb-4">
-        <UserAvatar src={userProfile?.avatar} name={userProfile?.name} alt={userProfile?.name || 'You'} size={40} />
+        <UserAvatar src={userProfile?.avatar} mediaId={userProfile?.avatarMediaId} media={userProfile?.avatarMedia} name={userProfile?.name} alt={userProfile?.name || 'You'} size={40} />
         <textarea
           autoFocus
           value={repostCaption}
@@ -198,7 +222,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
 
       <div className="border border-gray-200 rounded-2xl p-4 bg-gray-50/50 overflow-hidden">
         <div className="flex items-center gap-2 mb-2">
-          <UserAvatar src={survey.author.avatar} name={survey.author.name} alt={survey.author.name || 'Author'} size={20} />
+          <UserAvatar src={survey.author.avatar} mediaId={survey.author.avatarMediaId} media={survey.author.avatarMedia} name={survey.author.name} alt={survey.author.name || 'Author'} size={20} />
           <span className="text-[11px] font-bold text-gray-700">{survey.author.name}</span>
         </div>
         <h5 className="font-bold text-sm text-gray-900 line-clamp-1">{survey.title}</h5>

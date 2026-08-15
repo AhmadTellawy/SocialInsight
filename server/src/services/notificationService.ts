@@ -1,6 +1,7 @@
 import prisma from '../prisma';
 import { getIO } from './socketService';
 import { sendPushNotification } from './pushService';
+import { PUBLIC_AVATAR_MEDIA_SELECT, serializeUserMediaRecord } from './mediaService';
 
 export const notify = async (
     actorId: string | undefined | null,
@@ -90,7 +91,7 @@ export const notify = async (
             } as any,
             include: {
                 actor: {
-                    select: { id: true, name: true, avatar: true }
+                    select: { id: true, name: true, avatar: true, ...PUBLIC_AVATAR_MEDIA_SELECT }
                 }
             }
         });
@@ -110,11 +111,7 @@ export const notify = async (
                     isRead: newNotif.isRead,
                     timestamp: newNotif.createdAt.toISOString(),
                     createdAt: newNotif.createdAt.getTime(),
-                    actor: newNotif.actor ? {
-                        id: newNotif.actor.id,
-                        name: newNotif.actor.name,
-                        avatar: newNotif.actor.avatar
-                    } : undefined
+                    actor: newNotif.actor ? serializeUserMediaRecord(newNotif.actor) : undefined
                 });
             }
         } catch (socketErr) {

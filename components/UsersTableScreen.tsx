@@ -116,7 +116,7 @@ export const UsersTableScreen: React.FC<UsersTableScreenProps> = ({ onBack, onUs
                                     >
                                         <td className="px-4 py-4 whitespace-nowrap">
                                             <div className="flex items-center gap-3">
-                                                <UserAvatar src={user.avatar} name={user.name} alt={user.name || 'User'} size={40} className="!rounded-xl border border-gray-100" />
+                                                <UserAvatar src={user.avatar} mediaId={user.avatarMediaId} media={user.avatarMedia} name={user.name} alt={user.name || 'User'} size={40} className="!rounded-xl border border-gray-100" />
                                                 <div>
                                                     <div className="text-sm font-bold text-gray-900">{user.name}</div>
                                                     <div className="text-[10px] text-gray-400 font-medium">@{user.handle}</div>

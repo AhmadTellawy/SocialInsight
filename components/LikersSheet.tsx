@@ -84,7 +84,7 @@ export const LikersSheet: React.FC<LikersSheetProps> = ({ isOpen, onClose, targe
                                         onAuthorClick?.({ id: user.id || '', name: user.name || '', avatar: user.avatar || '' });
                                     }}
                                 >
-                                    <UserAvatar src={user.avatar} name={user.name} alt={user.name || 'User'} size={40} className="border border-gray-100" />
+                                    <UserAvatar src={user.avatar} mediaId={user.avatarMediaId} media={user.avatarMedia} name={user.name} alt={user.name || 'User'} size={40} className="border border-gray-100" />
                                     <div className="min-w-0 flex-1">
                                         <h3 className="text-sm font-bold text-gray-900 truncate group-hover:text-blue-600 transition-colors">{user.name}</h3>
                                         {user.handle && <p className="text-[10px] text-gray-400 truncate uppercase font-bold tracking-widest">@{user.handle}</p>}

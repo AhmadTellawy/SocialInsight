@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../prisma';
 import { notify } from '../services/notificationService';
+import { PUBLIC_AVATAR_MEDIA_SELECT, serializeUserMediaRecord } from '../services/mediaService';
 
 export const followUser = async (req: Request, res: Response) => {
     const userId = req.params.userId as string; // The user to follow
@@ -109,7 +110,7 @@ export const followUser = async (req: Request, res: Response) => {
 
 export const getFollowStatus = async (req: Request, res: Response) => {
     const userId = req.params.userId as string;
-    const currentUserId = req.user?.userId || req.query.currentUserId;
+    const currentUserId = req.user?.userId;
 
     if (!currentUserId) {
         res.json({ followStatus: 'NONE' });
@@ -251,6 +252,7 @@ export const getPendingRequests = async (req: Request, res: Response) => {
                         name: true,
                         handle: true,
                         avatar: true,
+                        ...PUBLIC_AVATAR_MEDIA_SELECT,
                         verifiedBadge: true
                     }
                 }
@@ -258,7 +260,10 @@ export const getPendingRequests = async (req: Request, res: Response) => {
             orderBy: { requestedAt: 'desc' }
         });
 
-        res.json(requests);
+        res.json(requests.map((request) => ({
+            ...request,
+            follower: serializeUserMediaRecord(request.follower)
+        })));
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Failed to fetch pending requests' });

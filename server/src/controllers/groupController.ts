@@ -7,9 +7,15 @@ import { processBase64Image } from '../utils/imageProcessor';
 import {
     commitPreparedMedia,
     getStoredMediaPresentation,
+    POST_MEDIA_INCLUDE,
+    PUBLIC_AVATAR_MEDIA_SELECT,
+    PUBLIC_GROUP_MEDIA_INCLUDE,
     prepareMediaAttachments,
     rollbackPreparedMedia,
-    scheduleMediaDeletion
+    scheduleMediaDeletion,
+    serializeGroupMediaRecord,
+    serializePostMediaRecord,
+    serializeUserMediaRecord
 } from '../services/mediaService';
 import { MediaValidationError } from '../services/mediaProcessor';
 
@@ -80,6 +86,7 @@ export const getGroups = async (req: Request, res: Response) => {
         const groups = await prisma.group.findMany({
             where: whereClause,
             include: {
+                ...PUBLIC_GROUP_MEDIA_INCLUDE,
                 members: currentUserId ? { where: { userId: currentUserId } } : false
             }
         });
@@ -94,7 +101,7 @@ export const getGroups = async (req: Request, res: Response) => {
             });
 
             return {
-                ...g,
+                ...serializeGroupMediaRecord(g),
                 memberCount: g.memberCount,
                 postsCount,
                 permissions,
@@ -114,7 +121,8 @@ export const getGroupById = async (req: Request, res: Response) => {
     const currentUserId = req.user?.userId;
     try {
         const group = await prisma.group.findUnique({
-            where: { id: id as string }
+            where: { id: id as string },
+            include: PUBLIC_GROUP_MEDIA_INCLUDE
         });
 
         if (!group || group.isDeleted) {
@@ -132,6 +140,7 @@ export const getGroupById = async (req: Request, res: Response) => {
         const groupDetails = await prisma.group.findUnique({
             where: { id: id as string },
             include: {
+                ...PUBLIC_GROUP_MEDIA_INCLUDE,
                 members: {
                     where: { status: MEMBERSHIP_STATUS.JOINED },
                     take: 10,
@@ -139,15 +148,17 @@ export const getGroupById = async (req: Request, res: Response) => {
                         userId: true,
                         role: true,
                         user: {
-                            select: { id: true, name: true, avatar: true, handle: true }
+                            select: { id: true, name: true, avatar: true, handle: true, ...PUBLIC_AVATAR_MEDIA_SELECT }
                         }
                     }
                 }
             }
         });
 
+        const serializedDetails = serializeGroupMediaRecord(groupDetails)!;
         res.json({
-            ...groupDetails,
+            ...serializedDetails,
+            members: serializedDetails.members?.map((member: any) => ({ ...member, user: serializeUserMediaRecord(member.user) })),
             permissions
         });
     } catch (error) {
@@ -340,7 +351,7 @@ export const updateGroup = async (req: Request, res: Response) => {
                 res.status(400).json({ error: 'Image size exceeds the 2MB limit.' });
                 return;
             }
-            updateData.image = image ? await processBase64Image(image) : null;
+            updateData.image = image ? await processBase64Image(image, group.image) : null;
         }
 
         let updated;
@@ -706,20 +717,25 @@ export const getGroupMembers = async (req: Request, res: Response) => {
             take: limit,
             include: {
                 user: {
-                    select: { id: true, name: true, avatar: true, handle: true }
+                    select: { id: true, name: true, avatar: true, handle: true, ...PUBLIC_AVATAR_MEDIA_SELECT }
                 }
             }
         });
 
         const total = await prisma.groupMember.count({ where: { groupId: id, status: MEMBERSHIP_STATUS.JOINED } });
 
-        const formattedMembers = members.map((m: any) => ({
-            id: m.userId,
-            name: m.user.name,
-            avatar: m.user.avatar,
-            handle: m.user.handle,
-            role: m.role
-        }));
+        const formattedMembers = members.map((m: any) => {
+            const user = serializeUserMediaRecord(m.user)!;
+            return {
+                id: m.userId,
+                name: user.name,
+                avatar: user.avatar,
+                avatarMediaId: user.avatarMediaId,
+                avatarMedia: user.avatarMedia,
+                handle: user.handle,
+                role: m.role
+            };
+        });
 
         res.json({
             members: formattedMembers,
@@ -862,6 +878,7 @@ export const getGroupPosts = async (req: Request, res: Response) => {
                 author: {
                     select: {
                         id: true, name: true, handle: true, avatar: true, bio: true, location: true, website: true,
+                        ...PUBLIC_AVATAR_MEDIA_SELECT,
                         isPrivate: true, groupPrivacy: true, verifiedBadge: true, followersCount: true, followingCount: true, createdAt: true,
                         ...(currentUserId ? {
                             following: {
@@ -880,7 +897,7 @@ export const getGroupPosts = async (req: Request, res: Response) => {
                 savedBy: currentUserId ? { where: { userId: currentUserId }, take: 1 } : false,
                 sharedFrom: {
                     include: {
-                        author: { select: { id: true, name: true, handle: true, avatar: true } },
+                        author: { select: { id: true, name: true, handle: true, avatar: true, ...PUBLIC_AVATAR_MEDIA_SELECT } },
                         questions: { include: { options: { orderBy: { order: 'asc' } } } },
                         sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
                         targetedGroups: true,
@@ -888,8 +905,10 @@ export const getGroupPosts = async (req: Request, res: Response) => {
                         likes: currentUserId ? { where: { userId: currentUserId }, take: 1 } : false,
                         shares: currentUserId ? { where: { authorId: currentUserId }, take: 1 } : false,
                         savedBy: currentUserId ? { where: { userId: currentUserId }, take: 1 } : false,
+                        media: POST_MEDIA_INCLUDE,
                     }
-                }
+                },
+                media: POST_MEDIA_INCLUDE
             }
         });
 
@@ -898,7 +917,8 @@ export const getGroupPosts = async (req: Request, res: Response) => {
         });
 
         // Note: Mapping logic to parse JSONs and formats
-        const mappedPosts = posts.map((s: any) => {
+        const mappedPosts = posts.map((rawPost: any) => {
+            const s = serializePostMediaRecord(rawPost);
             const actualResponse = s.sharedFrom ? s.sharedFrom.responses?.[0] : s.responses?.[0];
             const userAnswers = actualResponse?.answers || [];
             
@@ -926,7 +946,7 @@ export const getGroupPosts = async (req: Request, res: Response) => {
                 ...s,
                 likes: s.likesCount,
                 participants: s.responseCount,
-                coverImage: s.image,
+                coverImage: s.coverImage,
                 hasParticipated: currentUserId ? (s.responses && s.responses.length > 0) : false,
                 isLiked: currentUserId ? (s.likes && s.likes.length > 0) : false,
                 isSaved: currentUserId ? (s.savedBy && s.savedBy.length > 0) : false,
@@ -1173,16 +1193,21 @@ export const getPendingRequests = async (req: Request, res: Response) => {
 
         const pending = await prisma.groupMember.findMany({
             where: { groupId: id, status: MEMBERSHIP_STATUS.PENDING },
-            include: { user: { select: { id: true, name: true, avatar: true, handle: true } } }
+            include: { user: { select: { id: true, name: true, avatar: true, handle: true, ...PUBLIC_AVATAR_MEDIA_SELECT } } }
         });
 
-        const formatted = pending.map((m: any) => ({
-            id: m.userId,
-            name: m.user.name,
-            avatar: m.user.avatar,
-            handle: m.user.handle,
-            status: m.status
-        }));
+        const formatted = pending.map((m: any) => {
+            const user = serializeUserMediaRecord(m.user)!;
+            return {
+                id: m.userId,
+                name: user.name,
+                avatar: user.avatar,
+                avatarMediaId: user.avatarMediaId,
+                avatarMedia: user.avatarMedia,
+                handle: user.handle,
+                status: m.status
+            };
+        });
 
         res.json(formatted);
     } catch (error) {
@@ -1300,12 +1325,13 @@ export const getPendingPosts = async (req: Request, res: Response) => {
         const pendingPosts = await prisma.post.findMany({
             where: { targetedGroups: { some: { id } }, status: POST_STATUS.PENDING_APPROVAL, isDeleted: false },
             include: {
-                author: { select: { id: true, name: true, handle: true, avatar: true } }
+                author: { select: { id: true, name: true, handle: true, avatar: true, ...PUBLIC_AVATAR_MEDIA_SELECT } },
+                media: POST_MEDIA_INCLUDE
             },
             orderBy: { createdAt: 'desc' }
         });
 
-        res.json(pendingPosts);
+        res.json(pendingPosts.map(serializePostMediaRecord));
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Failed to get pending posts queue' });
@@ -1566,16 +1592,21 @@ export const getBannedMembers = async (req: Request, res: Response) => {
 
         const banned = await prisma.groupMember.findMany({
             where: { groupId: id, status: MEMBERSHIP_STATUS.BANNED },
-            include: { user: { select: { id: true, name: true, avatar: true, handle: true } } }
+            include: { user: { select: { id: true, name: true, avatar: true, handle: true, ...PUBLIC_AVATAR_MEDIA_SELECT } } }
         });
 
-        res.json(banned.map((m: any) => ({
-            id: m.userId,
-            name: m.user.name,
-            avatar: m.user.avatar,
-            handle: m.user.handle,
-            status: m.status
-        })));
+        res.json(banned.map((m: any) => {
+            const user = serializeUserMediaRecord(m.user)!;
+            return {
+                id: m.userId,
+                name: user.name,
+                avatar: user.avatar,
+                avatarMediaId: user.avatarMediaId,
+                avatarMedia: user.avatarMedia,
+                handle: user.handle,
+                status: m.status
+            };
+        }));
     } catch (error) {
         console.error('getBannedMembers error:', error);
         res.status(500).json({ error: 'Failed to get banned members' });

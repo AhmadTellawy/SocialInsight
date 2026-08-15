@@ -8,9 +8,13 @@ import { MEMBERSHIP_STATUS, POST_STATUS } from '../utils/constants';
 import {
     commitPreparedMedia,
     getStoredMediaPresentation,
+    PUBLIC_AVATAR_MEDIA_SELECT,
+    PUBLIC_GROUP_MEDIA_INCLUDE,
     prepareMediaAttachments,
     rollbackPreparedMedia,
-    scheduleMediaDeletion
+    scheduleMediaDeletion,
+    serializeGroupMediaRecord,
+    serializeUserMediaRecord
 } from '../services/mediaService';
 import { requestMediaPrivacyTransition } from '../services/mediaPrivacyTransitionService';
 import { MediaValidationError } from '../services/mediaProcessor';
@@ -20,7 +24,7 @@ const SAFE_USER_SELECT = {
     name: true,
     handle: true,
     avatar: true,
-    avatarMediaId: true,
+    ...PUBLIC_AVATAR_MEDIA_SELECT,
     bio: true,
     location: true,
     website: true,
@@ -42,7 +46,7 @@ export const getUsers = async (req: Request, res: Response) => {
             take: 20,
             select: SAFE_USER_SELECT
         });
-        res.json(users);
+        res.json(users.map((user) => serializeUserMediaRecord(user)));
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Failed to fetch users' });
@@ -52,7 +56,7 @@ export const getUsers = async (req: Request, res: Response) => {
 export const searchUsers = async (req: Request, res: Response) => {
     try {
         const query = String(req.query.q || '').trim();
-        const userId = req.query.userId as string | undefined;
+        const userId = req.user?.userId;
 
         if (!query) {
             return res.json([]);
@@ -76,7 +80,7 @@ export const searchUsers = async (req: Request, res: Response) => {
             select: SAFE_USER_SELECT
         });
 
-        res.json(users);
+        res.json(users.map((user) => serializeUserMediaRecord(user)));
     } catch (error) {
         console.error('Failed to search users:', error);
         res.status(500).json({ error: 'Failed to search users' });
@@ -87,7 +91,8 @@ export const getUser = async (req: Request, res: Response) => {
     const { id } = req.params;
     try {
         const user = await prisma.user.findUnique({
-            where: { id: id as string }
+            where: { id: id as string },
+            include: { avatarMedia: { include: { variants: true } } }
         });
 
         if (!user) {
@@ -96,6 +101,7 @@ export const getUser = async (req: Request, res: Response) => {
         }
 
         const { password: _, passwordHash: __, ...safeUser } = user;
+        const serializedUser = serializeUserMediaRecord(safeUser)!;
 
         const demographics = await prisma.userDemographics.findUnique({
             where: { userId: user.id }
@@ -134,7 +140,7 @@ export const getUser = async (req: Request, res: Response) => {
         ]);
 
         res.json({
-            ...safeUser,
+            ...serializedUser,
             followStatus,
             isFollowing: followStatus === 'ACTIVE',
             demographics: demographics || {},
@@ -160,7 +166,8 @@ export const getUserByHandle = async (req: Request, res: Response) => {
         }
 
         const user = await prisma.user.findUnique({
-            where: { handle: cleanHandle }
+            where: { handle: cleanHandle },
+            include: { avatarMedia: { include: { variants: true } } }
         });
 
         if (!user) {
@@ -169,6 +176,7 @@ export const getUserByHandle = async (req: Request, res: Response) => {
         }
 
         const { password: _, passwordHash: __, ...safeUser } = user;
+        const serializedUser = serializeUserMediaRecord(safeUser)!;
 
         const demographics = await prisma.userDemographics.findUnique({
             where: { userId: user.id }
@@ -207,7 +215,7 @@ export const getUserByHandle = async (req: Request, res: Response) => {
         ]);
 
         res.json({
-            ...safeUser,
+            ...serializedUser,
             followStatus,
             isFollowing: followStatus === 'ACTIVE',
             demographics: demographics || {},
@@ -234,8 +242,9 @@ export const updateUser = async (req: Request, res: Response) => {
     const data = req.body;
 
     try {
+        const currentUser = await prisma.user.findUnique({ where: { id }, select: { avatar: true, avatarMediaId: true } });
         if (data.avatar && data.avatarMediaId === undefined) {
-            data.avatar = await processBase64Image(data.avatar);
+            data.avatar = await processBase64Image(data.avatar, currentUser?.avatar);
         }
 
         const allowedFields = ['name', 'handle', 'avatar', 'bio', 'location', 'website', 'language', 'country', 'groupPrivacy'];
@@ -244,7 +253,6 @@ export const updateUser = async (req: Request, res: Response) => {
             if (data[field] !== undefined) updateData[field] = data[field];
         });
 
-        const currentUser = await prisma.user.findUnique({ where: { id }, select: { avatarMediaId: true } });
         let oldAvatarMediaId: string | null | undefined;
         if (data.avatarMediaId !== undefined) {
             oldAvatarMediaId = currentUser?.avatarMediaId;
@@ -368,7 +376,7 @@ export const updateUser = async (req: Request, res: Response) => {
 
         const user = await prisma.user.findUniqueOrThrow({ where: { id }, select: SAFE_USER_SELECT });
         res.json({
-            ...user,
+            ...serializeUserMediaRecord(user),
             isPrivate: user.mediaPrivacyTarget === true || user.isPrivate,
             demographics,
             stats: {
@@ -462,9 +470,9 @@ export const getUserAnalytics = async (req: Request, res: Response) => {
 
 export const getUserFollowers = async (req: Request, res: Response) => {
     const { id } = req.params;
-    const { currentUserId } = req.query;
+    const currentUserId = req.user?.userId;
     try {
-        const canView = await PrivacyService.canViewUserContent(currentUserId as string, id as string);
+        const canView = await PrivacyService.canViewUserContent(currentUserId, id as string);
         if (!canView) {
             res.status(403).json({ error: 'Forbidden' });
             return;
@@ -477,7 +485,7 @@ export const getUserFollowers = async (req: Request, res: Response) => {
                     select: {
                         ...SAFE_USER_SELECT,
                         following: currentUserId ? {
-                            where: { followerId: currentUserId as string },
+                            where: { followerId: currentUserId },
                             select: { status: true }
                         } : false
                     }
@@ -485,13 +493,13 @@ export const getUserFollowers = async (req: Request, res: Response) => {
             }
         });
 
-        const mapped = (followers as any[]).map(f => ({
-            id: f.follower.id,
-            name: f.follower.name,
-            handle: f.follower.handle,
-            avatar: f.follower.avatar,
-            followStatus: currentUserId ? (f.follower.following && f.follower.following.length > 0 ? f.follower.following[0].status : 'NONE') : 'NONE'
-        }));
+        const mapped = (followers as any[]).map(f => {
+            const follower = serializeUserMediaRecord(f.follower)!;
+            return {
+                ...follower,
+                followStatus: currentUserId ? (f.follower.following && f.follower.following.length > 0 ? f.follower.following[0].status : 'NONE') : 'NONE'
+            };
+        });
 
         res.json(mapped);
     } catch (error) {
@@ -502,9 +510,9 @@ export const getUserFollowers = async (req: Request, res: Response) => {
 
 export const getUserFollowing = async (req: Request, res: Response) => {
     const { id } = req.params;
-    const { currentUserId } = req.query;
+    const currentUserId = req.user?.userId;
     try {
-        const canView = await PrivacyService.canViewUserContent(currentUserId as string, id as string);
+        const canView = await PrivacyService.canViewUserContent(currentUserId, id as string);
         if (!canView) {
             res.status(403).json({ error: 'Forbidden' });
             return;
@@ -517,7 +525,7 @@ export const getUserFollowing = async (req: Request, res: Response) => {
                     select: {
                         ...SAFE_USER_SELECT,
                         following: currentUserId ? {
-                            where: { followerId: currentUserId as string },
+                            where: { followerId: currentUserId },
                             select: { status: true }
                         } : false
                     }
@@ -525,13 +533,13 @@ export const getUserFollowing = async (req: Request, res: Response) => {
             }
         });
 
-        const mapped = (following as any[]).map(f => ({
-            id: f.following.id,
-            name: f.following.name,
-            handle: f.following.handle,
-            avatar: f.following.avatar,
-            followStatus: currentUserId ? (f.following.following && f.following.following.length > 0 ? f.following.following[0].status : 'NONE') : 'NONE'
-        }));
+        const mapped = (following as any[]).map(f => {
+            const followedUser = serializeUserMediaRecord(f.following)!;
+            return {
+                ...followedUser,
+                followStatus: currentUserId ? (f.following.following && f.following.following.length > 0 ? f.following.following[0].status : 'NONE') : 'NONE'
+            };
+        });
 
         res.json(mapped);
     } catch (error) {
@@ -555,7 +563,7 @@ export const getNotifications = async (req: Request, res: Response) => {
             orderBy: { createdAt: 'desc' },
             include: {
                 actor: {
-                    select: { id: true, name: true, avatar: true }
+                    select: { id: true, name: true, avatar: true, ...PUBLIC_AVATAR_MEDIA_SELECT }
                 }
             }
         });
@@ -570,11 +578,7 @@ export const getNotifications = async (req: Request, res: Response) => {
             isRead: n.isRead,
             timestamp: n.createdAt.toISOString(),
             createdAt: n.createdAt.getTime(),
-            actor: n.actor ? {
-                id: n.actor.id,
-                name: n.actor.name,
-                avatar: n.actor.avatar
-            } : undefined
+            actor: n.actor ? serializeUserMediaRecord(n.actor) : undefined
         }));
 
         res.json(mapped);
@@ -690,7 +694,7 @@ export const getUserGroups = async (req: Request, res: Response) => {
                 group: { isDeleted: false }
             },
             include: {
-                group: true
+                group: { include: PUBLIC_GROUP_MEDIA_INCLUDE }
             }
         });
 
@@ -709,7 +713,7 @@ export const getUserGroups = async (req: Request, res: Response) => {
             ]);
 
             return {
-                ...m.group,
+                ...serializeGroupMediaRecord(m.group),
                 memberCount,
                 postsCount,
                 permissions: GroupPermissionService.calculatePermissions(m.group, m.role, m.status),
@@ -769,7 +773,7 @@ export const getSuggestedUsers = async (req: Request, res: Response) => {
 
         // Add a "reason" field
         const suggestedList = interactionSuggestions.map(u => ({
-            ...u,
+            ...serializeUserMediaRecord(u)!,
             suggestionReason: 'Recently interacted'
         }));
 
@@ -788,7 +792,7 @@ export const getSuggestedUsers = async (req: Request, res: Response) => {
             });
 
             suggestedList.push(...popularSuggestions.map(u => ({
-                ...u,
+                ...serializeUserMediaRecord(u)!,
                 suggestionReason: 'Suggested for you'
             })));
         }

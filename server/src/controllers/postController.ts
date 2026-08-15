@@ -16,7 +16,10 @@ import {
     rollbackMediaScopeChange,
     rollbackPreparedMedia,
     scheduleMediaDeletion,
-    serializeMediaAsset,
+    serializeUserMediaRecord,
+    PUBLIC_AVATAR_MEDIA_SELECT,
+    POST_MEDIA_INCLUDE,
+    serializePostMediaRecord,
     validatePostMediaSet
 } from '../services/mediaService';
 import { MediaValidationError } from '../services/mediaProcessor';
@@ -27,6 +30,7 @@ export const SAFE_USER_SELECT = {
     name: true,
     handle: true,
     avatar: true,
+    ...PUBLIC_AVATAR_MEDIA_SELECT,
     verifiedBadge: true,
     isPrivate: true
 };
@@ -84,24 +88,6 @@ const getMediaAttachmentRequirements = (data: any): MediaAttachmentRequirement[]
         }
     }
     return requirements;
-};
-
-const POST_MEDIA_INCLUDE = {
-    orderBy: { sortOrder: 'asc' as const },
-    include: { mediaAsset: { include: { variants: true } } }
-};
-
-const serializePostMediaRecord = (post: any): any => {
-    if (!post) return post;
-    const media = Array.isArray(post.media)
-        ? post.media.map((attachment: any) => serializeMediaAsset(attachment.mediaAsset)).filter(Boolean)
-        : [];
-    return {
-        ...post,
-        media,
-        coverImage: media[0]?.src || post.image,
-        sharedFrom: post.sharedFrom ? serializePostMediaRecord(post.sharedFrom) : post.sharedFrom
-    };
 };
 
 const mapTargetGroups = (post: any): string[] => {
@@ -174,7 +160,7 @@ const resolveInteractionTarget = async (postId: string, type: 'like' | 'comment'
 
 
 export const getPosts = async (req: Request, res: Response) => {
-    const userId = req.query.userId as any;
+    const userId = req.user?.userId;
     const guestId = req.query.guestId as any;
     const authorId = req.query.authorId as string | undefined;
     const authorHandle = req.query.authorHandle as string | undefined;
@@ -321,7 +307,7 @@ export const getPosts = async (req: Request, res: Response) => {
 };
 
 export const getTrends = async (req: Request, res: Response) => {
-    const userId = req.query.userId as string | undefined;
+    const userId = req.user?.userId;
     const period = (req.query.period as string || '24h').toLowerCase();
     const type = req.query.type as string | undefined; // "Poll", "Survey", "Quiz", "Challenge"
     const country = req.query.country as string | undefined; // country code like 'JO', 'SA'
@@ -364,6 +350,7 @@ export const getTrends = async (req: Request, res: Response) => {
                         id: true,
                         name: true,
                         avatar: true,
+                        ...PUBLIC_AVATAR_MEDIA_SELECT,
                         handle: true,
                         location: true,
                         country: true,
@@ -419,7 +406,9 @@ export const getTrends = async (req: Request, res: Response) => {
                 author: {
                     id: post.author.id,
                     name: post.author.name,
-                    avatar: post.author.avatar || 'https://picsum.photos/100',
+                    avatar: post.author.avatar || null,
+                    avatarMediaId: post.author.avatarMediaId,
+                    avatarMedia: post.author.avatarMedia,
                     handle: post.author.handle,
                     location: post.author.location
                 }
@@ -439,7 +428,7 @@ export const getTrends = async (req: Request, res: Response) => {
 
 export const getPostById = async (req: Request, res: Response) => {
     const id = req.params.id as string;
-    const userId = req.query.userId as any;
+    const userId = req.user?.userId;
     const guestId = req.query.guestId as any;
     try {
         const post = await prisma.post.findFirst({
@@ -697,7 +686,7 @@ export const createPost = async (req: Request, res: Response) => {
         const mediaAspectRatio = await validatePostMediaSet(authorId, postMediaAssetIds, data.mediaAspectRatio);
         if (mediaAspectRatio) postData.mediaAspectRatio = mediaAspectRatio;
         const requirements = getMediaAttachmentRequirements(data);
-        const mediaScope = await resolvePostMediaScope(authorId, postData.status, targetGroupIds);
+        const mediaScope = await resolvePostMediaScope(authorId, postData.status, targetGroupIds, postData.targetAudience);
         const prepared = await prepareMediaAttachments(authorId, requirements, mediaScope);
 
         let transactionResult;
@@ -830,6 +819,7 @@ export const createPost = async (req: Request, res: Response) => {
         const media = (await Promise.all(postMediaAssetIds.map((id) => getStoredMediaPresentation(id)))).filter(Boolean);
         const mappedPost = {
             ...post,
+            author: serializeUserMediaRecord((post as any).author),
             likes: post.likesCount,
                 repostCount: post.sharesCount || 0,
             participants: post.responseCount,
@@ -876,6 +866,8 @@ export const updatePost = async (req: Request, res: Response) => {
                 isDeleted: true,
                 responseCount: true,
                 groupId: true,
+                image: true,
+                targetAudience: true,
                 mediaAspectRatio: true,
                 targetedGroups: { select: { id: true } },
                 media: { orderBy: { sortOrder: 'asc' }, select: { mediaAssetId: true } },
@@ -906,12 +898,19 @@ export const updatePost = async (req: Request, res: Response) => {
 
         // --- PRE-PROCESS IMAGES ---
         const submittedPostMediaIds = Array.isArray(data.mediaAssetIds) ? getPostMediaAssetIds(data) : undefined;
-        if (submittedPostMediaIds === undefined && data.coverImage) data.coverImage = await processBase64Image(data.coverImage);
-        if (submittedPostMediaIds === undefined && data.image) data.image = await processBase64Image(data.image);
+        if (submittedPostMediaIds === undefined && data.coverImage) data.coverImage = await processBase64Image(data.coverImage, existingPost.image);
+        if (submittedPostMediaIds === undefined && data.image) data.image = await processBase64Image(data.image, existingPost.image);
+
+        const existingQuestions = [
+            ...existingPost.questions,
+            ...existingPost.sections.flatMap((section) => section.questions)
+        ];
+        const existingQuestionById = new Map(existingQuestions.map((question) => [question.id, question]));
+        const existingOptionById = new Map(existingQuestions.flatMap((question) => question.options).map((option) => [option.id, option]));
 
         if (data.options && Array.isArray(data.options)) {
             for (let opt of data.options) {
-                if (opt.image && !opt.imageMediaId) opt.image = await processBase64Image(opt.image);
+                if (opt.image && !opt.imageMediaId) opt.image = await processBase64Image(opt.image, existingOptionById.get(opt.id)?.image);
             }
         }
 
@@ -919,10 +918,10 @@ export const updatePost = async (req: Request, res: Response) => {
             for (let sec of data.sections) {
                 if (sec.questions && Array.isArray(sec.questions)) {
                     for (let q of sec.questions) {
-                        if (q.image && !q.imageMediaId) q.image = await processBase64Image(q.image);
+                        if (q.image && !q.imageMediaId) q.image = await processBase64Image(q.image, existingQuestionById.get(q.id)?.image);
                         if (q.options && Array.isArray(q.options)) {
                             for (let opt of q.options) {
-                                if (opt.image && !opt.imageMediaId) opt.image = await processBase64Image(opt.image);
+                                if (opt.image && !opt.imageMediaId) opt.image = await processBase64Image(opt.image, existingOptionById.get(opt.id)?.image);
                             }
                         }
                     }
@@ -1062,7 +1061,7 @@ export const updatePost = async (req: Request, res: Response) => {
         const removedIds = Array.from(oldIds).filter((mediaId) => !incomingIds.has(mediaId));
         const newRequirements = incomingRequirements.filter((requirement) => !oldIds.has(requirement.id));
         const finalStatus = updateData.status || existingPost.status;
-        const mediaScope = await resolvePostMediaScope(trustedUserId, finalStatus, effectiveTargetGroups);
+        const mediaScope = await resolvePostMediaScope(trustedUserId, finalStatus, effectiveTargetGroups, data.targetAudience !== undefined ? data.targetAudience : existingPost.targetAudience);
         const ratio = await validatePostMediaSet(trustedUserId, finalPostMediaIds, data.mediaAspectRatio || existingPost.mediaAspectRatio || undefined);
         if (ratio) updateData.mediaAspectRatio = ratio;
         else if (submittedPostMediaIds) updateData.mediaAspectRatio = null;
@@ -1235,6 +1234,7 @@ export const updatePost = async (req: Request, res: Response) => {
 
         const mappedPost = {
             ...post,
+            author: serializeUserMediaRecord((post as any).author),
             likes: post.likesCount,
                 repostCount: post.sharesCount || 0,
             participants: post.responseCount,
@@ -1261,7 +1261,7 @@ export const updatePost = async (req: Request, res: Response) => {
 };
 
 export const getDrafts = async (req: Request, res: Response) => {
-    const userId = req.query.userId as any;
+    const userId = req.user!.userId;
     try {
         const drafts = await prisma.post.findMany({
             where: { authorId: userId, status: { in: [POST_STATUS.DRAFT, POST_STATUS.PENDING_APPROVAL, POST_STATUS.REJECTED] }, isDeleted: false },
@@ -1298,7 +1298,7 @@ export const getDrafts = async (req: Request, res: Response) => {
 };
 
 export const getSavedPosts = async (req: Request, res: Response) => {
-    const userId = req.query.userId as any;
+    const userId = req.user!.userId;
     try {
         const saved = await prisma.savedPost.findMany({
             where: { 
@@ -1638,7 +1638,7 @@ export const getParticipants = async (req: Request, res: Response) => {
     const rawId = req.params.id as string;
     try {
         const id = await resolveInteractionTarget(rawId, 'vote');
-        const currentUserId = req.user?.userId || (req.query.userId as string | undefined);
+        const currentUserId = req.user?.userId;
         const post = await prisma.post.findUnique({
             where: { id },
             select: {
@@ -1725,7 +1725,7 @@ export const getParticipants = async (req: Request, res: Response) => {
                  };
             }
             return {
-                 ...r.user,
+                 ...serializeUserMediaRecord(r.user),
                  isAnonymous: false,
                  timestamp: r.timestamp
             };
@@ -1740,7 +1740,7 @@ export const getPostResults = async (req: Request, res: Response) => {
     const rawId = req.params.id as string;
     try {
         const id = await resolveInteractionTarget(rawId, 'vote');
-        const currentUserId = req.user?.userId || (req.query.userId as string | undefined);
+        const currentUserId = req.user?.userId;
         const guestId = req.query.guestId as string | undefined;
         const post = await prisma.post.findUnique({
             where: { id },
@@ -1875,25 +1875,30 @@ export const getPostResults = async (req: Request, res: Response) => {
     }
 };
 
-const mapComment = (c: any, currentUserId?: string) => ({
-    id: c.id,
-    text: c.text,
-    author: {
-        id: c.user?.id || 'unknown',
-        name: c.user?.name || 'Unknown',
-        avatar: c.user?.avatar || '',
-        handle: c.user?.handle || '',
-        verifiedBadge: c.user?.verifiedBadge || false
-    },
-    timestamp: c.createdAt.toISOString(),
-    likes: c.likes || 0,
-    isLiked: currentUserId && c.likesList ? c.likesList.some((l: any) => l.userId === currentUserId) : false,
-    replies: c.replies ? c.replies.map((r: any) => mapComment(r, currentUserId)) : []
-});
+const mapComment = (c: any, currentUserId?: string) => {
+    const user = serializeUserMediaRecord(c.user);
+    return {
+        id: c.id,
+        text: c.text,
+        author: {
+            id: user?.id || 'unknown',
+            name: user?.name || 'Unknown',
+            avatar: user?.avatar || '',
+            avatarMediaId: user?.avatarMediaId,
+            avatarMedia: user?.avatarMedia,
+            handle: user?.handle || '',
+            verifiedBadge: user?.verifiedBadge || false
+        },
+        timestamp: c.createdAt.toISOString(),
+        likes: c.likes || 0,
+        isLiked: currentUserId && c.likesList ? c.likesList.some((l: any) => l.userId === currentUserId) : false,
+        replies: c.replies ? c.replies.map((r: any) => mapComment(r, currentUserId)) : []
+    };
+};
 
 export const getComments = async (req: Request, res: Response) => {
     const rawId = req.params.id as string;
-    const userId = req.query.userId as string | undefined;
+    const userId = req.user?.userId;
     try {
         const id = await resolveInteractionTarget(rawId, 'comment');
         const commentTarget = await prisma.post.findUnique({
@@ -2129,7 +2134,7 @@ export const getPostLikers = async (req: Request, res: Response) => {
             orderBy: { createdAt: 'desc' },
             take: 50
         });
-        res.json(likes.map(l => l.user));
+        res.json(likes.map(l => serializeUserMediaRecord(l.user)));
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch likers' });
     }
@@ -2144,7 +2149,7 @@ export const getCommentLikers = async (req: Request, res: Response) => {
             orderBy: { createdAt: 'desc' },
             take: 50
         });
-        res.json(likes.map(l => l.user));
+        res.json(likes.map(l => serializeUserMediaRecord(l.user)));
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch comment likers' });
     }

@@ -30,6 +30,26 @@ test('clamps an overly wide post ratio without leaving blank crop space', async 
   assert.ok(result.crop.x + result.crop.width <= 1);
 });
 
+test('preserves supported common ratios and clamps tall sources to 4:5', async () => {
+  const cases = [
+    [400, 400, 1],
+    [400, 500, 0.8],
+    [400, 300, 4 / 3],
+    [450, 300, 1.5],
+    [480, 270, 16 / 9],
+    [382, 200, 1.91]
+  ] as const;
+  for (const [width, height, ratio] of cases) {
+    const result = await processMediaBuffer(await makeImage(width, height), 'POST', 'image/jpeg', {});
+    assert.ok(Math.abs(result.aspectRatio - ratio) < 0.0001, `${width}x${height}`);
+  }
+
+  const tall = await processMediaBuffer(await makeImage(360, 640), 'POST', 'image/jpeg', {});
+  assert.equal(tall.aspectRatio, MEDIA_CONFIG.minAspectRatio);
+  assert.ok(tall.crop.y > 0);
+  assert.ok(tall.crop.y + tall.crop.height <= 1);
+});
+
 test('does not upscale a small avatar', async () => {
   const source = await makeImage(40, 60, 'png');
   const result = await processMediaBuffer(source, 'PROFILE_AVATAR', 'image/png', {});
@@ -55,6 +75,22 @@ test('rejects a declared MIME that does not match image bytes', async () => {
   await assert.rejects(
     () => processMediaBuffer(source, 'OPTION_IMAGE', 'image/jpeg', {}),
     (error: unknown) => error instanceof MediaValidationError && error.code === 'MIME_MISMATCH'
+  );
+});
+
+test('rejects unsupported and corrupt input before persistence', async () => {
+  const valid = await makeImage(100, 100);
+  await assert.rejects(
+    () => processMediaBuffer(valid, 'POST', 'image/gif', {}),
+    (error: unknown) => error instanceof MediaValidationError && error.code === 'UNSUPPORTED_MEDIA_TYPE'
+  );
+  await assert.rejects(
+    () => processMediaBuffer(Buffer.from('not-an-image'), 'POST', 'image/jpeg', {}),
+    (error: unknown) => error instanceof MediaValidationError && error.code === 'INVALID_IMAGE'
+  );
+  await assert.rejects(
+    () => processMediaBuffer(Buffer.alloc(MEDIA_CONFIG.maxInputBytes + 1), 'POST', 'image/jpeg', {}),
+    (error: unknown) => error instanceof MediaValidationError && error.code === 'INVALID_FILE_SIZE'
   );
 });
 

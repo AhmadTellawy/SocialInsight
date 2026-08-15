@@ -34,7 +34,7 @@ const corsOptions = {
 };
 app.use(helmet());
 app.use(cors(corsOptions));
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '4mb' }));
 app.use(hpp());
 
 // Serve static files from the uploads directory
