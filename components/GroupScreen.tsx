@@ -227,7 +227,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
   const handleBulkInvite = async () => {
     if (selectedInviteIds.size === 0 || isBulkInviting) return;
     setIsBulkInviting(true);
-    const ids = Array.from(selectedInviteIds);
+    const ids: string[] = Array.from(selectedInviteIds);
     let successCount = 0;
     for (const userId of ids) {
       try {
