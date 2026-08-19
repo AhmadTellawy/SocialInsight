@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { expect, test, type Page, type Response, type Route } from '@playwright/test';
+import { expect, test, type Locator, type Page, type Response, type Route } from '@playwright/test';
 import { baseURL } from './helpers/env';
 import { expectTokenPresent, gotoApp } from './helpers/auth';
 import { publicCreatorAuthStatePath } from './helpers/authState';
@@ -17,20 +17,42 @@ const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 const mediaFinalizePattern = new RegExp(`^/api/media/(${UUID})/finalize$`, 'i');
 const mediaDeletePattern = new RegExp(`^/api/media/(${UUID})$`, 'i');
 const postDeletePattern = new RegExp(`^/api/posts/(${UUID})$`, 'i');
+const groupDeletePattern = new RegExp(`^/api/groups/(${UUID})$`, 'i');
 
 type SafetyState = {
   assetIds: Set<string>;
   postId?: string;
   createUrl?: string;
+  groupId?: string;
+  allowGroupFixture: boolean;
   uploadSessions: number;
   storageUploads: number;
   finalizations: number;
   postCreates: number;
   postDeletes: number;
   mediaDeletes: number;
+  groupCreates: number;
+  groupDeletes: number;
   cleanup: boolean;
   blocked: string[];
 };
+
+function createSafetyState(allowGroupFixture = false): SafetyState {
+  return {
+    assetIds: new Set(),
+    allowGroupFixture,
+    uploadSessions: 0,
+    storageUploads: 0,
+    finalizations: 0,
+    postCreates: 0,
+    postDeletes: 0,
+    mediaDeletes: 0,
+    groupCreates: 0,
+    groupDeletes: 0,
+    cleanup: false,
+    blocked: [],
+  };
+}
 
 function isBackgroundMutation(method: string, pathname: string): boolean {
   return method === 'POST' && (
@@ -117,15 +139,40 @@ async function installMutationGuard(page: Page, state: SafetyState): Promise<voi
       await route.continue();
       return;
     }
+    if (
+      method === 'POST' &&
+      url.hostname === API_HOST &&
+      pathname === '/api/groups' &&
+      state.allowGroupFixture &&
+      state.groupCreates === 0
+    ) {
+      state.groupCreates += 1;
+      await route.continue();
+      return;
+    }
     const postDeleteMatch = pathname.match(postDeletePattern);
     if (
       method === 'DELETE' &&
       url.hostname === API_HOST &&
       state.cleanup &&
+      postDeleteMatch &&
       postDeleteMatch?.[1] === state.postId &&
       state.postDeletes < 3
     ) {
       state.postDeletes += 1;
+      await route.continue();
+      return;
+    }
+    const groupDeleteMatch = pathname.match(groupDeletePattern);
+    if (
+      method === 'DELETE' &&
+      url.hostname === API_HOST &&
+      state.cleanup &&
+      groupDeleteMatch &&
+      groupDeleteMatch?.[1] === state.groupId &&
+      state.groupDeletes < 3
+    ) {
+      state.groupDeletes += 1;
       await route.continue();
       return;
     }
@@ -187,22 +234,109 @@ async function authenticatedDeleteWithRetry(
   return result;
 }
 
+async function authenticatedPostJson(
+  page: Page,
+  targetUrl: string,
+  body: Record<string, unknown>,
+): Promise<{ ok: boolean; status: number; body?: unknown }> {
+  return page.evaluate(async ({ url, payload }) => {
+    const token = window.localStorage.getItem('si_token');
+    if (!token) return { ok: false, status: 0 };
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const responseBody = await response.json().catch(() => undefined);
+      return { ok: response.ok, status: response.status, body: responseBody };
+    } catch {
+      return { ok: false, status: 0 };
+    }
+  }, { url: targetUrl, payload: body });
+}
+
+async function createTemporaryGroup(page: Page, state: SafetyState, groupName: string): Promise<void> {
+  const result = await authenticatedPostJson(page, `https://${API_HOST}/api/groups`, {
+    name: groupName,
+    description: 'Temporary controlled-write media E2E fixture.',
+    category: 'Other',
+    isPublic: false,
+  });
+  expect(result.ok, `expected temporary group creation to succeed, got HTTP ${result.status}`).toBe(true);
+  const groupId = extractPostId(result.body);
+  expect(groupId).toBeTruthy();
+  state.groupId = groupId;
+}
+
 async function cleanup(page: Page, state: SafetyState): Promise<void> {
   state.cleanup = true;
+  const failures: string[] = [];
   try {
     if (state.postId && state.createUrl) {
       const createUrl = new URL(state.createUrl);
       const result = await authenticatedDeleteWithRetry(page, `${createUrl.origin}/api/posts/${state.postId}`);
-      expect(result.ok || result.status === 404, `expected exact post cleanup to succeed, got HTTP ${result.status}`).toBe(true);
-      return;
+      if (!result.ok && result.status !== 404) failures.push(`post ${state.postId}: HTTP ${result.status}`);
+    } else {
+      for (const assetId of state.assetIds) {
+        const result = await authenticatedDeleteWithRetry(page, `https://${API_HOST}/api/media/${assetId}`);
+        if (!result.ok && result.status !== 404) failures.push(`media ${assetId}: HTTP ${result.status}`);
+      }
     }
-    for (const assetId of state.assetIds) {
-      const result = await authenticatedDeleteWithRetry(page, `https://${API_HOST}/api/media/${assetId}`);
-      expect(result.ok || result.status === 404, `expected exact media cleanup to succeed, got HTTP ${result.status}`).toBe(true);
+    if (state.groupId) {
+      const result = await authenticatedDeleteWithRetry(page, `https://${API_HOST}/api/groups/${state.groupId}`);
+      if (!result.ok && result.status !== 404) failures.push(`group ${state.groupId}: HTTP ${result.status}`);
     }
   } finally {
     state.cleanup = false;
   }
+  expect(failures, `expected exact cleanup to succeed: ${failures.join(', ')}`).toEqual([]);
+}
+
+async function uploadSinglePostImage(
+  page: Page,
+  state: SafetyState,
+  buttonName: string,
+  imagePath: string,
+): Promise<void> {
+  const chooserPromise = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: buttonName }).click();
+  const chooser = await chooserPromise;
+  await chooser.setFiles(imagePath);
+
+  const cropDialog = page.getByRole('dialog', { name: 'Crop image' });
+  await expect(cropDialog).toBeVisible({ timeout: 15_000 });
+  const applyButton = cropDialog.getByRole('button', { name: 'Apply' });
+  await expect(applyButton).toBeEnabled({ timeout: 15_000 });
+  await applyButton.click();
+
+  await expect.poll(() => state.uploadSessions, { timeout: 20_000 }).toBe(1);
+  await expect.poll(() => state.storageUploads, { timeout: 45_000 }).toBe(1);
+  await expect.poll(() => state.finalizations, { timeout: 45_000 }).toBe(1);
+  await expect(page.getByRole('button', { name: 'Edit', exact: true })).toHaveCount(1, { timeout: 45_000 });
+}
+
+async function publishAndCapture(page: Page, state: SafetyState, publishButton: Locator): Promise<void> {
+  const createResponsePromise = page.waitForResponse((response) => {
+    const request = response.request();
+    const url = new URL(response.url());
+    return request.method() === 'POST' && url.hostname === API_HOST && url.pathname === '/api/posts';
+  });
+  await publishButton.click();
+  const createResponse = await createResponsePromise;
+  expect(createResponse.ok()).toBe(true);
+  const createBody = await createResponse.json();
+  state.postId = state.postId || extractPostId(createBody);
+  state.createUrl = state.createUrl || createResponse.url();
+  expect(state.postId).toBeTruthy();
+}
+
+async function expectPublishedSingleImage(page: Page, state: SafetyState, expectedTitle: string): Promise<void> {
+  await gotoApp(page, `/post/${state.postId}`);
+  await expect(page.getByText(expectedTitle, { exact: true }).first()).toBeVisible({ timeout: 20_000 });
+  const carousel = page.getByRole('region', { name: 'Post images' });
+  await expect(carousel).toBeVisible({ timeout: 20_000 });
+  await expect(carousel.getByRole('group', { name: '1 / 1' })).toBeVisible();
 }
 
 test.setTimeout(150_000);
@@ -221,17 +355,7 @@ test.describe('ONLINE_CONTROLLED_WRITE post media upload', () => {
 
     const suffix = `${Date.now()}_${randomUUID().slice(0, 8)}`;
     const pollTitle = `e2e_media_poll_${suffix}`;
-    const state: SafetyState = {
-      assetIds: new Set(),
-      uploadSessions: 0,
-      storageUploads: 0,
-      finalizations: 0,
-      postCreates: 0,
-      postDeletes: 0,
-      mediaDeletes: 0,
-      cleanup: false,
-      blocked: [],
-    };
+    const state = createSafetyState();
 
     installResponseTracking(page, state);
     await installMutationGuard(page, state);
@@ -320,5 +444,193 @@ test.describe('ONLINE_CONTROLLED_WRITE post media upload', () => {
     expect(state.postCreates).toBe(1);
     expect(state.postDeletes).toBeGreaterThanOrEqual(1);
     expect(state.postDeletes).toBeLessThanOrEqual(3);
+  });
+
+  test('Survey media: uploads one image, publishes, renders, and cleans exact IDs', async ({ page }) => {
+    expect(baseURL).toBe(APPROVED_ONLINE_BASE_URL);
+    const imagePath = path.resolve(process.cwd(), 'public', 'pwa-512x512.png');
+    expect(fs.existsSync(imagePath)).toBe(true);
+
+    const suffix = `${Date.now()}_${randomUUID().slice(0, 8)}`;
+    const surveyTitle = `e2e_media_survey_${suffix}`;
+    const state = createSafetyState();
+    installResponseTracking(page, state);
+    await installMutationGuard(page, state);
+
+    try {
+      await gotoApp(page, '/create/survey');
+      await expectTokenPresent(page);
+      await expect(page.getByRole('heading', { name: /new survey/i })).toBeVisible({ timeout: 15_000 });
+      await uploadSinglePostImage(page, state, 'Add survey images', imagePath);
+
+      await page.getByPlaceholder('Survey Title').fill(surveyTitle);
+      await page.getByPlaceholder('Question Text').fill(`e2e_survey_question_1_${suffix}`);
+      await page.getByPlaceholder('Option 1').fill(`e2e_survey_option_1a_${suffix}`);
+      await page.getByPlaceholder('Option 2').fill(`e2e_survey_option_1b_${suffix}`);
+
+      await page.getByRole('button', { name: /^Add Question$/ }).click();
+      await page.getByPlaceholder('Question Text').fill(`e2e_survey_question_2_${suffix}`);
+      await page.getByPlaceholder('Option 1').fill(`e2e_survey_option_2a_${suffix}`);
+      await page.getByPlaceholder('Option 2').fill(`e2e_survey_option_2b_${suffix}`);
+
+      await page.getByRole('button', { name: /^Category\s+Select$/i }).click();
+      await page.getByRole('button', { name: /^Technology$/ }).click();
+      const publishButton = page.getByRole('button', { name: /^Publish Survey$/ });
+      await expect(publishButton).toBeEnabled();
+      await publishAndCapture(page, state, publishButton);
+      await expectPublishedSingleImage(page, state, surveyTitle);
+      expect(state.blocked).toEqual([]);
+    } finally {
+      try {
+        await cleanup(page, state);
+      } finally {
+        console.log(`MEDIA_SURVEY_CONTROLLED_WRITE_COUNTS ${JSON.stringify({
+          assets: state.assetIds.size,
+          uploadSessions: state.uploadSessions,
+          storageUploads: state.storageUploads,
+          finalizations: state.finalizations,
+          postCreates: state.postCreates,
+          postDeletes: state.postDeletes,
+          mediaDeletes: state.mediaDeletes,
+          blocked: state.blocked.length,
+        })}`);
+      }
+    }
+
+    expect(state.assetIds.size).toBe(1);
+    expect(state.uploadSessions).toBe(1);
+    expect(state.storageUploads).toBe(1);
+    expect(state.finalizations).toBe(1);
+    expect(state.postCreates).toBe(1);
+    expect(state.postDeletes).toBeGreaterThanOrEqual(1);
+    expect(state.postDeletes).toBeLessThanOrEqual(3);
+  });
+
+  test('Quiz media: uploads one image, publishes, renders, and cleans exact IDs', async ({ page }) => {
+    expect(baseURL).toBe(APPROVED_ONLINE_BASE_URL);
+    const imagePath = path.resolve(process.cwd(), 'public', 'pwa-512x512.png');
+    expect(fs.existsSync(imagePath)).toBe(true);
+
+    const suffix = `${Date.now()}_${randomUUID().slice(0, 8)}`;
+    const quizQuestion = `e2e_media_quiz_${suffix}`;
+    const state = createSafetyState();
+    installResponseTracking(page, state);
+    await installMutationGuard(page, state);
+
+    try {
+      await gotoApp(page, '/create/quiz');
+      await expectTokenPresent(page);
+      await expect(page.getByRole('heading', { name: /new quiz/i })).toBeVisible({ timeout: 15_000 });
+      await uploadSinglePostImage(page, state, 'Add quiz images', imagePath);
+
+      await page.getByPlaceholder('Ask a question...').fill(quizQuestion);
+      const firstOption = page.getByPlaceholder('Option 1');
+      await firstOption.fill(`e2e_quiz_option_a_${suffix}`);
+      await page.getByPlaceholder('Option 2').fill(`e2e_quiz_option_b_${suffix}`);
+      await firstOption.locator('xpath=../../button[1]').click();
+
+      await page.getByRole('button', { name: /^Select category$/i }).click();
+      await page.getByRole('button', { name: /^General Knowledge$/ }).click();
+      const publishButton = page.getByRole('button', { name: /^Publish$/ });
+      await expect(publishButton).toBeEnabled();
+      await publishAndCapture(page, state, publishButton);
+      await expectPublishedSingleImage(page, state, quizQuestion);
+      expect(state.blocked).toEqual([]);
+    } finally {
+      try {
+        await cleanup(page, state);
+      } finally {
+        console.log(`MEDIA_QUIZ_CONTROLLED_WRITE_COUNTS ${JSON.stringify({
+          assets: state.assetIds.size,
+          uploadSessions: state.uploadSessions,
+          storageUploads: state.storageUploads,
+          finalizations: state.finalizations,
+          postCreates: state.postCreates,
+          postDeletes: state.postDeletes,
+          mediaDeletes: state.mediaDeletes,
+          blocked: state.blocked.length,
+        })}`);
+      }
+    }
+
+    expect(state.assetIds.size).toBe(1);
+    expect(state.uploadSessions).toBe(1);
+    expect(state.storageUploads).toBe(1);
+    expect(state.finalizations).toBe(1);
+    expect(state.postCreates).toBe(1);
+    expect(state.postDeletes).toBeGreaterThanOrEqual(1);
+    expect(state.postDeletes).toBeLessThanOrEqual(3);
+  });
+
+  test('Challenge media: uploads one image, publishes, renders, and cleans exact IDs', async ({ page }) => {
+    expect(baseURL).toBe(APPROVED_ONLINE_BASE_URL);
+    const imagePath = path.resolve(process.cwd(), 'public', 'pwa-512x512.png');
+    expect(fs.existsSync(imagePath)).toBe(true);
+
+    const suffix = `${Date.now()}_${randomUUID().slice(0, 8)}`;
+    const challengeTitle = `e2e_media_challenge_${suffix}`;
+    const groupName = `e2e_media_challenge_group_${suffix}`;
+    const state = createSafetyState(true);
+    installResponseTracking(page, state);
+    await installMutationGuard(page, state);
+
+    try {
+      await gotoApp(page);
+      await expectTokenPresent(page);
+      await createTemporaryGroup(page, state, groupName);
+
+      await gotoApp(page, '/create/challenge');
+      await expect(page.getByRole('heading', { name: /new challenge/i })).toBeVisible({ timeout: 15_000 });
+      await uploadSinglePostImage(page, state, 'Add challenge images', imagePath);
+
+      await page.getByPlaceholder('Create a challenge...').fill(challengeTitle);
+      await page.getByPlaceholder('Item 1 Name').fill(`e2e_challenge_item_a_${suffix}`);
+      await page.getByPlaceholder('Item 2 Name').fill(`e2e_challenge_item_b_${suffix}`);
+      await page.getByRole('button', { name: /^Select category$/i }).click();
+      await page.getByRole('button', { name: /^Entertainment$/ }).click();
+
+      await page.getByRole('button', { name: /Advanced Settings/ }).click();
+      await page.getByRole('button', { name: /Post Visibility/ }).click();
+      const groupButton = page.getByRole('button', { name: new RegExp(groupName) });
+      await expect(groupButton).toBeVisible({ timeout: 20_000 });
+      await groupButton.click();
+      const advancedDialog = page.getByRole('dialog');
+      await advancedDialog.locator('xpath=../div[@aria-hidden="true"]').click({ position: { x: 5, y: 5 } });
+      await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 5_000 });
+
+      const publishButton = page.getByRole('button', { name: /^Post$/ });
+      await expect(publishButton).toBeEnabled();
+      await publishAndCapture(page, state, publishButton);
+      await expectPublishedSingleImage(page, state, challengeTitle);
+      expect(state.blocked).toEqual([]);
+    } finally {
+      try {
+        await cleanup(page, state);
+      } finally {
+        console.log(`MEDIA_CHALLENGE_CONTROLLED_WRITE_COUNTS ${JSON.stringify({
+          assets: state.assetIds.size,
+          uploadSessions: state.uploadSessions,
+          storageUploads: state.storageUploads,
+          finalizations: state.finalizations,
+          postCreates: state.postCreates,
+          postDeletes: state.postDeletes,
+          mediaDeletes: state.mediaDeletes,
+          groupCreates: state.groupCreates,
+          groupDeletes: state.groupDeletes,
+          blocked: state.blocked.length,
+        })}`);
+      }
+    }
+
+    expect(state.assetIds.size).toBe(1);
+    expect(state.uploadSessions).toBe(1);
+    expect(state.storageUploads).toBe(1);
+    expect(state.finalizations).toBe(1);
+    expect(state.postCreates).toBe(1);
+    expect(state.postDeletes).toBeGreaterThanOrEqual(1);
+    expect(state.postDeletes).toBeLessThanOrEqual(3);
+    expect(state.groupCreates).toBe(1);
+    expect(state.groupDeletes).toBeGreaterThanOrEqual(1);
+    expect(state.groupDeletes).toBeLessThanOrEqual(3);
   });
 });
