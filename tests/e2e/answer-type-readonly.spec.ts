@@ -52,7 +52,21 @@ test.describe('answer type creation UX (online, read-only)', () => {
     await expect(page.getByText(/Option names are used in results and analytics/i)).toBeVisible();
     await expect(page.getByLabel('Option name 1')).toHaveValue('Messi');
     await expect(page.getByLabel('Option name 2')).toHaveValue('Ronaldo');
-    await expect(page.getByRole('button', { name: /Add images/i }).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: 'List option layout' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Grid option layout' })).toBeVisible();
+
+    const addImages = page.getByRole('button', { name: /Add images/i }).first();
+    await expect(addImages).toBeVisible();
+    const chooserPromise = page.waitForEvent('filechooser');
+    await addImages.click();
+    const chooser = await chooserPromise;
+    expect(chooser.isMultiple()).toBe(true);
+
+    const thumbnailBox = await page.getByLabel('Add image to option 1').boundingBox();
+    const nameBox = await page.getByLabel('Option name 1').boundingBox();
+    expect(thumbnailBox).not.toBeNull();
+    expect(nameBox).not.toBeNull();
+    expect(thumbnailBox!.x).toBeLessThan(nameBox!.x);
     await page.screenshot({ path: 'test-results/answer-type-poll-mobile-images.png', fullPage: true });
 
     await selector.getByRole('radio', { name: 'Rating scale' }).click();
