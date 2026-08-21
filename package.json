@@ -7,7 +7,7 @@
     "dev": "vite",
     "server": "cd server && npm run dev",
     "build": "vite build",
-    "test:unit": "node --test utils/mediaSafeStorage.test.ts utils/mediaUploadScheduler.test.ts",
+    "test:unit": "node --test utils/mediaSafeStorage.test.ts utils/mediaUploadScheduler.test.ts utils/ratingScale.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
