@@ -90,17 +90,18 @@ export const ShareAuthorHeader: React.FC<{ model: ShareCardViewModel; locale: st
 const ShareMediaPreview: React.FC<{ media: ShareCardMediaModel; answerKind: ShareCardViewModel['answerKind'] }> = ({ media, answerKind }) => {
   const [failed, setFailed] = useState(false);
   if (failed) return null;
+  const flexible = answerKind === 'rating';
   const heightClass = answerKind === 'visual-options'
     ? 'h-[118px]'
     : answerKind === 'text-options'
       ? 'h-[170px]'
       : answerKind === 'rating'
-        ? 'h-[280px]'
+        ? 'min-h-[280px] flex-1'
         : 'h-[300px]';
   return (
     <div
       data-testid="share-card-media"
-      className={`relative w-full shrink-0 overflow-hidden rounded-lg border border-gray-200 bg-gray-50 ${heightClass}`}
+      className={`relative w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-50 ${flexible ? '' : 'shrink-0'} ${heightClass}`}
     >
       <MediaImage
         media={media.media}
