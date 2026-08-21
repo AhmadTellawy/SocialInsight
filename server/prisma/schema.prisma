@@ -172,6 +172,8 @@ model Post {
   targetAudience String?
   pollChoiceType String?
   imageLayout    String?
+  optionPresentation String?
+  showOptionNames Boolean @default(true)
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
   comments       Comment[]
@@ -250,6 +252,8 @@ model Question {
   sectionId  String?
   order      Int      @default(0)
   isRequired Boolean  @default(true)
+  optionPresentation String?
+  showOptionNames Boolean @default(true)
   options    Option[]
   answers    Answer[]
   section    Section? @relation(fields: [sectionId], references: [id])

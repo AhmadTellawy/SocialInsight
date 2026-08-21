@@ -17,6 +17,7 @@ interface SurveyQuestionProps {
   isHorizontal: boolean;
   isRating: boolean;
   isMultiple: boolean;
+  showOptionNames?: boolean;
   totalVotes: number;
   portraitImages: Set<string>;
   followUpAnswers: Record<string, string>;
@@ -41,6 +42,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
   isHorizontal,
   isRating,
   isMultiple,
+  showOptionNames = true,
   totalVotes,
   portraitImages,
   followUpAnswers,
@@ -84,7 +86,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
 
   const renderHorizontal = () => (
     <div className="flex overflow-x-auto snap-x snap-mandatory hide-scrollbar gap-3 pb-4 px-1" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-      {(options || []).map((option) => {
+      {(options || []).map((option, optionIndex) => {
         const isSelected = selectedOptions.includes(option.id);
         const percentage = shouldShowResults ? getPercentage(option.votes || 0, totalVotes) : 0;
         const imageKey = optionImageKey(option);
@@ -102,7 +104,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
                     mediaId={option.imageMediaId}
                     fallbackSrc={option.image}
                     onLoad={(e) => onDetectOrientation(imageKey, e)}
-                    alt={option.text}
+                    alt={showOptionNames ? option.text : ''}
                     className="w-full h-full object-cover"
                   />
                   {isPortrait && (
@@ -148,7 +150,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
                           <Star key={i} size={14} fill="currentColor" />
                         ))}
                       </div>
-                    ) : option.text}
+                    ) : showOptionNames ? option.text : null}
                   </h3>
                   {shouldShowResults && <div className="text-[10px] text-gray-500 mt-1">{option.votes.toLocaleString()} {t('votes')}</div>}
                 </div>
@@ -160,7 +162,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
                     <X size={18} className="text-red-600 shrink-0" />
                   )}
                   {!hasVoted && !isExpired ? (
-                    <button onClick={() => onOptionClick(option.id)} className={`text-sm font-bold px-6 py-2 rounded-lg transition-colors border shadow-sm active:scale-95 ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-100'}`}>{isSelected && isMultiple ? t('Selected') : t('Vote')}</button>
+                    <button aria-label={showOptionNames ? option.text : t('answerType.imageOption', { number: optionIndex + 1 })} onClick={() => onOptionClick(option.id)} className={`text-sm font-bold px-6 py-2 rounded-lg transition-colors border shadow-sm active:scale-95 ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-100'}`}>{isSelected && isMultiple ? t('Selected') : t('Vote')}</button>
                   ) : (
                     isSelected ? (
                       <div className="flex items-center gap-2">
@@ -336,7 +338,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
 
         return (
           <div key={option.id} className="flex flex-col gap-2">
-            <button onClick={() => onOptionClick(option.id)} disabled={hasVoted || isExpired} className={`relative w-full text-left rounded-xl border transition-all duration-300 overflow-hidden group ${hasImages ? 'p-1 pr-3' : 'p-3'} ${hasVoted || isExpired ? (isCorrect ? 'border-green-500 bg-green-50' : isWrongSelection ? 'border-red-500 bg-red-50' : isSelected ? 'border-blue-500 bg-blue-50' : 'border-gray-100 bg-gray-50') : isSelected ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500/20' : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/30 active:scale-[0.99]'}`}>
+            <button aria-label={showOptionNames ? option.text : t('answerType.imageOption', { number: idx + 1 })} onClick={() => onOptionClick(option.id)} disabled={hasVoted || isExpired} className={`relative w-full text-left rounded-xl border transition-all duration-300 overflow-hidden group ${hasImages ? 'p-1 pr-3' : 'p-3'} ${hasVoted || isExpired ? (isCorrect ? 'border-green-500 bg-green-50' : isWrongSelection ? 'border-red-500 bg-red-50' : isSelected ? 'border-blue-500 bg-blue-50' : 'border-gray-100 bg-gray-50') : isSelected ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500/20' : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/30 active:scale-[0.99]'}`}>
               {shouldShowResults && <div className={`absolute top-0 left-0 bottom-0 transition-all duration-1000 ease-out ${isCorrect ? 'bg-green-200/50' : isWrongSelection ? 'bg-red-200/50' : isSelected ? 'bg-blue-100/50' : 'bg-gray-200/50'}`} style={{ width: `${percentage}%` }} />}
               <div className={`relative flex justify-between items-center z-10 ${hasImages ? 'min-h-[44px]' : ''}`}>
                 <div className={`flex items-center overflow-hidden ${hasImages ? 'gap-3' : 'gap-3'}`}>
@@ -381,7 +383,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
                       </div>
                     </div>
                   ) : (
-                    <span className={`font-medium text-sm truncate ${isSelected ? 'text-blue-700' : 'text-gray-700'} ${hasImages ? 'py-1' : ''}`}>{option.text}</span>
+                    showOptionNames ? <span className={`font-medium text-sm truncate ${isSelected ? 'text-blue-700' : 'text-gray-700'} ${hasImages ? 'py-1' : ''}`}>{option.text}</span> : null
                   )}
                 </div>
                 <div className="flex items-center gap-2 pl-2 shrink-0">

@@ -2,12 +2,16 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { X, Image as ImageIcon, Plus, Trash2, Globe, Users, AlertCircle, Clock, Calendar, ChevronDown, List, Info, Lock, Camera, Save, BarChart3, Check, ChevronRight, UserCircle, Target, Link2, LayoutGrid, Settings2, Star, MoreHorizontal, ArrowUp, ArrowDown, MessageSquare, ArrowLeft, Tag } from 'lucide-react';
 import { Survey, SurveyType, UserProfile, Option, Group, DraftOption, MediaDraft } from '../types';
+import { useTranslation } from 'react-i18next';
 import { BottomSheet } from './BottomSheet';
 import { RichMentionInput } from './RichMentionInput';
 import { api } from '../services/api';
 import { MediaPicker, MediaPickerHandle } from './media/MediaPicker';
-import { MediaImage } from './media/MediaImage';
 import { cancelTemporaryMediaDrafts, createPersistedMediaDraft, createPersistedMediaDraftFromId, mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds } from '../utils/mediaDrafts';
+import { AnswerTypeSelector, CreatorAnswerType } from './options/AnswerTypeSelector';
+import { OptionImagePicker, OptionImageThumbnail } from './options/OptionImagePicker';
+import { draftOptionHasImage, resolveOptionPresentation } from '../utils/optionPresentation';
+import { RatingScaleQuestion } from './Survey/RatingScaleQuestion';
 
 interface CreatePollScreenProps {
   onClose: () => void;
@@ -53,7 +57,28 @@ const DURATION_OPTIONS = [
 type VisibilityType = 'Public' | 'Groups' | 'Custom Audience' | 'Custom Domain';
 type PollDraftOption = DraftOption & { mediaDrafts: MediaDraft[] };
 
+const createEmptyPollOption = (): PollDraftOption => ({
+  id: `option-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+  text: '',
+  image: undefined,
+  mediaDrafts: [],
+  withFollowUp: false,
+  followUpLabel: ''
+});
+
+const createRatingOptions = (): PollDraftOption[] => [5, 4, 3, 2, 1].map((ratingValue) => ({
+  id: `rate-${ratingValue}`,
+  text: String(ratingValue),
+  image: undefined,
+  mediaDrafts: [],
+  isRating: true,
+  ratingValue,
+  withFollowUp: false,
+  followUpLabel: ''
+}));
+
 export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onSubmit, onSaveDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
+  const { t } = useTranslation();
   const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
   const [selectedGroups, setSelectedGroups] = useState<string[]>(initialGroupId ? [initialGroupId] : []);
   const [isCategorySheetOpen, setIsCategorySheetOpen] = useState(false);
@@ -96,7 +121,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
       alert('Please log in to save a draft');
       return;
     }
-    const allMedia = [...postMedia, ...options.flatMap((option) => option.mediaDrafts)];
+    const allMedia = [...postMedia, ...activeOptionMediaDrafts];
     if (!mediaDraftsAreReady(allMedia) || mediaDraftsHaveErrors(allMedia)) {
       alert('Please finish or remove image uploads before saving.');
       return;
@@ -110,18 +135,10 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
         description: '',
         type: SurveyType.POLL,
         pollChoiceType,
+        optionPresentation: pollChoiceType === 'rating' ? 'text' : optionPresentation,
+        showOptionNames: pollChoiceType === 'rating' ? true : showOptionNames,
         author: { id: userProfile.id, name: userProfile.name, avatar: userProfile.avatar },
-        options: options.map(o => ({
-          id: o.id,
-          text: o.text,
-          votes: 0,
-          image: o.mediaDrafts.length > 0 ? undefined : (o.image || undefined),
-          imageMediaId: readyMediaAssetIds(o.mediaDrafts)[0],
-          isRating: o.isRating || (pollChoiceType === 'rating'),
-          ratingValue: o.ratingValue || 0,
-          withFollowUp: o.withFollowUp,
-          followUpLabel: o.followUpLabel
-        })),
+        options: serializePollOptions(),
         coverImage: postMedia.length > 0 ? undefined : (legacyCoverImage || undefined),
         mediaAssetIds: readyMediaAssetIds(postMedia),
         mediaAspectRatio: postMedia.length > 0 ? mediaAspectRatio : undefined,
@@ -145,6 +162,9 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
 
       try {
         await onSaveDraft(draftData);
+        if (pollChoiceType === 'rating' || optionPresentation === 'text') {
+          await cancelTemporaryMediaDrafts(options.flatMap((option) => option.mediaDrafts));
+        }
       } catch (error) {
         console.error('Failed to save draft:', error);
         alert('Failed to save draft. Please try again.');
@@ -168,6 +188,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
 
   const [title, setTitle] = useState('');
   const [pollChoiceType, setPollChoiceType] = useState<'multiple' | 'rating'>('multiple');
+  const [optionPresentation, setOptionPresentation] = useState<'text' | 'image'>('text');
+  const [showOptionNames, setShowOptionNames] = useState(true);
 
   const [options, setOptions] = useState<PollDraftOption[]>([
     { id: '1', text: '', image: undefined, mediaDrafts: [], withFollowUp: false, followUpLabel: '' },
@@ -242,6 +264,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
       setTitle(combinedPrompt || '');
       setCategory(draft.category || '');
       setPollChoiceType(draft.pollChoiceType || 'multiple');
+      setOptionPresentation(resolveOptionPresentation(draft.optionPresentation, draft.options));
+      setShowOptionNames(draft.showOptionNames !== false);
       const draftVisibility = (draft.targetAudience as VisibilityType) || 'Public';
       setPollVisibility(draftVisibility);
       setSelectedGroups(draftVisibility === 'Groups' ? (draft.targetGroups || []) : []);
@@ -256,7 +280,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
       setMediaAspectRatio(draft.mediaAspectRatio || persistedPostMedia[0]?.aspectRatio);
       setLegacyCoverImage(persistedPostMedia.length > 0 ? null : (draft.coverImage || null));
       setImageLayout(draft.imageLayout || 'vertical');
-      if (draft.options) {
+      if (draft.options && draft.pollChoiceType !== 'rating') {
         setOptions(draft.options.map(o => ({
           id: o.id,
           text: o.text,
@@ -269,6 +293,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
           withFollowUp: o.withFollowUp || false,
           followUpLabel: o.followUpLabel || ''
         })));
+      } else if (draft.pollChoiceType === 'rating') {
+        setOptions([createEmptyPollOption(), createEmptyPollOption()]);
       }
       if (draft.demographics) {
         setSelectedDemographics(draft.demographics);
@@ -346,9 +372,9 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   ];
 
   const handleAddOption = () => {
-    const newOptId = Date.now().toString();
-    setOptions(prev => [...prev, { id: newOptId, text: '', image: undefined, mediaDrafts: [], withFollowUp: false, followUpLabel: '' }]);
-    setFocusedOptionId(newOptId);
+    const option = createEmptyPollOption();
+    setOptions(prev => [...prev, option]);
+    setFocusedOptionId(option.id);
   };
 
   const handleRemoveOption = (id: string) => {
@@ -362,25 +388,38 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
     if (errors.options) setErrors({ ...errors, options: false });
   };
 
-  const handleChoiceTypeChange = (type: 'multiple' | 'rating') => {
-    void cancelTemporaryMediaDrafts(options.flatMap((option) => option.mediaDrafts));
-    setPollChoiceType(type);
-    if (type === 'rating') {
-      setOptions([
-        { id: 'rate-5', text: '5', image: null, mediaDrafts: [], isRating: true, ratingValue: 5, withFollowUp: false, followUpLabel: '' },
-        { id: 'rate-4', text: '4', image: null, mediaDrafts: [], isRating: true, ratingValue: 4, withFollowUp: false, followUpLabel: '' },
-        { id: 'rate-3', text: '3', image: null, mediaDrafts: [], isRating: true, ratingValue: 3, withFollowUp: false, followUpLabel: '' },
-        { id: 'rate-2', text: '2', image: null, mediaDrafts: [], isRating: true, ratingValue: 2, withFollowUp: false, followUpLabel: '' },
-        { id: 'rate-1', text: '1', image: null, mediaDrafts: [], isRating: true, ratingValue: 1, withFollowUp: false, followUpLabel: '' },
-      ]);
-      setAllowMultipleSelection(false);
-      setAllowUserOptions(false);
-    } else {
-      setOptions([
-        { id: '1', text: '', image: null, mediaDrafts: [], withFollowUp: false, followUpLabel: '' },
-        { id: '2', text: '', image: null, mediaDrafts: [], withFollowUp: false, followUpLabel: '' }
-      ]);
+  const handleAnswerTypeChange = (answerType: CreatorAnswerType) => {
+    if (answerType === 'rating') {
+      setPollChoiceType('rating');
+      return;
     }
+    setPollChoiceType('multiple');
+    setOptionPresentation(answerType);
+  };
+
+  const answerType: CreatorAnswerType = pollChoiceType === 'rating' ? 'rating' : optionPresentation;
+  const ratingOptions = useMemo(() => createRatingOptions(), []);
+  const activeOptionMediaDrafts = pollChoiceType === 'multiple' && optionPresentation === 'image'
+    ? options.flatMap((option) => option.mediaDrafts)
+    : [];
+  const imageOptionsAreValid = options.length >= 2 && options.every((option) =>
+    option.text.trim().length > 0 && draftOptionHasImage(option)
+  );
+
+  const serializePollOptions = (): Option[] => {
+    const sourceOptions = pollChoiceType === 'rating' ? ratingOptions : options;
+    const includeImages = pollChoiceType === 'multiple' && optionPresentation === 'image';
+    return sourceOptions.map((option) => ({
+      id: option.id,
+      text: option.text,
+      votes: 0,
+      image: includeImages && option.mediaDrafts.length === 0 ? (option.image || undefined) : undefined,
+      imageMediaId: includeImages ? readyMediaAssetIds(option.mediaDrafts)[0] : undefined,
+      isRating: pollChoiceType === 'rating',
+      ratingValue: pollChoiceType === 'rating' ? option.ratingValue || 0 : 0,
+      withFollowUp: option.withFollowUp,
+      followUpLabel: option.followUpLabel
+    }));
   };
 
   const handleDemographicToggle = (id: string) => {
@@ -424,10 +463,21 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
     }
 
     if (pollChoiceType === 'multiple') {
-      if (options.filter(o => o.text.trim() !== '').length < 2) {
+      if (optionPresentation === 'image' && !imageOptionsAreValid) {
+        newErrors.options = options.length < 2
+          ? t('answerType.minimumImageOptions')
+          : t('answerType.imageAndNameRequired');
+        isValid = false;
+      } else if (optionPresentation === 'text' && options.filter(o => o.text.trim() !== '').length < 2) {
         newErrors.options = "At least 2 options are required";
         isValid = false;
       }
+    }
+
+    const requiredMedia = [...postMedia, ...activeOptionMediaDrafts];
+    if (!mediaDraftsAreReady(requiredMedia) || mediaDraftsHaveErrors(requiredMedia)) {
+      newErrors.media = "Please finish or remove image uploads.";
+      isValid = false;
     }
 
     if (!category) {
@@ -476,18 +526,10 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
         description: '',
         type: SurveyType.POLL,
         pollChoiceType,
+        optionPresentation: pollChoiceType === 'rating' ? 'text' : optionPresentation,
+        showOptionNames: pollChoiceType === 'rating' ? true : showOptionNames,
         author: { id: userProfile.id, name: userProfile.name, avatar: userProfile.avatar },
-        options: options.map(o => ({
-          id: o.id,
-          text: o.text,
-          votes: 0,
-          image: o.mediaDrafts.length > 0 ? undefined : (o.image || undefined),
-          imageMediaId: readyMediaAssetIds(o.mediaDrafts)[0],
-          isRating: o.isRating || (pollChoiceType === 'rating'),
-          ratingValue: o.ratingValue || 0,
-          withFollowUp: o.withFollowUp,
-          followUpLabel: o.followUpLabel
-        })),
+        options: serializePollOptions(),
         coverImage: postMedia.length > 0 ? undefined : (legacyCoverImage || undefined),
         mediaAssetIds: readyMediaAssetIds(postMedia),
         mediaAspectRatio: postMedia.length > 0 ? mediaAspectRatio : undefined,
@@ -506,6 +548,10 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
         expiresAt: getExpiresAt()
       });
 
+      if (pollChoiceType === 'rating' || optionPresentation === 'text') {
+        await cancelTemporaryMediaDrafts(options.flatMap((option) => option.mediaDrafts));
+      }
+
       // Close the creation screen and return to home
       onClose();
     } catch (error) {
@@ -517,12 +563,12 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   };
 
   const selectedOptionForSettings = options.find(o => o.id === settingsOptionId);
-  const allMediaDrafts = [...postMedia, ...options.flatMap((option) => option.mediaDrafts)];
+  const allMediaDrafts = [...postMedia, ...activeOptionMediaDrafts];
   const isPostReady = Boolean(
     !isSubmitting &&
     userProfile?.id &&
     title.trim() &&
-    (pollChoiceType === 'rating' || options.filter(o => o.text.trim() !== '').length >= 2) &&
+    (pollChoiceType === 'rating' || (optionPresentation === 'image' ? imageOptionsAreValid : options.filter(o => o.text.trim() !== '').length >= 2)) &&
     category &&
     (category !== 'Other' || otherCategoryText.trim()) &&
     (visibility !== 'Groups' || selectedGroups.length > 0) &&
@@ -609,40 +655,17 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               </div>
             )}
 
-            {/* Poll Type and Category Grid */}
-            <div className="grid grid-cols-2 gap-4 pt-3 mt-3 border-t border-gray-55/50">
-              {/* Left Column: Poll Type */}
+            {/* Answer Type and Category Grid */}
+            <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-3 pt-3 mt-3 border-t border-gray-55/50">
+              {/* Left Column: Answer Type */}
               <div className="space-y-1.5 text-left font-sans">
                 <div className="flex items-center gap-2 mb-1">
                   <div className="p-1.5 bg-gray-50 rounded-lg text-gray-500 border border-gray-100 shrink-0">
                     <BarChart3 size={12} />
                   </div>
-                  <span className="text-xs font-bold text-gray-800">Poll Type</span>
+                  <span className="text-xs font-bold text-gray-800">{t('answerType.label')}</span>
                 </div>
-                <div className="flex bg-gray-55/30 border border-gray-100 p-0.5 rounded-xl h-[38px] items-center">
-                  <button
-                    type="button"
-                    onClick={() => handleChoiceTypeChange('multiple')}
-                    className={`flex-1 h-full rounded-lg text-[8px] font-black uppercase tracking-wider transition-all ${
-                      pollChoiceType === 'multiple'
-                        ? 'bg-white text-blue-600 border border-blue-500 shadow-xs'
-                        : 'text-gray-400 hover:text-gray-650'
-                    }`}
-                  >
-                    Multiple Choice
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleChoiceTypeChange('rating')}
-                    className={`flex-1 h-full rounded-lg text-[8px] font-black uppercase tracking-wider transition-all ${
-                      pollChoiceType === 'rating'
-                        ? 'bg-white text-blue-600 border border-blue-500 shadow-xs'
-                        : 'text-gray-400 hover:text-gray-650'
-                    }`}
-                  >
-                    Rating
-                  </button>
-                </div>
+                <AnswerTypeSelector value={answerType} onChange={handleAnswerTypeChange} />
               </div>
 
               {/* Right Column: Category */}
@@ -683,7 +706,9 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                 <div className="p-1.5 bg-gray-55/30 rounded-lg text-gray-500 border border-gray-100 shrink-0">
                   <List size={12} />
                 </div>
-                <span className="text-xs font-bold text-gray-800">Options <span className="text-red-500">*</span></span>
+                <span className="text-xs font-bold text-gray-800">
+                  {pollChoiceType === 'rating' ? 'Rating' : <>Options <span className="text-red-500">*</span></>}
+                </span>
                 {errors.options && <span className="text-[10px] font-bold text-red-600 truncate">{errors.options}</span>}
               </div>
 
@@ -732,140 +757,163 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               </div>
             )}
 
-            <div className="space-y-3">
-              {options.map((option, idx) => (
-                <div key={option.id} className="flex items-center gap-2 animate-in fade-in slide-in-from-bottom-1 duration-200">
-                  <span className="text-xs font-black text-gray-300 w-4 text-center shrink-0">{idx + 1}</span>
-                  <div className="flex-1 flex flex-col gap-1.5">
-                    <div className="flex items-center w-full bg-gray-55/5 border border-gray-200 rounded-xl px-2 py-0.5 focus-within:border-blue-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100 transition-all shadow-xs">
-                      {pollChoiceType === 'multiple' && (
-                        <MediaPicker
-                          purpose="OPTION_IMAGE"
-                          value={option.mediaDrafts}
-                          onChange={(mediaDrafts) => setOptions((current) => current.map((item) => item.id === option.id ? {
-                            ...item,
-                            mediaDrafts,
-                            image: mediaDrafts.some((draft) => draft.status === 'ready') ? undefined : item.image,
-                            imageMediaId: readyMediaAssetIds(mediaDrafts)[0]
-                          } : item))}
-                          className="shrink-0"
-                          renderContent={({ open, retry, busy }) => {
-                            const current = option.mediaDrafts[0];
-                            const hasImage = Boolean(current || option.image);
-                            return (
-                              <button
-                                type="button"
-                                onClick={() => current?.status === 'error' ? retry(current.clientId) : open()}
-                                disabled={busy}
-                                className={`relative w-8 h-8 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-dashed transition-all disabled:cursor-wait ${hasImage ? 'border-blue-500' : 'border-gray-200 text-gray-400 hover:text-blue-500'}`}
-                                aria-label={current?.status === 'error' ? 'Retry option image upload' : `Add image to option ${idx + 1}`}
-                                title={current?.status === 'error' ? 'Retry' : 'Add option image'}
-                              >
-                                {current?.previewUrl ? (
-                                  <img src={current.previewUrl} className="w-full h-full object-cover" alt="" />
-                                ) : current?.presentation ? (
-                                  <MediaImage media={current.presentation} className="w-full h-full object-cover" />
-                                ) : option.image ? (
-                                  <img src={option.image} className="w-full h-full object-cover" alt="" />
-                                ) : (
-                                  <Camera size={14} />
-                                )}
-                                {busy && <span className="absolute inset-x-0 bottom-0 h-1 bg-blue-500" />}
-                              </button>
-                            );
-                          }}
-                        />
-                      )}
+            {pollChoiceType === 'rating' ? (
+              <RatingScaleQuestion
+                options={ratingOptions}
+                selectedOptionIds={[]}
+                showResults={false}
+                disabled
+              />
+            ) : optionPresentation === 'image' ? (
+              <OptionImagePicker
+                options={options}
+                onChange={setOptions}
+                createOption={createEmptyPollOption}
+              >
+                {(controls) => (
+                  <div className="space-y-3">
+                    <p className="px-1 text-[10px] font-medium leading-relaxed text-gray-600">
+                      {t('answerType.imageHelper')}
+                    </p>
+                    {!options.some(draftOptionHasImage) && (
+                      <button
+                        type="button"
+                        onClick={controls.openBulk}
+                        disabled={!controls.canSelect}
+                        className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-blue-300 bg-blue-50/50 px-3 text-xs font-bold text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                      >
+                        <ImageIcon size={16} aria-hidden="true" />
+                        {t('answerType.addImages')}
+                      </button>
+                    )}
 
-                      {pollChoiceType === 'rating' ? (
-                        <div className="flex-1 px-2.5 py-1.5 flex items-center gap-2">
-                          <div className="flex text-yellow-500">
-                            {Array.from({ length: option.ratingValue || 0 }).map((_, i) => (
-                              <Star key={i} size={14} fill="currentColor" />
-                            ))}
+                    {options.map((option, idx) => (
+                      <div key={option.id} className="flex items-center gap-2 animate-in fade-in slide-in-from-bottom-1 duration-200">
+                        <span className="w-4 shrink-0 text-center text-xs font-black text-gray-400">{idx + 1}</span>
+                        <div className="flex-1 flex flex-col gap-1.5">
+                          <div className="flex min-h-[58px] w-full items-center gap-2 rounded-xl border border-gray-200 bg-gray-55/5 px-2 py-1 focus-within:border-blue-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100 transition-all shadow-xs">
+                            <OptionImageThumbnail
+                              optionId={option.id}
+                              optionIndex={idx}
+                              draft={option.mediaDrafts[0]}
+                              legacyImage={option.image}
+                              controls={controls}
+                            />
+                            <input
+                              type="text"
+                              value={option.text}
+                              maxLength={80}
+                              autoFocus={focusedOptionId === option.id}
+                              onChange={(event) => handleOptionChange(option.id, event.target.value)}
+                              onBlur={() => focusedOptionId === option.id && setFocusedOptionId(null)}
+                              placeholder={t('answerType.optionName', { number: idx + 1 })}
+                              aria-label={t('answerType.optionName', { number: idx + 1 })}
+                              className="min-w-0 flex-1 bg-transparent px-1 py-1.5 text-sm font-semibold text-gray-900 placeholder-gray-500 focus:outline-none"
+                            />
+                            <span className="me-1 whitespace-nowrap text-[9px] text-gray-500">{option.text.length}/80</span>
                           </div>
+                          {option.withFollowUp && (
+                            <div className="flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-2 py-1.5 text-[10px]">
+                              <MessageSquare size={10} className="text-blue-500" />
+                              <span className="truncate font-bold text-blue-700">Follow-up: {option.followUpLabel || "Please explain..."}</span>
+                            </div>
+                          )}
                         </div>
-                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setSettingsOptionId(option.id)}
+                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-gray-500 hover:text-gray-700"
+                          aria-label={`Option ${idx + 1} menu`}
+                        >
+                          <MoreHorizontal size={18} />
+                        </button>
+                      </div>
+                    ))}
+
+                    {options.some(draftOptionHasImage) && (
+                      <button
+                        type="button"
+                        onClick={controls.openBulk}
+                        disabled={!controls.canSelect}
+                        className="flex min-h-11 items-center gap-2 px-1 text-xs font-bold text-blue-600 hover:text-blue-700 disabled:opacity-50"
+                      >
+                        <Plus size={15} aria-hidden="true" />
+                        {t('answerType.addMoreImages')}
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={showOptionNames}
+                      onClick={() => setShowOptionNames((current) => !current)}
+                      className="flex min-h-11 w-full items-center justify-between gap-3 border-t border-gray-100 px-1 pt-3 text-left"
+                    >
+                      <span className="text-xs font-semibold text-gray-700">{t('answerType.showNames')}</span>
+                      <span className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${showOptionNames ? 'bg-blue-600' : 'bg-gray-300'}`} aria-hidden="true">
+                        <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-[inset-inline-start] ${showOptionNames ? 'start-6' : 'start-1'}`} />
+                      </span>
+                    </button>
+                  </div>
+                )}
+              </OptionImagePicker>
+            ) : (
+              <div className="space-y-3">
+                {options.map((option, idx) => (
+                  <div key={option.id} className="flex items-center gap-2 animate-in fade-in slide-in-from-bottom-1 duration-200">
+                    <span className="w-4 shrink-0 text-center text-xs font-black text-gray-400">{idx + 1}</span>
+                    <div className="flex-1 flex flex-col gap-1.5">
+                      <div className="flex w-full items-center rounded-xl border border-gray-200 bg-gray-55/5 px-2 py-0.5 shadow-xs transition-all focus-within:border-blue-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100">
                         <input
                           type="text"
                           value={option.text}
                           maxLength={80}
                           autoFocus={focusedOptionId === option.id}
-                          onChange={(e) => handleOptionChange(option.id, e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
+                          onChange={(event) => handleOptionChange(option.id, event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault();
                               handleAddOption();
                             }
                           }}
-                          onBlur={() => {
-                            if (focusedOptionId === option.id) setFocusedOptionId(null);
-                          }}
+                          onBlur={() => focusedOptionId === option.id && setFocusedOptionId(null)}
                           placeholder={`Option ${idx + 1}`}
-                          className="flex-1 px-2.5 py-1.5 bg-transparent text-sm font-semibold focus:outline-none text-gray-900 placeholder-gray-400"
+                          className="min-w-0 flex-1 bg-transparent px-2.5 py-1.5 text-sm font-semibold text-gray-900 placeholder-gray-500 focus:outline-none"
                         />
-                      )}
-
-                      {pollChoiceType !== 'rating' && (
-                        <span className="text-[9px] text-gray-450 mr-1.5 whitespace-nowrap">{option.text.length}/80</span>
-                      )}
-
-                      {pollChoiceType === 'multiple' && (option.image || option.mediaDrafts.length > 0) && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void cancelTemporaryMediaDrafts(option.mediaDrafts);
-                            setOptions((current) => current.map((item) => item.id === option.id ? { ...item, image: undefined, imageMediaId: undefined, mediaDrafts: [] } : item));
-                          }}
-                          className="p-1.5 text-gray-300 hover:text-red-500 rounded-full flex items-center justify-center transition-colors mr-1"
-                          aria-label={`Remove image from option ${idx + 1}`}
-                          title="Remove option image"
-                        >
-                          <X size={14} strokeWidth={3} />
-                        </button>
-                      )}
-                    </div>
-
-                    {option.withFollowUp && (
-                      <div className="px-2 py-1.5 bg-blue-50 border border-blue-100 rounded-lg text-[10px] flex items-center gap-2">
-                        <MessageSquare size={10} className="text-blue-500" />
-                        <span className="font-bold text-blue-700 truncate">Follow-up: {option.followUpLabel || "Please explain..."}</span>
+                        <span className="me-1.5 whitespace-nowrap text-[9px] text-gray-500">{option.text.length}/80</span>
                       </div>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setSettingsOptionId(option.id)}
-                    className="p-2 text-gray-400 hover:text-gray-650 rounded-full flex items-center justify-center shrink-0 transition-colors"
-                  >
-                    <MoreHorizontal size={18} />
-                  </button>
-                </div>
-              ))}
-
-              {/* Interactive Placeholder / Auto-Add Option */}
-              {pollChoiceType === 'multiple' && (
-                <div className="flex items-center gap-2 opacity-50 hover:opacity-80 focus-within:opacity-100 transition-opacity duration-200">
-                  <span className="text-xs font-black text-gray-300 w-4 text-center shrink-0">{options.length + 1}</span>
-                  <div className="flex-1 flex flex-col gap-2">
-                    <div className="flex items-center w-full bg-gray-50/30 border border-dashed border-gray-200 rounded-xl px-2 py-0.5">
-                      <button disabled className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border border-dashed border-gray-200 text-gray-300">
-                        <Camera size={14} />
-                      </button>
-                      <input
-                        type="text"
-                        placeholder="Add option..."
-                        className="flex-1 px-2.5 py-1.5 bg-transparent text-sm font-semibold focus:outline-none text-gray-500 placeholder-gray-500 cursor-pointer"
-                        onFocus={handleAddOption}
-                      />
+                      {option.withFollowUp && (
+                        <div className="flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-2 py-1.5 text-[10px]">
+                          <MessageSquare size={10} className="text-blue-500" />
+                          <span className="truncate font-bold text-blue-700">Follow-up: {option.followUpLabel || "Please explain..."}</span>
+                        </div>
+                      )}
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setSettingsOptionId(option.id)}
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-gray-500 hover:text-gray-700"
+                      aria-label={`Option ${idx + 1} menu`}
+                    >
+                      <MoreHorizontal size={18} />
+                    </button>
                   </div>
-                  <button disabled className="p-2 text-gray-200 rounded-full flex items-center justify-center shrink-0">
-                    <MoreHorizontal size={18} />
-                  </button>
+                ))}
+
+                <div className="flex items-center gap-2 opacity-60 transition-opacity hover:opacity-90 focus-within:opacity-100">
+                  <span className="w-4 shrink-0 text-center text-xs font-black text-gray-400">{options.length + 1}</span>
+                  <div className="flex-1 rounded-xl border border-dashed border-gray-200 bg-gray-50/30 px-2 py-0.5">
+                    <input
+                      type="text"
+                      placeholder="Add option..."
+                      className="w-full cursor-pointer bg-transparent px-2.5 py-1.5 text-sm font-semibold text-gray-600 placeholder-gray-500 focus:outline-none"
+                      onFocus={handleAddOption}
+                    />
+                  </div>
+                  <span className="h-10 w-10 shrink-0" />
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </section>
 
 

@@ -52,3 +52,45 @@ test('suppresses migrated legacy Base64 values from serialized post media', () =
   assert.equal(serialized.questions[0].imageMediaId, 'question-media-id');
   assert.equal(serialized.questions[0].options[0].imageMediaId, 'option-media-id');
 });
+
+test('redacts hidden image-option labels for viewers but preserves them for the creator', () => {
+  const post = {
+    id: 'post-id',
+    status: 'PUBLISHED',
+    authorId: 'creator-id',
+    optionPresentation: 'image',
+    showOptionNames: false,
+    questions: [{
+      id: 'question-id',
+      options: [{ id: 'option-id', text: 'Internal option name', image: 'https://example.com/option.webp' }]
+    }],
+    sections: [{
+      id: 'section-id',
+      questions: [{
+        id: 'section-question-id',
+        optionPresentation: 'image',
+        showOptionNames: false,
+        options: [{
+          id: 'section-option-id',
+          text: 'Internal section option name',
+          imageMedia: {
+            id: 'media-id',
+            accessScope: 'RESTRICTED',
+            aspectRatio: 1,
+            altText: 'Internal section option name',
+            variants: [{ kind: 'SMALL', isPublic: false, width: 100, height: 100 }]
+          }
+        }]
+      }]
+    }]
+  };
+
+  const publicPost = serializePostMediaRecord(post, 'viewer-id');
+  const creatorPost = serializePostMediaRecord(post, 'creator-id');
+
+  assert.equal(publicPost.questions[0].options[0].text, '');
+  assert.equal(publicPost.sections[0].questions[0].options[0].text, '');
+  assert.equal(publicPost.sections[0].questions[0].options[0].imageMedia.altText, null);
+  assert.equal(creatorPost.questions[0].options[0].text, 'Internal option name');
+  assert.equal(creatorPost.sections[0].questions[0].options[0].text, 'Internal section option name');
+});

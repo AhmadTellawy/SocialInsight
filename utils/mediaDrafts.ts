@@ -46,11 +46,15 @@ export const mediaDraftsHaveErrors = (drafts: MediaDraft[]): boolean => drafts.s
 );
 
 export const cancelTemporaryMediaDrafts = async (drafts: MediaDraft[]): Promise<void> => {
-  drafts.forEach((draft) => {
+  const allDrafts = Array.from(new Map<string, MediaDraft>(
+    drafts.flatMap((draft) => draft.replacedDraft ? [draft, draft.replacedDraft] : [draft])
+      .map((draft): [string, MediaDraft] => [draft.clientId, draft])
+  ).values());
+  allDrafts.forEach((draft) => {
     mediaUploadRegistry.cancel(draft.clientId);
     if (draft.previewUrl.startsWith('blob:')) URL.revokeObjectURL(draft.previewUrl);
   });
-  const ids = drafts
+  const ids = allDrafts
     .filter((draft) => draft.assetId && !draft.persisted)
     .map((draft) => draft.assetId!);
   await Promise.all(ids.map((id) => mediaApi.cancel(id).catch(() => undefined)));

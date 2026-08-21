@@ -918,7 +918,7 @@ export const getGroupPosts = async (req: Request, res: Response) => {
 
         // Note: Mapping logic to parse JSONs and formats
         const mappedPosts = posts.map((rawPost: any) => {
-            const s = serializePostMediaRecord(rawPost);
+            const s = serializePostMediaRecord(rawPost, currentUserId);
             const actualResponse = s.sharedFrom ? s.sharedFrom.responses?.[0] : s.responses?.[0];
             const userAnswers = actualResponse?.answers || [];
             
@@ -1331,7 +1331,7 @@ export const getPendingPosts = async (req: Request, res: Response) => {
             orderBy: { createdAt: 'desc' }
         });
 
-        res.json(pendingPosts.map(serializePostMediaRecord));
+        res.json(pendingPosts.map((post) => serializePostMediaRecord(post, currentUserId)));
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Failed to get pending posts queue' });

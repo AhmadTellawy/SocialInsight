@@ -2,13 +2,17 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { X, Plus, Trash2, Globe, Users, ChevronDown, Clock, Calendar, Type, ListChecks, ImageIcon, Settings, Info, ArrowRight, Camera, Lock, AlertCircle, ChevronRight, ChevronLeft, MoreHorizontal, Layout, Terminal, Navigation, Sparkles, GripVertical, Save, FileText, BarChart3, UserCircle, Heart, Fingerprint, MapPin, Briefcase, Check, GraduationCap, Home, Smile, Building2, User, MessageSquare, ShieldCheck, Link2, Target, MoreHorizontal as MoreHorizontalIcon, ArrowUp, ArrowDown, Star, List, GalleryHorizontalEnd, CornerDownRight, PowerOff, CheckCircle2, ArrowLeft, Tag } from 'lucide-react';
 import { Survey, SurveyType, UserProfile, Group, MediaDraft } from '../types';
+import { useTranslation } from 'react-i18next';
 import { BottomSheet } from './BottomSheet';
 import { RichMentionInput } from './RichMentionInput';
 import { api } from '../services/api';
 import { MediaPicker, MediaPickerHandle } from './media/MediaPicker';
 import { MediaImage } from './media/MediaImage';
 import { cancelTemporaryMediaDrafts, createPersistedMediaDraft, mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds } from '../utils/mediaDrafts';
-import { collectSectionMedia, hydrateSections, serializeSections, SurveyOptionDraft, SurveyQuestionDraft, SurveySectionDraft } from '../utils/sectionMediaDrafts';
+import { collectInactiveSectionMedia, collectSectionMedia, hydrateSections, serializeSections, SurveyOptionDraft, SurveyQuestionDraft, SurveySectionDraft } from '../utils/sectionMediaDrafts';
+import { AnswerTypeSelector } from './options/AnswerTypeSelector';
+import { OptionImagePicker } from './options/OptionImagePicker';
+import { draftOptionHasImage, resolveOptionPresentation } from '../utils/optionPresentation';
 
 interface CreateQuizModalProps {
   isOpen: boolean;
@@ -53,6 +57,8 @@ const INITIAL_SECTIONS: SurveySectionDraft[] = [
         isRequired: true,
         weight: 10,
         imageLayout: 'vertical',
+        optionPresentation: 'text',
+        showOptionNames: true,
         mediaDrafts: [],
         options: [
           { id: `opt-quiz-init-1`, text: '', votes: 0, mediaDrafts: [] },
@@ -65,7 +71,15 @@ const INITIAL_SECTIONS: SurveySectionDraft[] = [
 
 type VisibilityType = 'Public' | 'Followers' | 'Groups' | 'Custom Audience' | 'Custom Domain';
 
+const createQuizOption = (): SurveyOptionDraft => ({
+  id: `o-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+  text: '',
+  votes: 0,
+  mediaDrafts: []
+});
+
 export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClose, onSubmit, onSaveDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
+  const { t } = useTranslation();
   const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
   const [isVisibilitySheetOpen, setIsVisibilitySheetOpen] = useState(false);
   const [isResultVisibilitySheetOpen, setIsResultVisibilitySheetOpen] = useState(false);
@@ -263,7 +277,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
   const handleDiscard = async () => {
     await Promise.all([
       cancelTemporaryMediaDrafts(postMedia),
-      cancelTemporaryMediaDrafts(collectSectionMedia(sections))
+      cancelTemporaryMediaDrafts(collectSectionMedia(sections, true))
     ]);
     if (!userProfile?.id) {
       onClose();
@@ -307,10 +321,21 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
           hasQuestionError = true;
         }
         if (q.type === 'multiple_choice') {
-          const filledOptions = q.options?.filter(o => o.text.trim() !== '');
-          if ((filledOptions?.length || 0) < 2) {
-            errorList.push(`Question ${qNum}: At least 2 options are required.`);
-            hasQuestionError = true;
+          const presentation = resolveOptionPresentation(q.optionPresentation, q.options);
+          if (presentation === 'image') {
+            const imageOptionsValid = (q.options?.length || 0) >= 2 && q.options?.every((option) =>
+              option.text.trim().length > 0 && draftOptionHasImage(option)
+            );
+            if (!imageOptionsValid) {
+              errorList.push(`Question ${qNum}: Every image option needs an image and a name.`);
+              hasQuestionError = true;
+            }
+          } else {
+            const filledOptions = q.options?.filter(o => o.text.trim() !== '');
+            if ((filledOptions?.length || 0) < 2) {
+              errorList.push(`Question ${qNum}: At least 2 options are required.`);
+              hasQuestionError = true;
+            }
           }
           if (!q.correctOptionId) {
             errorList.push(`Question ${qNum}: A correct answer must be selected.`);
@@ -372,6 +397,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
       try {
         setIsSubmitting(true);
         await onSaveDraft(draftData);
+        await cancelTemporaryMediaDrafts(collectInactiveSectionMedia(sections));
         onClose();
       } catch (error) {
         console.error('Failed to save quiz draft:', error);
@@ -430,6 +456,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
         author: { id: userProfile.id || "", name: userProfile.name, avatar: userProfile.avatar },
         createdAt: new Date().toISOString()
       });
+      await cancelTemporaryMediaDrafts(collectInactiveSectionMedia(sections));
       onClose();
     } catch (error) {
       console.error('Failed to publish quiz:', error);
@@ -445,7 +472,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
     setSections([...sections, {
       id: newId, title: '',
       questions: [{
-        id: newQId, text: '', type: 'multiple_choice', isRequired: true, weight: 10, imageLayout: 'vertical',
+        id: newQId, text: '', type: 'multiple_choice', isRequired: true, weight: 10, imageLayout: 'vertical', optionPresentation: 'text', showOptionNames: true,
         mediaDrafts: [],
         options: [{ id: `o1-${Date.now()}`, text: '', votes: 0, mediaDrafts: [] }, { id: `o2-${Date.now()}`, text: '', votes: 0, mediaDrafts: [] }]
       }]
@@ -455,13 +482,12 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
   };
 
   const handleAddQuizOption = (secId: string, qId: string) => {
-    const newOptId = `o-${Date.now()}`;
-    const newOpt: SurveyOptionDraft = { id: newOptId, text: '', votes: 0, mediaDrafts: [] };
+    const newOpt = createQuizOption();
     const section = sections.find(s => s.id === secId);
     const question = section?.questions.find(qu => qu.id === qId);
     if (question) {
       updateQuestion(secId, qId, { options: [...(question.options || []), newOpt] });
-      setFocusedOptionId(newOptId);
+      setFocusedOptionId(newOpt.id);
     }
   };
 
@@ -699,6 +725,8 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                           isRequired: true,
                           weight: 10,
                           imageLayout: 'vertical',
+                          optionPresentation: 'text',
+                          showOptionNames: true,
                           mediaDrafts: [],
                           options: [
                             { id: `o1-${Date.now()}`, text: '', votes: 0, mediaDrafts: [] },
@@ -718,6 +746,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                 {activeQuestionId && (() => {
                   const q = activeSection.questions.find(qu => qu.id === activeQuestionId);
                   if (!q) return null;
+                  const optionPresentation = resolveOptionPresentation(q.optionPresentation, q.options);
 
                   return (
                     <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-4 shadow-sm">
@@ -783,6 +812,15 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                       </div>
 
 
+                      <div className="space-y-2 pt-2">
+                        <label className="block px-1 text-[10px] font-black uppercase tracking-widest text-gray-600">{t('answerType.label')}</label>
+                        <AnswerTypeSelector
+                          value={optionPresentation}
+                          modes={['text', 'image']}
+                          accent="purple"
+                          onChange={(value) => value !== 'rating' && updateQuestion(activeSection.id, q.id, { optionPresentation: value })}
+                        />
+                      </div>
 
                       {q.type === 'multiple_choice' && (
                         <div className="space-y-3 pt-2 border-t border-gray-50">
@@ -790,6 +828,33 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                             <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Options (Select Correct)</span>
                             {!q.correctOptionId && <span className="text-[9px] font-bold text-red-500 animate-pulse">Required: Select correct answer</span>}
                           </div>
+                          {optionPresentation === 'image' && (
+                            <OptionImagePicker
+                              options={q.options || []}
+                              onChange={(options) => updateQuestion(activeSection.id, q.id, { options })}
+                              createOption={createQuizOption}
+                            >
+                              {(controls) => (
+                                <div className="space-y-3">
+                                  <p className="px-1 text-[10px] font-medium leading-relaxed text-gray-600">{t('answerType.imageHelper')}</p>
+                                  <button type="button" onClick={controls.openBulk} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-purple-300 bg-purple-50/50 px-3 text-xs font-bold text-purple-700">
+                                    <ImageIcon size={16} aria-hidden="true" />
+                                    {q.options?.some(draftOptionHasImage) ? t('answerType.addMoreImages') : t('answerType.addImages')}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    role="switch"
+                                    aria-checked={q.showOptionNames !== false}
+                                    onClick={() => updateQuestion(activeSection.id, q.id, { showOptionNames: q.showOptionNames === false })}
+                                    className="flex min-h-11 w-full items-center justify-between gap-3 px-1 text-left"
+                                  >
+                                    <span className="text-xs font-semibold text-gray-700">{t('answerType.showNames')}</span>
+                                    <span className={`relative h-6 w-11 shrink-0 rounded-full ${q.showOptionNames !== false ? 'bg-purple-600' : 'bg-gray-300'}`} aria-hidden="true"><span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm ${q.showOptionNames !== false ? 'start-6' : 'start-1'}`} /></span>
+                                  </button>
+                                </div>
+                              )}
+                            </OptionImagePicker>
+                          )}
                           {q.options?.map((opt, oIdx) => {
                             const isCorrect = q.correctOptionId === opt.id;
                             return (
@@ -802,7 +867,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                                     <CheckCircle2 size={18} strokeWidth={3} />
                                   </button>
                                   <div className={`flex-1 flex items-center bg-gray-50 rounded-xl px-1 py-1 border transition-all shadow-sm ${isCorrect ? 'border-green-200 ring-2 ring-green-50 bg-green-50/20' : 'border-transparent focus-within:border-purple-200 focus-within:bg-white'}`}>
-                                    <MediaPicker
+                                    {optionPresentation === 'image' && <MediaPicker
                                       purpose="OPTION_IMAGE"
                                       value={opt.mediaDrafts}
                                       onChange={(mediaDrafts) => updateOption(activeSection.id, q.id, opt.id, {
@@ -811,15 +876,15 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                                         imageMediaId: readyMediaAssetIds(mediaDrafts)[0]
                                       })}
                                       className="mr-1 shrink-0"
-                                      renderContent={({ open, retry, busy }) => {
+                                      renderContent={({ open, replace, retry, busy }) => {
                                         const current = opt.mediaDrafts[0];
                                         const hasImage = Boolean(current || opt.image);
                                         return (
                                           <button
                                             type="button"
-                                            onClick={() => current?.status === 'error' ? retry(current.clientId) : open()}
+                                            onClick={() => current?.status === 'error' ? retry(current.clientId) : current ? replace(current.clientId) : open()}
                                             disabled={busy}
-                                            className={`relative w-10 h-10 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-dashed transition-all disabled:cursor-wait ${hasImage ? 'border-purple-500' : 'border-gray-200 text-gray-400 hover:text-purple-500'}`}
+                                            className={`relative w-12 h-12 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-dashed transition-all disabled:cursor-wait ${hasImage ? 'border-purple-500' : 'border-gray-200 text-gray-400 hover:text-purple-500'}`}
                                             aria-label={current?.status === 'error' ? 'Retry option image upload' : `Add image to option ${oIdx + 1}`}
                                             title={current?.status === 'error' ? 'Retry' : 'Add option image'}
                                           >
@@ -836,7 +901,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                                           </button>
                                         );
                                       }}
-                                    />
+                                    />}
                                     <input
                                       type="text"
                                       value={opt.text}
@@ -856,7 +921,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                                       className="flex-1 text-xs font-semibold p-2 bg-transparent focus:outline-none placeholder-gray-400"
                                     />
                                     <span className="text-[9px] text-gray-500 mr-1.5 whitespace-nowrap">{opt.text.length}/80</span>
-                                    {(opt.image || opt.mediaDrafts.length > 0) && (
+                                    {optionPresentation === 'image' && (opt.image || opt.mediaDrafts.length > 0) && (
                                       <button
                                         type="button"
                                         onClick={() => {
@@ -881,9 +946,9 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                               <CheckCircle2 size={18} />
                             </button>
                             <div className="flex-1 flex items-center bg-gray-50/50 border border-dashed border-gray-200 rounded-xl px-1 py-1">
-                              <button disabled className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border border-dashed border-gray-200 text-gray-300 mr-1">
+                              {optionPresentation === 'image' && <button disabled className="w-12 h-12 rounded-lg flex items-center justify-center shrink-0 border border-dashed border-gray-200 text-gray-300 mr-1">
                                 <Camera size={16} />
-                              </button>
+                              </button>}
                               <input
                                 type="text"
                                 placeholder="Add option..."
@@ -1436,7 +1501,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
           <div className="space-y-4 py-4 px-2">
             <button disabled={activeSectionIndex === 0} onClick={() => { moveSection(activeSection.id, 'up'); setIsSectionSettingsSheetOpen(false); }} className="w-full flex items-center gap-4 p-4 rounded-2xl border hover:bg-gray-50 disabled:opacity-30"><div className="p-2.5 rounded-xl bg-gray-100 text-gray-500"><ArrowUp size={20} /></div><span className="font-bold text-sm">Move Up</span></button>
             <button disabled={activeSectionIndex === sections.length - 1} onClick={() => { moveSection(activeSection.id, 'down'); setIsSectionSettingsSheetOpen(false); }} className="w-full flex items-center gap-4 p-4 rounded-2xl border hover:bg-gray-50 disabled:opacity-30"><div className="p-2.5 rounded-xl bg-gray-100 text-gray-500"><ArrowDown size={20} /></div><span className="font-bold text-sm">Move Down</span></button>
-            <button disabled={sections.length <= 1} onClick={() => { void cancelTemporaryMediaDrafts(collectSectionMedia([activeSection])); setSections(sections.filter(s => s.id !== activeSection.id)); setIsSectionSettingsSheetOpen(false); }} className="w-full flex items-center gap-4 p-4 rounded-2xl border border-red-100 bg-red-50/30 text-red-600 disabled:opacity-30"><div className="p-2.5 rounded-xl bg-red-100 text-red-600"><Trash2 size={20} /></div><span className="font-bold text-sm">Delete Section</span></button>
+            <button disabled={sections.length <= 1} onClick={() => { void cancelTemporaryMediaDrafts(collectSectionMedia([activeSection], true)); setSections(sections.filter(s => s.id !== activeSection.id)); setIsSectionSettingsSheetOpen(false); }} className="w-full flex items-center gap-4 p-4 rounded-2xl border border-red-100 bg-red-50/30 text-red-600 disabled:opacity-30"><div className="p-2.5 rounded-xl bg-red-100 text-red-600"><Trash2 size={20} /></div><span className="font-bold text-sm">Delete Section</span></button>
             <button onClick={() => setIsSectionSettingsSheetOpen(false)} className="w-full mt-4 py-4 bg-gray-900 text-white rounded-2xl font-black uppercase tracking-widest text-[10px]">Done</button>
           </div>
         )}

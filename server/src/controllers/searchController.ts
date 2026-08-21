@@ -82,7 +82,7 @@ export const searchAll = async (req: Request, res: Response) => {
         });
 
         res.json({
-            surveys: posts.map(serializePostMediaRecord),
+            surveys: posts.map((post) => serializePostMediaRecord(post, viewerId)),
             people: users.map((user) => serializeUserMediaRecord(user)),
             groups: groups.map((group) => serializeGroupMediaRecord(group)),
             categories: Array.from(categoriesSet)

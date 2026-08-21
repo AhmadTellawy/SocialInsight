@@ -17,7 +17,7 @@ export const MediaImage: React.FC<MediaImageProps> = ({
   fallbackSrc,
   fallback,
   eager = false,
-  alt = '',
+  alt,
   sizes,
   onError,
   ...imageProps
@@ -86,7 +86,7 @@ export const MediaImage: React.FC<MediaImageProps> = ({
       sizes={sizes}
       width={resolved.width || undefined}
       height={resolved.height || undefined}
-      alt={alt || resolved.altText || ''}
+      alt={alt ?? resolved.altText ?? ''}
       loading={eager ? 'eager' : 'lazy'}
       fetchPriority={eager ? 'high' : 'auto'}
       decoding="async"

@@ -33,8 +33,10 @@ export type MediaPickerHandle = {
 export type MediaPickerControls = {
   open: () => void;
   edit: (clientId: string) => void;
+  replace: (clientId: string) => void;
   retry: (clientId: string) => void;
   remove: (clientId: string) => void;
+  isBusy: (clientId: string) => boolean;
   canSelect: boolean;
   busy: boolean;
 };
@@ -127,7 +129,9 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
   const valuesRef = useRef(value);
   const previewUrls = useRef(new Set<string>());
   const replacedPersistedDrafts = useRef<MediaDraft[] | null>(null);
+  const pendingReplacements = useRef(new Map<string, MediaDraft>());
   const [activeEditorId, setActiveEditorId] = useState<string | null>(null);
+  const [replacementTargetId, setReplacementTargetId] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -137,7 +141,10 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
 
   useImperativeHandle(ref, () => ({
     open: () => {
-      if (!disabled) inputRef.current?.click();
+      if (!disabled) {
+        setReplacementTargetId(null);
+        inputRef.current?.click();
+      }
     }
   }), [disabled]);
 
@@ -163,6 +170,22 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
   const continueEditing = (excludingId: string): void => {
     const next = valuesRef.current.find((draft) => draft.clientId !== excludingId && draft.status === 'editing');
     setActiveEditorId(next?.clientId || null);
+  };
+
+  const releaseTransientDraft = (draft: MediaDraft): void => {
+    mediaUploadRegistry.cancel(draft.clientId);
+    if (draft.assetId && !draft.persisted) void mediaApi.cancel(draft.assetId).catch(() => undefined);
+    if (draft.previewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(draft.previewUrl);
+      previewUrls.current.delete(draft.previewUrl);
+    }
+  };
+
+  const completePendingReplacement = (draft: MediaDraft): void => {
+    const replacedDraft = pendingReplacements.current.get(draft.clientId) || draft.replacedDraft;
+    if (!replacedDraft) return;
+    if (!replacedDraft.persisted) releaseTransientDraft(replacedDraft);
+    pendingReplacements.current.delete(draft.clientId);
   };
 
   const startUpload = (draft: MediaDraft, crop: MediaCropSelection): void => {
@@ -199,8 +222,11 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
             aspectRatio: result.aspectRatio,
             width: result.width,
             height: result.height
-          }
+          },
+          replacesClientId: undefined,
+          replacedDraft: undefined
         });
+        completePendingReplacement(draft);
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') return;
         if (!mediaUploadRegistry.isActive(draft.clientId, controller)) return;
@@ -215,18 +241,14 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
     });
   };
 
-  const releaseTransientDraft = (draft: MediaDraft): void => {
-    mediaUploadRegistry.cancel(draft.clientId);
-    if (draft.assetId && !draft.persisted) void mediaApi.cancel(draft.assetId).catch(() => undefined);
-    if (draft.previewUrl.startsWith('blob:')) {
-      URL.revokeObjectURL(draft.previewUrl);
-      previewUrls.current.delete(draft.previewUrl);
-    }
-  };
-
   const addFiles = async (files: File[]): Promise<void> => {
     setValidationError(null);
-    const capacity = multiple ? Math.max(0, maxFiles - valuesRef.current.length) : 1;
+    const replacementTarget = replacementTargetId
+      ? valuesRef.current.find((draft) => draft.clientId === replacementTargetId)
+      : undefined;
+    const capacity = replacementTarget
+      ? (multiple ? Math.max(1, maxFiles - valuesRef.current.length + 1) : 1)
+      : multiple ? Math.max(0, maxFiles - valuesRef.current.length) : 1;
     if (files.length > capacity) {
       setValidationError(t('media.tooMany', { max: maxFiles, defaultValue: `You can add up to ${maxFiles} images.` }));
     }
@@ -274,7 +296,18 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
     }
     if (drafts.length === 0) return;
     if (purpose === 'POST' && valuesRef.current.length === 0) onAspectRatioChange?.(drafts[0].aspectRatio);
-    if (multiple) {
+    if (replacementTarget) {
+      const [replacement, ...additionalDrafts] = drafts;
+      replacement.replacesClientId = replacementTarget.clientId;
+      replacement.replacedDraft = replacementTarget;
+      pendingReplacements.current.set(replacement.clientId, replacementTarget);
+      publish([
+        ...valuesRef.current.map((draft) => draft.clientId === replacementTarget.clientId ? replacement : draft),
+        ...additionalDrafts
+      ]);
+      setReplacementTargetId(null);
+      setActiveEditorId(replacement.clientId);
+    } else if (multiple) {
       publish([...valuesRef.current, ...drafts]);
     } else {
       if (!replacedPersistedDrafts.current) {
@@ -289,6 +322,15 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
 
   const removeDraft = (draft: MediaDraft, restoreReplacement = false): void => {
     if (!draft.persisted) releaseTransientDraft(draft);
+    const pendingReplacement = pendingReplacements.current.get(draft.clientId) || draft.replacedDraft;
+    if (pendingReplacement) {
+      pendingReplacements.current.delete(draft.clientId);
+      publish(valuesRef.current.map((item) => item.clientId === draft.clientId
+        ? { ...pendingReplacement, replacesClientId: draft.clientId, replacedDraft: undefined }
+        : item));
+      if (activeEditorId === draft.clientId) continueEditing(draft.clientId);
+      return;
+    }
     const replacement = !multiple && restoreReplacement ? replacedPersistedDrafts.current : null;
     publish(replacement || valuesRef.current.filter((item) => item.clientId !== draft.clientId));
     if (!replacement || restoreReplacement) replacedPersistedDrafts.current = null;
@@ -311,8 +353,11 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
             status: 'ready',
             progress: 100,
             aspectRatio: result.aspectRatio,
-            presentation: { id: result.id, access: 'RESTRICTED', aspectRatio: result.aspectRatio, width: result.width, height: result.height }
+            presentation: { id: result.id, access: 'RESTRICTED', aspectRatio: result.aspectRatio, width: result.width, height: result.height },
+            replacesClientId: undefined,
+            replacedDraft: undefined
           });
+          completePendingReplacement(draft);
         } catch (error) {
           if (!mediaUploadRegistry.isActive(draft.clientId, controller)) return;
           patchDraft(draft.clientId, { status: 'error', error: error instanceof Error ? error.message : t('media.processingFailed', { defaultValue: 'Image processing failed.' }) });
@@ -329,8 +374,16 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
   const canAdd = !disabled && value.length < maxFiles;
   const canSelect = !disabled && (multiple ? value.length < maxFiles : true);
   const controls: MediaPickerControls = {
-    open: () => inputRef.current?.click(),
+    open: () => {
+      setReplacementTargetId(null);
+      inputRef.current?.click();
+    },
     edit: (clientId) => setActiveEditorId(clientId),
+    replace: (clientId) => {
+      if (disabled) return;
+      setReplacementTargetId(clientId);
+      inputRef.current?.click();
+    },
     retry: (clientId) => {
       const draft = valuesRef.current.find((item) => item.clientId === clientId);
       if (draft) retry(draft);
@@ -338,6 +391,10 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
     remove: (clientId) => {
       const draft = valuesRef.current.find((item) => item.clientId === clientId);
       if (draft) removeDraft(draft, Boolean(!draft.persisted && replacedPersistedDrafts.current));
+    },
+    isBusy: (clientId) => {
+      const draft = valuesRef.current.find((item) => item.clientId === clientId);
+      return Boolean(draft && ['editing', 'queued', 'uploading', 'processing'].includes(draft.status));
     },
     canSelect,
     busy: value.some((draft) => ['editing', 'queued', 'uploading', 'processing'].includes(draft.status))

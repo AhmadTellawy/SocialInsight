@@ -24,6 +24,7 @@ import {
 } from '../services/mediaService';
 import { MediaValidationError } from '../services/mediaProcessor';
 import { MediaAttachmentRequirement } from '../services/mediaService';
+import { validatePublishedAnswerTypes } from '../utils/answerTypeValidation';
 
 export const SAFE_USER_SELECT = {
     id: true,
@@ -73,6 +74,9 @@ const getPostMediaAssetIds = (data: any): string[] => {
     if (!Array.isArray(data?.mediaAssetIds)) return [];
     return data.mediaAssetIds.filter((id: unknown): id is string => typeof id === 'string' && id.length > 0);
 };
+
+const normalizeOptionPresentation = (value: unknown): 'text' | 'image' | undefined =>
+    value === 'text' || value === 'image' ? value : undefined;
 
 const getMediaAttachmentRequirements = (data: any): MediaAttachmentRequirement[] => {
     const requirements: MediaAttachmentRequirement[] = getPostMediaAssetIds(data).map((id) => ({ id, purpose: 'POST' }));
@@ -242,7 +246,7 @@ export const getPosts = async (req: Request, res: Response) => {
         });
 
         const mappedPosts = posts.map((rawPost: any) => {
-            const s = serializePostMediaRecord(rawPost);
+            const s = serializePostMediaRecord(rawPost, userId);
             const actualResponse = s.sharedFrom ? s.sharedFrom.responses?.[0] : s.responses?.[0];
             const userAnswers = actualResponse?.answers || [];
             
@@ -364,7 +368,7 @@ export const getTrends = async (req: Request, res: Response) => {
         // Map and rank candidates in-memory
         const nowMs = Date.now();
         const scoredPosts = posts.map(rawPost => {
-            const post = serializePostMediaRecord(rawPost);
+            const post = serializePostMediaRecord(rawPost, userId);
             const votes = post.responseCount || 0;
             const comments = post.commentsCount || 0;
             const likes = post.likesCount || 0;
@@ -494,7 +498,7 @@ export const getPostById = async (req: Request, res: Response) => {
             return;
         }
 
-        const p = serializePostMediaRecord(post as any);
+        const p = serializePostMediaRecord(post as any, userId);
         const canViewPost = await GroupPermissionService.canViewPost(id, userId);
         if (!canViewPost) {
             res.status(403).json({ error: 'Forbidden' });
@@ -665,6 +669,8 @@ export const createPost = async (req: Request, res: Response) => {
             expiresAt: data.expiresAt ? new Date(data.expiresAt) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
             pollChoiceType: data.pollChoiceType,
             imageLayout: data.imageLayout,
+            optionPresentation: normalizeOptionPresentation(data.optionPresentation),
+            showOptionNames: data.showOptionNames !== undefined ? parseBoolean(data.showOptionNames) : true,
             currentStep: data.currentStep || 1,
             targetAudience: data.targetAudience,
             targetedGroups: data.targetGroups && Array.isArray(data.targetGroups) && data.targetGroups.length > 0 
@@ -682,6 +688,14 @@ export const createPost = async (req: Request, res: Response) => {
             forceAnonymous: data.forceAnonymous !== undefined ? parseBoolean(data.forceAnonymous) : false,
             status: needsApproval ? POST_STATUS.PENDING_APPROVAL : (data.status === 'DRAFT' ? POST_STATUS.DRAFT : POST_STATUS.PUBLISHED)
         };
+
+        if (postData.status !== POST_STATUS.DRAFT) {
+            const answerTypeError = validatePublishedAnswerTypes(data);
+            if (answerTypeError) {
+                res.status(400).json({ error: answerTypeError, code: 'INVALID_ANSWER_OPTIONS' });
+                return;
+            }
+        }
 
         const mediaAspectRatio = await validatePostMediaSet(authorId, postMediaAssetIds, data.mediaAspectRatio);
         if (mediaAspectRatio) postData.mediaAspectRatio = mediaAspectRatio;
@@ -719,7 +733,13 @@ export const createPost = async (req: Request, res: Response) => {
 
             if (OPTION_POST_TYPES.includes(typeStr) && data.options) {
                 const question = await tx.question.create({
-                    data: { text: data.title || "Poll Question", type: 'SingleChoice', postId: newPost.id }
+                    data: {
+                        text: data.title || "Poll Question",
+                        type: 'SingleChoice',
+                        postId: newPost.id,
+                        optionPresentation: normalizeOptionPresentation(data.optionPresentation),
+                        showOptionNames: data.showOptionNames !== undefined ? parseBoolean(data.showOptionNames) : true
+                    }
                 });
                 await tx.option.createMany({
                     data: data.options.map((opt: any, index: number) => ({
@@ -754,6 +774,8 @@ export const createPost = async (req: Request, res: Response) => {
                                 imageMediaId: q.imageMediaId || null,
                                 order: q.order !== undefined ? q.order : qIdx,
                                 isRequired: q.isRequired !== undefined ? q.isRequired : true,
+                                optionPresentation: normalizeOptionPresentation(q.optionPresentation),
+                                showOptionNames: q.showOptionNames !== undefined ? parseBoolean(q.showOptionNames) : true,
                                 postId: newPost.id,
                                 sectionId: section.id
                             }
@@ -896,6 +918,16 @@ export const updatePost = async (req: Request, res: Response) => {
             return;
         }
 
+        const publishesAnswerChanges = data.status === 'PUBLISHED'
+            || (existingPost.status === POST_STATUS.PUBLISHED && (data.options !== undefined || data.sections !== undefined || data.optionPresentation !== undefined));
+        if (publishesAnswerChanges) {
+            const answerTypeError = validatePublishedAnswerTypes(data);
+            if (answerTypeError) {
+                res.status(400).json({ error: answerTypeError, code: 'INVALID_ANSWER_OPTIONS' });
+                return;
+            }
+        }
+
         // --- PRE-PROCESS IMAGES ---
         const submittedPostMediaIds = Array.isArray(data.mediaAssetIds) ? getPostMediaAssetIds(data) : undefined;
         if (submittedPostMediaIds === undefined && data.coverImage) data.coverImage = await processBase64Image(data.coverImage, existingPost.image);
@@ -997,6 +1029,8 @@ export const updatePost = async (req: Request, res: Response) => {
             }),
             ...(data.pollChoiceType !== undefined && { pollChoiceType: data.pollChoiceType }),
             ...(data.imageLayout !== undefined && { imageLayout: data.imageLayout }),
+            ...(data.optionPresentation !== undefined && { optionPresentation: normalizeOptionPresentation(data.optionPresentation) }),
+            ...(data.showOptionNames !== undefined && { showOptionNames: parseBoolean(data.showOptionNames) }),
             ...(data.randomPairing !== undefined && { randomPairing: parseBoolean(data.randomPairing) }),
             ...(data.demographics !== undefined && { demographics: normalizeDemographicFilters(data.demographics) })
         };
@@ -1114,7 +1148,23 @@ export const updatePost = async (req: Request, res: Response) => {
                 if (OPTION_POST_TYPES.includes(typeStr) && data.options !== undefined) {
                     let question = await tx.question.findFirst({ where: { postId: id, sectionId: null } });
                     if (!question) {
-                        question = await tx.question.create({ data: { text: data.title || 'Poll Question', type: 'SingleChoice', postId: id } });
+                        question = await tx.question.create({
+                            data: {
+                                text: data.title || 'Poll Question',
+                                type: 'SingleChoice',
+                                postId: id,
+                                optionPresentation: normalizeOptionPresentation(data.optionPresentation),
+                                showOptionNames: data.showOptionNames !== undefined ? parseBoolean(data.showOptionNames) : true
+                            }
+                        });
+                    } else if (data.optionPresentation !== undefined || data.showOptionNames !== undefined) {
+                        question = await tx.question.update({
+                            where: { id: question.id },
+                            data: {
+                                ...(data.optionPresentation !== undefined && { optionPresentation: normalizeOptionPresentation(data.optionPresentation) }),
+                                ...(data.showOptionNames !== undefined && { showOptionNames: parseBoolean(data.showOptionNames) })
+                            }
+                        });
                     }
                     await tx.option.deleteMany({ where: { questionId: question.id } });
                     if (data.options.length > 0) {
@@ -1159,6 +1209,8 @@ export const updatePost = async (req: Request, res: Response) => {
                                     imageMediaId: questionInput.imageMediaId || null,
                                     order: questionInput.order !== undefined ? questionInput.order : questionIndex,
                                     isRequired: questionInput.isRequired !== undefined ? questionInput.isRequired : true,
+                                    optionPresentation: normalizeOptionPresentation(questionInput.optionPresentation),
+                                    showOptionNames: questionInput.showOptionNames !== undefined ? parseBoolean(questionInput.showOptionNames) : true,
                                     postId: id,
                                     sectionId: section.id
                                 }
@@ -1275,7 +1327,7 @@ export const getDrafts = async (req: Request, res: Response) => {
             orderBy: { updatedAt: 'desc' }
         });
         const mappedDrafts = drafts.map((rawDraft: any) => {
-            const d = serializePostMediaRecord(rawDraft);
+            const d = serializePostMediaRecord(rawDraft, userId);
             return {
                 ...d,
                 likes: d.likesCount,
@@ -1325,7 +1377,7 @@ export const getSavedPosts = async (req: Request, res: Response) => {
             orderBy: { createdAt: 'desc' }
         });
         const posts = saved.map((s: any) => {
-            const p: any = serializePostMediaRecord(s.post);
+            const p: any = serializePostMediaRecord(s.post, userId);
             const userResponse = p.responses?.[0];
             const userAnswers = userResponse?.answers || [];
             return {
@@ -2332,7 +2384,7 @@ export const sharePost = async (req: Request, res: Response) => {
             return;
         }
 
-        const p = serializePostMediaRecord(createdPost as any);
+        const p = serializePostMediaRecord(createdPost as any, userId);
         
         let mappedSharedFrom: any = undefined;
         if (p.sharedFrom) {

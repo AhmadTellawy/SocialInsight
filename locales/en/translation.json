@@ -52,6 +52,27 @@
     "voteCount_one": "{{count}} vote",
     "voteCount_other": "{{count}} votes"
   },
+  "answerType": {
+    "label": "Answer Type",
+    "text": "Text",
+    "images": "Images",
+    "rating": "Rating",
+    "textOptions": "Text options",
+    "imageOptions": "Image options",
+    "ratingScale": "Rating scale",
+    "addImages": "Add images",
+    "addMoreImages": "Add more images",
+    "imageHelper": "Option names are used in results and analytics. You can hide them from voters.",
+    "showNames": "Show option names to voters",
+    "optionName": "Option name {{number}}",
+    "addOptionImage": "Add image to option {{number}}",
+    "replaceOptionImage": "Replace image for option {{number}}",
+    "editOptionCrop": "Edit crop for option {{number}}",
+    "editCrop": "Edit crop",
+    "imageOption": "Image option {{number}}",
+    "imageAndNameRequired": "Every image option needs an image and a name.",
+    "minimumImageOptions": "At least 2 image options are required."
+  },
   "settings": {
     "title": "Settings",
     "account": "Account",
