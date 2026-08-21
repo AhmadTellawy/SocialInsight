@@ -1083,14 +1083,14 @@ const App: React.FC = () => {
     return { answers: progressAnswers, followUpAnswers: progressFollowUps };
   };
 
-  const handleVote = (
+  const handleVote = async (
     surveyId: string,
     optionIds: string[],
     isAnonymous?: boolean,
     newOption?: Option,
     followUpAnswers?: Record<string, string>,
     answers?: PostAnswerPayload[]
-  ) => {
+  ): Promise<boolean> => {
     const previousSurveys = [...surveys];
     const submittedProgress = buildProgressFromAnswerPayload(answers);
     setSurveys(prev =>
@@ -1206,12 +1206,16 @@ const App: React.FC = () => {
 
     // Server Call with Rollback
     if (optionIds.length > 0 || (answers && answers.length > 0)) {
-      api.vote(surveyId, optionIds, userProfile?.id, isAnonymous, newOption, followUpAnswers, answers)
-        .catch(error => {
-          console.error("Failed to submit votes to server, rolling back:", error);
-          setSurveys(previousSurveys);
-        });
+      try {
+        await api.vote(surveyId, optionIds, userProfile?.id, isAnonymous, newOption, followUpAnswers, answers);
+      } catch (error) {
+        console.error("Failed to submit votes to server, rolling back:", error);
+        setSurveys(previousSurveys);
+        return false;
+      }
     }
+
+    return true;
   };
 
   type SurveyProgressPayload = {

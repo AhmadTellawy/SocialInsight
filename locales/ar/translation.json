@@ -40,6 +40,22 @@
       "goTo": "الانتقال إلى الصورة {{index}}"
     }
   },
+  "rating": {
+    "prompt": "قيّم من 1 إلى 5",
+    "worst": "الأسوأ",
+    "best": "الأفضل",
+    "average": "المتوسط",
+    "choice": "{{value}} من 5",
+    "submitting": "جارٍ إرسال التقييم...",
+    "submitFailed": "تعذر إرسال تقييمك. حاول مرة أخرى.",
+    "resultProgress": "نتيجة التقييم {{value}}",
+    "voteCount_zero": "لا أصوات",
+    "voteCount_one": "صوت واحد",
+    "voteCount_two": "صوتان",
+    "voteCount_few": "{{count}} أصوات",
+    "voteCount_many": "{{count}} صوتًا",
+    "voteCount_other": "{{count}} صوت"
+  },
   "settings": {
     "title": "الإعدادات",
     "account": "الحساب",
