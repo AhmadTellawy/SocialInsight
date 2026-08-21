@@ -23,7 +23,7 @@ interface GroupScreenProps {
   userProfile: UserProfile;
   onBack: () => void;
   onPostClick: (id: string, surface?: string, tab?: 'post' | 'analysis') => void;
-  onVote: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: any, followUpAnswers?: Record<string, string>, answers?: PostAnswerPayload[]) => void;
+  onVote: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: any, followUpAnswers?: Record<string, string>, answers?: PostAnswerPayload[]) => void | boolean | Promise<void | boolean>;
   onSurveyProgress?: (surveyId: string, progress: any) => void;
   onSettingsClick?: () => void;
   onCreatePost?: (type: 'Poll' | 'Survey' | 'Quiz' | 'Challenge') => void;

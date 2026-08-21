@@ -40,6 +40,18 @@
       "goTo": "Go to image {{index}}"
     }
   },
+  "rating": {
+    "prompt": "Rate from 1 to 5",
+    "worst": "Worst",
+    "best": "Best",
+    "average": "Average",
+    "choice": "{{value}} out of 5",
+    "submitting": "Submitting rating...",
+    "submitFailed": "Couldn't submit your rating. Try again.",
+    "resultProgress": "Rating {{value}} result",
+    "voteCount_one": "{{count}} vote",
+    "voteCount_other": "{{count}} votes"
+  },
   "settings": {
     "title": "Settings",
     "account": "Account",

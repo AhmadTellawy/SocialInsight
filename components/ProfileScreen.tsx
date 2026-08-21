@@ -18,7 +18,7 @@ interface ProfileScreenProps {
   userProfile: UserProfile;
   onSurveyClick: (id: string, surface?: string) => void;
   onGroupClick?: (id: string) => void;
-  onVote: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: any, followUpAnswers?: Record<string, string>, answers?: PostAnswerPayload[]) => void;
+  onVote: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: any, followUpAnswers?: Record<string, string>, answers?: PostAnswerPayload[]) => void | boolean | Promise<void | boolean>;
   onSurveyProgress?: (surveyId: string, progress: { index: number, answers: Record<string, any>, followUpAnswers?: Record<string, string>, historyStack?: number[], isAnonymous?: boolean }) => void;
   user?: Partial<UserProfile> & { id?: string; name: string; avatar: string; handle?: string; isFollowing?: boolean; followStatus?: string; isPrivate?: boolean };
   onBack?: () => void;

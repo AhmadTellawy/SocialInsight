@@ -15,16 +15,18 @@ import { useFollowState } from '../hooks/useFollowState';
 import { useTranslation } from 'react-i18next';
 import { SurveyActions } from './Survey/SurveyActions';
 import { SurveyQuestion } from './Survey/SurveyQuestion';
+import { RatingScaleQuestion } from './Survey/RatingScaleQuestion';
 import { usePostViewTracker } from '../hooks/usePostViewTracker';
 import { MediaCarousel } from './media/MediaCarousel';
 import { MediaImage } from './media/MediaImage';
+import { calculateAverageRating } from '../utils/ratingScale';
 
 interface SurveyCardProps {
   survey: Survey;
   userProfile?: UserProfile;
   isDetailView?: boolean;
   onContentClick?: () => void;
-  onVote?: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: Option, followUpAnswers?: Record<string, string>, answers?: PostAnswerPayload[]) => void;
+  onVote?: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: Option, followUpAnswers?: Record<string, string>, answers?: PostAnswerPayload[]) => void | boolean | Promise<void | boolean>;
   onSurveyProgress?: (surveyId: string, progress: { index: number, answers: Record<string, any>, followUpAnswers?: Record<string, string>, historyStack?: number[], isAnonymous?: boolean }) => void;
   onAuthorClick?: (author: { id: string; name: string; avatar: string; handle?: string }) => void;
   onShareToFeed?: (survey: Survey, caption: string) => void;
@@ -272,6 +274,9 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const [localOptions, setLocalOptions] = useState<Option[]>([]);
   const [selectedOptions, setSelectedOptions] = useState<string[]>(sourceSurface === 'SHARE_CAPTURE' ? [] : (survey.userSelectedOptions || []));
   const [hasVoted, setHasVoted] = useState(sourceSurface === 'SHARE_CAPTURE' ? false : (survey.hasParticipated || false));
+  const ratingSubmissionRef = useRef(false);
+  const [isRatingSubmitting, setIsRatingSubmitting] = useState(false);
+  const [ratingError, setRatingError] = useState<string | null>(null);
 
   // Voter-added option state
   const [isAddingCustomOption, setIsAddingCustomOption] = useState(false);
@@ -390,6 +395,9 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     setReviewQIndex(0);
     setChallengeActivePair([]);
     setChallengeEliminatedIds(new Set());
+    ratingSubmissionRef.current = false;
+    setIsRatingSubmitting(false);
+    setRatingError(null);
 
     if (!(survey.sharedFrom || survey).allowAnonymous) {
       setIsAnonToggled(false);
@@ -413,6 +421,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         return 0; // Fallback to original order if ID doesn't have a timestamp
       });
     }
+
+    if (ratingSubmissionRef.current && s.pollChoiceType === 'rating') return;
 
     setLocalOptions(opts);
 
@@ -820,14 +830,15 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
   const isMultiple = sourceSurvey.allowMultipleSelection || false;
   const isRating = sourceSurvey.pollChoiceType === 'rating';
+  const useCompactRating = isRating && sourceSurface !== 'SHARE_CAPTURE';
   const hasImages = (localOptions || []).some(hasOptionImage);
   const isPollType = sourceSurvey.type === SurveyType.POLL || sourceSurvey.type === SurveyType.TRENDING;
   const isTextOnlyPoll = isPollType && !isRating && !hasImages;
   const hasDescription = !!sourceSurvey.description?.trim();
 
-  // Premium cover-image poll card: polls with a coverImage but no option images (rating included)
+  // Keep the legacy share-card composition, while interactive rating polls use the compact scale.
   const hasPostMedia = Boolean(sourceSurvey.media?.length || sourceSurvey.coverImage);
-  const isCoverImagePollCard = hasPostMedia && isPollType && !hasImages;
+  const isCoverImagePollCard = hasPostMedia && isPollType && !hasImages && !useCompactRating;
 
   // Integer percentage for a single option
   const getOptionPercentage = (optionId: string): number => {
@@ -850,15 +861,47 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const resultsPrivate = sourceSurvey.resultsVisibility === 'Private';
   const shouldShowResults = (hasVoted || isExpired) && !resultsPrivate;
   const totalVotes = (localOptions || []).reduce((acc, curr) => acc + curr.votes, 0);
+  const displayedParticipantCount = (sourceSurvey.participants || 0) + (
+    isRating && hasVoted && !sourceSurvey.hasParticipated ? 1 : 0
+  );
 
   const averageRating = useMemo(() => {
     if (!isRating || totalVotes === 0) return 0;
-    const totalScore = (localOptions || []).reduce((acc, curr) => {
-      const val = curr.ratingValue || 0;
-      return acc + (val * curr.votes);
-    }, 0);
-    return (totalScore / totalVotes).toFixed(1);
+    return calculateAverageRating(localOptions || []).toFixed(1);
   }, [localOptions, isRating, totalVotes]);
+
+  const handleRatingOptionClick = async (option: Option) => {
+    if (hasVoted || isExpired || ratingSubmissionRef.current || !onVote) return;
+
+    const previousSelectedOptions = selectedOptions;
+    const previousLocalOptions = localOptions;
+    ratingSubmissionRef.current = true;
+    setSelectedOptions([option.id]);
+    setIsRatingSubmitting(true);
+    setRatingError(null);
+
+    try {
+      const submitted = await Promise.resolve(onVote(sourceSurvey.id, [option.id], isCurrentlyAnonymous));
+      if (submitted === false) throw new Error('Rating submission failed');
+
+      setLocalOptions(current => current.map(currentOption =>
+        currentOption.id === option.id
+          ? { ...currentOption, votes: (currentOption.votes || 0) + 1 }
+          : currentOption
+      ));
+      setHasVoted(true);
+      startDemographicFlow();
+    } catch (error) {
+      console.error('Failed to submit rating:', error);
+      setSelectedOptions(previousSelectedOptions);
+      setLocalOptions(previousLocalOptions);
+      setHasVoted(false);
+      setRatingError(t('rating.submitFailed'));
+    } finally {
+      ratingSubmissionRef.current = false;
+      setIsRatingSubmitting(false);
+    }
+  };
 
   const handlePollOptionClick = (optionId: string) => {
     if (hasVoted || isExpired) return;
@@ -1250,6 +1293,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     const isHorizontal = currentQuestion.imageLayout === 'horizontal' || (!currentQuestion.imageLayout && sourceSurvey.imageLayout === 'horizontal');
     const isQuiz = survey.type === SurveyType.QUIZ;
     const currentCorrectOptionIds = isQuiz ? getCorrectOptionIds(currentQuestion) : [];
+    const selectedQuestionOptionIds = Array.isArray(answer) ? answer : (answer ? [answer] : []);
+    const isRatingQuestion = currentQuestion.options?.some(option => option.isRating) || false;
 
     return (
       <div className="bg-white rounded-xl overflow-hidden border border-gray-100 shadow-sm mt-3">
@@ -1316,6 +1361,15 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
               </div>
               <div className="pb-4">
                 {currentQuestion.type === 'multiple_choice' || isTF ? (
+                  isRatingQuestion && sourceSurface !== 'SHARE_CAPTURE' ? (
+                    <RatingScaleQuestion
+                      options={currentQuestion.options || []}
+                      selectedOptionIds={selectedQuestionOptionIds}
+                      showResults={false}
+                      disabled={isQuiz && selectedQuestionOptionIds.length > 0}
+                      onSelect={(option) => handleSurveyAnswer(option.id)}
+                    />
+                  ) : (
                   <div className={`${isTF ? 'grid grid-cols-2 gap-3' : isHorizontal ? 'flex gap-3 overflow-x-auto no-scrollbar snap-x pb-2' : 'grid grid-cols-1 space-y-2'}`}>
                     {currentQuestion.options?.map((opt, idx) => {
                       const selectedIds = Array.isArray(answer) ? answer : (answer ? [answer] : []);
@@ -1384,6 +1438,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                       );
                     })}
                   </div>
+                  )
                 ) : (
                   <div className="animate-in fade-in">
                     <textarea value={answer || ''} onChange={(e) => {
@@ -1431,6 +1486,10 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           totalVotes={totalVotes}
           portraitImages={portraitImages}
           followUpAnswers={followUpAnswers}
+          useCompactRating={sourceSurface !== 'SHARE_CAPTURE'}
+          isRatingSubmitting={isRatingSubmitting}
+          ratingError={ratingError}
+          onRatingSelect={handleRatingOptionClick}
           onOptionClick={handlePollOptionClick}
           onFollowUpChange={handleFollowUpChange}
           onImageExpand={(option) => setExpandedImage(option)}
@@ -1981,18 +2040,18 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
             <div className={`flex items-center justify-between text-[11px] text-gray-400 font-medium px-1 ${isTextOnlyPoll ? 'mt-0 mb-2' : 'mt-2 mb-3'}`}>
               <div className="flex items-center gap-3">
-                <button onClick={() => setIsParticipantsOpen(true)} className="flex items-center gap-1 hover:text-blue-600 transition-colors">
+                <button onClick={() => setIsParticipantsOpen(true)} className="flex items-center gap-1 hover:text-blue-600 transition-colors" data-testid={isRating ? 'rating-total-votes' : undefined}>
                   <Users size={12} />
-                  <span>{sourceSurvey.participants.toLocaleString()} {survey.type === SurveyType.POLL ? t('votes') : t('responses')}</span>
+                  <span>{displayedParticipantCount.toLocaleString()} {survey.type === SurveyType.POLL ? t('votes') : t('responses')}</span>
                 </button>
                 <div className="flex items-center gap-1 text-gray-500" title={t('Views')}>
                   <Eye size={12} />
                   <span>{viewCount.toLocaleString()}</span>
                 </div>
                 {isRating && Number(averageRating) > 0 && (
-                  <div className="flex items-center gap-1 text-yellow-600 bg-yellow-50 px-2 py-0.5 rounded-md border border-yellow-200/60 shadow-sm pt-[3px]">
+                  <div className="flex items-center gap-1 text-yellow-600 bg-yellow-50 px-2 py-0.5 rounded-md border border-yellow-200/60 shadow-sm pt-[3px]" data-testid="rating-average">
                     <Star size={11} fill="currentColor" />
-                    <span className="font-bold text-[10px] uppercase tracking-widest">{averageRating} {t('Average')}</span>
+                    <span className="font-bold text-[10px] uppercase tracking-widest">{averageRating} {t('rating.average')}</span>
                   </div>
                 )}
                 {timeLeftStr && (

@@ -4,6 +4,7 @@ import { Survey, SurveyType, Option } from '../../types';
 import { useTranslation } from 'react-i18next';
 import { getPercentage } from '../../utils/formatters';
 import { MediaImage } from '../media/MediaImage';
+import { RatingScaleQuestion } from './RatingScaleQuestion';
 
 interface SurveyQuestionProps {
   sourceSurvey: Survey;
@@ -19,6 +20,10 @@ interface SurveyQuestionProps {
   totalVotes: number;
   portraitImages: Set<string>;
   followUpAnswers: Record<string, string>;
+  useCompactRating?: boolean;
+  isRatingSubmitting?: boolean;
+  ratingError?: string | null;
+  onRatingSelect?: (option: Option) => void;
   onOptionClick: (optionId: string) => void;
   onFollowUpChange: (optionId: string, value: string) => void;
   onImageExpand: (option: Option) => void;
@@ -39,6 +44,10 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
   totalVotes,
   portraitImages,
   followUpAnswers,
+  useCompactRating = true,
+  isRatingSubmitting = false,
+  ratingError,
+  onRatingSelect,
   onOptionClick,
   onFollowUpChange,
   onImageExpand,
@@ -50,6 +59,28 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
   const isTextOnlyPoll = !hasImages;
   const hasOptionImage = (option: Option): boolean => Boolean(option.imageMediaId || option.imageMedia || option.image);
   const optionImageKey = (option: Option): string => option.imageMediaId || option.image || option.id;
+
+  if (isRating && useCompactRating) {
+    return (
+      <div className="mb-2">
+        {isQuiz && (firstQuestion?.imageMediaId || firstQuestion?.imageMedia || firstQuestion?.image) && (
+          <div className="w-full rounded-xl overflow-hidden mb-3 bg-gray-100">
+            <MediaImage media={firstQuestion.imageMedia} mediaId={firstQuestion.imageMediaId} fallbackSrc={firstQuestion.image} className="w-full max-h-[500px] object-cover block" alt="Question context" />
+          </div>
+        )}
+        <RatingScaleQuestion
+          options={options}
+          selectedOptionIds={selectedOptions}
+          showResults={shouldShowResults}
+          disabled={hasVoted || isExpired}
+          isSubmitting={isRatingSubmitting}
+          errorMessage={ratingError}
+          totalVotes={totalVotes}
+          onSelect={onRatingSelect}
+        />
+      </div>
+    );
+  }
 
   const renderHorizontal = () => (
     <div className="flex overflow-x-auto snap-x snap-mandatory hide-scrollbar gap-3 pb-4 px-1" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
