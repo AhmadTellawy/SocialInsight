@@ -49,6 +49,7 @@
         "@types/web-push": "^3.6.4",
         "nodemon": "^3.1.9",
         "prisma": "^6.3.1",
+        "socket.io-client": "^4.8.3",
         "ts-node": "^10.9.2",
         "typescript": "^5.7.3"
     }
