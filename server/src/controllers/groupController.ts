@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import prisma from '../prisma';
 import { GROUP_ROLES, MEMBERSHIP_STATUS, JOIN_POLICIES, POSTING_PERMISSIONS, POST_STATUS } from '../utils/constants';
 import { GroupPermissionService } from '../services/groupPermissionService';
-import { notify } from '../services/notificationService';
+import { extractAndNotifyMentions, notify } from '../services/notificationService';
 import { processBase64Image } from '../utils/imageProcessor';
 import {
     commitPreparedMedia,
@@ -1390,6 +1390,7 @@ export const approvePendingPost = async (req: Request, res: Response) => {
 
         // Notify author
         await notify(currentUserId, post.authorId, 'group_post_approved', `Your post "${post.title}" has been approved in ${group?.name}.`, 'post', postId);
+        await extractAndNotifyMentions(`${post.title} ${post.description}`, post.authorId, { postId });
 
         res.json({ success: true, post: updated });
     } catch (error) {

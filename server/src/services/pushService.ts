@@ -44,16 +44,22 @@ export const sendPushNotification = async (userId: string, payload: PushNotifica
             } catch (error: any) {
                 // If the subscription is invalid/expired (status 410 or 404), delete it
                 if (error.statusCode === 410 || error.statusCode === 404) {
-                    console.log(`Deleting expired push subscription: ${sub.id}`);
+                    console.info(JSON.stringify({ event: 'push_subscription_expired' }));
                     await prisma.pushSubscription.delete({ where: { id: sub.id } });
                 } else {
-                    console.error('Error sending push notification to a specific endpoint:', error);
+                    console.error(JSON.stringify({
+                        event: payload.type === 'mention' ? 'mention_push_failed' : 'push_delivery_failed',
+                        statusCode: typeof error.statusCode === 'number' ? error.statusCode : undefined
+                    }));
                 }
             }
         });
 
         await Promise.allSettled(sendPromises);
     } catch (error) {
-        console.error('Error in sendPushNotification:', error);
+        console.error(JSON.stringify({
+            event: payload.type === 'mention' ? 'mention_push_failed' : 'push_dispatch_failed',
+            error: error instanceof Error ? error.name : 'unknown'
+        }));
     }
 };

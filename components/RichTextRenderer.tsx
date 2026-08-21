@@ -1,4 +1,5 @@
 import React from 'react';
+import { parseTextEntities } from '../utils/textEntities';
 
 interface RichTextRendererProps {
   text: string;
@@ -15,54 +16,57 @@ export const RichTextRenderer: React.FC<RichTextRendererProps> = ({
 }) => {
   if (!text) return null;
 
-  // Match @username or #hashtag. 
-  // We use a single capture group so split() includes the matches in the resulting array.
-  const regex = /([@#][a-zA-Z0-9_.]+)/g;
-  const parts = text.split(regex);
+  const entities = parseTextEntities(text);
+  const parts: React.ReactNode[] = [];
+  let cursor = 0;
+
+  entities.forEach((entity) => {
+    if (entity.start > cursor) {
+      parts.push(<span key={`text-${cursor}`}>{text.slice(cursor, entity.start)}</span>);
+    }
+
+    if (entity.type === 'mention') {
+      parts.push(
+        <span
+          key={`mention-${entity.start}`}
+          onClick={(event) => {
+            if (onUserClick) {
+              event.stopPropagation();
+              onUserClick(entity.normalizedValue);
+            }
+          }}
+          className={`text-blue-600 font-semibold transition-colors ${onUserClick ? 'hover:underline cursor-pointer' : ''}`}
+        >
+          {entity.raw}
+        </span>
+      );
+    } else {
+      parts.push(
+        <span
+          key={`hashtag-${entity.start}`}
+          onClick={(event) => {
+            if (onHashtagClick) {
+              event.stopPropagation();
+              onHashtagClick(entity.value);
+            }
+          }}
+          className={`text-blue-600 font-semibold transition-colors ${onHashtagClick ? 'hover:underline cursor-pointer' : ''}`}
+        >
+          {entity.raw}
+        </span>
+      );
+    }
+
+    cursor = entity.end;
+  });
+
+  if (cursor < text.length) {
+    parts.push(<span key={`text-${cursor}`}>{text.slice(cursor)}</span>);
+  }
 
   return (
     <span className={`whitespace-pre-wrap break-words ${className}`}>
-      {parts.map((part, index) => {
-        if (!part) return null;
-
-        if (part.startsWith('@')) {
-          const handle = part.substring(1);
-          return (
-            <span 
-              key={index}
-              onClick={(e) => {
-                if (onUserClick) {
-                  e.stopPropagation();
-                  onUserClick(handle);
-                }
-              }}
-              className={`text-blue-600 font-semibold transition-colors ${onUserClick ? 'hover:underline cursor-pointer' : ''}`}
-            >
-              {part}
-            </span>
-          );
-        }
-
-        if (part.startsWith('#')) {
-          const tag = part.substring(1);
-          return (
-            <span 
-              key={index}
-              onClick={(e) => {
-                if (onHashtagClick) {
-                  e.stopPropagation();
-                  onHashtagClick(tag);
-                }
-              }}
-              className={`text-blue-600 font-semibold transition-colors ${onHashtagClick ? 'hover:underline cursor-pointer' : ''}`}
-            >
-              {part}
-            </span>
-          );
-        }
-
-        return <span key={index}>{part}</span>;
-      })}
+      {parts}
     </span>
   );
 };

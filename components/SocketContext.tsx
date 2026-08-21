@@ -1,6 +1,9 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { Bell } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Bell, X } from 'lucide-react';
+import { API_BASE_URL } from '../services/api';
+import { getNotificationDeepLink } from '../utils/notificationNavigation';
 
 interface SocketContextType {
     socket: Socket | null;
@@ -12,14 +15,25 @@ const SocketContext = createContext<SocketContextType>({ socket: null, isConnect
 export const useSocket = () => useContext(SocketContext);
 
 // Simple Toast Component
-const Toast = ({ notification, onClose }: { notification: any, onClose: () => void }) => {
+const Toast = ({ notification, onClose, onOpen }: { notification: any, onClose: () => void, onOpen: () => void }) => {
     useEffect(() => {
         const timer = setTimeout(onClose, 4000);
         return () => clearTimeout(timer);
     }, [onClose]);
 
     return (
-        <div style={{
+        <div
+          role="button"
+          tabIndex={0}
+          aria-label="Open notification"
+          onClick={onOpen}
+          onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  onOpen();
+              }
+          }}
+          style={{
             position: 'fixed',
             bottom: '20px',
             right: '20px',
@@ -32,7 +46,8 @@ const Toast = ({ notification, onClose }: { notification: any, onClose: () => vo
             alignItems: 'center',
             gap: '12px',
             zIndex: 9999,
-            animation: 'slideIn 0.3s ease-out forwards'
+            animation: 'slideIn 0.3s ease-out forwards',
+            cursor: 'pointer'
         }}>
             <style>
                 {`
@@ -53,35 +68,40 @@ const Toast = ({ notification, onClose }: { notification: any, onClose: () => vo
                     Just now
                 </p>
             </div>
-            <button 
-                onClick={onClose}
+            <button
+                type="button"
+                aria-label="Close notification"
+                onClick={(event) => {
+                    event.stopPropagation();
+                    onClose();
+                }}
                 style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', marginLeft: 'auto', padding: '4px' }}
             >
-                ✕
+                <X size={16} aria-hidden="true" />
             </button>
         </div>
     );
 };
 
 export const SocketProvider: React.FC<{ children: React.ReactNode, user?: any }> = ({ children, user }) => {
+    const navigate = useNavigate();
     const [socket, setSocket] = useState<Socket | null>(null);
     const [isConnected, setIsConnected] = useState(false);
     const [lastNotification, setLastNotification] = useState<any>(null);
 
     useEffect(() => {
-        // Disconnect if no user
-        if (!user || user.isGuest) {
-            if (socket) {
-                socket.disconnect();
-                setSocket(null);
-                setIsConnected(false);
-            }
+        const token = localStorage.getItem('si_token');
+        if (!user || user.isGuest || !token) {
+            setSocket(null);
+            setIsConnected(false);
             return;
         }
 
-        // Connect if user exists
-        const socketInstance = io(import.meta.env.VITE_API_URL || 'http://localhost:3001', {
-            query: { userId: user.id },
+        const socketUrl = API_BASE_URL.startsWith('http')
+            ? API_BASE_URL.replace(/\/api\/?$/, '')
+            : window.location.origin;
+        const socketInstance = io(socketUrl, {
+            auth: { token },
             transports: ['websocket'],
             reconnectionAttempts: 5,
         });
@@ -96,8 +116,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode, user?: any }>
             setIsConnected(false);
         });
 
+        socketInstance.on('connect_error', () => {
+            console.warn('Socket authentication or connection failed');
+            setIsConnected(false);
+        });
+
         socketInstance.on('newNotification', (data) => {
-            console.log('Received real-time notification:', data);
             setLastNotification(data);
             
             // Dispatch a custom window event so other components (like Notification menu) can update instantly
@@ -108,8 +132,17 @@ export const SocketProvider: React.FC<{ children: React.ReactNode, user?: any }>
 
         return () => {
             socketInstance.disconnect();
+            setSocket(null);
+            setIsConnected(false);
         };
-    }, [user]); // Re-run if user changes
+    }, [user?.id, user?.isGuest]);
+
+    const openLastNotification = () => {
+        if (!lastNotification) return;
+        const deepLink = getNotificationDeepLink(lastNotification);
+        setLastNotification(null);
+        if (deepLink) navigate(deepLink);
+    };
 
     return (
         <SocketContext.Provider value={{ socket, isConnected }}>
@@ -118,6 +151,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode, user?: any }>
                 <Toast 
                     notification={lastNotification} 
                     onClose={() => setLastNotification(null)} 
+                    onOpen={openLastNotification}
                 />
             )}
         </SocketContext.Provider>

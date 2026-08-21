@@ -18,6 +18,8 @@ import {
 } from '../services/mediaService';
 import { requestMediaPrivacyTransition } from '../services/mediaPrivacyTransitionService';
 import { MediaValidationError } from '../services/mediaProcessor';
+import { withNotificationDeepLink } from '../utils/notificationTarget';
+import { buildMentionSearchWhere, MENTION_SUGGESTION_LIMIT, MENTION_USER_SELECT } from '../utils/mentionSearch';
 
 const SAFE_USER_SELECT = {
     id: true,
@@ -61,23 +63,14 @@ export const searchUsers = async (req: Request, res: Response) => {
         if (!query) {
             return res.json([]);
         }
+        if (query.length > 64) {
+            return res.status(400).json({ error: 'Search query is too long', code: 'INVALID_MENTION_QUERY' });
+        }
 
         const users = await prisma.user.findMany({
-            where: {
-                OR: [
-                    { handle: { contains: query, mode: 'insensitive' } },
-                    { name: { contains: query, mode: 'insensitive' } }
-                ],
-                status: 'ACTIVE',
-                ...(userId ? {
-                    NOT: [
-                        { blockedBy: { some: { blockerId: userId } } },
-                        { blocking: { some: { blockedId: userId } } }
-                    ]
-                } : {})
-            },
-            take: 10,
-            select: SAFE_USER_SELECT
+            where: buildMentionSearchWhere(query, userId!),
+            take: MENTION_SUGGESTION_LIMIT,
+            select: MENTION_USER_SELECT
         });
 
         res.json(users.map((user) => serializeUserMediaRecord(user)));
@@ -569,17 +562,23 @@ export const getNotifications = async (req: Request, res: Response) => {
         });
         console.log(`[API] prisma.notification returned ${notifications.length} rows`);
 
-        const mapped = notifications.map((n: any) => ({
-            id: n.id,
-            type: n.type,
-            message: n.message,
-            targetId: n.targetId,
-            targetType: n.targetType === 'user' ? 'profile' : n.targetType,
-            isRead: n.isRead,
-            timestamp: n.createdAt.toISOString(),
-            createdAt: n.createdAt.getTime(),
-            actor: n.actor ? serializeUserMediaRecord(n.actor) : undefined
-        }));
+        const mapped = notifications.map((n: any) => {
+            const targetType = n.targetType === 'user' ? 'profile' : n.targetType;
+            const payload = withNotificationDeepLink(targetType, n.targetId, n.payload);
+            return {
+                id: n.id,
+                type: n.type,
+                message: n.message,
+                targetId: n.targetId,
+                targetType,
+                payload,
+                deepLink: payload?.deepLink,
+                isRead: n.isRead,
+                timestamp: n.createdAt.toISOString(),
+                createdAt: n.createdAt.getTime(),
+                actor: n.actor ? serializeUserMediaRecord(n.actor) : undefined
+            };
+        });
 
         res.json(mapped);
     } catch (error) {

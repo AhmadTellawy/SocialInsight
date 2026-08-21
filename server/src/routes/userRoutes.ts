@@ -3,11 +3,12 @@ import { getUser, getUserByHandle, updateUser, getUsers, getUserAnalytics, getUs
 import { followUser, getFollowStatus, acceptFollowRequest, rejectFollowRequest, removeFollower, getPendingRequests } from '../controllers/followController';
 
 import { requireAuth, optionalAuth } from '../middleware/authMiddleware';
+import { mentionSearchLimiter } from '../middleware/rateLimiters';
 
 const router = Router();
 
 router.get('/', optionalAuth, getUsers);
-router.get('/search', optionalAuth, searchUsers);
+router.get('/search', requireAuth, mentionSearchLimiter, searchUsers);
 router.get('/handle/:handle', optionalAuth, getUserByHandle);
 router.get('/:id', optionalAuth, getUser);
 router.get('/:id/followers', optionalAuth, getUserFollowers);

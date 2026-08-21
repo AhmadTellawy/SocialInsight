@@ -25,6 +25,7 @@ import {
 import { MediaValidationError } from '../services/mediaProcessor';
 import { MediaAttachmentRequirement } from '../services/mediaService';
 import { validatePublishedAnswerTypes } from '../utils/answerTypeValidation';
+import { getMentionLimitViolation } from '../utils/mentionLimits';
 
 export const SAFE_USER_SELECT = {
     id: true,
@@ -69,6 +70,21 @@ export const normalizePostType = (type?: string): string | undefined => {
 const OPTION_POST_TYPES = ['Poll', 'Challenge', 'Prediction', 'Debate'];
 const SECTION_POST_TYPES = ['Quiz', 'Survey'];
 const EDIT_WINDOW_MS = 5 * 60 * 1000;
+
+const validateMentionRecipientLimit = (text: string, res: Response, surface: 'post' | 'comment'): boolean => {
+    const violation = getMentionLimitViolation(text);
+    if (!violation) return true;
+
+    console.warn(JSON.stringify({
+        event: 'mention_limit_exceeded',
+        surface,
+        recipientCount: violation.recipientCount,
+        limit: violation.limit
+    }));
+    const { recipientCount: _recipientCount, ...response } = violation;
+    res.status(400).json(response);
+    return false;
+};
 
 const getPostMediaAssetIds = (data: any): string[] => {
     if (!Array.isArray(data?.mediaAssetIds)) return [];
@@ -595,6 +611,10 @@ export const createPost = async (req: Request, res: Response) => {
         const authorId = req.user!.userId;
         const postMediaAssetIds = getPostMediaAssetIds(data);
 
+        if (data.status !== 'DRAFT' && !validateMentionRecipientLimit(`${data.title || ''} ${data.description || ''}`, res, 'post')) {
+            return;
+        }
+
         // --- PRE-PROCESS IMAGES ---
         if (postMediaAssetIds.length === 0 && data.coverImage) data.coverImage = await processBase64Image(data.coverImage);
         if (postMediaAssetIds.length === 0 && data.image) data.image = await processBase64Image(data.image);
@@ -823,7 +843,7 @@ export const createPost = async (req: Request, res: Response) => {
         try {
             if (postData.status === POST_STATUS.PUBLISHED) {
                 const fullText = `${post.title} ${post.description}`;
-                await extractAndNotifyMentions(fullText, authorId, 'survey', post.id);
+                await extractAndNotifyMentions(fullText, authorId, { postId: post.id });
             } else if (postData.status === POST_STATUS.PENDING_APPROVAL) {
                 const targetGroupId = data.targetGroups[0];
                 const group = await prisma.group.findUnique({ where: { id: targetGroupId }, select: { name: true } });
@@ -883,6 +903,8 @@ export const updatePost = async (req: Request, res: Response) => {
             where: { id },
             select: {
                 authorId: true,
+                title: true,
+                description: true,
                 status: true,
                 createdAt: true,
                 isDeleted: true,
@@ -926,6 +948,13 @@ export const updatePost = async (req: Request, res: Response) => {
                 res.status(400).json({ error: answerTypeError, code: 'INVALID_ANSWER_OPTIONS' });
                 return;
             }
+        }
+
+        const validatesPublishedMentions = data.status === 'PUBLISHED'
+            || (existingPost.status === POST_STATUS.PUBLISHED && data.status !== 'DRAFT');
+        if (validatesPublishedMentions) {
+            const nextMentionText = `${data.title ?? existingPost.title} ${data.description ?? existingPost.description}`;
+            if (!validateMentionRecipientLimit(nextMentionText, res, 'post')) return;
         }
 
         // --- PRE-PROCESS IMAGES ---
@@ -1263,7 +1292,7 @@ export const updatePost = async (req: Request, res: Response) => {
 
         try {
             if (existingPost.status !== POST_STATUS.PUBLISHED && post.status === POST_STATUS.PUBLISHED) {
-                await extractAndNotifyMentions(`${post.title} ${post.description}`, trustedUserId, 'survey', post.id);
+                await extractAndNotifyMentions(`${post.title} ${post.description}`, trustedUserId, { postId: post.id });
             } else if (post.status === POST_STATUS.PENDING_APPROVAL && existingPost.status !== POST_STATUS.PENDING_APPROVAL) {
                 const targetGroupId = post.groupId || post.targetedGroups[0]?.id;
                 if (targetGroupId) {
@@ -2075,6 +2104,8 @@ export const createComment = async (req: Request, res: Response) => {
             return;
         }
 
+        if (!validateMentionRecipientLimit(cleanText, res, 'comment')) return;
+
         if (parentId) {
             const parentComment = await prisma.comment.findUnique({
                 where: { id: parentId },
@@ -2098,11 +2129,19 @@ export const createComment = async (req: Request, res: Response) => {
             prisma.post.update({ where: { id }, data: { commentsCount: { increment: 1 } } })
         ]);
 
+        const commentNavigation = parentId
+            ? { postId: id, commentId: parentId, replyId: comment.id, sourceType: 'reply' }
+            : { postId: id, commentId: comment.id, sourceType: 'comment' };
+
         if (targetPost.authorId) {
-            await notify(userId, targetPost.authorId, 'response', 'commented on your post', 'survey', id, { commentId: comment.id });
+            await notify(userId, targetPost.authorId, 'response', 'commented on your post', 'post', id, commentNavigation);
         }
-        
-        await extractAndNotifyMentions(cleanText, userId, 'comment', comment.id, { postId: id });
+
+        await extractAndNotifyMentions(cleanText, userId, {
+            postId: id,
+            commentId: parentId || comment.id,
+            ...(parentId ? { replyId: comment.id } : {})
+        });
 
         res.json(mapComment(comment, userId));
     } catch (error) {
@@ -2158,7 +2197,10 @@ export const likeComment = async (req: Request, res: Response) => {
             await prisma.commentLike.create({ data: { userId, commentId: id } });
             const targetComment = await prisma.comment.update({ where: { id }, data: { likes: { increment: 1 } } });
             if (targetComment.userId) {
-                await notify(userId, targetComment.userId, 'like', 'liked your comment', 'comment', id);
+                const commentNavigation = targetComment.parentId
+                    ? { postId: targetComment.postId, commentId: targetComment.parentId, replyId: id, sourceType: 'reply' }
+                    : { postId: targetComment.postId, commentId: id, sourceType: 'comment' };
+                await notify(userId, targetComment.userId, 'like', 'liked your comment', 'post', targetComment.postId, commentNavigation);
             }
             res.json({ isLiked: true });
         }
@@ -2541,7 +2583,9 @@ export const deletePost = async (req: Request, res: Response) => {
         // Hard Delete cascade via manual transaction
         await prisma.$transaction(async (tx) => {
             // Notifications about this post
-            await tx.notification.deleteMany({ where: { targetId: id, targetType: 'survey' } });
+            await tx.notification.deleteMany({
+                where: { targetId: id, targetType: { in: ['survey', 'post'] } }
+            });
             // Post interactions
             await tx.savedPost.deleteMany({ where: { postId: id } });
             await tx.hiddenPost.deleteMany({ where: { postId: id } });

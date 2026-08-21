@@ -2,7 +2,7 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { api } from './services/api';
+import { api, ApiError } from './services/api';
 import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
 import { SurveyCard } from './components/SurveyCard';
@@ -29,6 +29,7 @@ import { UsersTableScreen } from './components/UsersTableScreen';
 import { PrivacyPolicyScreen } from './components/PrivacyPolicyScreen';
 import { PostAnswerPayload, Survey, Option, Notification, SurveyType, Group, UserProfile } from './types';
 import { readMediaSafeJson, writeMediaSafeJson } from './utils/mediaSafeStorage';
+import { getNotificationDeepLink } from './utils/notificationNavigation';
 import {
   BarChart3, PieChart, Activity, ArrowLeft, Users, MessageCircle,
   Share2, MoreVertical, Globe, ShieldCheck, ChevronRight, BarChart,
@@ -464,6 +465,20 @@ const App: React.FC = () => {
         })
         .catch(err => console.error("Failed to fetch notifications:", err));
     }
+  }, [isAuthenticated, userProfile?.id]);
+
+  React.useEffect(() => {
+    const handleRealtimeNotification = (event: Event) => {
+      if (!isAuthenticated || !userProfile?.id) return;
+      const notification = (event as CustomEvent<Notification>).detail;
+      if (!notification?.id) return;
+      setNotifications((current) => current.some((item) => item.id === notification.id)
+        ? current
+        : [notification, ...current]);
+    };
+
+    window.addEventListener('app:newNotification', handleRealtimeNotification);
+    return () => window.removeEventListener('app:newNotification', handleRealtimeNotification);
   }, [isAuthenticated, userProfile?.id]);
 
   const [selectedSurveyId, setSelectedSurveyId] = useState<string | null>(null);
@@ -908,7 +923,11 @@ const App: React.FC = () => {
       }
     } catch (error) {
       console.error("Failed to create/publish survey:", error);
-      alert("Something went wrong. Please check your connection.");
+      if (error instanceof ApiError && error.code === 'MENTION_LIMIT_EXCEEDED') {
+        alert(t('mentions.limitExceeded', { limit: error.details?.limit }));
+      } else {
+        alert("Something went wrong. Please check your connection.");
+      }
     }
   };
 
@@ -1354,7 +1373,10 @@ const App: React.FC = () => {
             }
           }
           setNotifications(newNotifs);
-        }} onBack={() => window.history.length > 2 ? navigate(-1) : navigate('/', { replace: true })} onItemClick={(tid, ttype, actor) => (ttype === 'profile' || ttype === 'user') ? navigateToProfile({ id: tid || actor?.id || '', name: actor?.name || '', avatar: actor?.avatar || '' }) : handleSurveyClick(tid)} />;
+        }} onBack={() => window.history.length > 2 ? navigate(-1) : navigate('/', { replace: true })} onItemClick={(notification) => {
+          const deepLink = getNotificationDeepLink(notification);
+          if (deepLink) navigate(deepLink);
+        }} />;
       case 'messages':
         return <MessagesScreen onBack={() => window.history.length > 2 ? navigate(-1) : navigate('/', { replace: true })} />;
       default:
@@ -1391,6 +1413,9 @@ const App: React.FC = () => {
     [surveys, selectedSurveyId]
   );
   const selectedSurvey = detailSurvey || selectedSurveyFromFeed;
+  const detailSearchParams = new URLSearchParams(location.search);
+  const initialCommentId = selectedSurveyId ? detailSearchParams.get('comment') || undefined : undefined;
+  const initialReplyId = selectedSurveyId ? detailSearchParams.get('reply') || undefined : undefined;
   const viewerProfile = userProfile || INITIAL_USER;
 
   const canSeeAnalysis = useMemo(() => {
@@ -1694,6 +1719,8 @@ const App: React.FC = () => {
                     userProfile={userProfile || undefined}
                     contextGroups={userGroups}
                     isDetailView={true}
+                    initialCommentId={initialCommentId}
+                    initialReplyId={initialReplyId}
                     onVote={handleVote}
                     onSurveyProgress={handleSurveyProgress}
                     onAuthorClick={navigateToProfile}

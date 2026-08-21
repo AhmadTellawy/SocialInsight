@@ -327,7 +327,16 @@ export interface Notification {
   timestamp: string;
   isRead: boolean;
   targetId?: string;
-  targetType?: 'survey' | 'profile' | 'group' | 'user';
+  targetType?: 'post' | 'survey' | 'profile' | 'group' | 'user';
+  deepLink?: string;
+  payload?: {
+    postId?: string;
+    commentId?: string;
+    replyId?: string;
+    sourceType?: 'post' | 'comment' | 'reply' | string;
+    deepLink?: string;
+  };
+  createdAt?: number;
 }
 
 export interface TabItem {

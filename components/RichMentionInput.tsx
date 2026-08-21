@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { api } from '../services/api';
+import { createMentionSearchScheduler, MentionSearchScheduler } from '../utils/mentionAutocomplete';
+import { ActiveMentionQuery, findActiveMentionQuery } from '../utils/textEntities';
 import { UserAvatar } from './UserAvatar';
 
 interface RichMentionInputProps {
@@ -21,10 +23,14 @@ export const RichMentionInput: React.FC<RichMentionInputProps> = ({
   autoFocus = false,
   onKeyDown
 }) => {
-  const [mentionQuery, setMentionQuery] = useState<{ text: string, index: number } | null>(null);
+  const [mentionQuery, setMentionQuery] = useState<ActiveMentionQuery | null>(null);
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const searchSchedulerRef = useRef<MentionSearchScheduler<any> | null>(null);
+  if (!searchSchedulerRef.current) {
+    searchSchedulerRef.current = createMentionSearchScheduler((query, signal) => api.searchUsers(query, signal));
+  }
 
   // Auto-resize logic
   useEffect(() => {
@@ -42,59 +48,43 @@ export const RichMentionInput: React.FC<RichMentionInputProps> = ({
 
   // Debounced search for mentions
   useEffect(() => {
+    const scheduler = searchSchedulerRef.current!;
+    scheduler.cancel();
+    setIsLoading(false);
+
     if (!mentionQuery) {
       setSuggestions([]);
       return;
     }
 
-    const timer = setTimeout(async () => {
-      try {
-        setIsLoading(true);
-        const results = await api.searchUsers(mentionQuery.text);
-        setSuggestions(results || []);
-      } catch (err) {
-        console.error("Failed to fetch mention suggestions:", err);
-      } finally {
-        setIsLoading(false);
-      }
-    }, 300);
+    scheduler.schedule(mentionQuery.text, {
+      onStart: () => setIsLoading(true),
+      onSuccess: (results) => setSuggestions(results || []),
+      onError: () => console.error('Failed to fetch mention suggestions'),
+      onSettled: () => setIsLoading(false)
+    });
 
-    return () => clearTimeout(timer);
+    return () => scheduler.cancel();
   }, [mentionQuery?.text]);
+
+  const updateMentionQuery = (text: string, cursor: number) => {
+    setMentionQuery(findActiveMentionQuery(text, cursor));
+  };
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const text = e.target.value;
     onChange(text);
-
-    const cursor = e.target.selectionStart;
-    const textBeforeCursor = text.substring(0, cursor);
-    
-    // Find if the last word before cursor starts with '@'
-    const words = textBeforeCursor.split(/\s/);
-    const lastWord = words[words.length - 1];
-
-    if (lastWord.startsWith('@')) {
-      const matchText = lastWord.substring(1);
-      // Valid mention search text: alphanumeric and underscores/dots
-      if (/^[a-zA-Z0-9_.]*$/.test(matchText)) {
-        setMentionQuery({ 
-          text: matchText, 
-          index: cursor - lastWord.length // Index where the '@' starts
-        });
-        return;
-      }
-    }
-    
-    setMentionQuery(null);
+    updateMentionQuery(text, e.target.selectionStart);
   };
 
   const insertMention = (handle: string) => {
     if (!mentionQuery) return;
     
     const textBeforeMention = value.substring(0, mentionQuery.index);
-    const textAfterMentionCursor = value.substring(mentionQuery.index + mentionQuery.text.length + 1); // +1 for the '@'
+    const textAfterMentionCursor = value.substring(mentionQuery.end);
     
     const newText = `${textBeforeMention}@${handle} ${textAfterMentionCursor}`;
+    const nextCursor = textBeforeMention.length + handle.length + 2;
     onChange(newText);
     setMentionQuery(null);
     setSuggestions([]);
@@ -102,6 +92,7 @@ export const RichMentionInput: React.FC<RichMentionInputProps> = ({
     // Restore focus
     if (textareaRef.current) {
       textareaRef.current.focus();
+      requestAnimationFrame(() => textareaRef.current?.setSelectionRange(nextCursor, nextCursor));
     }
   };
 
@@ -111,7 +102,7 @@ export const RichMentionInput: React.FC<RichMentionInputProps> = ({
         ref={textareaRef}
         value={value}
         onChange={handleChange}
-        onSelect={handleChange} // Capture cursor changes
+        onSelect={(event) => updateMentionQuery(event.currentTarget.value, event.currentTarget.selectionStart)}
         onBlur={() => {
             // Delay zeroing out query to allow click on suggestion to register
             setTimeout(() => setMentionQuery(null), 200);
