@@ -50,12 +50,31 @@ export type MediaPresentation = {
   id: string;
   access: 'PUBLIC' | 'RESTRICTED';
   aspectRatio: number;
+  focalX: number;
+  focalY: number;
   altText: string | null;
   width: number;
   height: number;
   src?: string;
   srcSet?: string;
   sources?: Array<{ src: string; width: number; height: number }>;
+};
+
+const clampUnit = (value: number): number => Math.max(0, Math.min(1, value));
+
+const presentationFocalPoint = (
+  asset: Pick<MediaAsset, 'cropX' | 'cropY' | 'cropWidth' | 'cropHeight' | 'focalX' | 'focalY'>
+): { focalX: number; focalY: number } => {
+  const cropX = asset.cropX ?? 0;
+  const cropY = asset.cropY ?? 0;
+  const cropWidth = asset.cropWidth && asset.cropWidth > 0 ? asset.cropWidth : 1;
+  const cropHeight = asset.cropHeight && asset.cropHeight > 0 ? asset.cropHeight : 1;
+  const focalX = asset.focalX ?? cropX + cropWidth / 2;
+  const focalY = asset.focalY ?? cropY + cropHeight / 2;
+  return {
+    focalX: clampUnit((focalX - cropX) / cropWidth),
+    focalY: clampUnit((focalY - cropY) / cropHeight)
+  };
 };
 
 export type MediaAttachmentRequirement = {
@@ -101,6 +120,7 @@ const publicPresentation = (
     id: asset.id,
     access: 'PUBLIC',
     aspectRatio: asset.aspectRatio,
+    ...presentationFocalPoint(asset),
     altText: asset.altText,
     width: largest.width,
     height: largest.height,
@@ -600,6 +620,7 @@ export const getMediaReadPresentation = async (assetId: string, viewerId?: strin
     id: asset.id,
     access: 'RESTRICTED',
     aspectRatio: asset.aspectRatio,
+    ...presentationFocalPoint(asset),
     altText: asset.altText,
     width: largest.width,
     height: largest.height,
@@ -620,6 +641,7 @@ export const getStoredMediaPresentation = async (assetId?: string | null): Promi
     id: asset.id,
     access: 'RESTRICTED',
     aspectRatio: asset.aspectRatio,
+    ...presentationFocalPoint(asset),
     altText: asset.altText,
     width: largest.width,
     height: largest.height
@@ -637,6 +659,7 @@ export const serializeMediaAsset = (
     id: asset.id,
     access: 'RESTRICTED',
     aspectRatio: asset.aspectRatio,
+    ...presentationFocalPoint(asset),
     altText: asset.altText,
     width: largest.width,
     height: largest.height

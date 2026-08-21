@@ -9,6 +9,8 @@ type MediaImageProps = Omit<React.ImgHTMLAttributes<HTMLImageElement>, 'src' | '
   fallbackSrc?: string | null;
   fallback?: React.ReactNode;
   eager?: boolean;
+  useFocalPoint?: boolean;
+  onUnavailable?: () => void;
 };
 
 export const MediaImage: React.FC<MediaImageProps> = ({
@@ -17,8 +19,11 @@ export const MediaImage: React.FC<MediaImageProps> = ({
   fallbackSrc,
   fallback,
   eager = false,
+  useFocalPoint = false,
+  onUnavailable,
   alt,
   sizes,
+  style,
   onError,
   ...imageProps
 }) => {
@@ -44,7 +49,10 @@ export const MediaImage: React.FC<MediaImageProps> = ({
       mediaApi.get(id).then((result) => {
         if (active) setResolved(result);
       }).catch(() => {
-        if (active) setFailed(true);
+        if (active) {
+          setFailed(true);
+          onUnavailable?.();
+        }
       }).finally(() => {
         if (active) setLoading(false);
       });
@@ -65,6 +73,7 @@ export const MediaImage: React.FC<MediaImageProps> = ({
       setFailed(false);
     } catch {
       setFailed(true);
+      onUnavailable?.();
     } finally {
       setLoading(false);
     }
@@ -91,10 +100,17 @@ export const MediaImage: React.FC<MediaImageProps> = ({
       fetchPriority={eager ? 'high' : 'auto'}
       decoding="async"
       crossOrigin="anonymous"
+      style={{
+        ...style,
+        objectPosition: style?.objectPosition || (useFocalPoint && resolved.focalX !== undefined && resolved.focalY !== undefined
+          ? `${resolved.focalX * 100}% ${resolved.focalY * 100}%`
+          : undefined)
+      }}
       onError={(event) => {
         onError?.(event);
         if (!id || retriedSourceRef.current === resolved.src) {
           setFailed(true);
+          onUnavailable?.();
           return;
         }
         retriedSourceRef.current = resolved.src;

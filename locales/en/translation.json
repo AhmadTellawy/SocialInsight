@@ -317,5 +317,18 @@
   "Rising": "Rising",
   "Most Commented": "Most Commented",
   "Growing Rapidly": "Growing Rapidly",
-  "High Engagement": "High Engagement"
+  "High Engagement": "High Engagement",
+  "shareCard": {
+    "questions": "{{count}} questions",
+    "moreOptions": "+ {{count}} more options",
+    "ratePrompt": "Rate from 1 to 5",
+    "openResponse": "Open response",
+    "votes": "{{formattedCount}} votes",
+    "responses": "{{formattedCount}} responses",
+    "privatePost": "{{author}} shared a private post.",
+    "restrictedGroupPost": "{{author}} shared a restricted group post.",
+    "openToView": "Open SocialInsight to view this content.",
+    "shareText": "Check out this {{type}} on SocialInsight:",
+    "preparing": "Preparing share card..."
+  }
 }

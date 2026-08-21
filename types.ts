@@ -17,6 +17,8 @@ export interface MediaPresentation {
   id: string;
   access: MediaAccess;
   aspectRatio: number;
+  focalX?: number;
+  focalY?: number;
   altText?: string | null;
   width: number;
   height: number;
@@ -270,6 +272,7 @@ export interface Survey {
   mediaAspectRatio?: number;
   targetAudience?: 'Public' | 'Followers' | 'Groups' | 'Custom Audience' | 'Custom Domain';
   targetGroups?: string[]; // IDs of groups if 'Groups' is selected
+  visibility?: 'PUBLIC' | 'PRIVATE' | string;
 
   // New granular visibility
   resultsWho?: 'Public' | 'Followers' | 'Participants' | 'OnlyMe';

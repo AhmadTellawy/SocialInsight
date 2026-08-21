@@ -1915,7 +1915,13 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
   return (
     <>
-      <div ref={viewRef} className="bg-white pt-5 pb-2 border-b-8 border-gray-100 animate-in fade-in slide-in-from-bottom-4 duration-500 relative">
+      <div
+        ref={viewRef}
+        data-testid="survey-card"
+        data-post-id={survey.id}
+        data-post-type={sourceSurvey.type}
+        className="bg-white pt-5 pb-2 border-b-8 border-gray-100 animate-in fade-in slide-in-from-bottom-4 duration-500 relative"
+      >
         <div className="px-4">
 
           {/* SHARER HEADER (If this is a repost) */}

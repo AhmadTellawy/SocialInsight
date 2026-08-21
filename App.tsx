@@ -219,6 +219,8 @@ const App: React.FC = () => {
         name: raw.author.name || 'Unknown',
         handle: raw.author.handle,
         avatar: raw.author.avatar || '',
+        avatarMediaId: raw.author.avatarMediaId,
+        avatarMedia: raw.author.avatarMedia,
         type: raw.author.type || 'Personal',
         isFollowing: raw.author.isFollowing || false,
         isPrivate: raw.author.isPrivate
@@ -227,6 +229,8 @@ const App: React.FC = () => {
         name: currentUser.name || 'Unknown',
         handle: currentUser.handle,
         avatar: currentUser.avatar || '',
+        avatarMediaId: currentUser.avatarMediaId,
+        avatarMedia: currentUser.avatarMedia,
         type: 'Personal',
         isFollowing: false,
         isPrivate: currentUser.isPrivate
