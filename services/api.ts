@@ -2,6 +2,33 @@ import { normalizeSurvey, PostAnswerPayload } from '../types';
 
 export const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
+export class ApiError extends Error {
+    constructor(
+        message: string,
+        public readonly status: number,
+        public readonly code?: string,
+        public readonly details?: Record<string, unknown>
+    ) {
+        super(message);
+        this.name = 'ApiError';
+    }
+}
+
+const throwApiError = async (response: Response, fallbackMessage: string): Promise<never> => {
+    let details: Record<string, unknown> = {};
+    try {
+        details = await response.json();
+    } catch {
+        // The fallback below keeps non-JSON upstream errors user-safe.
+    }
+    throw new ApiError(
+        typeof details.error === 'string' ? details.error : fallbackMessage,
+        response.status,
+        typeof details.code === 'string' ? details.code : undefined,
+        details
+    );
+};
+
 export const getGuestId = () => {
     let guestId = localStorage.getItem('si_guest_id');
     if (!guestId) {
@@ -150,7 +177,7 @@ export const api = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        if (!response.ok) throw new Error('Failed to update post');
+        if (!response.ok) await throwApiError(response, 'Failed to update post');
         const resData = await response.json();
         return normalizeSurvey(resData);
     },
@@ -202,10 +229,10 @@ export const api = {
         return response.json();
     },
 
-    searchUsers: async (query: string) => {
+    searchUsers: async (query: string, signal?: AbortSignal) => {
         if (!query) return [];
-        const response = await authFetch(`${API_BASE_URL}/users/search?q=${encodeURIComponent(query)}`);
-        if (!response.ok) throw new Error('Failed to search users');
+        const response = await authFetch(`${API_BASE_URL}/users/search?q=${encodeURIComponent(query)}`, { signal });
+        if (!response.ok) await throwApiError(response, 'Failed to search users');
         return response.json();
     },
 
@@ -241,7 +268,7 @@ export const api = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        if (!response.ok) throw new Error('Failed to create post');
+        if (!response.ok) await throwApiError(response, 'Failed to create post');
         const resData = await response.json();
         return normalizeSurvey(resData);
     },
@@ -272,7 +299,7 @@ export const api = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text, parentId, userId: authorId })
         });
-        if (!response.ok) throw new Error('Failed to create comment');
+        if (!response.ok) await throwApiError(response, 'Failed to create comment');
         return response.json();
     },
 

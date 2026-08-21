@@ -1,0 +1,56 @@
+[
+  {
+    "name": "mention punctuation and case",
+    "text": "Hello (@Ahmad), then @ahmad. Thanks @team_member!",
+    "entities": [
+      { "type": "mention", "raw": "@Ahmad", "value": "Ahmad", "normalizedValue": "ahmad" },
+      { "type": "mention", "raw": "@ahmad", "value": "ahmad", "normalizedValue": "ahmad" },
+      { "type": "mention", "raw": "@team_member", "value": "team_member", "normalizedValue": "team_member" }
+    ]
+  },
+  {
+    "name": "email and embedded mention false positives",
+    "text": "Email ahmad@example.com and ignore word@person, but keep @person.",
+    "entities": [
+      { "type": "mention", "raw": "@person", "value": "person", "normalizedValue": "person" }
+    ]
+  },
+  {
+    "name": "unicode and Arabic hashtags",
+    "text": "#AI, (#SaudiArabia) #كرة_القدم! #السعودية #الذكاء_الاصطناعي.",
+    "entities": [
+      { "type": "hashtag", "raw": "#AI", "value": "AI", "normalizedValue": "ai" },
+      { "type": "hashtag", "raw": "#SaudiArabia", "value": "SaudiArabia", "normalizedValue": "saudiarabia" },
+      { "type": "hashtag", "raw": "#كرة_القدم", "value": "كرة_القدم", "normalizedValue": "كرة_القدم" },
+      { "type": "hashtag", "raw": "#السعودية", "value": "السعودية", "normalizedValue": "السعودية" },
+      { "type": "hashtag", "raw": "#الذكاء_الاصطناعي", "value": "الذكاء_الاصطناعي", "normalizedValue": "الذكاء_الاصطناعي" }
+    ]
+  },
+  {
+    "name": "hashtag boundaries",
+    "text": "Ignore abc#AI and _#hidden; keep #AI.",
+    "entities": [
+      { "type": "hashtag", "raw": "#AI", "value": "AI", "normalizedValue": "ai" }
+    ]
+  },
+  {
+    "name": "handle dots and trailing punctuation",
+    "text": "@first.last... @under_score",
+    "entities": [
+      { "type": "mention", "raw": "@first.last", "value": "first.last", "normalizedValue": "first.last" },
+      { "type": "mention", "raw": "@under_score", "value": "under_score", "normalizedValue": "under_score" }
+    ]
+  },
+  {
+    "name": "unicode NFC normalization",
+    "text": "#Café",
+    "entities": [
+      { "type": "hashtag", "raw": "#Café", "value": "Café", "normalizedValue": "café" }
+    ]
+  },
+  {
+    "name": "plain markers and doubled markers are not entities",
+    "text": "plain @ @. @! @@double ##topic",
+    "entities": []
+  }
+]

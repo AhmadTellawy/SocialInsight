@@ -14,6 +14,9 @@
     "edit": "Edit",
     "remove": "Remove"
   },
+  "mentions": {
+    "limitExceeded": "You can mention up to {{limit}} people."
+  },
   "media": {
     "add": "Add image",
     "reorder": "Reorder image",

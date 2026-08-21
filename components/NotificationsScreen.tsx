@@ -9,7 +9,7 @@ interface NotificationsScreenProps {
   notifications: Notification[];
   onNotificationsChange: (notifications: Notification[]) => void;
   onBack: () => void;
-  onItemClick: (targetId: string, type?: 'survey' | 'profile' | 'group' | 'user', actor?: any) => void;
+  onItemClick: (notification: Notification) => void;
   currentUserId?: string;
 }
 
@@ -51,9 +51,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
     if (!notification.isRead) {
       onNotificationsChange(notifications.map(n => n.id === notification.id ? { ...n, isRead: true } : n));
     }
-    if (notification.targetId) {
-      onItemClick(notification.targetId, notification.targetType, notification.actor);
-    }
+    onItemClick(notification);
   };
 
   const handleAcceptRequest = async (id: string, actorId: string, e: React.MouseEvent) => {
@@ -195,6 +193,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
             }).map((notification) => (
               <div
                 key={notification.id}
+                data-notification-id={notification.id}
                 onClick={() => handleItemClick(notification)}
                 className={`flex gap-4 p-4 transition-colors cursor-pointer active:bg-gray-100 ${notification.isRead ? 'bg-white' : 'bg-blue-50/40'
                   }`}

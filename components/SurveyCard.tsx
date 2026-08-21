@@ -26,6 +26,8 @@ interface SurveyCardProps {
   survey: Survey;
   userProfile?: UserProfile;
   isDetailView?: boolean;
+  initialCommentId?: string;
+  initialReplyId?: string;
   onContentClick?: () => void;
   onVote?: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: Option, followUpAnswers?: Record<string, string>, answers?: PostAnswerPayload[]) => void | boolean | Promise<void | boolean>;
   onSurveyProgress?: (surveyId: string, progress: { index: number, answers: Record<string, any>, followUpAnswers?: Record<string, string>, historyStack?: number[], isAnonymous?: boolean }) => void;
@@ -136,6 +138,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   survey,
   userProfile,
   isDetailView = false,
+  initialCommentId,
+  initialReplyId,
   onContentClick,
   onAnalysisClick,
   onVote,
@@ -235,6 +239,10 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const [isLikersSheetOpen, setIsLikersSheetOpen] = useState(false);
   const [isRepostMenuOpen, setIsRepostMenuOpen] = useState(false);
   const [shareSheetInitialStep, setShareSheetInitialStep] = useState<'menu' | 'repost-editor'>('menu');
+
+  useEffect(() => {
+    if (isDetailView && (initialCommentId || initialReplyId)) setIsCommentsOpen(true);
+  }, [isDetailView, initialCommentId, initialReplyId]);
 
   // Unified Demographic Flow State
   const [isDemographicSheetOpen, setIsDemographicSheetOpen] = useState(false);
@@ -2269,6 +2277,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           onAuthorClick={onAuthorClick}
           sourceSurface={sourceSurface}
           onCommentAdded={() => setCommentsCount(prev => prev + 1)}
+          initialCommentId={initialCommentId}
+          initialReplyId={initialReplyId}
         />
       </BottomSheet>
       <BottomSheet isOpen={isShareSheetOpen} onClose={() => { setIsShareSheetOpen(false); setShareSheetInitialStep('menu'); }}>

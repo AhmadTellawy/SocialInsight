@@ -21,19 +21,27 @@ self.addEventListener('push', function (event) {
 
 self.addEventListener('notificationclick', function (event) {
     event.notification.close();
+    var targetUrl = new URL(event.notification.data.url || '/', self.location.origin).href;
     event.waitUntil(
-        clients.matchAll({ type: 'window' }).then(windowClients => {
-            // Check if there is already a window/tab open with the target URL
+        clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windowClients => {
             for (var i = 0; i < windowClients.length; i++) {
                 var client = windowClients[i];
-                // If so, just focus it.
-                if (client.url === event.notification.data.url && 'focus' in client) {
+                if (client.url === targetUrl && 'focus' in client) {
                     return client.focus();
                 }
             }
-            // If not, then open the target URL in a new window/tab.
+
+            for (var j = 0; j < windowClients.length; j++) {
+                var appClient = windowClients[j];
+                if (new URL(appClient.url).origin === self.location.origin && 'navigate' in appClient) {
+                    return appClient.navigate(targetUrl).then(function (navigatedClient) {
+                        return navigatedClient && 'focus' in navigatedClient ? navigatedClient.focus() : navigatedClient;
+                    });
+                }
+            }
+
             if (clients.openWindow) {
-                return clients.openWindow(event.notification.data.url);
+                return clients.openWindow(targetUrl);
             }
         })
     );

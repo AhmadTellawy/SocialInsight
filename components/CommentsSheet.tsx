@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Send, ThumbsUp, Reply, Edit2, Trash2, X } from 'lucide-react';
 import { Analytics } from '../utils/analytics';
 import { Comment, UserProfile } from '../types';
@@ -14,6 +15,8 @@ interface CommentsSheetProps {
   onAuthorClick?: (author: { name: string; avatar: string }) => void;
   sourceSurface?: 'FEED' | 'PROFILE' | 'SAVED' | 'SEARCH' | 'DEEP_LINK';
   onCommentAdded?: () => void;
+  initialCommentId?: string;
+  initialReplyId?: string;
 }
 
 const formatRelativeTime = (dateString: string) => {
@@ -45,9 +48,10 @@ interface CommentItemProps {
   onReply: (id: string) => void;
   onAuthorClick?: (author: { name: string; avatar: string }) => void;
   onLongPress?: (comment: Comment, isReply: boolean, parentId?: string) => void;
+  highlightedCommentId?: string | null;
 }
 
-const CommentItem: React.FC<CommentItemProps> = ({ comment, isReply = false, parentId, onLike, onLikersClick, onReply, onAuthorClick, onLongPress }) => {
+const CommentItem: React.FC<CommentItemProps> = ({ comment, isReply = false, parentId, onLike, onLikersClick, onReply, onAuthorClick, onLongPress, highlightedCommentId }) => {
   const timerRef = React.useRef<NodeJS.Timeout | null>(null);
 
   const handlePressStart = () => {
@@ -62,7 +66,11 @@ const CommentItem: React.FC<CommentItemProps> = ({ comment, isReply = false, par
   };
 
   return (
-  <div className={`flex gap-3 mb-4 ${isReply ? 'ml-11 mt-2' : ''}`}>
+  <div
+    id={`comment-${comment.id}`}
+    data-comment-id={comment.id}
+    className={`flex gap-3 mb-4 rounded-xl transition-colors duration-500 ${isReply ? 'ml-11 mt-2' : ''} ${highlightedCommentId === comment.id ? 'bg-blue-50 ring-2 ring-blue-200' : ''}`}
+  >
     <button type="button" onClick={() => onAuthorClick && onAuthorClick(comment.author)} className="shrink-0 cursor-pointer hover:opacity-80" aria-label={comment.author.name}>
       <UserAvatar src={comment.author.avatar} mediaId={comment.author.avatarMediaId} media={comment.author.avatarMedia} name={comment.author.name} alt={comment.author.name} size={32} className="select-none" />
     </button>
@@ -130,6 +138,7 @@ const CommentItem: React.FC<CommentItemProps> = ({ comment, isReply = false, par
           onReply={onReply}
           onAuthorClick={onAuthorClick}
           onLongPress={onLongPress}
+          highlightedCommentId={highlightedCommentId}
         />
       ))}
     </div>
@@ -138,11 +147,12 @@ const CommentItem: React.FC<CommentItemProps> = ({ comment, isReply = false, par
   );
 };
 
-import { api } from '../services/api';
+import { api, ApiError } from '../services/api';
 
 // ... imports
 
-export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProfile, onAuthorClick, sourceSurface = 'FEED', onCommentAdded }) => {
+export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProfile, onAuthorClick, sourceSurface = 'FEED', onCommentAdded, initialCommentId, initialReplyId }) => {
+  const { t } = useTranslation();
   const [comments, setComments] = useState<Comment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [newComment, setNewComment] = useState('');
@@ -155,6 +165,7 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
   // Comment Actions State
   const [actionSheetComment, setActionSheetComment] = useState<{ comment: Comment, isReply: boolean, parentId?: string } | null>(null);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
 
   React.useEffect(() => {
     const loadComments = async () => {
@@ -171,6 +182,24 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
     };
     loadComments();
   }, [surveyId, userProfile?.id]);
+
+  React.useEffect(() => {
+    const targetId = initialReplyId || initialCommentId;
+    if (isLoading || !targetId) return;
+
+    const scrollTimer = window.setTimeout(() => {
+      const target = document.getElementById(`comment-${targetId}`);
+      if (!target) return;
+      setHighlightedCommentId(targetId);
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 50);
+    const clearTimer = window.setTimeout(() => setHighlightedCommentId(null), 2600);
+
+    return () => {
+      window.clearTimeout(scrollTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [isLoading, initialCommentId, initialReplyId, comments]);
 
   const handleLike = async (commentId: string, isReply = false, parentId?: string) => {
     if (!userProfile?.id) return;
@@ -254,7 +283,11 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
       }
     } catch (error) {
       console.error("Failed to process comment", error);
-      alert(editingCommentId ? "Failed to update comment." : "Failed to send the comment. Please try again.");
+      if (error instanceof ApiError && error.code === 'MENTION_LIMIT_EXCEEDED') {
+        alert(t('mentions.limitExceeded', { limit: error.details?.limit }));
+      } else {
+        alert(editingCommentId ? "Failed to update comment." : "Failed to send the comment. Please try again.");
+      }
     } finally {
       isSubmittingRef.current = false;
       setIsSubmitting(false);
@@ -302,6 +335,7 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
                   setActionSheetComment({ comment, isReply, parentId });
                 }
               }}
+              highlightedCommentId={highlightedCommentId}
             />
           ))
         )}
