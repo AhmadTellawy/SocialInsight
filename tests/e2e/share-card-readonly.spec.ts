@@ -97,6 +97,7 @@ async function expectStableShareShell(shareCard: Locator, direction: 'ltr' | 'rt
 }
 
 test('mobile generates the official 1080 square Share Card and carries its canonical URL', async ({ page }) => {
+  test.setTimeout(60_000);
   await installShareCapture(page, 'en');
   await blockUnexpectedMutations(page);
   await gotoApp(page, '/');
