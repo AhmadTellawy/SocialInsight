@@ -183,5 +183,18 @@
   "Rising": "صاعد حديثاً",
   "Most Commented": "الأكثر تعليقاً",
   "Growing Rapidly": "ينمو بسرعة",
-  "High Engagement": "تفاعل مرتفع"
+  "High Engagement": "تفاعل مرتفع",
+  "shareCard": {
+    "questions": "{{count}} أسئلة",
+    "moreOptions": "+ {{count}} خيارات أخرى",
+    "ratePrompt": "قيّم من 1 إلى 5",
+    "openResponse": "إجابة نصية",
+    "votes": "{{formattedCount}} تصويت",
+    "responses": "{{formattedCount}} استجابة",
+    "privatePost": "شارك {{author}} منشوراً خاصاً.",
+    "restrictedGroupPost": "شارك {{author}} منشوراً ضمن مجموعة مقيّدة.",
+    "openToView": "افتح SocialInsight لعرض هذا المحتوى.",
+    "shareText": "شاهد هذا المحتوى من نوع {{type}} على SocialInsight:",
+    "preparing": "جارٍ تجهيز بطاقة المشاركة..."
+  }
 }

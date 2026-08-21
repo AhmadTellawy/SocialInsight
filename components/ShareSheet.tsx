@@ -1,16 +1,22 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
-  Search, Link as LinkIcon, Repeat, MoreHorizontal,
-  Send, Check, Share2, Copy, Image as ImageIcon, Loader2, Download, PieChart, ExternalLink, QrCode, CheckCircle2,
-  Users, MessageSquare, ArrowLeft, SendHorizontal, ChevronRight, X, Star
+  Repeat, Check, Share2, Copy, Loader2, ExternalLink, CheckCircle2, ChevronRight
 } from 'lucide-react';
-import { Survey, SurveyType } from '../types';
-import { SurveyCard } from './SurveyCard';
+import { Survey } from '../types';
 import html2canvas from 'html2canvas';
 import { Analytics } from '../utils/analytics';
 import { UserProfile } from '../types';
 import { UserAvatar } from './UserAvatar';
+import { useTranslation } from 'react-i18next';
+import { ShareCard } from './share/ShareCard';
+import {
+  SHARE_CARD_SIZE,
+  buildCanonicalPostUrl,
+  buildShareCardViewModel,
+  getCanonicalHost,
+  resolveCanonicalOrigin
+} from '../utils/shareCard';
 
 interface ShareSheetProps {
   survey: Survey;
@@ -22,7 +28,8 @@ interface ShareSheetProps {
   initialStep?: 'menu' | 'contacts' | 'feed' | 'repost-editor';
 }
 
-const waitForCaptureImages = async (root: HTMLElement, timeoutMs = 5000): Promise<void> => {
+const waitForCaptureAssets = async (root: HTMLElement, timeoutMs = 5000): Promise<void> => {
+  if (document.fonts?.ready) await document.fonts.ready;
   const deadline = Date.now() + timeoutMs;
   while (root.querySelector('[aria-busy="true"]') && Date.now() < deadline) {
     await new Promise((resolve) => window.setTimeout(resolve, 50));
@@ -43,9 +50,11 @@ const waitForCaptureImages = async (root: HTMLElement, timeoutMs = 5000): Promis
       image.addEventListener('error', done, { once: true });
     });
   }));
+  await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
 };
 
 export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShareToFeed, userProfile, sourceSurface = 'FEED', initialStep = 'menu' }) => {
+  const { t } = useTranslation();
   const [step, setStep] = useState<'menu' | 'contacts' | 'feed' | 'repost-editor'>(initialStep);
   const [sentTo, setSentTo] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
@@ -54,7 +63,13 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
   const [repostCaption, setRepostCaption] = useState('');
 
   const posterRef = useRef<HTMLDivElement>(null);
-  const postUrl = `${window.location.origin}/post/${survey.id}`;
+  const canonicalOrigin = resolveCanonicalOrigin(import.meta.env.VITE_PUBLIC_URL, window.location.origin);
+  const postUrl = buildCanonicalPostUrl(survey.id, canonicalOrigin);
+  const canonicalHost = getCanonicalHost(canonicalOrigin);
+  const shareCardModel = useMemo(
+    () => buildShareCardViewModel(survey, window.location.origin),
+    [survey]
+  );
 
   const handleRepostConfirm = async () => {
     if (!onShareToFeed) return;
@@ -88,25 +103,37 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
     if (!posterRef.current) return;
 
     setIsGeneratingImage(true);
+    const typeLabel = t(shareCardModel.badge, { defaultValue: shareCardModel.badge });
+    const shareText = t('shareCard.shareText', { type: typeLabel });
 
     try {
-      await new Promise(r => setTimeout(r, 300)); // Wait for render
-      await waitForCaptureImages(posterRef.current);
+      await waitForCaptureAssets(posterRef.current);
 
       const canvas = await html2canvas(posterRef.current, {
         useCORS: true,
-        allowTaint: true,
-        scale: 3,
+        allowTaint: false,
+        scale: 1,
+        width: SHARE_CARD_SIZE,
+        height: SHARE_CARD_SIZE,
+        windowWidth: SHARE_CARD_SIZE,
+        windowHeight: SHARE_CARD_SIZE,
         backgroundColor: '#ffffff',
         logging: false,
       });
 
-      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png', 1.0));
+      const outputCanvas = document.createElement('canvas');
+      outputCanvas.width = SHARE_CARD_SIZE;
+      outputCanvas.height = SHARE_CARD_SIZE;
+      const context = outputCanvas.getContext('2d');
+      if (!context) throw new Error('Share image canvas is unavailable.');
+      context.imageSmoothingEnabled = true;
+      context.imageSmoothingQuality = 'high';
+      context.drawImage(canvas, 0, 0, SHARE_CARD_SIZE, SHARE_CARD_SIZE);
 
-      const shareText = `Check out this ${survey.type} on SocialInsight!`;
+      const blob = await new Promise<Blob | null>((resolve) => outputCanvas.toBlob(resolve, 'image/png', 1.0));
 
       if (blob && navigator.share) {
-        const file = new File([blob], `SocialInsight_${survey.type}.png`, { type: 'image/png' });
+        const file = new File([blob], `SocialInsight_${shareCardModel.badge}.png`, { type: 'image/png' });
 
         const shareData: ShareData = {
           title: `SocialInsight - ${survey.title}`,
@@ -116,6 +143,8 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
 
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
           shareData.files = [file];
+          shareData.text = `${shareText}\n${postUrl}`;
+          delete shareData.url;
         }
 
         try {
@@ -144,7 +173,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
       if (navigator.share) {
         await navigator.share({
           title: `SocialInsight`,
-          text: `Check out this ${survey.type} on SocialInsight!`,
+          text: shareText,
           url: postUrl
         });
         onClose();
@@ -188,7 +217,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
         </div>
         <div className="text-left flex-1">
           <h4 className="font-bold text-gray-900">Share Outside</h4>
-          <p className="text-xs text-gray-500">{isGeneratingImage ? 'Capturing exact view...' : 'WhatsApp, Instagram, etc.'}</p>
+          <p className="text-xs text-gray-500">{isGeneratingImage ? t('shareCard.preparing') : 'WhatsApp, Instagram, etc.'}</p>
         </div>
         <ExternalLink size={18} className="text-gray-300" />
       </button>
@@ -233,45 +262,10 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
 
   return (
     <div className="flex flex-col h-full bg-white relative overflow-hidden">
-      {/* Hidden container that replicates a high-quality static card view for screenshot capture */}
-      <div className="fixed top-0 left-[-9999px] pointer-events-none" aria-hidden="true">
-        <div ref={posterRef} className="w-[500px] bg-white pb-12 pt-8 px-6 flex flex-col gap-4">
-            {/* Custom Header with App Logo */}
-            <div className="flex items-center justify-between px-2 mb-2">
-               <img src="/logo.png" className="h-[36px] object-contain" alt="SocialInsight" />
-               <div className="text-right">
-                 <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-0.5">Join the conversation</p>
-                 <p className="text-[12px] font-bold text-gray-500">socialinsight.app</p>
-               </div>
-            </div>
-
-            {/* Content Card */}
-            <div className="capture-target-wrapper pointer-events-none rounded-3xl border border-gray-100 shadow-sm relative bg-white mx-4 mt-4 mb-4">
-              <style>{`
-                .capture-target-wrapper > div { border-bottom: none !important; padding-bottom: 16px !important; }
-                .capture-target-wrapper .border-t.border-gray-100.mt-2 { display: none !important; }
-                .capture-target-wrapper .lucide-more-horizontal { display: none !important; }
-                .capture-target-wrapper button { pointer-events: none !important; }
-                .capture-target-wrapper .truncate { 
-                  overflow: visible !important; 
-                  text-overflow: clip !important; 
-                  white-space: normal !important; 
-                  line-height: 1.5 !important;
-                  padding-top: 4px !important;
-                  padding-bottom: 4px !important;
-                }
-                .capture-target-wrapper img.rounded-full {
-                  border-radius: 50% !important;
-                  overflow: visible !important;
-                }
-              `}</style>
-              <SurveyCard 
-                 survey={survey} 
-                 userProfile={userProfile}
-                 isDetailView={true} 
-                 sourceSurface="SHARE_CAPTURE"
-              />
-            </div>
+      {/* Dedicated deterministic external representation; never capture the live Feed card. */}
+      <div className="pointer-events-none fixed left-[-12000px] top-0" aria-hidden="true">
+        <div ref={posterRef}>
+          <ShareCard model={shareCardModel} canonicalHost={canonicalHost} />
         </div>
       </div>
 

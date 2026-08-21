@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { resolvePostMediaScopeFromState, serializePostMediaRecord } from './mediaService';
+import { resolvePostMediaScopeFromState, serializeMediaAsset, serializePostMediaRecord } from './mediaService';
 import { processBase64Image } from '../utils/imageProcessor';
 
 test('resolves draft, group, audience, and account media scopes conservatively', () => {
@@ -93,4 +93,24 @@ test('redacts hidden image-option labels for viewers but preserves them for the 
   assert.equal(publicPost.sections[0].questions[0].options[0].imageMedia.altText, null);
   assert.equal(creatorPost.questions[0].options[0].text, 'Internal option name');
   assert.equal(creatorPost.sections[0].questions[0].options[0].text, 'Internal section option name');
+});
+
+test('serializes the focal point relative to the creator crop', () => {
+  const presentation = serializeMediaAsset({
+    id: 'media-id',
+    accessScope: 'RESTRICTED',
+    aspectRatio: 1,
+    altText: null,
+    cropX: 0.2,
+    cropY: 0.1,
+    cropWidth: 0.5,
+    cropHeight: 0.5,
+    focalX: 0.65,
+    focalY: 0.2,
+    variants: [{ kind: 'MEDIUM', isPublic: false, width: 768, height: 768 }]
+  } as any);
+
+  assert.ok(presentation);
+  assert.equal(presentation.focalX, 0.9);
+  assert.equal(presentation.focalY, 0.2);
 });
