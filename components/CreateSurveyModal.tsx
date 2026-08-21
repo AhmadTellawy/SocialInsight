@@ -2,13 +2,18 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { X, Plus, Trash2, Globe, Users, ChevronDown, Clock, Calendar, Type, ListChecks, ImageIcon, Settings, Info, ArrowRight, Camera, Lock, AlertCircle, ChevronRight, ChevronLeft, MoreVertical, Layout, Terminal, Navigation, Sparkles, GripVertical, Save, FileText, BarChart3, UserCircle, Heart, Fingerprint, MapPin, Briefcase, Check, GraduationCap, Home, Smile, Building2, User, MessageSquare, ShieldCheck, Link2, Target, MoreHorizontal, ArrowUp, ArrowDown, Star, List, LayoutGrid, CornerDownRight, PowerOff } from 'lucide-react';
 import { Survey, SurveyType, UserProfile, Group, MediaDraft } from '../types';
+import { useTranslation } from 'react-i18next';
 import { BottomSheet } from './BottomSheet';
 import { RichMentionInput } from './RichMentionInput';
 import { api } from '../services/api';
 import { MediaPicker, MediaPickerHandle } from './media/MediaPicker';
 import { MediaImage } from './media/MediaImage';
 import { cancelTemporaryMediaDrafts, createPersistedMediaDraft, mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds } from '../utils/mediaDrafts';
-import { collectSectionMedia, hydrateSections, serializeSections, SurveyOptionDraft, SurveyQuestionDraft, SurveySectionDraft } from '../utils/sectionMediaDrafts';
+import { collectInactiveSectionMedia, collectSectionMedia, hydrateSections, serializeSections, SurveyOptionDraft, SurveyQuestionDraft, SurveySectionDraft } from '../utils/sectionMediaDrafts';
+import { AnswerTypeSelector, CreatorAnswerType } from './options/AnswerTypeSelector';
+import { OptionImagePicker, OptionImageThumbnail } from './options/OptionImagePicker';
+import { draftOptionHasImage, resolveOptionPresentation } from '../utils/optionPresentation';
+import { RatingScaleQuestion } from './Survey/RatingScaleQuestion';
 
 interface CreateSurveyModalProps {
   isOpen: boolean;
@@ -54,6 +59,8 @@ const INITIAL_SECTIONS: SurveySectionDraft[] = [
         maxSelection: 1,
         isRequired: true,
         imageLayout: 'vertical',
+        optionPresentation: 'text',
+        showOptionNames: true,
         mediaDrafts: [],
         options: [
           { id: `opt-init-1`, text: '', votes: 0, mediaDrafts: [], withFollowUp: false, followUpLabel: '' },
@@ -66,7 +73,26 @@ const INITIAL_SECTIONS: SurveySectionDraft[] = [
 
 type VisibilityType = 'Public' | 'Followers' | 'Groups' | 'Custom Audience' | 'Custom Domain';
 
+const createSurveyOption = (): SurveyOptionDraft => ({
+  id: `o-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+  text: '',
+  votes: 0,
+  mediaDrafts: [],
+  withFollowUp: false,
+  followUpLabel: ''
+});
+
+const createSurveyRatingOptions = (): SurveyOptionDraft[] => [5, 4, 3, 2, 1].map((ratingValue) => ({
+  id: `rate-${ratingValue}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+  text: String(ratingValue),
+  votes: 0,
+  mediaDrafts: [],
+  isRating: true,
+  ratingValue
+}));
+
 export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, onClose, onSubmit, onSaveDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
+  const { t } = useTranslation();
   const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
   const [isVisibilitySheetOpen, setIsVisibilitySheetOpen] = useState(false);
   const [isResultVisibilitySheetOpen, setIsResultVisibilitySheetOpen] = useState(false);
@@ -182,7 +208,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
   const handleDiscard = async () => {
     await Promise.all([
       cancelTemporaryMediaDrafts(postMedia),
-      cancelTemporaryMediaDrafts(collectSectionMedia(sections))
+      cancelTemporaryMediaDrafts(collectSectionMedia(sections, true))
     ]);
     if (!userProfile?.id) {
       onClose();
@@ -323,10 +349,24 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
           hasQuestionError = true;
         }
         if (q.type === 'multiple_choice') {
-          const filledOptions = q.options?.filter(o => o.text.trim() !== '');
-          if ((filledOptions?.length || 0) < 2) {
-            errorList.push(`Question ${qNum}: At least 2 options are required.`);
-            hasQuestionError = true;
+          const isRating = q.options?.some((option) => option.isRating) || false;
+          if (!isRating) {
+            const presentation = resolveOptionPresentation(q.optionPresentation, q.options);
+            if (presentation === 'image') {
+              const imageOptionsValid = (q.options?.length || 0) >= 2 && q.options?.every((option) =>
+                option.text.trim().length > 0 && draftOptionHasImage(option)
+              );
+              if (!imageOptionsValid) {
+                errorList.push(`Question ${qNum}: Every image option needs an image and a name.`);
+                hasQuestionError = true;
+              }
+            } else {
+              const filledOptions = q.options?.filter(o => o.text.trim() !== '');
+              if ((filledOptions?.length || 0) < 2) {
+                errorList.push(`Question ${qNum}: At least 2 options are required.`);
+                hasQuestionError = true;
+              }
+            }
           }
         }
         if (q.type === 'text') {
@@ -416,6 +456,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
       } else {
         await onSubmit(surveyData);
       }
+      await cancelTemporaryMediaDrafts(collectInactiveSectionMedia(sections));
       onClose();
     } catch (error) {
       console.error('Failed to save survey:', error);
@@ -438,6 +479,8 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
         maxSelection: 1,
         isRequired: true,
         imageLayout: 'vertical',
+        optionPresentation: 'text',
+        showOptionNames: true,
         mediaDrafts: [],
         options: [
           { id: `o1-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0, mediaDrafts: [], withFollowUp: false, followUpLabel: '' },
@@ -450,13 +493,12 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
   };
 
   const handleAddSurveyOption = (secId: string, qId: string) => {
-    const newOptId = `o-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const newOpt: SurveyOptionDraft = { id: newOptId, text: '', votes: 0, mediaDrafts: [], withFollowUp: false, followUpLabel: '' };
+    const newOpt = createSurveyOption();
     const section = sections.find(s => s.id === secId);
     const question = section?.questions.find(qu => qu.id === qId);
     if (question) {
       updateQuestion(secId, qId, { options: [...(question.options || []), newOpt] });
-      setFocusedOptionId(newOptId);
+      setFocusedOptionId(newOpt.id);
     }
   };
 
@@ -474,31 +516,35 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
     }));
   };
 
-  const handleChoiceTypeChange = (secId: string, qId: string, choiceType: 'multiple' | 'rating' | 'text') => {
-    let newType: 'multiple_choice' | 'text' = 'multiple_choice';
-    let newOptions: SurveyOptionDraft[] = [];
+  const handleChoiceTypeChange = (secId: string, qId: string, choiceType: CreatorAnswerType) => {
+    setSections((currentSections) => currentSections.map((section) => section.id !== secId ? section : {
+      ...section,
+      questions: section.questions.map((question) => {
+        if (question.id !== qId) return question;
+        const isRating = question.options?.some((option) => option.isRating) || false;
+        if (choiceType === 'rating') {
+          return {
+            ...question,
+            type: 'multiple_choice',
+            multipleChoiceDraft: isRating ? question.multipleChoiceDraft : question.options,
+            options: isRating ? question.options : createSurveyRatingOptions(),
+            maxSelection: 1
+          };
+        }
 
-    if (choiceType === 'rating') {
-      newOptions = [
-        { id: `rate-5-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '5', votes: 0, mediaDrafts: [], isRating: true, ratingValue: 5 },
-        { id: `rate-4-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '4', votes: 0, mediaDrafts: [], isRating: true, ratingValue: 4 },
-        { id: `rate-3-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '3', votes: 0, mediaDrafts: [], isRating: true, ratingValue: 3 },
-        { id: `rate-2-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '2', votes: 0, mediaDrafts: [], isRating: true, ratingValue: 2 },
-        { id: `rate-1-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '1', votes: 0, mediaDrafts: [], isRating: true, ratingValue: 1 },
-      ];
-    } else if (choiceType === 'text') {
-      newType = 'text';
-      newOptions = [];
-    } else {
-      newOptions = [
-        { id: `o1-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0, mediaDrafts: [] },
-        { id: `o2-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0, mediaDrafts: [] }
-      ];
-    }
-
-    const currentQuestion = sections.find((section) => section.id === secId)?.questions.find((question) => question.id === qId);
-    if (currentQuestion) void cancelTemporaryMediaDrafts((currentQuestion.options || []).flatMap((option) => option.mediaDrafts));
-    updateQuestion(secId, qId, { type: newType, options: newOptions, maxSelection: 1 });
+        const restoredOptions = isRating
+          ? question.multipleChoiceDraft || [createSurveyOption(), createSurveyOption()]
+          : question.options || [createSurveyOption(), createSurveyOption()];
+        return {
+          ...question,
+          type: 'multiple_choice',
+          optionPresentation: choiceType,
+          options: restoredOptions,
+          multipleChoiceDraft: undefined,
+          maxSelection: 1
+        };
+      })
+    }));
   };
 
   const moveOption = (secId: string, qId: string, optId: string, direction: 'up' | 'down') => {
@@ -794,6 +840,8 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                           type: 'multiple_choice',
                           isRequired: true,
                           imageLayout: 'vertical',
+                          optionPresentation: 'text',
+                          showOptionNames: true,
                           mediaDrafts: [],
                           options: [
                             { id: `o1-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, text: '', votes: 0, mediaDrafts: [], withFollowUp: false, followUpLabel: '' },
@@ -822,7 +870,9 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                   const q = activeSection.questions.find(qu => qu.id === activeQuestionId);
                   if (!q) return null;
                   const isRating = q.options?.some(o => o.isRating);
-                  const currentChoiceType = q.type === 'text' ? 'text' : isRating ? 'rating' : 'multiple';
+                  const currentChoiceType: CreatorAnswerType = isRating
+                    ? 'rating'
+                    : resolveOptionPresentation(q.optionPresentation, q.options);
 
                   return (
                     <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-4 shadow-sm">
@@ -894,23 +944,13 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                         </div>
                       )}
 
-                      {/* Choice Type Selector */}
+                      {/* Answer Type Selector */}
                       <div className="space-y-3 pt-2">
-                        <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest px-1">Choice Type</label>
-                        <div className="flex gap-2">
-                          {[
-                            { id: 'multiple', label: 'Multiple Choice' },
-                            { id: 'rating', label: 'Rating Scale' }
-                          ].map((type) => (
-                            <button
-                              key={type.id}
-                              onClick={() => handleChoiceTypeChange(activeSection.id, q.id, type.id as any)}
-                              className={`flex-1 py-2.5 rounded-xl text-[10px] font-bold border transition-all ${currentChoiceType === type.id ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}
-                            >
-                              {type.label}
-                            </button>
-                          ))}
-                        </div>
+                        <label className="block text-[10px] font-black text-gray-600 uppercase tracking-widest px-1">{t('answerType.label')}</label>
+                        <AnswerTypeSelector
+                          value={currentChoiceType}
+                          onChange={(value) => handleChoiceTypeChange(activeSection.id, q.id, value)}
+                        />
                       </div>
 
                       {q.type === 'multiple_choice' && !isRating && (
@@ -942,150 +982,116 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                       )}
 
                       {q.type === 'multiple_choice' ? (
-                        <div className="space-y-3 pt-2 border-t border-gray-50">
-                          {q.options?.map((opt, oIdx) => (
-                            <div key={opt.id} className="flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-1 duration-200">
-                              <div className="flex items-center gap-2">
-                                <div className="flex-1 flex items-center bg-gray-50 rounded-xl px-1 py-1 border border-transparent focus-within:border-blue-200 focus-within:bg-white transition-all shadow-sm">
-                                  {currentChoiceType === 'multiple' && (
-                                    <MediaPicker
-                                      purpose="OPTION_IMAGE"
-                                      value={opt.mediaDrafts}
-                                      onChange={(mediaDrafts) => updateOption(activeSection.id, q.id, opt.id, {
-                                        mediaDrafts,
-                                        image: mediaDrafts.some((media) => media.status === 'ready') ? undefined : opt.image,
-                                        imageMediaId: readyMediaAssetIds(mediaDrafts)[0]
-                                      })}
-                                      className="mr-1 shrink-0"
-                                      renderContent={({ open, retry, busy }) => {
-                                        const current = opt.mediaDrafts[0];
-                                        const hasImage = Boolean(current || opt.image);
-                                        return (
-                                          <button
-                                            type="button"
-                                            onClick={() => current?.status === 'error' ? retry(current.clientId) : open()}
-                                            disabled={busy}
-                                            className={`relative w-10 h-10 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-dashed transition-all disabled:cursor-wait ${hasImage ? 'border-blue-500' : 'border-gray-200 text-gray-400 hover:text-blue-500'}`}
-                                            aria-label={current?.status === 'error' ? 'Retry option image upload' : `Add image to option ${oIdx + 1}`}
-                                            title={current?.status === 'error' ? 'Retry' : 'Add option image'}
-                                          >
-                                            {current?.previewUrl ? (
-                                              <img src={current.previewUrl} className="w-full h-full object-cover" alt="" />
-                                            ) : current?.presentation ? (
-                                              <MediaImage media={current.presentation} className="w-full h-full object-cover" />
-                                            ) : opt.image ? (
-                                              <img src={opt.image} className="w-full h-full object-cover" alt="" />
-                                            ) : (
-                                              <Camera size={16} />
-                                            )}
-                                            {busy && <span className="absolute inset-x-0 bottom-0 h-1 bg-blue-500" />}
-                                          </button>
-                                        );
-                                      }}
-                                    />
-                                  )}
-                                  {isRating ? (
-                                    <div className="flex-1 px-3 py-2 flex items-center gap-2">
-                                      <div className="flex text-yellow-500">
-                                        {Array.from({ length: opt.ratingValue || 0 }).map((_, i) => (
-                                          <Star key={i} size={14} fill="currentColor" />
-                                        ))}
+                        isRating ? (
+                          <RatingScaleQuestion
+                            options={q.options || []}
+                            selectedOptionIds={[]}
+                            showResults={false}
+                            disabled
+                          />
+                        ) : currentChoiceType === 'image' ? (
+                          <OptionImagePicker
+                            options={q.options || []}
+                            onChange={(options) => updateQuestion(activeSection.id, q.id, { options })}
+                            createOption={createSurveyOption}
+                          >
+                            {(controls) => (
+                              <div className="space-y-3 border-t border-gray-50 pt-3">
+                                <p className="px-1 text-[10px] font-medium leading-relaxed text-gray-600">{t('answerType.imageHelper')}</p>
+                                {!q.options?.some(draftOptionHasImage) && (
+                                  <button type="button" onClick={controls.openBulk} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-blue-300 bg-blue-50/50 px-3 text-xs font-bold text-blue-700">
+                                    <ImageIcon size={16} aria-hidden="true" /> {t('answerType.addImages')}
+                                  </button>
+                                )}
+                                {q.options?.map((opt, oIdx) => (
+                                  <div key={opt.id} className="flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-1 duration-200">
+                                    <div className="flex items-center gap-2">
+                                      <div className="flex min-h-[58px] flex-1 items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-2 py-1 transition-all focus-within:border-blue-300 focus-within:bg-white">
+                                        <OptionImageThumbnail optionId={opt.id} optionIndex={oIdx} draft={opt.mediaDrafts[0]} legacyImage={opt.image} controls={controls} />
+                                        <input
+                                          type="text"
+                                          value={opt.text}
+                                          maxLength={80}
+                                          autoFocus={focusedOptionId === opt.id}
+                                          onChange={(event) => updateOption(activeSection.id, q.id, opt.id, { text: event.target.value })}
+                                          onBlur={() => focusedOptionId === opt.id && setFocusedOptionId(null)}
+                                          placeholder={t('answerType.optionName', { number: oIdx + 1 })}
+                                          aria-label={t('answerType.optionName', { number: oIdx + 1 })}
+                                          className="min-w-0 flex-1 bg-transparent p-2 text-xs font-semibold placeholder-gray-500 focus:outline-none"
+                                        />
+                                        <span className="whitespace-nowrap text-[9px] text-gray-500">{opt.text.length}/80</span>
+                                        <button onClick={() => setSettingsOptionId({ secId: activeSection.id, qId: q.id, optId: opt.id })} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-gray-500" aria-label={`Option ${oIdx + 1} menu`}><MoreHorizontal size={18} /></button>
                                       </div>
                                     </div>
-                                  ) : (
-                                    <div className="flex-1 flex items-center">
-                                      <input
-                                        type="text"
-                                        value={opt.text}
-                                        maxLength={80}
-                                        autoFocus={focusedOptionId === opt.id}
-                                        onChange={(e) => {
-                                          const updated = q.options?.map(o => o.id === opt.id ? { ...o, text: e.target.value } : o);
-                                          updateQuestion(activeSection.id, q.id, { options: updated });
-                                        }}
-                                        onKeyDown={(e) => {
-                                          if (e.key === 'Enter') {
-                                            e.preventDefault();
-                                            handleAddSurveyOption(activeSection.id, q.id);
-                                          }
-                                        }}
-                                        onBlur={() => {
-                                          if (focusedOptionId === opt.id) setFocusedOptionId(null);
-                                        }}
-                                        placeholder={`Option ${oIdx + 1}`}
-                                        className="flex-1 text-xs font-semibold p-2 bg-transparent focus:outline-none placeholder-gray-400"
-                                      />
-                                      <span className="text-[9px] text-gray-500 mr-1.5 whitespace-nowrap">{opt.text.length}/80</span>
-                                      {(opt.image || opt.mediaDrafts.length > 0) && (
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            void cancelTemporaryMediaDrafts(opt.mediaDrafts);
-                                            updateOption(activeSection.id, q.id, opt.id, { image: undefined, imageMediaId: undefined, mediaDrafts: [] });
-                                          }}
-                                          className="p-3 text-gray-300 hover:text-red-500 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]"
-                                          aria-label={`Remove image from option ${oIdx + 1}`}
-                                          title="Remove option image"
-                                        ><X size={12} /></button>
-                                      )}
+                                    <div className="flex flex-wrap gap-2 ms-2">
+                                      {opt.withFollowUp && <div className="flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-2 py-1 text-[9px]"><MessageSquare size={10} className="text-blue-500" /><span className="truncate font-bold text-blue-700">Follow-up: {opt.followUpLabel || "Please explain..."}</span></div>}
+                                      {opt.jumpToQuestionId && (() => {
+                                        const targetQ = allQuestionsFlat.find((item) => item.id === opt.jumpToQuestionId);
+                                        return <div className="flex items-center gap-2 rounded-lg border border-purple-100 bg-purple-50 px-2 py-1 text-[9px]"><CornerDownRight size={10} className="text-purple-500" /><span className="truncate font-bold text-purple-700">Jump to: {targetQ ? `Q${targetQ.globalIndex}: ${targetQ.text}` : "Question"}</span></div>;
+                                      })()}
+                                      {opt.isTerminal && <div className="flex items-center gap-2 rounded-lg border border-red-100 bg-red-50 px-2 py-1 text-[9px]"><PowerOff size={10} className="text-red-500" /><span className="font-bold uppercase tracking-widest text-red-700">End Survey</span></div>}
                                     </div>
-                                  )}
-                                  <button
-                                    onClick={() => setSettingsOptionId({ secId: activeSection.id, qId: q.id, optId: opt.id })}
-                                    className="p-3 text-gray-400 hover:text-gray-605 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"
-                                  >
-                                    <MoreHorizontal size={18} />
-                                  </button>
-                                </div>
-                              </div>
-                              <div className="flex flex-wrap gap-2 ml-2">
-                                {opt.withFollowUp && (
-                                  <div className="px-2 py-1 bg-blue-50 border border-blue-100 rounded-lg text-[9px] flex items-center gap-2 animate-in fade-in">
-                                    <MessageSquare size={10} className="text-blue-500" />
-                                    <span className="font-bold text-blue-700 truncate">Follow-up: {opt.followUpLabel || "Please explain..."}</span>
                                   </div>
+                                ))}
+                                {q.options?.some(draftOptionHasImage) && (
+                                  <button type="button" onClick={controls.openBulk} className="flex min-h-11 items-center gap-2 px-1 text-xs font-bold text-blue-600"><Plus size={15} aria-hidden="true" />{t('answerType.addMoreImages')}</button>
                                 )}
-                                {opt.jumpToQuestionId && (() => {
-                                  const targetQ = allQuestionsFlat.find(aq => aq.id === opt.jumpToQuestionId);
-                                  return (
-                                    <div className="px-2 py-1 bg-purple-50 border border-purple-100 rounded-lg text-[9px] flex items-center gap-2 animate-in fade-in">
-                                      <CornerDownRight size={10} className="text-purple-500" />
-                                      <span className="font-bold text-purple-700 truncate">Jump to: {targetQ ? `Q${targetQ.globalIndex}: ${targetQ.text}` : "Question"}</span>
-                                    </div>
-                                  );
-                                })()}
-                                {opt.isTerminal && (
-                                  <div className="px-2 py-1 bg-red-50 border border-red-100 rounded-lg text-[9px] flex items-center gap-2 animate-in fade-in">
-                                    <PowerOff size={10} className="text-red-500" />
-                                    <span className="font-bold text-red-700 uppercase tracking-widest">End Survey</span>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-
-                          {/* Interactive Placeholder / Auto-Add Option */}
-                          {q.type === 'multiple_choice' && !isRating && (
-                            <div className="flex items-center gap-2 opacity-50 hover:opacity-80 focus-within:opacity-100 transition-opacity duration-200">
-                              <div className="flex-1 flex items-center bg-gray-50/50 border border-dashed border-gray-200 rounded-xl px-1 py-1">
-                                {currentChoiceType === 'multiple' && (
-                                  <button disabled className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border border-dashed border-gray-200 text-gray-300 mr-1">
-                                    <Camera size={16} />
-                                  </button>
-                                )}
-                                <input
-                                  type="text"
-                                  placeholder="Add option..."
-                                  className="flex-1 text-xs font-semibold p-2 bg-transparent focus:outline-none text-gray-500 placeholder-gray-500 cursor-pointer"
-                                  onFocus={() => handleAddSurveyOption(activeSection.id, q.id)}
-                                />
-                                <button disabled className="p-3 text-gray-300 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]">
-                                  <MoreHorizontal size={18} />
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={q.showOptionNames !== false}
+                                  onClick={() => updateQuestion(activeSection.id, q.id, { showOptionNames: q.showOptionNames === false })}
+                                  className="flex min-h-11 w-full items-center justify-between gap-3 border-t border-gray-100 px-1 pt-3 text-left"
+                                >
+                                  <span className="text-xs font-semibold text-gray-700">{t('answerType.showNames')}</span>
+                                  <span className={`relative h-6 w-11 shrink-0 rounded-full ${q.showOptionNames !== false ? 'bg-blue-600' : 'bg-gray-300'}`} aria-hidden="true"><span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm ${q.showOptionNames !== false ? 'start-6' : 'start-1'}`} /></span>
                                 </button>
                               </div>
+                            )}
+                          </OptionImagePicker>
+                        ) : (
+                          <div className="space-y-3 border-t border-gray-50 pt-2">
+                            {q.options?.map((opt, oIdx) => (
+                              <div key={opt.id} className="flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-1 duration-200">
+                                <div className="flex items-center gap-2">
+                                  <div className="flex flex-1 items-center rounded-xl border border-transparent bg-gray-50 px-1 py-1 shadow-sm transition-all focus-within:border-blue-200 focus-within:bg-white">
+                                    <input
+                                      type="text"
+                                      value={opt.text}
+                                      maxLength={80}
+                                      autoFocus={focusedOptionId === opt.id}
+                                      onChange={(event) => updateOption(activeSection.id, q.id, opt.id, { text: event.target.value })}
+                                      onKeyDown={(event) => {
+                                        if (event.key === 'Enter') {
+                                          event.preventDefault();
+                                          handleAddSurveyOption(activeSection.id, q.id);
+                                        }
+                                      }}
+                                      onBlur={() => focusedOptionId === opt.id && setFocusedOptionId(null)}
+                                      placeholder={`Option ${oIdx + 1}`}
+                                      className="min-w-0 flex-1 bg-transparent p-2 text-xs font-semibold placeholder-gray-500 focus:outline-none"
+                                    />
+                                    <span className="whitespace-nowrap text-[9px] text-gray-500">{opt.text.length}/80</span>
+                                    <button onClick={() => setSettingsOptionId({ secId: activeSection.id, qId: q.id, optId: opt.id })} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-gray-500" aria-label={`Option ${oIdx + 1} menu`}><MoreHorizontal size={18} /></button>
+                                  </div>
+                                </div>
+                                <div className="flex flex-wrap gap-2 ms-2">
+                                  {opt.withFollowUp && <div className="flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-2 py-1 text-[9px]"><MessageSquare size={10} className="text-blue-500" /><span className="truncate font-bold text-blue-700">Follow-up: {opt.followUpLabel || "Please explain..."}</span></div>}
+                                  {opt.jumpToQuestionId && (() => {
+                                    const targetQ = allQuestionsFlat.find((item) => item.id === opt.jumpToQuestionId);
+                                    return <div className="flex items-center gap-2 rounded-lg border border-purple-100 bg-purple-50 px-2 py-1 text-[9px]"><CornerDownRight size={10} className="text-purple-500" /><span className="truncate font-bold text-purple-700">Jump to: {targetQ ? `Q${targetQ.globalIndex}: ${targetQ.text}` : "Question"}</span></div>;
+                                  })()}
+                                  {opt.isTerminal && <div className="flex items-center gap-2 rounded-lg border border-red-100 bg-red-50 px-2 py-1 text-[9px]"><PowerOff size={10} className="text-red-500" /><span className="font-bold uppercase tracking-widest text-red-700">End Survey</span></div>}
+                                </div>
+                              </div>
+                            ))}
+                            <div className="flex items-center gap-2 opacity-60 transition-opacity hover:opacity-90 focus-within:opacity-100">
+                              <div className="flex-1 rounded-xl border border-dashed border-gray-200 bg-gray-50/50 px-1 py-1">
+                                <input type="text" placeholder="Add option..." className="w-full cursor-pointer bg-transparent p-2 text-xs font-semibold text-gray-600 placeholder-gray-500 focus:outline-none" onFocus={() => handleAddSurveyOption(activeSection.id, q.id)} />
+                              </div>
                             </div>
-                          )}
-                        </div>
+                          </div>
+                        )
                       ) : q.type === 'text' ? (
                         <div className="p-4 bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center gap-2">
                           <Type size={24} className="text-gray-300" />
@@ -1802,7 +1808,8 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                         const removed = activeSection.questions.find(q => q.id === activeQuestionId);
                         if (removed) void cancelTemporaryMediaDrafts([
                           ...removed.mediaDrafts,
-                          ...(removed.options || []).flatMap((option) => option.mediaDrafts)
+                          ...(removed.options || []).flatMap((option) => option.mediaDrafts),
+                          ...(removed.multipleChoiceDraft || []).flatMap((option) => option.mediaDrafts)
                         ]);
                         const updatedQs = activeSection.questions.filter(q => q.id !== activeQuestionId);
                         setSections(sections.map(s => s.id === activeSection.id ? { ...s, questions: updatedQs } : s));
@@ -1870,7 +1877,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
               <button
                 disabled={sections.length <= 1}
                 onClick={() => {
-                  void cancelTemporaryMediaDrafts(collectSectionMedia([activeSection]));
+                  void cancelTemporaryMediaDrafts(collectSectionMedia([activeSection], true));
                   const updatedSections = sections.filter(s => s.id !== activeSection.id);
                   setSections(updatedSections);
                   setActiveSectionId(updatedSections[0]?.id || null);

@@ -26,6 +26,7 @@ export interface MediaPresentation {
 }
 
 export type MediaPurpose = 'POST' | 'PROFILE_AVATAR' | 'GROUP_IMAGE' | 'QUESTION_IMAGE' | 'OPTION_IMAGE';
+export type OptionPresentation = 'text' | 'image';
 
 export interface MediaCropSelection {
   aspectRatio: number;
@@ -48,6 +49,8 @@ export interface MediaDraft {
   presentation?: MediaPresentation;
   persisted?: boolean;
   error?: string;
+  replacesClientId?: string;
+  replacedDraft?: MediaDraft;
 }
 
 export interface UserProfile {
@@ -185,6 +188,8 @@ export interface SurveyQuestion {
   imageMediaId?: string;
   imageMedia?: MediaPresentation;
   imageLayout?: 'vertical' | 'horizontal';
+  optionPresentation?: OptionPresentation;
+  showOptionNames?: boolean;
 
   // Constraints
   minSelection?: number;
@@ -227,6 +232,8 @@ export interface Survey {
   description: string;
   type: SurveyType;
   pollChoiceType?: 'multiple' | 'rating';
+  optionPresentation?: OptionPresentation;
+  showOptionNames?: boolean;
   question?: string;
   options?: Option[];
   participants: number;

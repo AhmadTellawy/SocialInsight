@@ -668,16 +668,22 @@ export const serializeGroupMediaRecord = <T extends Record<string, any>>(group?:
   } as unknown as T;
 };
 
-export const serializePostMediaRecord = (post: any): any => {
+export const serializePostMediaRecord = (post: any, viewerId?: string | null): any => {
   if (!post) return post;
+  const maySeeInternalOptionNames = post.status !== 'PUBLISHED' || (Boolean(viewerId) && post.authorId === viewerId);
+  const hidePostOptionNames = !maySeeInternalOptionNames
+    && post.optionPresentation === 'image'
+    && post.showOptionNames === false;
   const media = Array.isArray(post.media)
     ? post.media.map((attachment: any) => serializeMediaAsset(attachment.mediaAsset)).filter(Boolean)
     : [];
-  const serializeOption = (option: any): any => {
-    const presentation = serializeMediaAsset(option?.imageMedia);
+  const serializeOption = (option: any, hideName = false): any => {
+    const rawPresentation = serializeMediaAsset(option?.imageMedia);
+    const presentation = hideName && rawPresentation ? { ...rawPresentation, altText: null } : rawPresentation;
     const { imageMedia, ...rest } = option || {};
     return {
       ...rest,
+      text: hideName ? '' : rest.text,
       image: presentation?.src || (option?.imageMediaId ? undefined : option?.image),
       imageMedia: presentation
     };
@@ -685,11 +691,16 @@ export const serializePostMediaRecord = (post: any): any => {
   const serializeQuestion = (question: any): any => {
     const presentation = serializeMediaAsset(question?.imageMedia);
     const { imageMedia, ...rest } = question || {};
+    const hideQuestionOptionNames = !maySeeInternalOptionNames
+      && question?.optionPresentation === 'image'
+      && question?.showOptionNames === false;
     return {
       ...rest,
       image: presentation?.src || (question?.imageMediaId ? undefined : question?.image),
       imageMedia: presentation,
-      options: Array.isArray(question?.options) ? question.options.map(serializeOption) : question?.options
+      options: Array.isArray(question?.options)
+        ? question.options.map((option: any) => serializeOption(option, hideQuestionOptionNames || hidePostOptionNames))
+        : question?.options
     };
   };
   return {
@@ -703,7 +714,7 @@ export const serializePostMediaRecord = (post: any): any => {
       ...section,
       questions: Array.isArray(section.questions) ? section.questions.map(serializeQuestion) : section.questions
     })) : post.sections,
-    sharedFrom: post.sharedFrom ? serializePostMediaRecord(post.sharedFrom) : post.sharedFrom
+    sharedFrom: post.sharedFrom ? serializePostMediaRecord(post.sharedFrom, viewerId) : post.sharedFrom
   };
 };
 

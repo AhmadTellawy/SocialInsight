@@ -56,6 +56,27 @@
     "voteCount_many": "{{count}} صوتًا",
     "voteCount_other": "{{count}} صوت"
   },
+  "answerType": {
+    "label": "نوع الإجابة",
+    "text": "نص",
+    "images": "صور",
+    "rating": "تقييم",
+    "textOptions": "خيارات نصية",
+    "imageOptions": "خيارات بالصور",
+    "ratingScale": "مقياس تقييم",
+    "addImages": "إضافة صور",
+    "addMoreImages": "إضافة المزيد من الصور",
+    "imageHelper": "تُستخدم أسماء الخيارات في النتائج والتحليلات، ويمكنك إخفاءها عن المصوّتين.",
+    "showNames": "إظهار أسماء الخيارات للمصوّتين",
+    "optionName": "اسم الخيار {{number}}",
+    "addOptionImage": "إضافة صورة للخيار {{number}}",
+    "replaceOptionImage": "استبدال صورة الخيار {{number}}",
+    "editOptionCrop": "تعديل قص صورة الخيار {{number}}",
+    "editCrop": "تعديل القص",
+    "imageOption": "خيار صورة {{number}}",
+    "imageAndNameRequired": "يحتاج كل خيار صورة إلى صورة واسم.",
+    "minimumImageOptions": "يلزم وجود خيارين مصورين على الأقل."
+  },
   "settings": {
     "title": "الإعدادات",
     "account": "الحساب",

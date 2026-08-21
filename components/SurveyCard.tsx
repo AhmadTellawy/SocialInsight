@@ -20,6 +20,7 @@ import { usePostViewTracker } from '../hooks/usePostViewTracker';
 import { MediaCarousel } from './media/MediaCarousel';
 import { MediaImage } from './media/MediaImage';
 import { calculateAverageRating } from '../utils/ratingScale';
+import { shouldShowOptionNames } from '../utils/optionPresentation';
 
 interface SurveyCardProps {
   survey: Survey;
@@ -50,6 +51,8 @@ interface FlatQuestion {
   imageMediaId?: string;
   imageMedia?: MediaPresentation;
   imageLayout?: 'vertical' | 'horizontal';
+  optionPresentation?: 'text' | 'image';
+  showOptionNames?: boolean;
   sectionTitle: string;
   sectionId: string;
   minSelection?: number;
@@ -832,6 +835,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const isRating = sourceSurvey.pollChoiceType === 'rating';
   const useCompactRating = isRating && sourceSurface !== 'SHARE_CAPTURE';
   const hasImages = (localOptions || []).some(hasOptionImage);
+  const displayOptionNames = shouldShowOptionNames(sourceSurvey.optionPresentation, sourceSurvey.showOptionNames);
   const isPollType = sourceSurvey.type === SurveyType.POLL || sourceSurvey.type === SurveyType.TRENDING;
   const isTextOnlyPoll = isPollType && !isRating && !hasImages;
   const hasDescription = !!sourceSurvey.description?.trim();
@@ -1169,7 +1173,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           <div className="bg-white p-4 rounded-xl border border-amber-200 shadow-sm flex items-center gap-4 text-left">
             {hasOptionImage(winner) && <MediaImage media={winner.imageMedia} mediaId={winner.imageMediaId} fallbackSrc={winner.image} className="w-16 h-16 rounded-lg object-cover" alt="" />}
             <div className="flex-1">
-              <h4 className="font-bold text-gray-900 leading-tight">{winner.text}</h4>
+              {displayOptionNames && <h4 className="font-bold text-gray-900 leading-tight">{winner.text}</h4>}
               <div className="flex items-center gap-1.5 mt-1 text-green-600 font-bold text-[10px] uppercase">
                 <CheckCircle2 size={12} /> {t('Winner')}
               </div>
@@ -1205,6 +1209,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
               <button
                 key={opt.id}
                 disabled={isChallengeTransitioning !== null}
+                aria-label={displayOptionNames ? opt.text : t('answerType.imageOption', { number: pairOptions.indexOf(opt) + 1 })}
                 onClick={() => handleChallengeVote(opt.id)}
                 className={`relative flex flex-col items-stretch text-left group overflow-hidden rounded-2xl border bg-white transition-all duration-300 ${isLeaving ? 'scale-90 opacity-0 -translate-y-4' : 'hover:border-amber-400 hover:shadow-md active:scale-95 border-gray-100 shadow-sm animate-in zoom-in fade-in'}`}
               >
@@ -1238,9 +1243,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                   )}
                   <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 pointer-events-none" />
                 </div>
-                <div className="p-3 bg-white flex-1 flex flex-col justify-center border-t border-gray-50 min-h-[60px]">
-                  <span className="text-sm font-bold text-gray-800 leading-tight line-clamp-2">{opt.text}</span>
-                </div>
+                {displayOptionNames && (
+                  <div className="p-3 bg-white flex-1 flex flex-col justify-center border-t border-gray-50 min-h-[60px]">
+                    <span className="text-sm font-bold text-gray-800 leading-tight line-clamp-2">{opt.text}</span>
+                  </div>
+                )}
               </button>
             );
           })}
@@ -1295,6 +1302,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     const currentCorrectOptionIds = isQuiz ? getCorrectOptionIds(currentQuestion) : [];
     const selectedQuestionOptionIds = Array.isArray(answer) ? answer : (answer ? [answer] : []);
     const isRatingQuestion = currentQuestion.options?.some(option => option.isRating) || false;
+    const displayCurrentOptionNames = shouldShowOptionNames(currentQuestion.optionPresentation, currentQuestion.showOptionNames);
 
     return (
       <div className="bg-white rounded-xl overflow-hidden border border-gray-100 shadow-sm mt-3">
@@ -1384,7 +1392,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
                       return (
                         <div key={opt.id} className={`group relative ${isHorizontal && !isTF ? 'min-w-[51%] snap-center' : ''}`}>
-                          <button onClick={() => handleSurveyAnswer(opt.id)} disabled={(isMaxReached || (hasVotedCurrent && isQuiz)) as boolean} className={`w-full text-left p-3 rounded-xl border transition-all duration-200 flex items-center justify-between active:scale-[0.99] h-auto ${hasVotedCurrent && isQuiz ? (isCorrect ? 'border-green-500 bg-green-50 text-green-700 ring-1 ring-green-500/20 shadow-sm' : isWrongSelection ? 'border-red-500 bg-red-50 text-red-700 ring-1 ring-red-500/20 shadow-sm' : 'border-gray-100 bg-gray-50 opacity-50') : isSelected ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-sm' : isMaxReached ? 'opacity-50 border-gray-100 bg-gray-50' : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/30 active:scale-[0.99]'} ${isTF ? 'flex-col gap-2 items-center text-center justify-center py-6' : ''} ${isHorizontal && optionHasImage ? 'flex-col items-stretch p-1 pb-3' : ''}`}>
+                          <button aria-label={displayCurrentOptionNames ? opt.text : t('answerType.imageOption', { number: idx + 1 })} onClick={() => handleSurveyAnswer(opt.id)} disabled={(isMaxReached || (hasVotedCurrent && isQuiz)) as boolean} className={`w-full text-left p-3 rounded-xl border transition-all duration-200 flex items-center justify-between active:scale-[0.99] h-auto ${hasVotedCurrent && isQuiz ? (isCorrect ? 'border-green-500 bg-green-50 text-green-700 ring-1 ring-green-500/20 shadow-sm' : isWrongSelection ? 'border-red-500 bg-red-50 text-red-700 ring-1 ring-red-500/20 shadow-sm' : 'border-gray-100 bg-gray-50 opacity-50') : isSelected ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-sm' : isMaxReached ? 'opacity-50 border-gray-100 bg-gray-50' : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/30 active:scale-[0.99]'} ${isTF ? 'flex-col gap-2 items-center text-center justify-center py-6' : ''} ${isHorizontal && optionHasImage ? 'flex-col items-stretch p-1 pb-3' : ''}`}>
                             {optionHasImage && (
                               <div
                                 className={`${isHorizontal ? 'w-full aspect-square mb-3' : 'w-14 h-14 shrink-0 mr-3'} rounded-lg overflow-hidden border border-gray-100 bg-gray-50 relative group/img`}
@@ -1424,7 +1432,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                                   </div>
                                 </div>
                               ) : (
-                                <span className={`font-bold ${isTF ? 'text-base' : 'text-sm'} leading-snug break-words uppercase tracking-wide flex-1 ${isHorizontal && optionHasImage ? 'text-center px-2' : ''}`}>{opt.text}</span>
+                                displayCurrentOptionNames ? <span className={`font-bold ${isTF ? 'text-base' : 'text-sm'} leading-snug break-words uppercase tracking-wide flex-1 ${isHorizontal && optionHasImage ? 'text-center px-2' : ''}`}>{opt.text}</span> : null
                               )}
                             </div>
                           </button>
@@ -1483,6 +1491,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           isHorizontal={isHorizontal}
           isRating={isRating}
           isMultiple={isMultiple}
+          showOptionNames={displayOptionNames}
           totalVotes={totalVotes}
           portraitImages={portraitImages}
           followUpAnswers={followUpAnswers}

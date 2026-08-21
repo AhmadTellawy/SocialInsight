@@ -8,12 +8,16 @@ import {
   ArrowUp, ArrowDown, MessageSquare, Settings2, ArrowLeft, Tag
 } from 'lucide-react';
 import { Survey, SurveyType, UserProfile, Group, MediaDraft } from '../types';
+import { useTranslation } from 'react-i18next';
 import { BottomSheet } from './BottomSheet';
 import { RichMentionInput } from './RichMentionInput';
 import { api } from '../services/api';
 import { MediaPicker, MediaPickerHandle } from './media/MediaPicker';
 import { MediaImage } from './media/MediaImage';
 import { cancelTemporaryMediaDrafts, createPersistedMediaDraft, createPersistedMediaDraftFromId, mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds } from '../utils/mediaDrafts';
+import { AnswerTypeSelector } from './options/AnswerTypeSelector';
+import { OptionImagePicker } from './options/OptionImagePicker';
+import { draftOptionHasImage, resolveOptionPresentation } from '../utils/optionPresentation';
 
 interface CreateChallengeScreenProps {
   onClose: () => void;
@@ -65,7 +69,15 @@ type ChallengeDraftOption = {
   followUpLabel?: string;
 };
 
+const createChallengeOption = (): ChallengeDraftOption => ({
+  id: `challenge-option-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+  text: '',
+  image: null,
+  mediaDrafts: []
+});
+
 export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ onClose, onSubmit, onSaveDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
+  const { t } = useTranslation();
   const [visibility, setVisibility] = useState<VisibilityType>('Groups');
   const [isAdvancedSheetOpen, setIsAdvancedSheetOpen] = useState(false);
   const [advancedSheetView, setAdvancedSheetView] = useState<'main' | 'visibility' | 'results'>('main');
@@ -115,7 +127,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
       onClose();
       return;
     }
-    const allMedia = [...postMedia, ...options.flatMap((option) => option.mediaDrafts)];
+    const allMedia = [...postMedia, ...activeOptionMediaDrafts];
     if (!mediaDraftsAreReady(allMedia) || mediaDraftsHaveErrors(allMedia)) {
       alert('Please finish or remove image uploads before saving.');
       return;
@@ -126,13 +138,15 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
         title,
         description: '',
         type: SurveyType.CHALLENGE,
+        optionPresentation,
+        showOptionNames,
         author: { id: userProfile.id, name: userProfile.name, avatar: userProfile.avatar },
         options: options.map(o => ({
           id: o.id,
           text: o.text,
           votes: 0,
-          image: o.mediaDrafts.length > 0 ? undefined : (o.image || undefined),
-          imageMediaId: readyMediaAssetIds(o.mediaDrafts)[0],
+          image: optionPresentation === 'image' && o.mediaDrafts.length === 0 ? (o.image || undefined) : undefined,
+          imageMediaId: optionPresentation === 'image' ? readyMediaAssetIds(o.mediaDrafts)[0] : undefined,
           withFollowUp: o.withFollowUp,
           followUpLabel: o.followUpLabel
         })),
@@ -156,11 +170,16 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
         currentStep: 1
       };
       await onSaveDraft(draftData);
+      if (optionPresentation === 'text') {
+        await cancelTemporaryMediaDrafts(options.flatMap((option) => option.mediaDrafts));
+      }
     }
     onClose();
   };
 
   const [title, setTitle] = useState('');
+  const [optionPresentation, setOptionPresentation] = useState<'text' | 'image'>('text');
+  const [showOptionNames, setShowOptionNames] = useState(true);
   const [options, setOptions] = useState<ChallengeDraftOption[]>([
     { id: '1', text: '', image: null, mediaDrafts: [] },
     { id: '2', text: '', image: null, mediaDrafts: [] }
@@ -221,6 +240,8 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
     if (draft) {
       setTitle(draft.title || '');
       setCategory(draft.category || '');
+      setOptionPresentation(resolveOptionPresentation(draft.optionPresentation, draft.options));
+      setShowOptionNames(draft.showOptionNames !== false);
       const draftVisibility = draft.targetAudience as VisibilityType;
       setVisibility(['Groups', 'Custom Audience', 'Custom Domain'].includes(draftVisibility) ? draftVisibility : 'Groups');
       setResultsWho(draft.resultsWho || 'Public');
@@ -281,9 +302,9 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
       : `${advancedItems.length} on`;
 
   const handleAddOption = () => {
-    const newOptId = Date.now().toString();
-    setOptions([...options, { id: newOptId, text: '', image: null, mediaDrafts: [] }]);
-    setFocusedOptionId(newOptId);
+    const option = createChallengeOption();
+    setOptions([...options, option]);
+    setFocusedOptionId(option.id);
   };
 
   const handleRemoveOption = (id: string) => {
@@ -296,6 +317,13 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   const handleOptionChange = (id: string, text: string) => {
     setOptions(options.map(o => id === o.id ? { ...o, text } : o));
   };
+
+  const activeOptionMediaDrafts = optionPresentation === 'image'
+    ? options.flatMap((option) => option.mediaDrafts)
+    : [];
+  const imageOptionsAreValid = options.length >= 2 && options.every((option) =>
+    option.text.trim().length > 0 && draftOptionHasImage(option)
+  );
 
   const handleDemographicToggle = (id: string) => {
     setSelectedDemographics(prev =>
@@ -320,9 +348,23 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
       newErrors.title = "Challenge text is required";
       isValid = false;
     }
-    const filledOptions = options.filter(o => o.text.trim() !== '');
-    if (filledOptions.length < 2) {
-      newErrors.options = "You need at least 2 items to compare.";
+    if (optionPresentation === 'image') {
+      if (!imageOptionsAreValid) {
+        newErrors.options = options.length < 2
+          ? t('answerType.minimumImageOptions')
+          : t('answerType.imageAndNameRequired');
+        isValid = false;
+      }
+    } else {
+      const filledOptions = options.filter(o => o.text.trim() !== '');
+      if (filledOptions.length < 2) {
+        newErrors.options = "You need at least 2 items to compare.";
+        isValid = false;
+      }
+    }
+    const requiredMedia = [...postMedia, ...activeOptionMediaDrafts];
+    if (!mediaDraftsAreReady(requiredMedia) || mediaDraftsHaveErrors(requiredMedia)) {
+      newErrors.media = "Please finish or remove image uploads.";
       isValid = false;
     }
     if (!category) {
@@ -364,13 +406,15 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
         title,
         description: '',
         type: SurveyType.CHALLENGE,
+        optionPresentation,
+        showOptionNames,
         author: { id: userProfile.id, name: userProfile.name, avatar: userProfile.avatar },
         options: options.map(o => ({
           id: o.id,
           text: o.text,
           votes: 0,
-          image: o.mediaDrafts.length > 0 ? undefined : (o.image || undefined),
-          imageMediaId: readyMediaAssetIds(o.mediaDrafts)[0],
+          image: optionPresentation === 'image' && o.mediaDrafts.length === 0 ? (o.image || undefined) : undefined,
+          imageMediaId: optionPresentation === 'image' ? readyMediaAssetIds(o.mediaDrafts)[0] : undefined,
           withFollowUp: o.withFollowUp,
           followUpLabel: o.followUpLabel
         })),
@@ -390,6 +434,9 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
         expiresAt: getExpiresAt(),
         createdAt: new Date().toISOString()
       });
+      if (optionPresentation === 'text') {
+        await cancelTemporaryMediaDrafts(options.flatMap((option) => option.mediaDrafts));
+      }
       onClose();
     } catch (error) {
       console.error('Failed to create challenge:', error);
@@ -400,12 +447,12 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   };
 
   const selectedOptionForSettings = options.find(o => o.id === settingsOptionId);
-  const allMediaDrafts = [...postMedia, ...options.flatMap((option) => option.mediaDrafts)];
+  const allMediaDrafts = [...postMedia, ...activeOptionMediaDrafts];
   const isPostReady = Boolean(
     !isSubmitting &&
     userProfile?.id &&
     title.trim() &&
-    options.filter(o => o.text.trim() !== '').length >= 2 &&
+    (optionPresentation === 'image' ? imageOptionsAreValid : options.filter(o => o.text.trim() !== '').length >= 2) &&
     category &&
     (visibility !== 'Groups' || selectedGroups.length > 0) &&
     mediaDraftsAreReady(allMediaDrafts) &&
@@ -490,8 +537,22 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
               </div>
             )}
 
-            {/* Category Grid */}
-            <div className="grid grid-cols-1 gap-4 pt-3 mt-3 border-t border-gray-55/50">
+            {/* Answer Type and Category Grid */}
+            <div className="grid grid-cols-2 gap-3 pt-3 mt-3 border-t border-gray-55/50">
+              <div className="space-y-1.5 text-left min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="p-1.5 bg-gray-50 rounded-lg text-gray-500 border border-gray-100 shrink-0">
+                    <BarChart3 size={12} />
+                  </div>
+                  <span className="text-xs font-bold text-gray-800">{t('answerType.label')}</span>
+                </div>
+                <AnswerTypeSelector
+                  value={optionPresentation}
+                  modes={['text', 'image']}
+                  accent="amber"
+                  onChange={(value) => value !== 'rating' && setOptionPresentation(value)}
+                />
+              </div>
               <div className="space-y-1.5 text-left min-w-0">
                 <div className="flex items-center gap-2 mb-1">
                   <div className="p-1.5 bg-gray-50 rounded-lg text-gray-500 border border-gray-100 shrink-0">
@@ -533,13 +594,37 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
               </div>
             </div>
 
+            {optionPresentation === 'image' && (
+              <OptionImagePicker options={options} onChange={setOptions} createOption={createChallengeOption}>
+                {(controls) => (
+                  <div className="space-y-3">
+                    <p className="px-1 text-[10px] font-medium leading-relaxed text-gray-600">{t('answerType.imageHelper')}</p>
+                    <button type="button" onClick={controls.openBulk} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-amber-300 bg-amber-50/50 px-3 text-xs font-bold text-amber-700">
+                      <ImageIcon size={16} aria-hidden="true" />
+                      {options.some(draftOptionHasImage) ? t('answerType.addMoreImages') : t('answerType.addImages')}
+                    </button>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={showOptionNames}
+                      onClick={() => setShowOptionNames((current) => !current)}
+                      className="flex min-h-11 w-full items-center justify-between gap-3 px-1 text-left"
+                    >
+                      <span className="text-xs font-semibold text-gray-700">{t('answerType.showNames')}</span>
+                      <span className={`relative h-6 w-11 shrink-0 rounded-full ${showOptionNames ? 'bg-amber-600' : 'bg-gray-300'}`} aria-hidden="true"><span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm ${showOptionNames ? 'start-6' : 'start-1'}`} /></span>
+                    </button>
+                  </div>
+                )}
+              </OptionImagePicker>
+            )}
+
             <div className="space-y-3">
               {options.map((option, idx) => (
                 <div key={option.id} className="flex items-center gap-2 animate-in fade-in slide-in-from-bottom-1 duration-200">
                   <span className="text-xs font-black text-gray-300 w-4 text-center shrink-0">{idx + 1}</span>
                   <div className="flex-1 flex flex-col gap-1.5">
                     <div className="flex items-center w-full bg-gray-55/5 border border-gray-200 rounded-xl px-2 py-0.5 focus-within:border-amber-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-amber-100 transition-all shadow-xs">
-                        <MediaPicker
+                        {optionPresentation === 'image' && <MediaPicker
                           purpose="OPTION_IMAGE"
                           value={option.mediaDrafts}
                           onChange={(mediaDrafts) => setOptions((current) => current.map((item) => item.id === option.id ? {
@@ -549,15 +634,15 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                             imageMediaId: readyMediaAssetIds(mediaDrafts)[0]
                           } : item))}
                           className="shrink-0"
-                          renderContent={({ open, retry, busy }) => {
+                          renderContent={({ open, replace, retry, busy }) => {
                             const current = option.mediaDrafts[0];
                             const hasImage = Boolean(current || option.image);
                             return (
                               <button
                                 type="button"
-                                onClick={() => current?.status === 'error' ? retry(current.clientId) : open()}
+                                onClick={() => current?.status === 'error' ? retry(current.clientId) : current ? replace(current.clientId) : open()}
                                 disabled={busy}
-                                className={`relative w-8 h-8 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-dashed transition-all disabled:cursor-wait ${hasImage ? 'border-amber-500' : 'border-gray-200 text-gray-400 hover:text-amber-500'}`}
+                                className={`relative w-12 h-12 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-dashed transition-all disabled:cursor-wait ${hasImage ? 'border-amber-500' : 'border-gray-200 text-gray-400 hover:text-amber-500'}`}
                                 aria-label={current?.status === 'error' ? 'Retry option image upload' : `Add image to challenge item ${idx + 1}`}
                                 title={current?.status === 'error' ? 'Retry' : 'Add item image'}
                               >
@@ -574,7 +659,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                               </button>
                             );
                           }}
-                        />
+                        />}
 
                         <input
                           type="text"
@@ -597,7 +682,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
 
                         <span className="text-[9px] text-gray-450 mr-1.5 whitespace-nowrap">{option.text.length}/80</span>
 
-                      {(option.image || option.mediaDrafts.length > 0) && (
+                      {optionPresentation === 'image' && (option.image || option.mediaDrafts.length > 0) && (
                         <button
                           type="button"
                           onClick={() => {
@@ -635,9 +720,9 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                   <span className="text-xs font-black text-gray-300 w-4 text-center shrink-0">{options.length + 1}</span>
                   <div className="flex-1 flex flex-col gap-2">
                     <div className="flex items-center w-full bg-gray-50/30 border border-dashed border-gray-200 rounded-xl px-2 py-0.5">
-                      <button disabled className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border border-dashed border-gray-200 text-gray-300">
+                      {optionPresentation === 'image' && <button disabled className="w-12 h-12 rounded-lg flex items-center justify-center shrink-0 border border-dashed border-gray-200 text-gray-300">
                         <Camera size={14} />
-                      </button>
+                      </button>}
                       <input
                         type="text"
                         placeholder="Add item to compare..."
