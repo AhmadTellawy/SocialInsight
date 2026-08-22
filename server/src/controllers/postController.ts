@@ -48,6 +48,11 @@ import {
     serializePeopleTags
 } from '../services/peopleTagService';
 import { buildVisiblePublishedPostWhere } from '../services/postVisibilityService';
+import {
+    PostOptionValidationError,
+    buildPostReportDedupeKey,
+    normalizePostReportInput
+} from '../services/postOptionService';
 
 export const SAFE_USER_SELECT = {
     id: true,
@@ -1534,11 +1539,7 @@ export const getSavedPosts = async (req: Request, res: Response) => {
         const saved = await prisma.savedPost.findMany({
             where: { 
                 userId, 
-                post: { 
-                    isDeleted: false,
-                    status: POST_STATUS.PUBLISHED,
-                    ...PrivacyService.getPostPrivacyWhereClause(userId)
-                } 
+                post: buildVisiblePublishedPostWhere(userId)
             },
             include: {
                 post: {
@@ -1551,7 +1552,32 @@ export const getSavedPosts = async (req: Request, res: Response) => {
                         media: POST_MEDIA_INCLUDE,
                         targetedGroups: true,
                         responses: userId ? { where: { userId }, take: 1, include: { answers: true } } : false,
-                        likes: userId ? { where: { userId }, take: 1 } : false
+                        likes: userId ? { where: { userId }, take: 1 } : false,
+                        shares: { where: { authorId: userId }, take: 1 },
+                        savedBy: { where: { userId }, take: 1 },
+                        sharedFrom: {
+                            include: {
+                                author: {
+                                    select: {
+                                        ...SAFE_USER_SELECT,
+                                        following: {
+                                            where: { followerId: userId, status: 'ACTIVE' },
+                                            select: { followerId: true }
+                                        }
+                                    }
+                                },
+                                questions: { include: { options: { orderBy: { order: 'asc' } } } },
+                                sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                                mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+                                taggedUsers: getVisiblePeopleTagsInclude(userId),
+                                media: POST_MEDIA_INCLUDE,
+                                targetedGroups: true,
+                                responses: { where: { userId }, take: 1, include: { answers: true } },
+                                likes: { where: { userId }, take: 1 },
+                                shares: { where: { authorId: userId }, take: 1 },
+                                savedBy: { where: { userId }, take: 1 }
+                            }
+                        }
                     }
                 }
             },
@@ -1559,10 +1585,31 @@ export const getSavedPosts = async (req: Request, res: Response) => {
         });
         const posts = saved.map((s: any) => {
             const p: any = serializePostSocialRecord(s.post, userId);
-            const userResponse = p.responses?.[0];
+            const userResponse = p.sharedFrom ? p.sharedFrom.responses?.[0] : p.responses?.[0];
             const userAnswers = userResponse?.answers || [];
+            const mappedSharedFrom = p.sharedFrom ? {
+                ...p.sharedFrom,
+                options: OPTION_POST_TYPES.includes(normalizePostType(p.sharedFrom.type) || '') && p.sharedFrom.questions?.length > 0
+                    ? p.sharedFrom.questions[0].options
+                    : [],
+                demographics: parseJsonArray(p.sharedFrom.demographics),
+                author: p.sharedFrom.author ? {
+                    ...p.sharedFrom.author,
+                    isFollowing: p.sharedFrom.author.following?.length > 0
+                } : undefined,
+                likes: p.sharedFrom.likesCount,
+                repostCount: p.sharedFrom.sharesCount || 0,
+                participants: p.sharedFrom.responseCount,
+                targetGroups: mapTargetGroups(p.sharedFrom),
+                hasParticipated: !!p.sharedFrom.responses?.length,
+                userSelectedOptions: mapAnswerOptionIds(p.sharedFrom.responses?.[0]?.answers || []),
+                isLiked: !!p.sharedFrom.likes?.length,
+                hasReposted: !!p.sharedFrom.shares?.length,
+                isSaved: !!p.sharedFrom.savedBy?.length
+            } : undefined;
             return {
                 ...p,
+                sharedFrom: mappedSharedFrom,
                 likes: p.likesCount,
                 repostCount: p.sharesCount || 0,
                 participants: p.responseCount,
@@ -2443,55 +2490,149 @@ export const getCommentLikers = async (req: Request, res: Response) => {
 
 export const savePost = async (req: Request, res: Response) => {
     const id = req.params.id as string;
-    const { userId } = req.body;
+    const userId = req.user!.userId;
     try {
-        const targetPostCheck = await prisma.post.findUnique({ where: { id }, select: { authorId: true } });
-        if (targetPostCheck && targetPostCheck.authorId) {
-            const canView = await PrivacyService.canViewUserContent(userId, targetPostCheck.authorId);
-            if (!canView) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
+        const targetPost = await prisma.post.findFirst({
+            where: { id, ...buildVisiblePublishedPostWhere(userId) },
+            select: { id: true }
+        });
+        if (!targetPost) {
+            res.status(404).json({ error: 'Post not found or unavailable' });
+            return;
         }
-        const existing = await prisma.savedPost.findUnique({ where: { userId_postId: { userId, postId: id } } });
-        if (existing) {
-            await prisma.savedPost.delete({ where: { userId_postId: { userId, postId: id } } });
-            res.json({ isSaved: false });
-        } else {
-            await prisma.savedPost.create({ data: { userId, postId: id } });
-            res.json({ isSaved: true });
-        }
+
+        await prisma.savedPost.upsert({
+            where: { userId_postId: { userId, postId: id } },
+            update: {},
+            create: { userId, postId: id }
+        });
+        res.json({ isSaved: true });
     } catch (error) {
         res.status(500).json({ error: 'Failed to save post' });
     }
 };
 
+export const unsavePost = async (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    const userId = req.user!.userId;
+    try {
+        await prisma.savedPost.deleteMany({ where: { userId, postId: id } });
+        res.json({ isSaved: false });
+    } catch {
+        res.status(500).json({ error: 'Failed to remove saved post' });
+    }
+};
+
 export const hidePost = async (req: Request, res: Response) => {
     const id = req.params.id as string;
-    const { userId } = req.body;
+    const userId = req.user!.userId;
     try {
-        await prisma.hiddenPost.create({ data: { userId, postId: id } });
-        res.json({ success: true });
+        const existingHiddenPost = await prisma.hiddenPost.findUnique({
+            where: { userId_postId: { userId, postId: id } },
+            select: { postId: true }
+        });
+        if (existingHiddenPost) {
+            res.json({ success: true, isHidden: true });
+            return;
+        }
+
+        const targetPost = await prisma.post.findFirst({
+            where: { id, ...buildVisiblePublishedPostWhere(userId) },
+            select: { id: true, authorId: true }
+        });
+        if (!targetPost) {
+            res.status(404).json({ error: 'Post not found or unavailable' });
+            return;
+        }
+        if (targetPost.authorId === userId) {
+            res.status(400).json({ error: 'You cannot hide your own post', code: 'CANNOT_HIDE_OWN_POST' });
+            return;
+        }
+
+        await prisma.hiddenPost.upsert({
+            where: { userId_postId: { userId, postId: id } },
+            update: {},
+            create: { userId, postId: id }
+        });
+        res.json({ success: true, isHidden: true });
     } catch (error) {
         res.status(500).json({ error: 'Failed to hide post' });
     }
 };
 
+export const unhidePost = async (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    const userId = req.user!.userId;
+    try {
+        await prisma.hiddenPost.deleteMany({ where: { userId, postId: id } });
+        res.json({ success: true, isHidden: false });
+    } catch {
+        res.status(500).json({ error: 'Failed to restore post' });
+    }
+};
+
 export const reportPost = async (req: Request, res: Response) => {
     const id = req.params.id as string;
-    const { userId, reason, description } = req.body;
+    const reporterId = req.user!.userId;
     try {
-        const report = await prisma.report.create({
-            data: {
-                targetId: id,
-                targetType: 'POST',
-                reporterId: userId,
-                reason: description ? `${reason}: ${description}` : reason
+        const { reason, description } = normalizePostReportInput(req.body.reason, req.body.description);
+        const targetPost = await prisma.post.findFirst({
+            where: { id, ...buildVisiblePublishedPostWhere(reporterId) },
+            select: {
+                id: true,
+                authorId: true,
+                title: true,
+                description: true,
+                type: true,
+                createdAt: true
             }
         });
-        res.json(report);
+        if (!targetPost) {
+            res.status(404).json({ error: 'Post not found or unavailable' });
+            return;
+        }
+        if (targetPost.authorId === reporterId) {
+            res.status(400).json({ error: 'You cannot report your own post', code: 'CANNOT_REPORT_OWN_POST' });
+            return;
+        }
+
+        const existingReport = await prisma.report.findFirst({
+            where: { reporterId, targetType: 'POST', targetId: id },
+            orderBy: { createdAt: 'asc' },
+            select: { id: true, status: true, createdAt: true }
+        });
+        if (existingReport) {
+            res.json({ report: existingReport, alreadyReported: true });
+            return;
+        }
+
+        const report = await prisma.report.upsert({
+            where: { dedupeKey: buildPostReportDedupeKey(reporterId, id) },
+            update: {},
+            create: {
+                targetId: id,
+                targetType: 'POST',
+                reporterId,
+                dedupeKey: buildPostReportDedupeKey(reporterId, id),
+                reason,
+                description,
+                targetSnapshot: {
+                    title: targetPost.title,
+                    description: targetPost.description,
+                    type: targetPost.type,
+                    authorId: targetPost.authorId,
+                    createdAt: targetPost.createdAt.toISOString()
+                }
+            },
+            select: { id: true, status: true, createdAt: true }
+        });
+        res.json({ report, alreadyReported: false });
     } catch (error) {
         console.error(error);
+        if (error instanceof PostOptionValidationError) {
+            res.status(error.statusCode).json({ error: error.message, code: error.code });
+            return;
+        }
         res.status(500).json({ error: 'Failed to report post' });
     }
 };
@@ -2981,57 +3122,64 @@ export const deletePost = async (req: Request, res: Response) => {
             return;
         }
 
-        const mediaAssetIds = [
-            ...post.media.map(({ mediaAssetId }) => mediaAssetId),
-            ...post.questions.flatMap((question) => [
+        const dependentShares = post.sharedFromId
+            ? []
+            : await prisma.post.findMany({
+                where: { sharedFromId: id },
+                include: {
+                    media: { select: { mediaAssetId: true } },
+                    questions: { include: { options: { select: { imageMediaId: true } } } }
+                }
+            });
+        const postsToDelete = [post, ...dependentShares];
+        const postIds = postsToDelete.map(({ id: postId }) => postId);
+        const dependentShareIds = dependentShares.map(({ id: postId }) => postId);
+        const mediaAssetIds = Array.from(new Set(postsToDelete.flatMap((postToDelete) => [
+            ...postToDelete.media.map(({ mediaAssetId }) => mediaAssetId),
+            ...postToDelete.questions.flatMap((question) => [
                 question.imageMediaId,
                 ...question.options.map((option) => option.imageMediaId)
             ])
-        ];
+        ]).filter((mediaAssetId): mediaAssetId is string => Boolean(mediaAssetId))));
 
-        // Hard Delete cascade via manual transaction
         await prisma.$transaction(async (tx) => {
-            // Notifications about this post
             await tx.notification.deleteMany({
-                where: { targetId: id, targetType: { in: ['survey', 'post'] } }
+                where: { targetId: { in: postIds }, targetType: { in: ['survey', 'post'] } }
             });
-            // Post interactions
-            await tx.savedPost.deleteMany({ where: { postId: id } });
-            await tx.hiddenPost.deleteMany({ where: { postId: id } });
-            await tx.userLike.deleteMany({ where: { postId: id } });
+            await tx.savedPost.deleteMany({ where: { postId: { in: postIds } } });
+            await tx.hiddenPost.deleteMany({ where: { postId: { in: postIds } } });
+            await tx.userLike.deleteMany({ where: { postId: { in: postIds } } });
 
-            // Comments and their likes
-            const comments = await tx.comment.findMany({ where: { postId: id } });
+            const comments = await tx.comment.findMany({ where: { postId: { in: postIds } } });
             const commentIds = comments.map(c => c.id);
             if (commentIds.length > 0) {
                 await tx.commentLike.deleteMany({ where: { commentId: { in: commentIds } } });
-                await tx.comment.deleteMany({ where: { postId: id } });
+                await tx.comment.deleteMany({ where: { postId: { in: postIds } } });
             }
 
-            // Responses and Answers
-            const responses = await tx.response.findMany({ where: { postId: id } });
+            const responses = await tx.response.findMany({ where: { postId: { in: postIds } } });
             const responseIds = responses.map(r => r.id);
             if (responseIds.length > 0) {
                 await tx.answer.deleteMany({ where: { responseId: { in: responseIds } } });
-                await tx.response.deleteMany({ where: { postId: id } });
+                await tx.response.deleteMany({ where: { postId: { in: postIds } } });
             }
 
-            // Survey structure
-            const questions = await tx.question.findMany({ where: { postId: id } });
+            const questions = await tx.question.findMany({ where: { postId: { in: postIds } } });
             const questionIds = questions.map(q => q.id);
             if (questionIds.length > 0) {
                 await tx.option.deleteMany({ where: { questionId: { in: questionIds } } });
-                await tx.question.deleteMany({ where: { postId: id } });
+                await tx.question.deleteMany({ where: { postId: { in: postIds } } });
             }
-            await tx.section.deleteMany({ where: { postId: id } });
+            await tx.section.deleteMany({ where: { postId: { in: postIds } } });
 
-            // Finally delete the post
+            if (dependentShareIds.length > 0) {
+                await tx.post.deleteMany({ where: { id: { in: dependentShareIds } } });
+            }
             await tx.post.delete({ where: { id } });
 
-            // Decrement sharesCount of original post if applicable
             if (post.sharedFromId) {
-                await tx.post.update({
-                    where: { id: post.sharedFromId },
+                await tx.post.updateMany({
+                    where: { id: post.sharedFromId, sharesCount: { gt: 0 } },
                     data: { sharesCount: { decrement: 1 } }
                 });
             }
@@ -3039,7 +3187,7 @@ export const deletePost = async (req: Request, res: Response) => {
 
         await scheduleMediaDeletion(mediaAssetIds);
 
-        res.json({ success: true, message: 'Post permanently deleted' });
+        res.json({ success: true, message: 'Post permanently deleted', deletedPostIds: postIds });
     } catch (error) {
         console.error("Hard delete failed:", error);
         res.status(500).json({ error: 'Failed to delete post permanently' });

@@ -19,6 +19,8 @@ interface HashtagTopicScreenProps {
   onUpdateDemographics?: (demographics: Partial<NonNullable<UserProfile['demographics']>>) => void;
   onGroupClick?: (groupId: string) => void;
   onLike?: (surveyId: string, isLiked: boolean) => void;
+  onDelete?: (surveyId: string, deletedPostIds?: string[]) => void;
+  onEditDraft?: (survey: Survey) => void;
 }
 
 export const HashtagTopicScreen: React.FC<HashtagTopicScreenProps> = ({
@@ -33,7 +35,9 @@ export const HashtagTopicScreen: React.FC<HashtagTopicScreenProps> = ({
   onShareToFeed,
   onUpdateDemographics,
   onGroupClick,
-  onLike
+  onLike,
+  onDelete,
+  onEditDraft
 }) => {
   const { i18n } = useTranslation();
   const isRtl = ['ar', 'ur'].includes(i18n.language?.split('-')[0]);
@@ -143,6 +147,12 @@ export const HashtagTopicScreen: React.FC<HashtagTopicScreenProps> = ({
               onUpdateDemographics={onUpdateDemographics}
               onGroupClick={onGroupClick}
               onLike={onLike}
+              onEditDraft={onEditDraft}
+              onDelete={(postId, deletedPostIds) => {
+                const ids = new Set(deletedPostIds || [postId]);
+                setPosts((current) => current.filter((candidate) => !ids.has(candidate.id)));
+                onDelete?.(postId, deletedPostIds);
+              }}
             />
           ))}
           {nextCursor && (

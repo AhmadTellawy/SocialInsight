@@ -994,6 +994,24 @@ const App: React.FC = () => {
     }
   };
 
+  const handleEditPost = (draft: Survey) => {
+    setEditingDraft(draft);
+    navigate(`/create/${draft.type.toLowerCase()}`);
+  };
+
+  const handlePostDeleted = (surveyId: string, deletedPostIds?: string[]) => {
+    const ids = new Set(deletedPostIds || [surveyId]);
+    setSurveys(prev => prev.filter(post => !ids.has(post.id)));
+    setProfileSurveys(prev => prev.filter(post => !ids.has(post.id)));
+    if (selectedSurveyId && ids.has(selectedSurveyId)) {
+      setSelectedSurveyId(null);
+      setDetailSurvey(null);
+      setDetailTab('post');
+      setActiveTab('home');
+      navigate('/');
+    }
+  };
+
 
   const handleSaveDraft = async (draftData: Partial<Survey>) => {
     console.log("handleSaveDraft called with data:", draftData);
@@ -1345,6 +1363,8 @@ const App: React.FC = () => {
           onUpdateDemographics={handleUpdateDemographics}
           onGroupClick={navigateToGroup}
           onLike={handleLikePost}
+          onDelete={handlePostDeleted}
+          onEditDraft={handleEditPost}
         />
       );
     }
@@ -1365,6 +1385,8 @@ const App: React.FC = () => {
             contextGroups={userGroups}
             onGroupClick={navigateToGroup}
             onLike={handleLikePost}
+            onDelete={handlePostDeleted}
+            onEditDraft={handleEditPost}
             onLoadMore={fetchMore}
             hasNextPage={!!nextCursor}
             isLoadingMore={isLoadingMore}
@@ -1383,7 +1405,7 @@ const App: React.FC = () => {
             </ErrorBoundary>
           );
         }
-        return <ProfileScreen isLoading={isProfileLoading} surveys={profileSurveys} userGroups={userGroups} userProfile={userProfile!} user={selectedProfile || undefined} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onAuthorClick={navigateToProfile} onSurveyProgress={handleSurveyProgress} onShareToFeed={handleShareToFeed} onSettingsClick={() => navigate('/settings/profile')} onEditDraft={(d) => { navigate(`/create/${d.type.toLowerCase()}`); setEditingDraft(d); }} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} onLike={handleLikePost} />;
+        return <ProfileScreen isLoading={isProfileLoading} surveys={profileSurveys} userGroups={userGroups} userProfile={userProfile!} user={selectedProfile || undefined} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onAuthorClick={navigateToProfile} onSurveyProgress={handleSurveyProgress} onShareToFeed={handleShareToFeed} onSettingsClick={() => navigate('/settings/profile')} onEditDraft={handleEditPost} onDelete={handlePostDeleted} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} onLike={handleLikePost} />;
       case 'notifications':
         return <NotificationsScreen currentUserId={userProfile?.id || ""} notifications={notifications} onNotificationsChange={(newNotifs) => {
           if (userProfile?.id) {
@@ -1424,6 +1446,8 @@ const App: React.FC = () => {
             contextGroups={userGroups}
             onGroupClick={navigateToGroup}
             onLike={handleLikePost}
+            onDelete={handlePostDeleted}
+            onEditDraft={handleEditPost}
             onLoadMore={fetchMore}
             hasNextPage={!!nextCursor}
             isLoadingMore={isLoadingMore}
@@ -1663,6 +1687,8 @@ const App: React.FC = () => {
                 onShareToFeed={handleShareToFeed}
                 onUpdateDemographics={handleUpdateDemographics}
                 onLike={handleLikePost}
+                onDelete={handlePostDeleted}
+                onEditDraft={handleEditPost}
               />
             )
           ) : profileError ? (
@@ -1709,7 +1735,8 @@ const App: React.FC = () => {
               hasNextPage={!!profileNextCursor}
               onLoadMore={fetchMore}
               onSettingsClick={() => navigate('/settings/profile')}
-              onEditDraft={(d) => { navigate(`/create/${d.type.toLowerCase()}`); setEditingDraft(d); }}
+              onEditDraft={handleEditPost}
+              onDelete={handlePostDeleted}
               onLike={handleLikePost}
             />
           ) : selectedSurveyId ? (
@@ -1757,6 +1784,8 @@ const App: React.FC = () => {
                     onGroupClick={navigateToGroup}
                     sourceSurface={selectedSurveySurface as any}
                     onLike={handleLikePost}
+                    onDelete={handlePostDeleted}
+                    onEditDraft={handleEditPost}
                   />
                 ) : (
                   <PostAnalysis survey={selectedSurvey} isAccessDenied={!canSeeAnalysis} />
@@ -1861,9 +1890,8 @@ const App: React.FC = () => {
                     const sid = editRestrictionState.surveyId;
                     if (sid && userProfile?.id) {
                       try {
-                        await api.deletePost(sid, userProfile.id);
-                        setSurveys(prev => prev.filter(s => s.id !== sid));
-                        setProfileSurveys(prev => prev.filter(s => s.id !== sid));
+                        const result = await api.deletePost(sid);
+                        handlePostDeleted(sid, result.deletedPostIds);
                       } catch (e) {
                         console.error("Failed to delete post:", e);
                       }

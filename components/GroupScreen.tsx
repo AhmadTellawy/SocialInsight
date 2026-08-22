@@ -33,6 +33,8 @@ interface GroupScreenProps {
   getGroupShareUrl?: (groupId: string) => string;
   onLike?: (surveyId: string, isLiked: boolean) => void;
   onInviteUser?: (groupId: string, userId: string) => Promise<void>;
+  onDelete?: (surveyId: string, deletedPostIds?: string[]) => void;
+  onEditDraft?: (survey: Survey) => void;
 }
 
 export const GroupScreen: React.FC<GroupScreenProps> = ({
@@ -49,6 +51,8 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
   getGroupShareUrl,
   onLike,
   onInviteUser,
+  onDelete,
+  onEditDraft,
 }) => {
   const [activeTab, setActiveTab] = useState<'posts' | 'about' | 'members'>('posts');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -75,7 +79,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
 
   const {
     posts, isLoading: isPostsLoading, isFetchingNextPage: isPostsFetchingNextPage,
-    error: postsError, hasMore, fetchNextPage, updatePostLikeStatus
+    error: postsError, hasMore, fetchNextPage, updatePostLikeStatus, removePosts
   } = useGroupPosts(group.id, userProfile?.id);
 
   const { stats, isLoading: isStatsLoading } = useGroupStats(group.id);
@@ -473,6 +477,11 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
                     onShareToFeed={onShareToFeed}
                     onUpdateDemographics={onUpdateDemographics}
                     onLike={handleLike}
+                    onEditDraft={onEditDraft}
+                    onDelete={(postId, deletedPostIds) => {
+                      removePosts(deletedPostIds || [postId]);
+                      onDelete?.(postId, deletedPostIds);
+                    }}
                   />
                 ))}
                 {hasMore && (

@@ -32,6 +32,7 @@ interface ProfileScreenProps {
   onUpdateCurrentUser?: (updates: Partial<UserProfile>) => void;
   onFollowChange?: (targetUserId: string, isFollowing: boolean) => void;
   onLike?: (surveyId: string, isLiked: boolean) => void;
+  onDelete?: (surveyId: string, deletedPostIds?: string[]) => void;
   isLoading?: boolean;
   isLoadingMore?: boolean;
   hasNextPage?: boolean;
@@ -59,6 +60,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onUpdateCurrentUser,
   onFollowChange,
   onLike,
+  onDelete,
   isLoading,
   isLoadingMore,
   hasNextPage,
@@ -675,6 +677,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     return baseTabs;
   }, [isMe, profileUser?.groupPrivacy, targetUser?.groupPrivacy, isFollowing, t]);
 
+  const handleCardDeleted = (surveyId: string, deletedPostIds?: string[]) => {
+    const ids = new Set(deletedPostIds || [surveyId]);
+    setSavedPosts(current => current.filter(post => !ids.has(post.id)));
+    onDelete?.(surveyId, deletedPostIds);
+  };
+
   const renderTabContent = () => {
     switch (activeTab as any) {
       case 'content':
@@ -701,6 +709,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 onGroupClick={onGroupClick}
                 sourceSurface="PROFILE"
                 onLike={onLike}
+                onEditDraft={onEditDraft}
+                onDelete={handleCardDeleted}
               />
             ))}
           </div>
@@ -764,6 +774,11 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 onGroupClick={onGroupClick}
                 onUpdateDemographics={onUpdateDemographics}
                 sourceSurface="SAVED"
+                onEditDraft={onEditDraft}
+                onDelete={handleCardDeleted}
+                onSaveChange={(postId, isSaved) => {
+                  if (!isSaved) setSavedPosts(current => current.filter(post => post.id !== postId));
+                }}
               />
             ))}
           </div>
@@ -798,6 +813,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 onGroupClick={onGroupClick}
                 sourceSurface="PROFILE"
                 onLike={onLike}
+                onEditDraft={onEditDraft}
+                onDelete={handleCardDeleted}
               />
             ))}
           </div>

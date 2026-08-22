@@ -222,6 +222,11 @@ export function useGroupPosts(groupId: string, userId?: string) {
         }));
     }, []);
 
+    const removePosts = useCallback((postIds: string[]) => {
+        const ids = new Set(postIds);
+        setPosts(prev => prev.filter(post => !ids.has(post.id)));
+    }, []);
+
     useEffect(() => {
         setPage(1);
         fetchPosts(1, true);
@@ -243,6 +248,7 @@ export function useGroupPosts(groupId: string, userId?: string) {
         hasMore,
         fetchNextPage,
         updatePostLikeStatus,
+        removePosts,
     };
 }
 

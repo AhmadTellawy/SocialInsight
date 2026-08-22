@@ -22,6 +22,8 @@ interface HomeScreenProps {
   contextGroups?: any[];
   onGroupClick?: (groupId: string) => void;
   onLike?: (surveyId: string, isLiked: boolean) => void;
+  onDelete?: (surveyId: string, deletedPostIds?: string[]) => void;
+  onEditDraft?: (survey: Survey) => void;
   isLoading?: boolean;
   onLoadMore?: () => void;
   hasNextPage?: boolean;
@@ -66,6 +68,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   contextGroups = [],
   onGroupClick,
   onLike,
+  onDelete,
+  onEditDraft,
   isLoading,
   onLoadMore,
   hasNextPage,
@@ -290,6 +294,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               onGroupClick={onGroupClick}
               sourceSurface="FEED"
               onLike={onLike}
+              onDelete={onDelete}
+              onEditDraft={onEditDraft}
             />
           </React.Fragment>
         ))}

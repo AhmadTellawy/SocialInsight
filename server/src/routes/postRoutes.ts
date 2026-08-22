@@ -13,7 +13,9 @@ import {
     likePost,
     likeComment,
     savePost,
+    unsavePost,
     hidePost,
+    unhidePost,
     reportPost,
     getSavedPosts,
     getPostLikers,
@@ -61,7 +63,9 @@ router.post('/:id/vote', optionalAuth, votePost); // Guest voting might be allow
 router.post('/:id/comments', requireAuth, createComment);
 router.post('/:id/like', requireAuth, likePost);
 router.post('/:id/save', requireAuth, savePost);
+router.delete('/:id/save', requireAuth, unsavePost);
 router.post('/:id/hide', requireAuth, hidePost);
+router.delete('/:id/hide', requireAuth, unhidePost);
 router.post('/:id/report', requireAuth, reportPost);
 router.post('/:id/share', requireAuth, sharePost);
 router.delete('/:id', requireAuth, deletePost);

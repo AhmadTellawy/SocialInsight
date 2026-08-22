@@ -21,6 +21,7 @@ import { MediaCarousel } from './media/MediaCarousel';
 import { MediaImage } from './media/MediaImage';
 import { calculateAverageRating } from '../utils/ratingScale';
 import { shouldShowOptionNames } from '../utils/optionPresentation';
+import { getPostOptionCapabilities } from '../utils/postOptions';
 
 interface SurveyCardProps {
   survey: Survey;
@@ -40,7 +41,8 @@ interface SurveyCardProps {
   contextGroups?: any[];
   onGroupClick?: (groupId: string) => void;
   onLike?: (surveyId: string, isLiked: boolean) => void;
-  onDelete?: (surveyId: string) => void;
+  onSaveChange?: (surveyId: string, isSaved: boolean) => void;
+  onDelete?: (surveyId: string, deletedPostIds?: string[]) => void;
   onEditDraft?: (survey: Survey) => void;
 }
 
@@ -63,6 +65,15 @@ interface FlatQuestion {
   weight?: number;
   correctOptionId?: string;
 }
+
+const REPORT_REASONS = [
+  'INAPPROPRIATE_CONTENT',
+  'SPAM',
+  'HARASSMENT',
+  'FALSE_INFORMATION',
+  'COPYRIGHT_VIOLATION',
+  'OTHER'
+] as const;
 
 // Configuration for demographic questions
 const DEM_CONFIG: Record<string, { title: string, question: string, options: string[], profileKey: keyof NonNullable<UserProfile['demographics']> }> = {
@@ -152,6 +163,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   contextGroups = [],
   onGroupClick,
   onLike,
+  onSaveChange,
   onDelete,
   onEditDraft
 }) => {
@@ -229,6 +241,16 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const [isHidden, setIsHidden] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isHiding, setIsHiding] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [isRemovingPeopleTag, setIsRemovingPeopleTag] = useState(false);
+  const [hideUndoVisible, setHideUndoVisible] = useState(false);
+  const [actionFeedback, setActionFeedback] = useState<string | null>(null);
+  const [menuError, setMenuError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const hideUndoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [removedPeopleTagIds, setRemovedPeopleTagIds] = useState<Set<string>>(new Set());
   const [isPeopleTagsOpen, setIsPeopleTagsOpen] = useState(false);
 
@@ -270,8 +292,6 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     && !removedPeopleTagIds.has(tag.id)
   );
 
-  const isAuthor = !!userProfile?.id && String(survey.author?.id) === String(userProfile.id);
-
   const [isAnonToggled, setIsAnonToggled] = useState(false);
   const [showShareToast, setShowShareToast] = useState(false);
   const [isLiked, setIsLiked] = useState(interactionTarget.isLiked || false);
@@ -283,6 +303,20 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     setLikeCount(interactionTarget.likes || 0);
     setCommentsCount(interactionTarget.commentsCount || 0);
   }, [interactionTarget.isLiked, interactionTarget.likes, interactionTarget.commentsCount]);
+
+  useEffect(() => {
+    setIsSaved(interactionTarget.isSaved || false);
+  }, [interactionTarget.id, interactionTarget.isSaved]);
+
+  useEffect(() => () => {
+    if (hideUndoTimerRef.current) clearTimeout(hideUndoTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (!actionFeedback) return;
+    const timer = setTimeout(() => setActionFeedback(null), 5000);
+    return () => clearTimeout(timer);
+  }, [actionFeedback]);
 
   // Tracking Refs
   const viewRef = useRef<HTMLDivElement>(null);
@@ -354,9 +388,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       if (resp && resp.isFollowing !== undefined) {
         setIsInteracted(resp.isFollowing);
       }
+      setIsMenuOpen(false);
     } catch (error) {
       console.error("Failed to follow/join", error);
       setIsInteracted(!newStatus);
+      setMenuError(t('postOptions.actionFailed'));
     } finally {
       setIsInteractLoading(false);
     }
@@ -1011,18 +1047,24 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
   const handleSave = async (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    if (!userProfile?.id) return;
+    if (!userProfile?.id || isSaving) return;
     setIsMenuOpen(false);
+    setActionFeedback(null);
     const previous = isSaved;
     const nextStatus = !previous;
     setIsSaved(nextStatus);
+    setIsSaving(true);
     try {
-      const res = await api.savePost(interactionTarget.id, userProfile.id);
-      setIsSaved(res.isSaved !== undefined ? res.isSaved : res.saved);
+      const res = nextStatus
+        ? await api.savePost(interactionTarget.id)
+        : await api.unsavePost(interactionTarget.id);
+      const confirmedStatus = res.isSaved !== undefined ? res.isSaved : nextStatus;
+      setIsSaved(confirmedStatus);
+      onSaveChange?.(interactionTarget.id, confirmedStatus);
       Analytics.track({
         event_type: 'SAVE_TOGGLE',
         post_id: interactionTarget.id,
-        new_state: res.isSaved !== undefined ? res.isSaved : res.saved,
+        new_state: confirmedStatus,
         actor_user_id: userProfile.id,
         source_surface: sourceSurface,
         position_in_feed: positionInFeed
@@ -1030,20 +1072,23 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     } catch (error) {
       console.error(error);
       setIsSaved(previous);
+      setActionFeedback(t('postOptions.saveFailed'));
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const handleEditClick = () => {
     setIsMenuOpen(false);
-    const createdAt = new Date(sourceSurvey.createdAt).getTime();
+    const createdAt = new Date(survey.createdAt).getTime();
     const now = Date.now();
     const diffInMinutes = (now - createdAt) / (1000 * 60);
     
     if (diffInMinutes > 5) {
-      window.dispatchEvent(new CustomEvent('onEditRestricted', { detail: { surveyId: sourceSurvey.id } }));
+      window.dispatchEvent(new CustomEvent('onEditRestricted', { detail: { surveyId: survey.id } }));
     } else {
       if (onEditDraft) {
-        onEditDraft(sourceSurvey);
+        onEditDraft(survey);
       }
     }
   };
@@ -1054,7 +1099,9 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   };
 
   const handleRemovePeopleTag = async () => {
-    if (!viewerPeopleTag) return;
+    if (!viewerPeopleTag || isRemovingPeopleTag) return;
+    setIsRemovingPeopleTag(true);
+    setMenuError(null);
     try {
       await api.removePeopleTag(viewerPeopleTag.id);
       setRemovedPeopleTagIds((current) => new Set(current).add(viewerPeopleTag.id));
@@ -1068,22 +1115,27 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       setIsMenuOpen(false);
     } catch (error) {
       console.error('Failed to remove people tag:', error);
+      setMenuError(t('postOptions.removeTagFailed'));
+    } finally {
+      setIsRemovingPeopleTag(false);
     }
   };
 
   const handleConfirmDelete = async () => {
     if (isDeleting) return;
     setIsDeleting(true);
+    setDeleteError(null);
     try {
-      await api.deletePost(survey.id, userProfile?.id || '');
+      const result = await api.deletePost(survey.id);
       setIsDeleteConfirmOpen(false);
       if (onDelete) {
-        onDelete(survey.id);
+        onDelete(survey.id, result.deletedPostIds);
       } else {
         setIsHidden(true);
       }
     } catch (err) {
       console.error('Failed to delete post:', err);
+      setDeleteError(t('postOptions.deleteFailed'));
     } finally {
       setIsDeleting(false);
     }
@@ -1092,7 +1144,10 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const handleHide = async () => {
     if (!userProfile?.id) return;
     setIsMenuOpen(false);
+    setActionFeedback(null);
     setIsHidden(true);
+    setHideUndoVisible(true);
+    setIsHiding(true);
     Analytics.track({
       event_type: 'HIDE_POST',
       post_id: survey.id,
@@ -1100,26 +1155,51 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       source_surface: sourceSurface
     });
     try {
-      await api.hidePost(survey.id, userProfile.id);
+      await api.hidePost(survey.id);
+      if (hideUndoTimerRef.current) clearTimeout(hideUndoTimerRef.current);
+      hideUndoTimerRef.current = setTimeout(() => setHideUndoVisible(false), 5000);
     } catch (error) {
       console.error(error);
+      if (hideUndoTimerRef.current) clearTimeout(hideUndoTimerRef.current);
+      setIsHidden(false);
+      setHideUndoVisible(false);
+      setActionFeedback(t('postOptions.hideFailed'));
+    } finally {
+      setIsHiding(false);
+    }
+  };
+
+  const handleUndoHide = async () => {
+    if (isRestoring) return;
+    setIsRestoring(true);
+    try {
+      await api.unhidePost(survey.id);
+      if (hideUndoTimerRef.current) clearTimeout(hideUndoTimerRef.current);
+      setIsHidden(false);
+      setHideUndoVisible(false);
+    } catch (error) {
+      console.error(error);
+      setActionFeedback(t('postOptions.unhideFailed'));
+    } finally {
+      setIsRestoring(false);
     }
   };
 
   const handleReport = async () => {
-    if (!userProfile?.id || !reportReason) return;
+    if (!userProfile?.id || !reportReason || (reportReason === 'OTHER' && !reportDescription.trim())) return;
     setIsReporting(true);
+    setReportError(null);
     try {
-      await api.reportPost(survey.id, userProfile.id, reportReason, reportDescription);
+      await api.reportPost(survey.id, reportReason, reportDescription.trim() || undefined);
       setIsReportSheetOpen(false);
-      alert("Post reported successfully. Thank you for helping us keep the community safe.");
-    } catch (error) {
-      console.error(error);
-      alert(error instanceof Error ? error.message : "Failed to report post");
-    } finally {
-      setIsReporting(false);
+      setActionFeedback(t('postOptions.reportSuccess'));
       setReportReason('');
       setReportDescription('');
+    } catch (error) {
+      console.error(error);
+      setReportError(error instanceof Error ? error.message : t('postOptions.reportFailed'));
+    } finally {
+      setIsReporting(false);
     }
   };
 
@@ -1139,6 +1219,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       setTimeout(() => setShowShareToast(false), 2000);
     } catch (err) {
       console.error('Failed to copy:', err);
+      setActionFeedback(t('postOptions.copyFailed'));
     }
   };
 
@@ -1189,6 +1270,13 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
   const isMyPost = !!userProfile?.id && survey.author?.id === userProfile.id;
   const isMySource = !!userProfile?.id && sourceSurvey.author?.id === userProfile.id;
+  const postOptionCapabilities = getPostOptionCapabilities({
+    isAuthenticated: !!userProfile?.id,
+    isPostOwner: isMyPost,
+    isSourceOwner: isMySource,
+    isRepost: !!survey.sharedFrom,
+    hasViewerPeopleTag: !!viewerPeopleTag
+  });
   const authorName = isMySource ? userProfile?.name : (sourceSurvey.author?.name || t('Anonymous'));
   const authorAvatar = isMySource ? userProfile?.avatar : sourceSurvey.author?.avatar;
 
@@ -1947,7 +2035,24 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     );
   };
 
-  if (isHidden) return null;
+  if (isHidden) {
+    if (!hideUndoVisible) return null;
+    return (
+      <div className="bg-white border-b-8 border-gray-100 px-4 py-4" role="status" aria-live="polite">
+        <div className="flex min-h-11 items-center justify-between gap-4 rounded-xl bg-gray-50 px-4 py-3 text-sm text-gray-700">
+          <span>{actionFeedback || t('postOptions.hidden')}</span>
+          <button
+            type="button"
+            onClick={handleUndoHide}
+            disabled={isRestoring || isHiding}
+            className="min-h-11 px-3 font-bold text-blue-600 disabled:opacity-50"
+          >
+            {isHiding ? t('postOptions.hiding') : isRestoring ? t('postOptions.restoring') : t('postOptions.undo')}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -1958,6 +2063,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         data-post-type={sourceSurvey.type}
         className="bg-white pt-5 pb-2 border-b-8 border-gray-100 animate-in fade-in slide-in-from-bottom-4 duration-500 relative"
       >
+        {actionFeedback && (
+          <div className="mx-4 mb-3 rounded-xl bg-gray-900 px-4 py-3 text-sm text-white" role="status" aria-live="polite">
+            {actionFeedback}
+          </div>
+        )}
         <div className="px-4">
 
           {/* SHARER HEADER (If this is a repost) */}
@@ -2058,7 +2168,16 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                   </div>
                 </div>
               </div>
-              <button onClick={() => setIsMenuOpen(true)} className="text-gray-400 hover:text-gray-600 p-2 -mr-2 rounded-full hover:bg-gray-50 transition-colors shrink-0"><MoreHorizontal size={20} /></button>
+              <button
+                type="button"
+                onClick={() => { setMenuError(null); setIsMenuOpen(true); }}
+                className="text-gray-400 hover:text-gray-600 w-11 h-11 -mr-2 rounded-full hover:bg-gray-50 transition-colors shrink-0 flex items-center justify-center"
+                aria-label={t('postOptions.open')}
+                title={t('postOptions.open')}
+                aria-haspopup="dialog"
+              >
+                <MoreHorizontal size={20} aria-hidden="true" />
+              </button>
             </div>
 
             <div className={isTextOnlyPoll ? "mb-2" : "mb-4"}>
@@ -2176,7 +2295,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           onShareClick={(e) => { e.stopPropagation(); setIsShareSheetOpen(true); }}
           onAnalysisClick={onAnalysisClick}
         />
-        {showShareToast && <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-4 py-2 rounded-full text-xs font-medium shadow-lg animate-in fade-in zoom-in duration-200 z-10">Link copied!</div>}
+        {showShareToast && <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-4 py-2 rounded-full text-xs font-medium shadow-lg animate-in fade-in zoom-in duration-200 z-10" role="status" aria-live="polite">{t('postOptions.linkCopied')}</div>}
       </div >
 
       {/* Lightbox for option images - only for portrait images */}
@@ -2203,43 +2322,44 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         )
       }
 
-      <BottomSheet isOpen={isMenuOpen} onClose={() => setIsMenuOpen(false)}>
+      <BottomSheet isOpen={isMenuOpen} onClose={() => setIsMenuOpen(false)} ariaLabel={t('postOptions.menuTitle')}>
         <div className="space-y-1">
-          {isAuthor && (
-            <button onClick={handleEditClick} className="w-full flex items-center gap-4 p-3.5 hover:bg-gray-50 rounded-xl transition-colors text-left group">
+          {menuError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{menuError}</p>}
+          {postOptionCapabilities.canEdit && (
+            <button onClick={handleEditClick} className="w-full flex items-center gap-4 p-3.5 hover:bg-gray-50 rounded-xl transition-colors text-start group">
               <div className="w-10 h-10 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center group-hover:bg-gray-200">
                 <Edit3 size={22} strokeWidth={1.5} />
               </div>
               <div>
-                <div className="font-semibold text-gray-900 text-sm">{t('Edit')}</div>
-                <div className="text-xs text-gray-500">{t('Edit Post')}</div>
+                <div className="font-semibold text-gray-900 text-sm">{t('postOptions.edit')}</div>
+                <div className="text-xs text-gray-500">{t('postOptions.editDescription')}</div>
               </div>
             </button>
           )}
-          <button onClick={handleSave} className="w-full flex items-center gap-4 p-3.5 hover:bg-gray-50 rounded-xl transition-colors text-left group">
+          {postOptionCapabilities.canSave && <button disabled={isSaving} onClick={handleSave} className="w-full flex items-center gap-4 p-3.5 hover:bg-gray-50 rounded-xl transition-colors text-start group disabled:opacity-50">
             <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isSaved ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-700'} group-hover:bg-gray-200`}>
               <Bookmark size={22} strokeWidth={1.5} fill={isSaved ? "currentColor" : "none"} />
             </div>
             <div>
-              <div className="font-semibold text-gray-900 text-sm">{isSaved ? 'Unsave' : 'Save'}</div>
-              <div className="text-xs text-gray-500">{isSaved ? 'Remove from saved' : 'Save for later'}</div>
+              <div className="font-semibold text-gray-900 text-sm">{isSaved ? t('postOptions.unsave') : t('postOptions.save')}</div>
+              <div className="text-xs text-gray-500">{isSaved ? t('postOptions.unsaveDescription') : t('postOptions.saveDescription')}</div>
             </div>
-          </button>
+          </button>}
 
-          <button onClick={handleCopyLink} className="w-full flex items-center gap-4 p-3.5 hover:bg-gray-50 rounded-xl transition-colors text-left group">
+          <button onClick={handleCopyLink} className="w-full flex items-center gap-4 p-3.5 hover:bg-gray-50 rounded-xl transition-colors text-start group">
             <div className="w-10 h-10 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center group-hover:bg-gray-200">
               <LinkIcon size={22} strokeWidth={1.5} />
             </div>
             <div>
-              <div className="font-semibold text-gray-900 text-sm">Copy link</div>
-              <div className="text-xs text-gray-500">Copy link to clipboard</div>
+              <div className="font-semibold text-gray-900 text-sm">{t('postOptions.copyLink')}</div>
+              <div className="text-xs text-gray-500">{t('postOptions.copyDescription')}</div>
             </div>
           </button>
 
           <hr className="my-2 border-gray-100" />
 
-          {viewerPeopleTag && (
-            <button onClick={handleRemovePeopleTag} className="w-full flex items-center gap-4 p-3.5 hover:bg-gray-50 rounded-xl transition-colors text-left group">
+          {postOptionCapabilities.canRemovePeopleTag && (
+            <button disabled={isRemovingPeopleTag} onClick={handleRemovePeopleTag} className="w-full flex items-center gap-4 p-3.5 hover:bg-gray-50 rounded-xl transition-colors text-start group disabled:opacity-50">
               <div className="w-10 h-10 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center group-hover:bg-gray-200">
                 <UserMinus size={22} strokeWidth={1.5} />
               </div>
@@ -2250,80 +2370,85 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             </button>
           )}
 
-          {isMyPost && (
-            <button onClick={handleDeleteClick} className="w-full flex items-center gap-4 p-3.5 hover:bg-red-50 rounded-xl transition-colors text-left group">
+          {postOptionCapabilities.canDelete && (
+            <button onClick={handleDeleteClick} className="w-full flex items-center gap-4 p-3.5 hover:bg-red-50 rounded-xl transition-colors text-start group">
               <div className="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center group-hover:bg-red-200">
                 <Trash2 size={22} strokeWidth={1.5} />
               </div>
               <div>
-                <div className="font-semibold text-red-600 text-sm">Delete Post</div>
-                <div className="text-xs text-red-400">Permanently remove this post</div>
+                <div className="font-semibold text-red-600 text-sm">{t('postOptions.delete')}</div>
+                <div className="text-xs text-red-500">{t('postOptions.deleteDescription')}</div>
               </div>
             </button>
           )}
 
-          {!isMySource && (
-            <button onClick={handleFollowInteraction} className="w-full flex items-center gap-4 p-3.5 hover:bg-gray-50 rounded-xl transition-colors text-left group">
+          {postOptionCapabilities.canFollowAuthor && (
+            <button disabled={isInteractLoading} onClick={handleFollowInteraction} className="w-full flex items-center gap-4 p-3.5 hover:bg-gray-50 rounded-xl transition-colors text-start group disabled:opacity-50">
               <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isInteracted ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'} group-hover:bg-gray-200`}>
                 {isInteracted ? <UserMinus size={22} strokeWidth={1.5} /> : <UserPlus size={22} strokeWidth={1.5} />}
               </div>
               <div>
-                <div className="font-semibold text-gray-900 text-sm">{isInteracted ? `Unfollow ${authorName}` : `Follow ${authorName}`}</div>
-                <div className="text-xs text-gray-500">{isInteracted ? 'Stop seeing posts from this author' : 'Stay updated with this author'}</div>
+                <div className="font-semibold text-gray-900 text-sm">{isInteracted ? t('postOptions.unfollowAuthor', { name: authorName }) : t('postOptions.followAuthor', { name: authorName })}</div>
+                <div className="text-xs text-gray-500">{isInteracted ? t('postOptions.unfollowDescription') : t('postOptions.followDescription')}</div>
               </div>
             </button>
           )}
 
-          <button onClick={handleHide} className="w-full flex items-center gap-4 p-3.5 hover:bg-gray-50 rounded-xl transition-colors text-left group">
+          {postOptionCapabilities.canHide && <button onClick={handleHide} className="w-full flex items-center gap-4 p-3.5 hover:bg-gray-50 rounded-xl transition-colors text-start group">
             <div className="w-10 h-10 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center group-hover:bg-gray-200">
               <EyeOff size={22} strokeWidth={1.5} />
             </div>
             <div>
-              <div className="font-semibold text-gray-900 text-sm">Hide</div>
-              <div className="text-xs text-gray-500">I don't want to see this</div>
+              <div className="font-semibold text-gray-900 text-sm">{t('postOptions.hide')}</div>
+              <div className="text-xs text-gray-500">{t('postOptions.hideDescription')}</div>
             </div>
-          </button>
+          </button>}
 
-          <button onClick={() => { setIsMenuOpen(false); setIsReportSheetOpen(true); }} className="w-full flex items-center gap-4 p-3.5 hover:bg-gray-50 rounded-xl transition-colors text-left group">
+          {postOptionCapabilities.canReport && <button onClick={() => { setIsMenuOpen(false); setReportError(null); setIsReportSheetOpen(true); }} className="w-full flex items-center gap-4 p-3.5 hover:bg-gray-50 rounded-xl transition-colors text-start group">
             <div className="w-10 h-10 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center group-hover:bg-gray-200">
               <Flag size={22} strokeWidth={1.5} />
             </div>
             <div>
-              <div className="font-semibold text-gray-900 text-sm">Report</div>
-              <div className="text-xs text-gray-500">I'm concerned about this post</div>
+              <div className="font-semibold text-gray-900 text-sm">{t('postOptions.report')}</div>
+              <div className="text-xs text-gray-500">{t('postOptions.reportDescription')}</div>
             </div>
-          </button>
+          </button>}
         </div>
       </BottomSheet>
 
-      <BottomSheet isOpen={isReportSheetOpen} onClose={() => setIsReportSheetOpen(false)} title="Report Post">
+      <BottomSheet isOpen={isReportSheetOpen} onClose={() => setIsReportSheetOpen(false)} title={t('postOptions.reportTitle')}>
         <div className="p-4 space-y-4">
-          <p className="text-sm text-gray-500 mb-4">Why are you reporting this post?</p>
-          <div className="space-y-2">
-            {['Inappropriate content', 'Spam', 'Harassment', 'False information', 'Copyright violation', 'Other'].map(r => (
+          <p className="text-sm text-gray-600 mb-4">{t('postOptions.reportPrompt')}</p>
+          <div className="space-y-2" role="radiogroup" aria-label={t('postOptions.reportPrompt')}>
+            {REPORT_REASONS.map(r => (
               <button
                 key={r}
                 onClick={() => setReportReason(r)}
-                className={`w-full p-4 rounded-xl border text-left text-sm font-bold transition-all ${reportReason === r ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-100 hover:bg-gray-50'}`}
+                role="radio"
+                aria-checked={reportReason === r}
+                className={`w-full p-4 rounded-xl border text-start text-sm font-bold transition-all ${reportReason === r ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-100 hover:bg-gray-50'}`}
               >
-                {r}
+                {t(`postOptions.reportReasons.${r}`)}
               </button>
             ))}
           </div>
-          {reportReason === 'Other' && (
+          {reportReason === 'OTHER' && (
             <textarea
               value={reportDescription}
               onChange={(e) => setReportDescription(e.target.value)}
-              placeholder="Tell us more..."
+              maxLength={1000}
+              aria-label={t('postOptions.reportDetails')}
+              placeholder={t('postOptions.reportDetails')}
               className="w-full p-4 bg-gray-50 border border-gray-100 rounded-xl text-sm min-h-[100px] focus:outline-none focus:border-blue-500"
             />
           )}
+          {reportError && <p className="text-sm text-red-600" role="alert">{reportError}</p>}
           <button
-            disabled={!reportReason || isReporting}
+            disabled={!reportReason || isReporting || (reportReason === 'OTHER' && !reportDescription.trim())}
             onClick={handleReport}
-            className={`w-full py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg transition-all active:scale-95 ${!reportReason || isReporting ? 'bg-gray-200 text-gray-400' : 'bg-red-600 text-white shadow-red-100'}`}
+            className={`w-full py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg transition-all active:scale-95 ${!reportReason || isReporting || (reportReason === 'OTHER' && !reportDescription.trim()) ? 'bg-gray-200 text-gray-500' : 'bg-red-600 text-white shadow-red-100'}`}
           >
-            {isReporting ? 'Reporting...' : 'Submit Report'}
+            {isReporting ? t('postOptions.reporting') : t('postOptions.submitReport')}
           </button>
         </div>
       </BottomSheet>
@@ -2447,31 +2572,32 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         {renderDemographicStep()}
       </BottomSheet>
 
-      <BottomSheet isOpen={isDeleteConfirmOpen} onClose={() => !isDeleting && setIsDeleteConfirmOpen(false)}>
+      <BottomSheet isOpen={isDeleteConfirmOpen} onClose={() => !isDeleting && setIsDeleteConfirmOpen(false)} ariaLabel={t('postOptions.delete')}>
         <div className="p-4 pt-2 text-center space-y-5">
           <div className="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto mb-2 shadow-sm border border-red-100">
             <Trash2 size={32} strokeWidth={1.5} />
           </div>
           <div>
-            <h3 className="text-xl font-black text-gray-900 mb-2">Delete Post</h3>
+            <h3 className="text-xl font-black text-gray-900 mb-2">{t('postOptions.delete')}</h3>
             <p className="text-sm text-gray-500 leading-relaxed max-w-xs mx-auto">
-              Are you sure you want to delete this post? This action cannot be undone.
+              {t('postOptions.deleteConfirm')}
             </p>
           </div>
+          {deleteError && <p className="text-sm text-red-600" role="alert">{deleteError}</p>}
           <div className="flex gap-3 pt-2">
             <button
               disabled={isDeleting}
               onClick={handleConfirmDelete}
               className="flex-1 bg-red-600 text-white p-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg shadow-red-600/20 active:scale-95 transition-all disabled:opacity-50"
             >
-              {isDeleting ? 'Deleting...' : 'Delete Post'}
+              {isDeleting ? t('postOptions.deleting') : t('postOptions.delete')}
             </button>
             <button
               disabled={isDeleting}
               onClick={() => setIsDeleteConfirmOpen(false)}
               className="flex-1 bg-gray-100 text-gray-700 p-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-gray-200 active:scale-95 transition-all disabled:opacity-50"
             >
-              Cancel
+              {t('common.cancel')}
             </button>
           </div>
         </div>

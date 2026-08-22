@@ -716,15 +716,24 @@ model HiddenPost {
 }
 
 model Report {
-  id         String   @id @default(uuid())
-  reporterId String   @map("reporter_id")
-  targetType String   @map("target_type") // POST, COMMENT, USER
-  targetId   String   @map("target_id")
-  reason     String
-  createdAt  DateTime @default(now()) @map("created_at")
+  id              String    @id @default(uuid())
+  reporterId      String    @map("reporter_id")
+  targetType      String    @map("target_type") // POST, COMMENT, USER
+  targetId        String    @map("target_id")
+  dedupeKey       String?   @unique @map("dedupe_key")
+  reason          String
+  description     String?
+  status          String    @default("PENDING")
+  targetSnapshot  Json?     @map("target_snapshot")
+  resolutionNote  String?   @map("resolution_note")
+  resolvedAt      DateTime? @map("resolved_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
 
   reporter User @relation("Reporter", fields: [reporterId], references: [id])
 
+  @@index([status, createdAt])
+  @@index([targetType, targetId])
   @@map("reports")
 }
 

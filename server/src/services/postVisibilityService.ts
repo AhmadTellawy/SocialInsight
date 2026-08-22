@@ -80,6 +80,7 @@ const buildBaseVisiblePublishedPostWhere = (
   return {
     isDeleted: false,
     status: POST_STATUS.PUBLISHED,
+    ...(viewerId ? { NOT: { hiddenBy: { some: { userId: viewerId } } } } : {}),
     OR: [nonGroupAudience, groupAudience]
   };
 };

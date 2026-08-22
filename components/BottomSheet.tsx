@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useId, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
 interface BottomSheetProps {
@@ -9,9 +9,10 @@ interface BottomSheetProps {
   customLayout?: boolean; // If true, removes default padding/scroll to let children handle layout
   title?: string;
   height?: string; // New prop to control height
+  ariaLabel?: string;
 }
 
-export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, children, customLayout = false, title, height }) => {
+export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, children, customLayout = false, title, height, ariaLabel }) => {
   const [isRendered, setIsRendered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [translateY, setTranslateY] = useState(0);
@@ -19,6 +20,13 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
   const sheetRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const startY = useRef<number>(0);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  const titleId = useId();
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (isOpen) {
@@ -36,12 +44,42 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
   }, [isOpen]);
 
   useEffect(() => {
-    const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+    if (!isOpen || !isRendered || !sheetRef.current) return;
+    previouslyFocusedRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const sheet = sheetRef.current;
+    const focusableSelector = 'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    const focusable = Array.from(sheet.querySelectorAll<HTMLElement>(focusableSelector)) as HTMLElement[];
+    (focusable[0] || sheet).focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const currentFocusable = Array.from(sheet.querySelectorAll<HTMLElement>(focusableSelector)) as HTMLElement[];
+      if (currentFocusable.length === 0) {
+        event.preventDefault();
+        sheet.focus();
+        return;
+      }
+      const first = currentFocusable[0];
+      const last = currentFocusable[currentFocusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
-    window.addEventListener('keydown', handleEsc);
-    return () => window.removeEventListener('keydown', handleEsc);
-  }, [onClose]);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      previouslyFocusedRef.current?.focus();
+    };
+  }, [isOpen, isRendered]);
 
   const handleTouchStart = (e: React.TouchEvent) => {
     const target = e.target as HTMLElement;
@@ -95,23 +133,26 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
         style={{ 
           transform: isOpen ? `translateY(${translateY}px)` : 'translateY(100%)',
           transition: isDragging ? 'none' : 'transform 0.35s cubic-bezier(0.15, 0.85, 0.35, 1)',
-          maxHeight: '95vh',
+          maxHeight: '95dvh',
           height: height || (customLayout ? '80vh' : 'auto'),
           minHeight: '20vh'
         }}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={title ? titleId : undefined}
+        aria-label={!title ? ariaLabel : undefined}
+        tabIndex={-1}
       >
         {/* Drag Handle Header */}
         <div className="w-full flex flex-col items-center justify-center pt-3 pb-2 shrink-0 z-10 bg-white rounded-t-3xl border-b border-gray-50 drag-handle touch-none">
            <div className="w-10 h-1 bg-gray-300 rounded-full mb-2" />
-           {title && <h3 className="text-sm font-bold text-gray-800 pb-1">{title}</h3>}
+           {title && <h3 id={titleId} className="text-sm font-bold text-gray-800 pb-1">{title}</h3>}
         </div>
         
         {/* Content Container */}
         <div 
           ref={scrollContainerRef}
-          className={`flex-1 ${customLayout ? 'overflow-hidden flex flex-col' : 'px-4 pb-8 sm:p-6 overflow-y-auto overscroll-contain no-scrollbar'}`}
+          className={`flex-1 ${customLayout ? 'overflow-hidden flex flex-col' : 'px-4 pb-[max(2rem,env(safe-area-inset-bottom))] sm:p-6 overflow-y-auto overscroll-contain no-scrollbar'}`}
         >
           {children}
         </div>

@@ -20,4 +20,5 @@ test('authenticated discovery carries private-group membership and both block di
   assert.match(serialized, /"targetAudience":\{"equals":"Followers"/);
   assert.match(serialized, /"sharedFromId":null/);
   assert.match(serialized, /"sharedFrom":\{"is":/);
+  assert.match(serialized, /"hiddenBy":\{"some":\{"userId":"viewer-1"\}\}/);
 });

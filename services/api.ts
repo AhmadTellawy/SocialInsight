@@ -161,11 +161,9 @@ export const api = {
         return data.map(normalizeSurvey);
     },
 
-    deletePost: async (postId: string, userId: string) => {
+    deletePost: async (postId: string, _userId?: string) => {
         const response = await authFetch(`${API_BASE_URL}/posts/${postId}`, {
-            method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId })
+            method: 'DELETE'
         });
         if (!response.ok) throw new Error('Failed to delete post');
         return response.json();
@@ -626,31 +624,39 @@ export const api = {
         return response.json();
     },
 
-    savePost: async (postId: string, userId: string) => {
+    savePost: async (postId: string, _userId?: string) => {
         const response = await authFetch(`${API_BASE_URL}/posts/${postId}/save`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId })
+            method: 'POST'
         });
         if (!response.ok) throw new Error('Failed to save post');
         return response.json();
     },
 
-    hidePost: async (postId: string, userId: string) => {
+    unsavePost: async (postId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/posts/${postId}/save`, { method: 'DELETE' });
+        if (!response.ok) throw new Error('Failed to remove saved post');
+        return response.json();
+    },
+
+    hidePost: async (postId: string, _userId?: string) => {
         const response = await authFetch(`${API_BASE_URL}/posts/${postId}/hide`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId })
+            method: 'POST'
         });
         if (!response.ok) throw new Error('Failed to hide post');
         return response.json();
     },
 
-    reportPost: async (postId: string, userId: string, reason: string, description?: string) => {
+    unhidePost: async (postId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/posts/${postId}/hide`, { method: 'DELETE' });
+        if (!response.ok) throw new Error('Failed to restore post');
+        return response.json();
+    },
+
+    reportPost: async (postId: string, reason: string, description?: string) => {
         const response = await authFetch(`${API_BASE_URL}/posts/${postId}/report`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId, reason, description })
+            body: JSON.stringify({ reason, description })
         });
         if (!response.ok) {
             const errorData = await response.json();
