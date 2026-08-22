@@ -5,16 +5,19 @@ import prisma from '../prisma';
 const VALID_EVENT_TYPES = [
     'POST_VIEW_START', 'POST_VIEW_END', 'LIKE', 'SAVE_TOGGLE',
     'COMMENT_CREATE', 'COMMENT_DELETE', 'SHARE_OR_COPY_LINK',
-    'HIDE_POST', 'PROFILE_VISIT', 'FOLLOW_TOGGLE'
+    'HIDE_POST', 'PROFILE_VISIT', 'FOLLOW_TOGGLE',
+    'MENTION_SUGGESTION_OPENED', 'MENTION_SELECTED', 'MENTION_PROFILE_OPENED',
+    'HASHTAG_CLICKED', 'HASHTAG_TOPIC_OPENED', 'HASHTAG_SEARCH_SELECTED',
+    'PEOPLE_TAG_ADDED', 'PEOPLE_TAG_REMOVED'
 ];
 
-const VALID_SURFACES = ['FEED', 'PROFILE', 'SAVED', 'SEARCH', 'DEEP_LINK'];
+const VALID_SURFACES = ['FEED', 'PROFILE', 'SAVED', 'SEARCH', 'DEEP_LINK', 'COMPOSER', 'TOPIC'];
 const VALID_DEVICES = ['WEB', 'ANDROID', 'IOS'];
 const VALID_SHARE_METHODS = ['COPY_LINK', 'NATIVE_SHARE', 'REPOST'];
 
 export const batchIngestInteractions = async (req: Request, res: Response) => {
     const events = req.body;
-    const authUserId = (req as any).user?.id;
+    const authUserId = req.user?.userId;
 
     if (!Array.isArray(events)) {
         res.status(400).json({ error: 'Payload must be an array' });
@@ -27,7 +30,7 @@ export const batchIngestInteractions = async (req: Request, res: Response) => {
 
     // WHITE-LISTED FIELDS ONLY (Requirement 6)
     const ALLOWED_FIELDS = [
-        'id', 'actor_user_id', 'event_type', 'post_id', 'target_user_id',
+        'id', 'event_type', 'post_id', 'target_user_id',
         'comment_id', 'method', 'new_state', 'dwell_time_ms',
         'source_surface', 'position_in_feed', 'session_id', 'device_type', 'created_at'
     ];
@@ -57,7 +60,7 @@ export const batchIngestInteractions = async (req: Request, res: Response) => {
 
                     if (!normalizedEvent.source_surface || !VALID_SURFACES.includes(normalizedEvent.source_surface)) throw new Error('Invalid source_surface');
 
-                    const actor_user_id = authUserId || normalizedEvent.actor_user_id;
+                    const actor_user_id = authUserId;
                     if (!actor_user_id) throw new Error('Missing actor_user_id');
 
                     // 2. Req 4: Position in Feed Consistency
@@ -89,7 +92,7 @@ export const batchIngestInteractions = async (req: Request, res: Response) => {
                         data.post_id = normalizedEvent.post_id;
                     }
 
-                    if (['PROFILE_VISIT', 'FOLLOW_TOGGLE'].includes(event_type)) {
+                    if (['PROFILE_VISIT', 'FOLLOW_TOGGLE', 'MENTION_SELECTED', 'MENTION_PROFILE_OPENED', 'PEOPLE_TAG_ADDED', 'PEOPLE_TAG_REMOVED'].includes(event_type)) {
                         if (!normalizedEvent.target_user_id) throw new Error('target_user_id required');
                         data.target_user_id = normalizedEvent.target_user_id;
                     }

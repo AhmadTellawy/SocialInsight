@@ -15,6 +15,7 @@ import { api } from '../services/api';
 import { useTranslation } from 'react-i18next';
 import { MediaPicker } from './media/MediaPicker';
 import { createPersistedMediaDraftFromId, mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds } from '../utils/mediaDrafts';
+import { RichMentionInput } from './RichMentionInput';
 
 interface ProfileSettingsScreenProps {
   userProfile: UserProfile;
@@ -185,6 +186,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
         phone: profileForm.phone,
         groupPrivacy: profileForm.groupPrivacy,
         isPrivate: profileForm.isPrivate,
+        peopleTagPermission: profileForm.peopleTagPermission,
         demographics: {
           ...(userProfile.demographics || {}),
           ...(profileForm.demographics || {})
@@ -547,11 +549,12 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
             </div>
             <div>
               <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-1">Bio</label>
-              <textarea
-                rows={4}
+              <RichMentionInput
                 value={profileForm.bio}
-                onChange={(e) => setProfileForm({ ...profileForm, bio: e.target.value })}
+                onChange={(bio) => setProfileForm({ ...profileForm, bio })}
                 className="w-full bg-white border border-gray-100 rounded-2xl px-4 py-3.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all shadow-sm resize-none"
+                minRows={4}
+                ariaLabel="Bio"
               />
             </div>
           </div>
@@ -594,6 +597,15 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   }
 
   if (currentSubPage === 'account-privacy') {
+    const peopleTagOptions: Array<{
+      value: NonNullable<UserProfile['peopleTagPermission']>;
+      label: string;
+    }> = [
+      { value: 'EVERYONE', label: t('Everyone') },
+      { value: 'FOLLOWING', label: t('People you follow') },
+      { value: 'NO_ONE', label: t('No one') }
+    ];
+
     return (
       <div className="flex flex-col h-full bg-gray-50 animate-in slide-in-from-right duration-300">
         <PageHeader title={t('Account privacy')} showSave={false} />
@@ -630,6 +642,63 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
             <p className="text-sm text-gray-500 leading-relaxed">
               {t("When your account is private, only the followers you approve can see what you share, including your polls and responses, and your followers and following lists. Certain info on your profile, like your profile picture and username, is visible to everyone on and off SocialInsight.")}
             </p>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
+            <h2 className="text-base font-bold text-gray-900 mb-2">{t('Who can tag you in posts?')}</h2>
+            <p className="text-sm text-gray-500 leading-relaxed mb-4">
+              {t('Choose who can add your profile as a people tag. Text mentions are controlled separately.')}
+            </p>
+            <div role="radiogroup" aria-label={t('Who can tag you in posts?')} className="divide-y divide-gray-100">
+              {peopleTagOptions.map((option) => {
+                const isSelected = (profileForm.peopleTagPermission || 'EVERYONE') === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={isSelected}
+                    disabled={isSaving}
+                    onClick={async () => {
+                      if (isSelected || !userProfile.id) return;
+
+                      const previousValue = profileForm.peopleTagPermission || 'EVERYONE';
+                      setProfileForm((current) => ({ ...current, peopleTagPermission: option.value }));
+                      setIsSaving(true);
+                      try {
+                        const updatedProfile = await api.updateUser(userProfile.id, {
+                          peopleTagPermission: option.value
+                        });
+                        const merged = {
+                          ...userProfile,
+                          ...updatedProfile,
+                          peopleTagPermission: option.value
+                        };
+                        setProfileForm((current) => ({ ...current, ...updatedProfile, peopleTagPermission: option.value }));
+                        onUpdateProfile(merged);
+                      } catch (error) {
+                        console.error('Failed to update people tag privacy', error);
+                        setProfileForm((current) => ({ ...current, peopleTagPermission: previousValue }));
+                        alert(t('Failed to update people tag privacy'));
+                      } finally {
+                        setIsSaving(false);
+                      }
+                    }}
+                    className="w-full min-h-12 flex items-center justify-between py-3 text-start disabled:opacity-60"
+                  >
+                    <span className={`text-sm font-semibold ${isSelected ? 'text-blue-600' : 'text-gray-800'}`}>
+                      {option.label}
+                    </span>
+                    <span
+                      aria-hidden="true"
+                      className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${isSelected ? 'border-blue-600' : 'border-gray-300'}`}
+                    >
+                      {isSelected && <span className="w-2.5 h-2.5 rounded-full bg-blue-600" />}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>

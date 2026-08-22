@@ -237,10 +237,35 @@ export const api = {
     },
 
     searchAll: async (query: string) => {
-        if (!query) return { surveys: [], people: [], groups: [], categories: [] };
+        if (!query) return { topics: [], surveys: [], people: [], groups: [], categories: [] };
         const response = await authFetch(`${API_BASE_URL}/search?q=${encodeURIComponent(query)}`);
         if (!response.ok) throw new Error('Failed to fetch search results');
         return response.json();
+    },
+
+    searchTaggableUsers: async (query: string, signal?: AbortSignal) => {
+        if (!query) return [];
+        const response = await authFetch(`${API_BASE_URL}/users/search?q=${encodeURIComponent(query)}&purpose=people-tag`, { signal });
+        if (!response.ok) await throwApiError(response, 'Failed to search taggable users');
+        return response.json();
+    },
+
+    getTrendingHashtags: async (limit: number = 10) => {
+        const response = await authFetch(`${API_BASE_URL}/hashtags/trending?limit=${limit}`);
+        if (!response.ok) throw new Error('Failed to fetch trending hashtags');
+        return response.json();
+    },
+
+    getHashtagPosts: async (name: string, sort: 'top' | 'recent' = 'top', cursor?: string, limit: number = 10) => {
+        const params = new URLSearchParams({ sort, limit: String(limit) });
+        if (cursor) params.set('cursor', cursor);
+        const response = await authFetch(`${API_BASE_URL}/hashtags/${encodeURIComponent(name.replace(/^#/, ''))}/posts?${params.toString()}`);
+        if (!response.ok) throw new Error('Failed to fetch hashtag topic');
+        const data = await response.json();
+        return {
+            ...data,
+            data: (data.data || []).map(normalizeSurvey)
+        };
     },
 
     getGroups: async () => {
@@ -283,6 +308,24 @@ export const api = {
         const resData = await response.json();
         if (resData.action === 'unshared') return resData;
         return normalizeSurvey(resData);
+    },
+
+    acceptPeopleTag: async (tagId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/posts/people-tags/${tagId}/accept`, { method: 'POST' });
+        if (!response.ok) await throwApiError(response, 'Failed to accept people tag');
+        return response.json();
+    },
+
+    rejectPeopleTag: async (tagId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/posts/people-tags/${tagId}/reject`, { method: 'POST' });
+        if (!response.ok) await throwApiError(response, 'Failed to reject people tag');
+        return response.json();
+    },
+
+    removePeopleTag: async (tagId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/posts/people-tags/${tagId}`, { method: 'DELETE' });
+        if (!response.ok) await throwApiError(response, 'Failed to remove people tag');
+        return response.json();
     },
 
     getComments: async (postId: string, userId?: string) => {

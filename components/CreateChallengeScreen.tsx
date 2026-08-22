@@ -18,6 +18,7 @@ import { cancelTemporaryMediaDrafts, createPersistedMediaDraft, createPersistedM
 import { AnswerTypeSelector } from './options/AnswerTypeSelector';
 import { OptionImagePicker } from './options/OptionImagePicker';
 import { draftOptionHasImage, resolveOptionPresentation } from '../utils/optionPresentation';
+import { PeopleTagPicker, PeopleTagPerson } from './PeopleTagPicker';
 
 interface CreateChallengeScreenProps {
   onClose: () => void;
@@ -155,6 +156,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
         mediaAspectRatio: postMedia.length > 0 ? mediaAspectRatio : undefined,
         targetAudience: visibility as any,
         targetGroups: visibility === 'Groups' ? selectedGroups : undefined,
+        taggedUserIds: taggedPeople.map((person) => person.id),
         resultsWho,
         resultsTiming,
         category,
@@ -178,6 +180,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   };
 
   const [title, setTitle] = useState('');
+  const [taggedPeople, setTaggedPeople] = useState<PeopleTagPerson[]>([]);
   const [optionPresentation, setOptionPresentation] = useState<'text' | 'image'>('text');
   const [showOptionNames, setShowOptionNames] = useState(true);
   const [options, setOptions] = useState<ChallengeDraftOption[]>([
@@ -248,6 +251,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
       setResultsTiming(draft.resultsTiming || 'AnyTime');
       setAllowComments(draft.allowComments !== undefined ? draft.allowComments : true);
       setForceAnonymous(draft.forceAnonymous || false);
+      setTaggedPeople((draft.taggedUsers || []).map((tag) => tag.taggedUser).filter((person): person is PeopleTagPerson => Boolean(person?.id && person?.handle)));
       setRandomPairing(draft.randomPairing !== undefined ? draft.randomPairing : true);
       const persistedPostMedia = (draft.media || []).map((media) => createPersistedMediaDraft(media, 'POST', draft.coverImage));
       setPostMedia(persistedPostMedia);
@@ -423,6 +427,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
         mediaAspectRatio: postMedia.length > 0 ? mediaAspectRatio : undefined,
         targetAudience: visibility as any,
         targetGroups: visibility === 'Groups' ? selectedGroups : undefined,
+        taggedUserIds: taggedPeople.map((person) => person.id),
         resultsWho,
         resultsTiming,
         category,
@@ -903,6 +908,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                     <ChevronRight size={14} />
                   </div>
                 </button>
+                <PeopleTagPicker selectedPeople={taggedPeople} onChange={setTaggedPeople} accent="amber" />
               </div>
 
               <div className="space-y-3 pb-4 border-b border-gray-100 pt-1">

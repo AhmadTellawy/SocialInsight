@@ -15,7 +15,40 @@
     "remove": "Remove"
   },
   "mentions": {
-    "limitExceeded": "You can mention up to {{limit}} people."
+    "limitExceeded": "You can mention up to {{limit}} people.",
+    "searching": "Searching...",
+    "noUsersFound": "No users found",
+    "searchFailed": "Unable to search users",
+    "suggestions": "Mention suggestions",
+    "suggestionCount": "{{count}} mention suggestions available",
+    "selected": "Mentioned @{{handle}}",
+    "viewProfile": "View @{{handle}} profile"
+  },
+  "hashtags": {
+    "viewTopic": "View #{{tag}} topic"
+  },
+  "peopleTags": {
+    "tagPeople": "Tag people",
+    "none": "None",
+    "openLabel": "Tag people, {{count}} selected",
+    "searchPlaceholder": "Search people",
+    "searchHint": "Search by name or handle.",
+    "searchFailed": "Unable to search people",
+    "selected": "Selected people",
+    "selectedCount": "{{count}} of {{limit}} selected",
+    "clear": "Clear",
+    "removePerson": "Remove {{name}}",
+    "limitExceeded": "You can tag up to {{limit}} people.",
+    "done": "Done",
+    "with": "with",
+    "and": "and",
+    "others": "others",
+    "accept": "Accept",
+    "reject": "Reject",
+    "removeMine": "Remove my tag",
+    "removeMineDescription": "Remove your association from this post",
+    "notificationMessage": "tagged you in a post",
+    "taggedPeople": "Tagged people"
   },
   "media": {
     "add": "Add image",
@@ -321,6 +354,12 @@
   "Most Commented": "Most Commented",
   "Growing Rapidly": "Growing Rapidly",
   "High Engagement": "High Engagement",
+  "Who can tag you in posts?": "Who can tag you in posts?",
+  "Choose who can add your profile as a people tag. Text mentions are controlled separately.": "Choose who can add your profile as a people tag. Text mentions are controlled separately.",
+  "Everyone": "Everyone",
+  "People you follow": "People you follow",
+  "No one": "No one",
+  "Failed to update people tag privacy": "Failed to update people tag privacy",
   "shareCard": {
     "questions": "{{count}} questions",
     "moreOptions": "+ {{count}} more options",

@@ -15,6 +15,7 @@ import analyticsRoutes from './routes/analyticsRoutes';
 import pushRoutes from './routes/pushRoutes';
 import searchRoutes from './routes/searchRoutes';
 import mediaRoutes from './routes/mediaRoutes';
+import hashtagRoutes from './routes/hashtagRoutes';
 import { requireAuth } from './middleware/authMiddleware';
 import { getNotificationSettings, updateNotificationSettings } from './controllers/userController';
 import { initCronJobs } from './services/cronService';
@@ -69,6 +70,7 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/push', pushRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/media', mediaRoutes);
+app.use('/api/hashtags', hashtagRoutes);
 
 app.get('/api/health', async (_req, res) => {
     const mediaStorage = isMediaStorageConfigured() ? 'configured' : 'not_configured';

@@ -13,6 +13,7 @@ import { collectInactiveSectionMedia, collectSectionMedia, hydrateSections, seri
 import { AnswerTypeSelector } from './options/AnswerTypeSelector';
 import { OptionImagePicker } from './options/OptionImagePicker';
 import { draftOptionHasImage, resolveOptionPresentation } from '../utils/optionPresentation';
+import { PeopleTagPicker, PeopleTagPerson } from './PeopleTagPicker';
 
 interface CreateQuizModalProps {
   isOpen: boolean;
@@ -98,6 +99,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
   const [forceAnonymous, setForceAnonymous] = useState(false);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [taggedPeople, setTaggedPeople] = useState<PeopleTagPerson[]>([]);
   const [legacyCoverImage, setLegacyCoverImage] = useState<string | null>(null);
   const [postMedia, setPostMedia] = useState<MediaDraft[]>([]);
   const [mediaAspectRatio, setMediaAspectRatio] = useState<number | undefined>(undefined);
@@ -183,6 +185,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
       setResultsTiming(draft.resultsTiming || 'AnyTime');
       setAllowComments(draft.allowComments !== undefined ? draft.allowComments : true);
       setForceAnonymous(draft.forceAnonymous || false);
+      setTaggedPeople((draft.taggedUsers || []).map((tag) => tag.taggedUser).filter((person): person is PeopleTagPerson => Boolean(person?.id && person?.handle)));
       const persistedPostMedia = (draft.media || []).map((media) => createPersistedMediaDraft(media, 'POST', draft.coverImage));
       setPostMedia(persistedPostMedia);
       setMediaAspectRatio(draft.mediaAspectRatio || persistedPostMedia[0]?.aspectRatio);
@@ -383,6 +386,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
         mediaAspectRatio: postMedia.length > 0 ? mediaAspectRatio : undefined,
         targetAudience: visibility as any,
         targetGroups: visibility === 'Groups' ? selectedGroups : undefined,
+        taggedUserIds: taggedPeople.map((person) => person.id),
         resultsWho,
         resultsTiming,
         allowAnonymous: true,
@@ -447,6 +451,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
         mediaAspectRatio: postMedia.length > 0 ? mediaAspectRatio : undefined,
         targetAudience: visibility as any,
         targetGroups: visibility === 'Groups' ? selectedGroups : undefined,
+        taggedUserIds: taggedPeople.map((person) => person.id),
         resultsWho,
         resultsTiming,
         allowAnonymous: true,
@@ -1160,6 +1165,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                     <ChevronRight size={14} />
                   </div>
                 </button>
+                <PeopleTagPicker selectedPeople={taggedPeople} onChange={setTaggedPeople} accent="purple" />
               </div>
 
               {/* Duration section inline inside settings sheet */}

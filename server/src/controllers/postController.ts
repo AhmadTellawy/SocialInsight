@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
+import { MentionState, MentionSurface, PeopleTagStatus } from '@prisma/client';
 import prisma from '../prisma';
-import { notify, extractAndNotifyMentions } from '../services/notificationService';
+import { dispatchNotificationIds, notify } from '../services/notificationService';
 import { processBase64Image } from '../utils/imageProcessor';
 import { PrivacyService } from '../services/privacyService';
 import { GroupPermissionService } from '../services/groupPermissionService';
@@ -26,6 +27,27 @@ import { MediaValidationError } from '../services/mediaProcessor';
 import { MediaAttachmentRequirement } from '../services/mediaService';
 import { validatePublishedAnswerTypes } from '../utils/answerTypeValidation';
 import { getMentionLimitViolation } from '../utils/mentionLimits';
+import { parseNotificationPayload } from '../utils/notificationTarget';
+import {
+    ACTIVE_MENTION_REFERENCE_INCLUDE,
+    MentionLimitError,
+    reconcileCommentMentions,
+    reconcilePostMentions,
+    serializeMentionReferences
+} from '../services/mentionLifecycleService';
+import {
+    HashtagLimitError,
+    reconcileCommentHashtags,
+    reconcilePostHashtags
+} from '../services/hashtagService';
+import {
+    PeopleTagValidationError,
+    getCurrentPeopleTagUserIds,
+    getVisiblePeopleTagsInclude,
+    reconcilePeopleTags,
+    serializePeopleTags
+} from '../services/peopleTagService';
+import { buildVisiblePublishedPostWhere } from '../services/postVisibilityService';
 
 export const SAFE_USER_SELECT = {
     id: true,
@@ -70,6 +92,43 @@ export const normalizePostType = (type?: string): string | undefined => {
 const OPTION_POST_TYPES = ['Poll', 'Challenge', 'Prediction', 'Debate'];
 const SECTION_POST_TYPES = ['Quiz', 'Survey'];
 const EDIT_WINDOW_MS = 5 * 60 * 1000;
+
+const getPostMentionSurfaces = (post: {
+    title: string;
+    description: string;
+    sharedFromId?: string | null;
+    sharedCaption?: string | null;
+}) => post.sharedFromId
+    ? [{ surface: MentionSurface.REPOST_CAPTION, text: post.sharedCaption || '' }]
+    : [
+        { surface: MentionSurface.POST_TITLE, text: post.title || '' },
+        { surface: MentionSurface.POST_DESCRIPTION, text: post.description || '' }
+    ];
+
+const getPostHashtagTexts = (post: {
+    title: string;
+    description: string;
+    sharedFromId?: string | null;
+    sharedCaption?: string | null;
+}) => post.sharedFromId
+    ? [post.sharedCaption || '']
+    : [post.title || '', post.description || ''];
+
+const serializePostSocialRecord = (post: any, viewerId?: string | null): any => {
+    const serialized = serializePostMediaRecord(post, viewerId);
+    return {
+        ...serialized,
+        mentions: serializeMentionReferences(post?.mentions),
+        taggedUsers: serializePeopleTags(post?.taggedUsers),
+        sharedFrom: serialized?.sharedFrom && post?.sharedFrom
+            ? {
+                ...serialized.sharedFrom,
+                mentions: serializeMentionReferences(post.sharedFrom.mentions),
+                taggedUsers: serializePeopleTags(post.sharedFrom.taggedUsers)
+            }
+            : serialized?.sharedFrom
+    };
+};
 
 const validateMentionRecipientLimit = (text: string, res: Response, surface: 'post' | 'comment'): boolean => {
     const violation = getMentionLimitViolation(text);
@@ -192,22 +251,32 @@ export const getPosts = async (req: Request, res: Response) => {
             take: limit + 1,
             ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
             where: {
-                isDeleted: false,
-                status: 'PUBLISHED',
-                ...(authorId ? { authorId } : {}),
-                ...(authorHandle ? { author: { handle: authorHandle } } : {}),
-                ...(userId && !authorId && !authorHandle ? {
-                    NOT: { hiddenBy: { some: { userId } } }
-                } : {}),
-                ...PrivacyService.getPostPrivacyWhereClause(userId),
-                OR: [
-                    { targetAudience: 'Public' },
-                    { targetAudience: 'PUBLIC' },
-                    { targetAudience: null },
-                    ...(userId ? [
-                        { authorId: userId },
-                        { author: { following: { some: { followerId: userId, status: 'ACTIVE' } } } }
-                    ] : [])
+                AND: [
+                    {
+                        isDeleted: false,
+                        status: 'PUBLISHED',
+                        ...(authorId ? { authorId } : {}),
+                        ...(authorHandle ? { author: { handle: authorHandle } } : {}),
+                        ...(userId && !authorId && !authorHandle ? {
+                            NOT: { hiddenBy: { some: { userId } } }
+                        } : {}),
+                        ...PrivacyService.getPostPrivacyWhereClause(userId),
+                        OR: [
+                            { targetAudience: 'Public' },
+                            { targetAudience: 'PUBLIC' },
+                            { targetAudience: null },
+                            ...(userId ? [
+                                { authorId: userId },
+                                { author: { following: { some: { followerId: userId, status: 'ACTIVE' } } } }
+                            ] : [])
+                        ]
+                    },
+                    {
+                        OR: [
+                            { sharedFromId: null },
+                            { sharedFrom: { is: buildVisiblePublishedPostWhere(userId) } }
+                        ]
+                    }
                 ]
             },
             include: {
@@ -222,6 +291,8 @@ export const getPosts = async (req: Request, res: Response) => {
                 },
                 questions: { include: { options: { orderBy: { order: 'asc' } } } },
                 sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+                taggedUsers: getVisiblePeopleTagsInclude(userId),
                 media: POST_MEDIA_INCLUDE,
                 targetedGroups: true,
                 responses: (userId || guestId) ? { 
@@ -245,6 +316,8 @@ export const getPosts = async (req: Request, res: Response) => {
                         },
                         questions: { include: { options: { orderBy: { order: 'asc' } } } },
                         sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                        mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+                        taggedUsers: getVisiblePeopleTagsInclude(userId),
                         media: POST_MEDIA_INCLUDE,
                         targetedGroups: true,
                         responses: (userId || guestId) ? { 
@@ -262,7 +335,7 @@ export const getPosts = async (req: Request, res: Response) => {
         });
 
         const mappedPosts = posts.map((rawPost: any) => {
-            const s = serializePostMediaRecord(rawPost, userId);
+            const s = serializePostSocialRecord(rawPost, userId);
             const actualResponse = s.sharedFrom ? s.sharedFrom.responses?.[0] : s.responses?.[0];
             const userAnswers = actualResponse?.answers || [];
             
@@ -349,8 +422,7 @@ export const getTrends = async (req: Request, res: Response) => {
         // Fetch all candidates matching basic criteria
         const posts = await prisma.post.findMany({
             where: {
-                isDeleted: false,
-                status: 'PUBLISHED',
+                ...buildVisiblePublishedPostWhere(userId),
                 ...dateFilter,
                 ...(type && type !== 'all' ? { type: { equals: type, mode: 'insensitive' } } : {}),
                 ...(category ? { category: { equals: category, mode: 'insensitive' } } : {}),
@@ -361,8 +433,7 @@ export const getTrends = async (req: Request, res: Response) => {
                             { location: { contains: country, mode: 'insensitive' } }
                         ]
                     }
-                } : {}),
-                ...PrivacyService.getPostPrivacyWhereClause(userId)
+                } : {})
             },
             include: {
                 author: {
@@ -465,6 +536,8 @@ export const getPostById = async (req: Request, res: Response) => {
                 },
                 questions: { include: { options: { orderBy: { order: 'asc' } } } },
                 sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+                taggedUsers: getVisiblePeopleTagsInclude(userId),
                 media: POST_MEDIA_INCLUDE,
                 targetedGroups: true,
                 responses: (userId || guestId) ? { 
@@ -494,6 +567,8 @@ export const getPostById = async (req: Request, res: Response) => {
                         },
                         questions: { include: { options: { orderBy: { order: 'asc' } } } },
                         sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                        mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+                        taggedUsers: getVisiblePeopleTagsInclude(userId),
                         media: POST_MEDIA_INCLUDE,
                         targetedGroups: true,
                         responses: (userId || guestId) ? { 
@@ -514,7 +589,20 @@ export const getPostById = async (req: Request, res: Response) => {
             return;
         }
 
-        const p = serializePostMediaRecord(post as any, userId);
+        if (post.sharedFromId) {
+            const visibleSourceCount = await prisma.post.count({
+                where: {
+                    id: post.sharedFromId,
+                    ...buildVisiblePublishedPostWhere(userId)
+                }
+            });
+            if (visibleSourceCount === 0) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+        }
+
+        const p = serializePostSocialRecord(post as any, userId);
         const canViewPost = await GroupPermissionService.canViewPost(id, userId);
         if (!canViewPost) {
             res.status(403).json({ error: 'Forbidden' });
@@ -526,21 +614,6 @@ export const getPostById = async (req: Request, res: Response) => {
         if (!canViewAuthorContent) {
             res.status(403).json({ error: 'Forbidden' });
             return;
-        }
-
-        const isAuthor = !!userId && p.authorId === userId;
-        if (!isAuthor && (p.targetAudience === 'Groups' || targetGroupIds.length > 0)) {
-            if (!userId) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-            const membership = await prisma.groupMember.findFirst({
-                where: { userId, groupId: { in: targetGroupIds }, status: 'JOINED' }
-            });
-            if (!membership) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
         }
 
         const actualResponse = p.sharedFrom ? p.sharedFrom.responses?.[0] : p.responses?.[0];
@@ -829,22 +902,40 @@ export const createPost = async (req: Request, res: Response) => {
                 }
             }
 
+            const mentionResult = await reconcilePostMentions(tx, {
+                postId: newPost.id,
+                actorUserId: authorId,
+                state: newPost.status === POST_STATUS.PUBLISHED ? MentionState.ACTIVE : MentionState.STAGED,
+                surfaces: getPostMentionSurfaces(newPost)
+            });
+            await reconcilePostHashtags(tx, newPost.id, getPostHashtagTexts(newPost));
+            const peopleTagResult = await reconcilePeopleTags(tx, {
+                postId: newPost.id,
+                actorUserId: authorId,
+                targetUserIds: Array.isArray(data.taggedUserIds) ? data.taggedUserIds : [],
+                strict: true
+            });
+
             await commitPreparedMedia(tx, prepared);
-            return { post: newPost, createdOptions: optionsList, createdSections: sectionsList };
+            return {
+                post: newPost,
+                createdOptions: optionsList,
+                createdSections: sectionsList,
+                notificationIds: [...mentionResult.notificationIds, ...peopleTagResult.notificationIds]
+            };
             });
         } catch (error) {
             await rollbackPreparedMedia(prepared);
             throw error;
         }
-        const { post, createdOptions, createdSections } = transactionResult;
+        const { post, createdOptions, createdSections, notificationIds } = transactionResult;
 
         console.log(`[CREATE POST] Saved to DB:`, JSON.stringify({ id: post.id, allowAnonymous: postData.allowAnonymous, forceAnonymous: postData.forceAnonymous }));
 
+        await dispatchNotificationIds(notificationIds);
+
         try {
-            if (postData.status === POST_STATUS.PUBLISHED) {
-                const fullText = `${post.title} ${post.description}`;
-                await extractAndNotifyMentions(fullText, authorId, { postId: post.id });
-            } else if (postData.status === POST_STATUS.PENDING_APPROVAL) {
+            if (postData.status === POST_STATUS.PENDING_APPROVAL) {
                 const targetGroupId = data.targetGroups[0];
                 const group = await prisma.group.findUnique({ where: { id: targetGroupId }, select: { name: true } });
                 const managers = await prisma.groupMember.findMany({
@@ -859,6 +950,13 @@ export const createPost = async (req: Request, res: Response) => {
         }
 
         const media = (await Promise.all(postMediaAssetIds.map((id) => getStoredMediaPresentation(id)))).filter(Boolean);
+        const socialRelations = await prisma.post.findUnique({
+            where: { id: post.id },
+            select: {
+                mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+                taggedUsers: getVisiblePeopleTagsInclude(authorId)
+            }
+        });
         const mappedPost = {
             ...post,
             author: serializeUserMediaRecord((post as any).author),
@@ -872,6 +970,8 @@ export const createPost = async (req: Request, res: Response) => {
             allowAnonymous: post.allowAnonymous,
             forceAnonymous: (post as any).forceAnonymous,
             randomPairing: (post as any).randomPairing,
+            mentions: serializeMentionReferences(socialRelations?.mentions),
+            taggedUsers: serializePeopleTags(socialRelations?.taggedUsers),
             demographics: parseJsonArray(post.demographics),
             targetGroups: mapTargetGroups(post)
         };
@@ -881,6 +981,14 @@ export const createPost = async (req: Request, res: Response) => {
         console.error(error);
         if (error instanceof MediaValidationError) {
             res.status(error.statusCode).json({ error: error.message, code: error.code });
+            return;
+        }
+        if (error instanceof MentionLimitError || error instanceof HashtagLimitError) {
+            res.status(400).json({ error: error.message, code: 'SOCIAL_TEXT_LIMIT_EXCEEDED', limit: error.limit });
+            return;
+        }
+        if (error instanceof PeopleTagValidationError) {
+            res.status(400).json({ error: error.message, code: error.code, invalidTargetIds: error.invalidTargetIds });
             return;
         }
         res.status(500).json({ error: 'Failed to create post' });
@@ -910,6 +1018,8 @@ export const updatePost = async (req: Request, res: Response) => {
                 isDeleted: true,
                 responseCount: true,
                 groupId: true,
+                sharedFromId: true,
+                sharedCaption: true,
                 image: true,
                 targetAudience: true,
                 mediaAspectRatio: true,
@@ -1264,6 +1374,23 @@ export const updatePost = async (req: Request, res: Response) => {
                     }
                 }
 
+                const mentionResult = await reconcilePostMentions(tx, {
+                    postId: post.id,
+                    actorUserId: trustedUserId,
+                    state: post.status === POST_STATUS.PUBLISHED ? MentionState.ACTIVE : MentionState.STAGED,
+                    surfaces: getPostMentionSurfaces(post)
+                });
+                await reconcilePostHashtags(tx, post.id, getPostHashtagTexts(post));
+                const taggedUserIds = Array.isArray(data.taggedUserIds)
+                    ? data.taggedUserIds
+                    : await getCurrentPeopleTagUserIds(tx, post.id);
+                const peopleTagResult = await reconcilePeopleTags(tx, {
+                    postId: post.id,
+                    actorUserId: trustedUserId,
+                    targetUserIds: taggedUserIds,
+                    strict: true
+                });
+
                 await commitPreparedMedia(tx, preparedNew);
                 await commitMediaScopeChange(tx, preparedRetained);
 
@@ -1277,7 +1404,12 @@ export const updatePost = async (req: Request, res: Response) => {
                         include: { questions: { orderBy: { order: 'asc' }, include: { options: { orderBy: { order: 'asc' } } } } }
                     })
                     : [];
-                return { post, finalOptions, finalSections };
+                return {
+                    post,
+                    finalOptions,
+                    finalSections,
+                    notificationIds: [...mentionResult.notificationIds, ...peopleTagResult.notificationIds]
+                };
             });
         } catch (error) {
             await rollbackPreparedMedia(preparedNew);
@@ -1287,13 +1419,13 @@ export const updatePost = async (req: Request, res: Response) => {
 
         await finalizeMediaScopeChange(preparedRetained);
         await scheduleMediaDeletion(removedIds);
-        const { post, finalOptions, finalSections } = transactionResult;
+        const { post, finalOptions, finalSections, notificationIds } = transactionResult;
         console.log('[UPDATE POST] Saved to DB:', JSON.stringify({ id: post.id, mediaCount: finalPostMediaIds.length }));
 
+        await dispatchNotificationIds(notificationIds);
+
         try {
-            if (existingPost.status !== POST_STATUS.PUBLISHED && post.status === POST_STATUS.PUBLISHED) {
-                await extractAndNotifyMentions(`${post.title} ${post.description}`, trustedUserId, { postId: post.id });
-            } else if (post.status === POST_STATUS.PENDING_APPROVAL && existingPost.status !== POST_STATUS.PENDING_APPROVAL) {
+            if (post.status === POST_STATUS.PENDING_APPROVAL && existingPost.status !== POST_STATUS.PENDING_APPROVAL) {
                 const targetGroupId = post.groupId || post.targetedGroups[0]?.id;
                 if (targetGroupId) {
                     const [group, managers] = await Promise.all([
@@ -1312,6 +1444,13 @@ export const updatePost = async (req: Request, res: Response) => {
         }
 
         const media = (await Promise.all(finalPostMediaIds.map((mediaId) => getStoredMediaPresentation(mediaId)))).filter(Boolean);
+        const socialRelations = await prisma.post.findUnique({
+            where: { id: post.id },
+            select: {
+                mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+                taggedUsers: getVisiblePeopleTagsInclude(trustedUserId)
+            }
+        });
 
         const mappedPost = {
             ...post,
@@ -1326,6 +1465,8 @@ export const updatePost = async (req: Request, res: Response) => {
             allowAnonymous: post.allowAnonymous,
             forceAnonymous: (post as any).forceAnonymous,
             randomPairing: (post as any).randomPairing,
+            mentions: serializeMentionReferences(socialRelations?.mentions),
+            taggedUsers: serializePeopleTags(socialRelations?.taggedUsers),
             demographics: parseJsonArray(post.demographics),
             targetGroups: mapTargetGroups(post)
         };
@@ -1335,6 +1476,14 @@ export const updatePost = async (req: Request, res: Response) => {
         console.error('Failed to update post:', error);
         if (error instanceof MediaValidationError) {
             res.status(error.statusCode).json({ error: error.message, code: error.code });
+            return;
+        }
+        if (error instanceof MentionLimitError || error instanceof HashtagLimitError) {
+            res.status(400).json({ error: error.message, code: 'SOCIAL_TEXT_LIMIT_EXCEEDED', limit: error.limit });
+            return;
+        }
+        if (error instanceof PeopleTagValidationError) {
+            res.status(400).json({ error: error.message, code: error.code, invalidTargetIds: error.invalidTargetIds });
             return;
         }
         res.status(500).json({ error: 'Failed to update post' });
@@ -1349,6 +1498,7 @@ export const getDrafts = async (req: Request, res: Response) => {
             include: {
                 questions: { include: { options: { orderBy: { order: 'asc' } } } },
                 sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                taggedUsers: getVisiblePeopleTagsInclude(userId),
                 media: POST_MEDIA_INCLUDE,
                 targetedGroups: true,
                 author: { select: SAFE_USER_SELECT }
@@ -1356,7 +1506,7 @@ export const getDrafts = async (req: Request, res: Response) => {
             orderBy: { updatedAt: 'desc' }
         });
         const mappedDrafts = drafts.map((rawDraft: any) => {
-            const d = serializePostMediaRecord(rawDraft, userId);
+            const d = serializePostSocialRecord(rawDraft, userId);
             return {
                 ...d,
                 likes: d.likesCount,
@@ -1396,6 +1546,8 @@ export const getSavedPosts = async (req: Request, res: Response) => {
                         author: { select: SAFE_USER_SELECT },
                         questions: { include: { options: { orderBy: { order: 'asc' } } } },
                         sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                        mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+                        taggedUsers: getVisiblePeopleTagsInclude(userId),
                         media: POST_MEDIA_INCLUDE,
                         targetedGroups: true,
                         responses: userId ? { where: { userId }, take: 1, include: { answers: true } } : false,
@@ -1406,7 +1558,7 @@ export const getSavedPosts = async (req: Request, res: Response) => {
             orderBy: { createdAt: 'desc' }
         });
         const posts = saved.map((s: any) => {
-            const p: any = serializePostMediaRecord(s.post, userId);
+            const p: any = serializePostSocialRecord(s.post, userId);
             const userResponse = p.responses?.[0];
             const userAnswers = userResponse?.answers || [];
             return {
@@ -1972,6 +2124,7 @@ const mapComment = (c: any, currentUserId?: string) => {
         },
         timestamp: c.createdAt.toISOString(),
         likes: c.likes || 0,
+        mentions: serializeMentionReferences(c.mentions),
         isLiked: currentUserId && c.likesList ? c.likesList.some((l: any) => l.userId === currentUserId) : false,
         replies: c.replies ? c.replies.map((r: any) => mapComment(r, currentUserId)) : []
     };
@@ -2032,10 +2185,15 @@ export const getComments = async (req: Request, res: Response) => {
             where: { postId: id, parentId: null },
             include: {
                 user: { select: SAFE_USER_SELECT },
+                mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
                 likesList: { select: { userId: true } },
                 replies: {
                     orderBy: { createdAt: 'asc' },
-                    include: { user: { select: SAFE_USER_SELECT }, likesList: { select: { userId: true } } }
+                    include: {
+                        user: { select: SAFE_USER_SELECT },
+                        mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+                        likesList: { select: { userId: true } }
+                    }
                 }
             },
             orderBy: { createdAt: 'desc' }
@@ -2051,7 +2209,7 @@ export const createComment = async (req: Request, res: Response) => {
     const { text, content, parentId } = req.body;
     try {
         const id = await resolveInteractionTarget(rawId, 'comment');
-        const userId = req.user?.userId || req.body.userId;
+        const userId = req.user!.userId;
 
         const commentTarget = await prisma.post.findUnique({
             where: { id },
@@ -2106,10 +2264,11 @@ export const createComment = async (req: Request, res: Response) => {
 
         if (!validateMentionRecipientLimit(cleanText, res, 'comment')) return;
 
+        let parentComment: { postId: string; userId: string } | null = null;
         if (parentId) {
-            const parentComment = await prisma.comment.findUnique({
+            parentComment = await prisma.comment.findUnique({
                 where: { id: parentId },
-                select: { postId: true }
+                select: { postId: true, userId: true }
             });
             if (!parentComment) {
                 res.status(400).json({ error: 'Parent comment not found' });
@@ -2121,30 +2280,63 @@ export const createComment = async (req: Request, res: Response) => {
             }
         }
 
-        const [comment, targetPost] = await prisma.$transaction([
-            prisma.comment.create({
-                data: { text: cleanText, userId, postId: id, parentId },
-                include: { user: { select: SAFE_USER_SELECT } }
-            }),
-            prisma.post.update({ where: { id }, data: { commentsCount: { increment: 1 } } })
-        ]);
+        const transactionResult = await prisma.$transaction(async (tx) => {
+            const createdComment = await tx.comment.create({
+                data: { text: cleanText, userId, postId: id, parentId }
+            });
+            const targetPost = await tx.post.update({
+                where: { id },
+                data: { commentsCount: { increment: 1 } }
+            });
+            const mentionResult = await reconcileCommentMentions(tx, {
+                postId: id,
+                commentId: createdComment.id,
+                actorUserId: userId,
+                isReply: Boolean(parentId),
+                parentCommentId: parentId || undefined,
+                text: cleanText
+            });
+            await reconcileCommentHashtags(tx, createdComment.id, cleanText);
+            const comment = await tx.comment.findUniqueOrThrow({
+                where: { id: createdComment.id },
+                include: {
+                    user: { select: SAFE_USER_SELECT },
+                    mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+                    likesList: { select: { userId: true } },
+                    replies: true
+                }
+            });
+            return { comment, targetPost, mentionResult };
+        });
+        const { comment, targetPost, mentionResult } = transactionResult;
+
+        await dispatchNotificationIds(mentionResult.notificationIds);
 
         const commentNavigation = parentId
             ? { postId: id, commentId: parentId, replyId: comment.id, sourceType: 'reply' }
             : { postId: id, commentId: comment.id, sourceType: 'comment' };
 
-        if (targetPost.authorId) {
-            await notify(userId, targetPost.authorId, 'response', 'commented on your post', 'post', id, commentNavigation);
+        const conversationalRecipientId = parentComment?.userId || targetPost.authorId;
+        if (conversationalRecipientId && !mentionResult.targetUserIds.includes(conversationalRecipientId)) {
+            await notify(
+                userId,
+                conversationalRecipientId,
+                'response',
+                parentId ? 'replied to your comment' : 'commented on your post',
+                'post',
+                id,
+                commentNavigation,
+                { dedupe: true }
+            );
         }
-
-        await extractAndNotifyMentions(cleanText, userId, {
-            postId: id,
-            commentId: parentId || comment.id,
-            ...(parentId ? { replyId: comment.id } : {})
-        });
 
         res.json(mapComment(comment, userId));
     } catch (error) {
+        if (error instanceof MentionLimitError || error instanceof HashtagLimitError) {
+            res.status(400).json({ error: error.message, code: 'SOCIAL_TEXT_LIMIT_EXCEEDED', limit: error.limit });
+            return;
+        }
+        console.error('Create comment failed:', error);
         res.status(500).json({ error: 'Failed to create comment' });
     }
 };
@@ -2307,18 +2499,29 @@ export const reportPost = async (req: Request, res: Response) => {
 export const sharePost = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const userId = req.user!.userId;
-    const { caption } = req.body;
+    const cleanCaption = typeof req.body.caption === 'string' ? req.body.caption.trim() : '';
     try {
+        if (cleanCaption && !validateMentionRecipientLimit(cleanCaption, res, 'post')) return;
+
         const originalPost = await prisma.post.findUnique({
             where: { id },
-            include: { questions: { include: { options: { orderBy: { order: 'asc' } } } }, targetedGroups: true }
+            include: {
+                questions: { include: { options: { orderBy: { order: 'asc' } } } },
+                targetedGroups: true,
+                author: { select: { isPrivate: true, mediaPrivacyTarget: true } }
+            }
         });
         if (!originalPost || (originalPost as any).isDeleted) {
             res.status(404).json({ error: 'Original post not found or has been deleted' });
             return;
         }
 
-        if (originalPost.targetAudience === 'Private' || originalPost.targetAudience === 'Groups' || originalPost.groupId || (originalPost as any).targetedGroups?.length > 0) {
+        const originalAudience = (originalPost.targetAudience || 'Public').trim().toLowerCase();
+        if (!['public', ''].includes(originalAudience)
+            || originalPost.groupId
+            || originalPost.targetedGroups.length > 0
+            || originalPost.author.isPrivate
+            || originalPost.author.mediaPrivacyTarget === true) {
             res.status(403).json({ error: 'Cannot share private or group content' });
             return;
         }
@@ -2332,9 +2535,19 @@ export const sharePost = async (req: Request, res: Response) => {
         }
 
         const actualSharedFromId = originalPost.sharedFromId ? originalPost.sharedFromId : originalPost.id;
+        const visibleSourceCount = await prisma.post.count({
+            where: {
+                id: actualSharedFromId,
+                ...buildVisiblePublishedPostWhere(userId)
+            }
+        });
+        if (visibleSourceCount === 0) {
+            res.status(403).json({ error: 'Cannot share content you cannot access' });
+            return;
+        }
 
         // If it's a direct repost (no caption), check if it already exists to toggle it off
-        if (!caption || caption.trim() === '') {
+        if (!cleanCaption) {
             const existingRepost = await prisma.post.findFirst({
                 where: {
                     authorId: userId,
@@ -2357,41 +2570,54 @@ export const sharePost = async (req: Request, res: Response) => {
             }
         }
 
-        const [newPost] = await prisma.$transaction([
-            prisma.post.create({
-            data: {
-                title: originalPost.title,
-                description: originalPost.description,
-                type: originalPost.type,
-                authorId: userId,
-                expiresAt: originalPost.expiresAt,
-                image: null,
-                category: originalPost.category,
-                targetAudience: originalPost.targetAudience,
-                pollChoiceType: originalPost.pollChoiceType,
-                imageLayout: originalPost.imageLayout,
-                sharedFromId: actualSharedFromId,
-                sharedCaption: caption || null,
-                visibility: 'PUBLIC',
-                status: 'PUBLISHED',
-                allowAnonymous: originalPost.allowAnonymous,
-                forceAnonymous: originalPost.forceAnonymous,
-                allowComments: originalPost.allowComments,
-                allowMultipleSelection: originalPost.allowMultipleSelection,
-                allowUserOptions: originalPost.allowUserOptions,
-                randomPairing: (originalPost as any).randomPairing,
-                resultsWho: originalPost.resultsWho,
-                resultsTiming: originalPost.resultsTiming,
-                targetedGroups: (originalPost as any).targetedGroups && (originalPost as any).targetedGroups.length > 0 ? {
-                    connect: (originalPost as any).targetedGroups.map((g: any) => ({ id: g.id }))
-                } : undefined
-            }
-            }),
-            prisma.post.update({
+        const transactionResult = await prisma.$transaction(async (tx) => {
+            const newPost = await tx.post.create({
+                data: {
+                    title: originalPost.title,
+                    description: originalPost.description,
+                    type: originalPost.type,
+                    authorId: userId,
+                    expiresAt: originalPost.expiresAt,
+                    image: null,
+                    category: originalPost.category,
+                    targetAudience: originalPost.targetAudience,
+                    pollChoiceType: originalPost.pollChoiceType,
+                    imageLayout: originalPost.imageLayout,
+                    sharedFromId: actualSharedFromId,
+                    sharedCaption: cleanCaption || null,
+                    visibility: 'PUBLIC',
+                    status: 'PUBLISHED',
+                    allowAnonymous: originalPost.allowAnonymous,
+                    forceAnonymous: originalPost.forceAnonymous,
+                    allowComments: originalPost.allowComments,
+                    allowMultipleSelection: originalPost.allowMultipleSelection,
+                    allowUserOptions: originalPost.allowUserOptions,
+                    randomPairing: (originalPost as any).randomPairing,
+                    resultsWho: originalPost.resultsWho,
+                    resultsTiming: originalPost.resultsTiming,
+                    targetedGroups: (originalPost as any).targetedGroups && (originalPost as any).targetedGroups.length > 0 ? {
+                        connect: (originalPost as any).targetedGroups.map((g: any) => ({ id: g.id }))
+                    } : undefined
+                }
+            });
+            await tx.post.update({
                 where: { id: actualSharedFromId },
                 data: { sharesCount: { increment: 1 } }
-            })
-        ]);
+            });
+            const mentionResult = await reconcilePostMentions(tx, {
+                postId: newPost.id,
+                actorUserId: userId,
+                state: MentionState.ACTIVE,
+                surfaces: getPostMentionSurfaces(newPost)
+            });
+            await reconcilePostHashtags(tx, newPost.id, getPostHashtagTexts(newPost));
+            return {
+                newPost,
+                notificationIds: mentionResult.notificationIds
+            };
+        });
+        await dispatchNotificationIds(transactionResult.notificationIds);
+        const newPost = transactionResult.newPost;
 
         const createdPost = await prisma.post.findUnique({
             where: { id: newPost.id },
@@ -2401,6 +2627,8 @@ export const sharePost = async (req: Request, res: Response) => {
                 sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
                 media: POST_MEDIA_INCLUDE,
                 targetedGroups: true,
+                mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+                taggedUsers: getVisiblePeopleTagsInclude(userId),
                 sharedFrom: {
                     include: {
                         author: {
@@ -2416,6 +2644,8 @@ export const sharePost = async (req: Request, res: Response) => {
                         sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
                         media: POST_MEDIA_INCLUDE,
                         targetedGroups: true,
+                        mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+                        taggedUsers: getVisiblePeopleTagsInclude(userId)
                     }
                 }
             }
@@ -2426,7 +2656,7 @@ export const sharePost = async (req: Request, res: Response) => {
             return;
         }
 
-        const p = serializePostMediaRecord(createdPost as any, userId);
+        const p = serializePostSocialRecord(createdPost as any, userId);
         
         let mappedSharedFrom: any = undefined;
         if (p.sharedFrom) {
@@ -2472,14 +2702,153 @@ export const sharePost = async (req: Request, res: Response) => {
 
         res.json(mappedPost);
     } catch (error) {
+        if (error instanceof MentionLimitError || error instanceof HashtagLimitError || error instanceof PeopleTagValidationError) {
+            res.status(400).json({
+                error: error.message,
+                code: error instanceof PeopleTagValidationError ? error.code : 'SOCIAL_TEXT_LIMIT_EXCEEDED',
+                limit: 'limit' in error ? error.limit : undefined
+            });
+            return;
+        }
         console.error("Shared Post Error:", error);
         res.status(500).json({ error: 'Failed to share post' });
     }
 };
 
+export const acceptPeopleTag = async (req: Request, res: Response) => {
+    const tagId = req.params.id as string;
+    const userId = req.user!.userId;
+    try {
+        const tag = await prisma.postTaggedUser.findUnique({ where: { id: tagId } });
+        if (!tag) return res.status(404).json({ error: 'People tag not found' });
+        if (tag.taggedUserId !== userId) {
+            return res.status(403).json({ error: 'Only the tagged user can accept this tag' });
+        }
+        if (tag.status === PeopleTagStatus.REMOVED || tag.status === PeopleTagStatus.REJECTED) {
+            return res.status(409).json({ error: 'This people tag is no longer pending' });
+        }
+
+        const updated = await prisma.$transaction(async (tx) => {
+            const accepted = await tx.postTaggedUser.update({
+                where: { id: tagId },
+                data: {
+                    status: PeopleTagStatus.ACCEPTED,
+                    acceptedAt: tag.acceptedAt || new Date(),
+                    rejectedAt: null,
+                    removedAt: null
+                },
+                include: {
+                    taggedUser: { select: SAFE_USER_SELECT }
+                }
+            });
+            if (tag.notificationId) {
+                const notification = await tx.notification.findUnique({
+                    where: { id: tag.notificationId },
+                    select: { payload: true }
+                });
+                if (notification) {
+                    await tx.notification.update({
+                        where: { id: tag.notificationId },
+                        data: {
+                            payload: JSON.stringify({
+                                ...parseNotificationPayload(notification.payload),
+                                peopleTagStatus: PeopleTagStatus.ACCEPTED
+                            })
+                        }
+                    });
+                }
+            }
+            return accepted;
+        });
+
+        res.json(serializePeopleTags([updated])[0]);
+    } catch (error) {
+        console.error('Accept People Tag Error:', error);
+        res.status(500).json({ error: 'Failed to accept people tag' });
+    }
+};
+
+export const rejectPeopleTag = async (req: Request, res: Response) => {
+    const tagId = req.params.id as string;
+    const userId = req.user!.userId;
+    try {
+        const tag = await prisma.postTaggedUser.findUnique({ where: { id: tagId } });
+        if (!tag) return res.status(404).json({ error: 'People tag not found' });
+        if (tag.taggedUserId !== userId) {
+            return res.status(403).json({ error: 'Only the tagged user can reject this tag' });
+        }
+        if (tag.status === PeopleTagStatus.REMOVED) {
+            return res.status(409).json({ error: 'This people tag has already been removed' });
+        }
+
+        const updated = await prisma.$transaction(async (tx) => {
+            if (tag.notificationId) {
+                await tx.notification.deleteMany({ where: { id: tag.notificationId } });
+            }
+            return tx.postTaggedUser.update({
+                where: { id: tagId },
+                data: {
+                    status: PeopleTagStatus.REJECTED,
+                    acceptedAt: null,
+                    rejectedAt: tag.rejectedAt || new Date(),
+                    removedAt: null,
+                    notificationId: null
+                },
+                include: {
+                    taggedUser: { select: SAFE_USER_SELECT }
+                }
+            });
+        });
+
+        res.json(serializePeopleTags([updated])[0]);
+    } catch (error) {
+        console.error('Reject People Tag Error:', error);
+        res.status(500).json({ error: 'Failed to reject people tag' });
+    }
+};
+
+export const removePeopleTag = async (req: Request, res: Response) => {
+    const tagId = req.params.id as string;
+    const userId = req.user!.userId;
+    try {
+        const tag = await prisma.postTaggedUser.findUnique({
+            where: { id: tagId },
+            include: { post: { select: { authorId: true } } }
+        });
+        if (!tag) return res.status(404).json({ error: 'People tag not found' });
+        const canRemove = tag.taggedUserId === userId
+            || tag.taggedByUserId === userId
+            || tag.post.authorId === userId;
+        if (!canRemove) {
+            return res.status(403).json({ error: 'You cannot remove this people tag' });
+        }
+
+        await prisma.$transaction(async (tx) => {
+            if (tag.notificationId) {
+                await tx.notification.deleteMany({ where: { id: tag.notificationId } });
+            }
+            await tx.postTaggedUser.update({
+                where: { id: tagId },
+                data: {
+                    status: PeopleTagStatus.REMOVED,
+                    acceptedAt: null,
+                    removedAt: tag.removedAt || new Date(),
+                    notificationId: null
+                }
+            });
+        });
+
+        res.json({ success: true, id: tagId, status: PeopleTagStatus.REMOVED });
+    } catch (error) {
+        console.error('Remove People Tag Error:', error);
+        res.status(500).json({ error: 'Failed to remove people tag' });
+    }
+};
+
 export const updateComment = async (req: Request, res: Response) => {
-    const id = req.params.id as string; // Comment ID
-    const { text, userId } = req.body;
+    const id = req.params.id as string;
+    const userId = req.user!.userId;
+    const cleanText = typeof req.body.text === 'string' ? req.body.text.trim() : '';
     try {
         const comment = await prisma.comment.findUnique({ where: { id } });
         if (!comment) {
@@ -2488,21 +2857,45 @@ export const updateComment = async (req: Request, res: Response) => {
         if (comment.userId !== userId) {
             return res.status(403).json({ error: 'Unauthorized to edit this comment' });
         }
+        if (!cleanText) return res.status(400).json({ error: 'Comment text is required' });
+        if (!validateMentionRecipientLimit(cleanText, res, 'comment')) return;
 
-        const updated = await prisma.comment.update({
-            where: { id },
-            data: { text },
-            include: {
-                user: { select: SAFE_USER_SELECT },
-                likesList: { select: { userId: true } },
-                replies: {
-                    include: { user: { select: SAFE_USER_SELECT }, likesList: { select: { userId: true } } }
+        const result = await prisma.$transaction(async (tx) => {
+            await tx.comment.update({ where: { id }, data: { text: cleanText } });
+            const mentionResult = await reconcileCommentMentions(tx, {
+                postId: comment.postId,
+                commentId: comment.id,
+                actorUserId: userId,
+                isReply: Boolean(comment.parentId),
+                parentCommentId: comment.parentId || undefined,
+                text: cleanText
+            });
+            await reconcileCommentHashtags(tx, comment.id, cleanText);
+            const updated = await tx.comment.findUniqueOrThrow({
+                where: { id },
+                include: {
+                    user: { select: SAFE_USER_SELECT },
+                    mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+                    likesList: { select: { userId: true } },
+                    replies: {
+                        include: {
+                            user: { select: SAFE_USER_SELECT },
+                            mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+                            likesList: { select: { userId: true } }
+                        }
+                    }
                 }
-            }
+            });
+            return { updated, mentionResult };
         });
 
-        res.json(mapComment(updated, userId));
+        await dispatchNotificationIds(result.mentionResult.notificationIds);
+        res.json(mapComment(result.updated, userId));
     } catch (error) {
+        if (error instanceof MentionLimitError || error instanceof HashtagLimitError) {
+            res.status(400).json({ error: error.message, code: 'SOCIAL_TEXT_LIMIT_EXCEEDED', limit: error.limit });
+            return;
+        }
         console.error("Update Comment Error:", error);
         res.status(500).json({ error: 'Failed to update comment' });
     }
@@ -2510,7 +2903,7 @@ export const updateComment = async (req: Request, res: Response) => {
 
 export const deleteComment = async (req: Request, res: Response) => {
     const id = req.params.id as string;
-    const { userId } = req.body;
+    const userId = req.user!.userId;
     try {
         const comment = await prisma.comment.findUnique({ where: { id } });
         if (!comment) {
@@ -2520,14 +2913,33 @@ export const deleteComment = async (req: Request, res: Response) => {
             return res.status(403).json({ error: 'Unauthorized to delete this comment' });
         }
 
-        // Must decrement commentsCount on the Post explicitly if needed, but the aggregate does it real-time.
-        // Wait, aggregateMetrics fetches commentsCount natively if comments array is counted?
-        // Actually the schema has `commentsCount` on the Post, but let's see how it was incremented.
-        // createComment did: await tx.post.update({ where: { id: postId }, data: { commentsCount: { increment: 1 } } });
         await prisma.$transaction(async (tx) => {
-            // Cascade delete likes and replies manually since no explicit schema cascade
             const replies = await tx.comment.findMany({ where: { parentId: id } });
             const replyIds = replies.map(r => r.id);
+            const deletedCommentIds = [id, ...replyIds];
+            const linkedMentionNotifications = await tx.mention.findMany({
+                where: { commentId: { in: deletedCommentIds }, notificationId: { not: null } },
+                select: { notificationId: true }
+            });
+            const navigationCandidates = await tx.notification.findMany({
+                where: { targetId: comment.postId, targetType: 'post', type: { in: ['response', 'mention'] } },
+                select: { id: true, payload: true }
+            });
+            const staleNavigationIds = navigationCandidates
+                .filter((notification) => {
+                    const payload = parseNotificationPayload(notification.payload);
+                    return deletedCommentIds.includes(String(payload.commentId || ''))
+                        || deletedCommentIds.includes(String(payload.replyId || ''));
+                })
+                .map((notification) => notification.id);
+            const notificationIds = Array.from(new Set([
+                ...linkedMentionNotifications.map((mention) => mention.notificationId).filter((value): value is string => Boolean(value)),
+                ...staleNavigationIds
+            ]));
+            if (notificationIds.length > 0) {
+                await tx.notification.deleteMany({ where: { id: { in: notificationIds } } });
+            }
+
             if (replyIds.length > 0) {
                 await tx.commentLike.deleteMany({ where: { commentId: { in: replyIds } } });
                 await tx.comment.deleteMany({ where: { parentId: id } });
@@ -2536,9 +2948,6 @@ export const deleteComment = async (req: Request, res: Response) => {
 
             await tx.comment.delete({ where: { id } });
 
-            // Decrement post commentsCount
-            // We only decrement for root comments or we decrement for all? createComment increments for both.
-            // Let's decrement by (1 + replies.length)
             await tx.post.update({
                 where: { id: comment.postId },
                 data: { commentsCount: { decrement: 1 + replyIds.length } }

@@ -27,6 +27,7 @@ import { PostAnalysis } from './components/PostAnalysis';
 import { AuthScreen } from './components/AuthScreen';
 import { UsersTableScreen } from './components/UsersTableScreen';
 import { PrivacyPolicyScreen } from './components/PrivacyPolicyScreen';
+import { HashtagTopicScreen } from './components/HashtagTopicScreen';
 import { PostAnswerPayload, Survey, Option, Notification, SurveyType, Group, UserProfile } from './types';
 import { readMediaSafeJson, writeMediaSafeJson } from './utils/mediaSafeStorage';
 import { getNotificationDeepLink } from './utils/notificationNavigation';
@@ -55,6 +56,14 @@ const INITIAL_USER: UserProfile = {
 };
 
 const getFeedCacheKey = (userId?: string | null) => `si_feed_cache:${userId || 'guest'}`;
+
+const decodePathSegment = (value: string) => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return '';
+  }
+};
 
 const App: React.FC = () => {
   const navigate = useNavigate();
@@ -545,7 +554,7 @@ const App: React.FC = () => {
 
     if (path === '/' || path === '') setActiveTab('home');
     else if (path === '/privacy') setIsPrivacyScreenOpen(true);
-    else if (path === '/search') setActiveTab('search');
+    else if (path === '/search' || path.startsWith('/hashtag/')) setActiveTab('search');
     else if (path === '/trends') setActiveTab('trends');
     else if (path === '/notifications') setActiveTab('notifications');
     else if (path === '/messages') setActiveTab('messages');
@@ -1320,6 +1329,25 @@ const App: React.FC = () => {
 
   const renderContent = () => {
     const publishedSurveys = surveys.filter(s => s.status === 'PUBLISHED');
+    if (location.pathname.startsWith('/hashtag/')) {
+      const name = decodePathSegment(location.pathname.split('/hashtag/')[1] || '').split('/')[0];
+      return (
+        <HashtagTopicScreen
+          name={name}
+          userProfile={userProfile || undefined}
+          contextGroups={userGroups}
+          onBack={() => window.history.length > 2 ? navigate(-1) : navigate('/search', { replace: true })}
+          onSurveyClick={handleSurveyClick}
+          onVote={handleVote}
+          onSurveyProgress={handleSurveyProgress}
+          onAuthorClick={navigateToProfile}
+          onShareToFeed={handleShareToFeed}
+          onUpdateDemographics={handleUpdateDemographics}
+          onGroupClick={navigateToGroup}
+          onLike={handleLikePost}
+        />
+      );
+    }
     switch (activeTab) {
       case 'home':
         return (

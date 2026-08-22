@@ -4,6 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import {
     MENTION_RECIPIENT_LIMIT,
+    getUniqueHashtags,
     getUniqueMentionHandles,
     parseTextEntities
 } from './textEntities';
@@ -37,4 +38,11 @@ test('server recipient counting is unique and capped by the shared constant', ()
     assert.equal(getUniqueMentionHandles('@one').length, 1);
     const handles = Array.from({ length: MENTION_RECIPIENT_LIMIT + 1 }, (_, index) => `@user_${index}`).join(' ');
     assert.equal(getUniqueMentionHandles(handles).length, MENTION_RECIPIENT_LIMIT + 1);
+});
+
+test('server hashtag identity is Unicode-normalized and deduplicated per source', () => {
+    assert.deepEqual(getUniqueHashtags('#AI #ai #Ai #كرة_القدم'), [
+        { normalizedName: 'ai', displayName: 'AI' },
+        { normalizedName: 'كرة_القدم', displayName: 'كرة_القدم' }
+    ]);
 });

@@ -11,6 +11,7 @@ import { api } from '../services/api';
 import { useFollowState } from '../hooks/useFollowState';
 import { UserAvatar } from './UserAvatar';
 import { MediaImage } from './media/MediaImage';
+import { RichTextRenderer } from './RichTextRenderer';
 
 interface ProfileScreenProps {
   surveys: Survey[];
@@ -960,7 +961,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           <p className="text-xs text-blue-600 font-black uppercase tracking-[0.2em] mb-4">@{profileUser.handle}</p>
 
           <p className="text-sm text-gray-600 text-center max-w-sm leading-relaxed whitespace-pre-wrap mb-6 px-4">
-            {profileUser.bio}
+            <RichTextRenderer text={profileUser.bio || ''} mentions={profileUser.bioMentions} mentionSurface="PROFILE_BIO" />
           </p>
 
           <div className="flex flex-wrap items-center justify-center gap-5 text-xs text-gray-500 mb-8 font-bold uppercase tracking-wider">

@@ -229,6 +229,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const [isHidden, setIsHidden] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [removedPeopleTagIds, setRemovedPeopleTagIds] = useState<Set<string>>(new Set());
+  const [isPeopleTagsOpen, setIsPeopleTagsOpen] = useState(false);
 
   const [isCommentsOpen, setIsCommentsOpen] = useState(false);
   const [isShareSheetOpen, setIsShareSheetOpen] = useState(false);
@@ -259,6 +261,14 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
   // For rendering questions/polls
   const sourceSurvey = voteTarget;
+  const acceptedPeopleTags = (sourceSurvey.taggedUsers || []).filter((tag) =>
+    tag.status === 'ACCEPTED' && !removedPeopleTagIds.has(tag.id)
+  );
+  const viewerPeopleTag = (sourceSurvey.taggedUsers || []).find((tag) =>
+    tag.taggedUserId === userProfile?.id
+    && (tag.status === 'PENDING' || tag.status === 'ACCEPTED')
+    && !removedPeopleTagIds.has(tag.id)
+  );
 
   const isAuthor = !!userProfile?.id && String(survey.author?.id) === String(userProfile.id);
 
@@ -1041,6 +1051,24 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const handleDeleteClick = () => {
     setIsMenuOpen(false);
     setIsDeleteConfirmOpen(true);
+  };
+
+  const handleRemovePeopleTag = async () => {
+    if (!viewerPeopleTag) return;
+    try {
+      await api.removePeopleTag(viewerPeopleTag.id);
+      setRemovedPeopleTagIds((current) => new Set(current).add(viewerPeopleTag.id));
+      Analytics.track({
+        event_type: 'PEOPLE_TAG_REMOVED',
+        target_user_id: viewerPeopleTag.taggedUserId,
+        post_id: interactionTarget.id,
+        source_surface: sourceSurface === 'SHARE_CAPTURE' ? 'DEEP_LINK' : sourceSurface,
+        ...(sourceSurface === 'FEED' ? { position_in_feed: positionInFeed } : {})
+      });
+      setIsMenuOpen(false);
+    } catch (error) {
+      console.error('Failed to remove people tag:', error);
+    }
   };
 
   const handleConfirmDelete = async () => {
@@ -1942,7 +1970,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 <Repeat size={14} className="text-gray-400" />
                 <span>{survey.author?.name || t('Anonymous')} {t('reposted this')}</span>
               </div>
-              {survey.sharedCaption && <p className="text-gray-900 text-[15px] mb-3 leading-relaxed whitespace-pre-wrap font-normal">{survey.sharedCaption}</p>}
+              {survey.sharedCaption && (
+                <p className="text-gray-900 text-[15px] mb-3 leading-relaxed whitespace-pre-wrap font-normal">
+                  <RichTextRenderer text={survey.sharedCaption} mentions={survey.mentions} mentionSurface="REPOST_CAPTION" />
+                </p>
+              )}
             </div>
           )}
 
@@ -2003,6 +2035,19 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                       )}
                       {((userProfile?.id !== sourceSurvey.author?.id) && !survey.sharedFrom) && renderInteractionButton()}
                     </div>
+                    {acceptedPeopleTags.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setIsPeopleTagsOpen(true);
+                        }}
+                        className="max-w-full text-start text-xs text-gray-500 hover:text-blue-600 truncate mt-0.5"
+                      >
+                        {t('peopleTags.with')} <span className="font-semibold">{acceptedPeopleTags[0].taggedUser.name}</span>
+                        {acceptedPeopleTags.length > 1 && ` ${t('peopleTags.and')} ${acceptedPeopleTags.length - 1} ${t('peopleTags.others')}`}
+                      </button>
+                    )}
                     <div className="flex items-center flex-wrap gap-y-1 gap-x-1 text-xs text-gray-500 mt-0.5 font-medium">
                       <span>{getTimeAgo(sourceSurvey.createdAt)}</span>
                       <span className="text-gray-300 text-[10px] mx-0.5">•</span>
@@ -2023,7 +2068,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                     onClick={onContentClick}
                     className={`font-semibold text-[15px] text-gray-900 leading-snug whitespace-pre-wrap ${onContentClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''} ${!isDetailView ? 'line-clamp-2' : ''}`}
                   >
-                    <RichTextRenderer text={sourceSurvey.title} inline />
+                    <RichTextRenderer text={sourceSurvey.title} mentions={sourceSurvey.mentions} mentionSurface="POST_TITLE" inline />
                   </h2>
                   {!isDetailView && (sourceSurvey.title?.length > 80 || (sourceSurvey.title?.match(/\n/g) || []).length > 1) && (
                     <button onClick={onContentClick} className="text-gray-400 hover:text-gray-700 font-bold text-xs mt-0.5 text-left inline-block">
@@ -2048,7 +2093,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                     onClick={onContentClick}
                     className={`text-gray-600 text-[13px] leading-relaxed whitespace-pre-wrap ${onContentClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''} ${!isDetailView ? 'line-clamp-3' : ''}`}
                   >
-                    <RichTextRenderer text={sourceSurvey.description} />
+                    <RichTextRenderer text={sourceSurvey.description} mentions={sourceSurvey.mentions} mentionSurface="POST_DESCRIPTION" />
                   </p>
                   {!isDetailView && (sourceSurvey.description?.length > 150 || (sourceSurvey.description?.match(/\n/g) || []).length > 2) && (
                     <button onClick={onContentClick} className="text-gray-500 hover:text-gray-800 font-bold text-sm mt-0.5 block text-left">
@@ -2193,6 +2238,18 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
           <hr className="my-2 border-gray-100" />
 
+          {viewerPeopleTag && (
+            <button onClick={handleRemovePeopleTag} className="w-full flex items-center gap-4 p-3.5 hover:bg-gray-50 rounded-xl transition-colors text-left group">
+              <div className="w-10 h-10 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center group-hover:bg-gray-200">
+                <UserMinus size={22} strokeWidth={1.5} />
+              </div>
+              <div>
+                <div className="font-semibold text-gray-900 text-sm">{t('peopleTags.removeMine')}</div>
+                <div className="text-xs text-gray-500">{t('peopleTags.removeMineDescription')}</div>
+              </div>
+            </button>
+          )}
+
           {isMyPost && (
             <button onClick={handleDeleteClick} className="w-full flex items-center gap-4 p-3.5 hover:bg-red-50 rounded-xl transition-colors text-left group">
               <div className="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center group-hover:bg-red-200">
@@ -2324,6 +2381,38 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         </div>
       </BottomSheet>
       <BottomSheet isOpen={isParticipantsOpen} onClose={() => setIsParticipantsOpen(false)} customLayout={true} title="Participants" height="90dvh"><ParticipantsSheet survey={sourceSurvey} onAuthorClick={onAuthorClick} /></BottomSheet>
+      <BottomSheet isOpen={isPeopleTagsOpen} onClose={() => setIsPeopleTagsOpen(false)} title={t('peopleTags.taggedPeople')}>
+        <div className="divide-y divide-gray-100">
+          {acceptedPeopleTags.map(({ id, taggedUser }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => {
+                setIsPeopleTagsOpen(false);
+                if (onAuthorClick) {
+                  onAuthorClick({ id: taggedUser.id, name: taggedUser.name, avatar: taggedUser.avatar || '', handle: taggedUser.handle });
+                } else {
+                  navigate(`/profile/${encodeURIComponent(taggedUser.id)}`);
+                }
+              }}
+              className="w-full min-h-14 flex items-center gap-3 px-1 py-3 text-start hover:bg-gray-50"
+            >
+              <UserAvatar
+                src={taggedUser.avatar}
+                mediaId={taggedUser.avatarMediaId}
+                media={taggedUser.avatarMedia}
+                name={taggedUser.name}
+                alt=""
+                size={40}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-bold text-gray-900">{taggedUser.name}</span>
+                {taggedUser.handle && <span className="block truncate text-xs text-gray-500" dir="ltr">@{taggedUser.handle}</span>}
+              </span>
+            </button>
+          ))}
+        </div>
+      </BottomSheet>
       <BottomSheet isOpen={isAnonInfoOpen} onClose={() => setIsAnonInfoOpen(false)} title="Anonymous Responses">
         <div className="p-4 space-y-6 text-center">
           <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto shadow-sm">

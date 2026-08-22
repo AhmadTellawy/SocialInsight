@@ -23,7 +23,10 @@ import {
     getPostAnalytics,
     updateComment,
     deleteComment,
-    getTrends
+    getTrends,
+    acceptPeopleTag,
+    rejectPeopleTag,
+    removePeopleTag
 } from '../controllers/postController';
 
 import { recordPostView } from '../controllers/viewController';
@@ -49,6 +52,9 @@ router.post('/:id/views', optionalAuth, recordPostView);
 router.post('/comments/:id/like', requireAuth, likeComment);
 router.put('/comments/:id', requireAuth, updateComment);
 router.delete('/comments/:id', requireAuth, deleteComment);
+router.post('/people-tags/:id/accept', requireAuth, acceptPeopleTag);
+router.post('/people-tags/:id/reject', requireAuth, rejectPeopleTag);
+router.delete('/people-tags/:id', requireAuth, removePeopleTag);
 router.post('/', requireAuth, createPost);
 router.put('/:id', requireAuth, updatePost);
 router.post('/:id/vote', optionalAuth, votePost); // Guest voting might be allowed based on poll settings, we keep optionalAuth

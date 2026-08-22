@@ -12,6 +12,7 @@ import { AnswerTypeSelector, CreatorAnswerType } from './options/AnswerTypeSelec
 import { OptionImagePicker, OptionImageThumbnail } from './options/OptionImagePicker';
 import { draftOptionHasImage, resolveOptionPresentation } from '../utils/optionPresentation';
 import { RatingScaleQuestion } from './Survey/RatingScaleQuestion';
+import { PeopleTagPicker, PeopleTagPerson } from './PeopleTagPicker';
 
 interface CreatePollScreenProps {
   onClose: () => void;
@@ -145,6 +146,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
         imageLayout: imageLayout,
         targetAudience: visibility as any,
         targetGroups: visibility === 'Groups' ? selectedGroups : undefined,
+        taggedUserIds: taggedPeople.map((person) => person.id),
         resultsWho,
         resultsTiming,
         category: finalCategory,
@@ -187,6 +189,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   const [mediaAspectRatio, setMediaAspectRatio] = useState<number | undefined>(undefined);
 
   const [title, setTitle] = useState('');
+  const [taggedPeople, setTaggedPeople] = useState<PeopleTagPerson[]>([]);
   const [pollChoiceType, setPollChoiceType] = useState<'multiple' | 'rating'>('multiple');
   const [optionPresentation, setOptionPresentation] = useState<'text' | 'image'>('text');
   const [showOptionNames, setShowOptionNames] = useState(true);
@@ -275,6 +278,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
       setAllowMultipleSelection(draft.allowMultipleSelection || false);
       setAllowComments(draft.allowComments !== undefined ? draft.allowComments : true);
       setForceAnonymous(draft.forceAnonymous || false);
+      setTaggedPeople((draft.taggedUsers || []).map((tag) => tag.taggedUser).filter((person): person is PeopleTagPerson => Boolean(person?.id && person?.handle)));
       const persistedPostMedia = (draft.media || []).map((media) => createPersistedMediaDraft(media, 'POST', draft.coverImage));
       setPostMedia(persistedPostMedia);
       setMediaAspectRatio(draft.mediaAspectRatio || persistedPostMedia[0]?.aspectRatio);
@@ -536,6 +540,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
         imageLayout: imageLayout,
         targetAudience: visibility as any,
         targetGroups: visibility === 'Groups' ? selectedGroups : undefined,
+        taggedUserIds: taggedPeople.map((person) => person.id),
         resultsWho,
         resultsTiming,
         category: finalCategory,
@@ -1096,6 +1101,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                     <ChevronRight size={14} />
                   </div>
                 </button>
+                <PeopleTagPicker selectedPeople={taggedPeople} onChange={setTaggedPeople} accent="blue" />
               </div>
 
               {/* Duration section inline inside settings sheet */}

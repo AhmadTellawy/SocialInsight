@@ -1,8 +1,9 @@
 import { Request, Response } from 'express';
+import { MentionState, MentionSurface } from '@prisma/client';
 import prisma from '../prisma';
 import { GROUP_ROLES, MEMBERSHIP_STATUS, JOIN_POLICIES, POSTING_PERMISSIONS, POST_STATUS } from '../utils/constants';
 import { GroupPermissionService } from '../services/groupPermissionService';
-import { extractAndNotifyMentions, notify } from '../services/notificationService';
+import { dispatchNotificationIds, notify } from '../services/notificationService';
 import { processBase64Image } from '../utils/imageProcessor';
 import {
     commitPreparedMedia,
@@ -18,6 +19,24 @@ import {
     serializeUserMediaRecord
 } from '../services/mediaService';
 import { MediaValidationError } from '../services/mediaProcessor';
+import {
+    ACTIVE_MENTION_REFERENCE_INCLUDE,
+    MentionLimitError,
+    reconcileGroupMentions,
+    reconcilePostMentions,
+    serializeMentionReferences
+} from '../services/mentionLifecycleService';
+import { HashtagLimitError, reconcilePostHashtags } from '../services/hashtagService';
+import {
+    PeopleTagValidationError,
+    getCurrentPeopleTagUserIds,
+    reconcilePeopleTags
+} from '../services/peopleTagService';
+
+const serializeGroupSocialRecord = (group: any) => ({
+    ...serializeGroupMediaRecord(group),
+    mentions: serializeMentionReferences(group?.mentions)
+});
 
 // Helper to update active member count on Group model
 export const updateGroupMemberCount = async (groupId: string) => {
@@ -87,6 +106,7 @@ export const getGroups = async (req: Request, res: Response) => {
             where: whereClause,
             include: {
                 ...PUBLIC_GROUP_MEDIA_INCLUDE,
+                mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
                 members: currentUserId ? { where: { userId: currentUserId } } : false
             }
         });
@@ -101,7 +121,7 @@ export const getGroups = async (req: Request, res: Response) => {
             });
 
             return {
-                ...serializeGroupMediaRecord(g),
+                ...serializeGroupSocialRecord(g),
                 memberCount: g.memberCount,
                 postsCount,
                 permissions,
@@ -122,7 +142,10 @@ export const getGroupById = async (req: Request, res: Response) => {
     try {
         const group = await prisma.group.findUnique({
             where: { id: id as string },
-            include: PUBLIC_GROUP_MEDIA_INCLUDE
+            include: {
+                ...PUBLIC_GROUP_MEDIA_INCLUDE,
+                mentions: ACTIVE_MENTION_REFERENCE_INCLUDE
+            }
         });
 
         if (!group || group.isDeleted) {
@@ -141,6 +164,7 @@ export const getGroupById = async (req: Request, res: Response) => {
             where: { id: id as string },
             include: {
                 ...PUBLIC_GROUP_MEDIA_INCLUDE,
+                mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
                 members: {
                     where: { status: MEMBERSHIP_STATUS.JOINED },
                     take: 10,
@@ -155,7 +179,7 @@ export const getGroupById = async (req: Request, res: Response) => {
             }
         });
 
-        const serializedDetails = serializeGroupMediaRecord(groupDetails)!;
+        const serializedDetails = serializeGroupSocialRecord(groupDetails)!;
         res.json({
             ...serializedDetails,
             members: serializedDetails.members?.map((member: any) => ({ ...member, user: serializeUserMediaRecord(member.user) })),
@@ -243,11 +267,23 @@ export const createGroup = async (req: Request, res: Response) => {
                         }
                     }
                 });
+                await reconcileGroupMentions(tx, {
+                    groupId: group.id,
+                    actorUserId: creatorId,
+                    description: group.description,
+                    rules: group.rules || ''
+                });
                 if (prepared) await commitPreparedMedia(tx, prepared);
-                return group;
+                return tx.group.findUniqueOrThrow({
+                    where: { id: group.id },
+                    include: {
+                        ...PUBLIC_GROUP_MEDIA_INCLUDE,
+                        mentions: ACTIVE_MENTION_REFERENCE_INCLUDE
+                    }
+                });
             });
 
-            res.status(201).json(newGroup);
+            res.status(201).json(serializeGroupSocialRecord(newGroup));
         } catch (error) {
             if (prepared) await rollbackPreparedMedia(prepared);
             throw error;
@@ -256,6 +292,10 @@ export const createGroup = async (req: Request, res: Response) => {
         console.error('Failed to create group:', error);
         if (error instanceof MediaValidationError) {
             res.status(error.statusCode).json({ error: error.message, code: error.code });
+            return;
+        }
+        if (error instanceof MentionLimitError) {
+            res.status(400).json({ error: error.message, code: 'MENTION_LIMIT_EXCEEDED', limit: error.limit });
             return;
         }
         res.status(500).json({ error: 'Failed to create group' });
@@ -363,8 +403,20 @@ export const updateGroup = async (req: Request, res: Response) => {
             }
             updated = await prisma.$transaction(async (tx) => {
                 const result = await tx.group.update({ where: { id }, data: updateData });
+                await reconcileGroupMentions(tx, {
+                    groupId: result.id,
+                    actorUserId: currentUserId,
+                    description: result.description,
+                    rules: result.rules || ''
+                });
                 if (prepared) await commitPreparedMedia(tx, prepared);
-                return result;
+                return tx.group.findUniqueOrThrow({
+                    where: { id },
+                    include: {
+                        ...PUBLIC_GROUP_MEDIA_INCLUDE,
+                        mentions: ACTIVE_MENTION_REFERENCE_INCLUDE
+                    }
+                });
             });
         } catch (error) {
             if (prepared) await rollbackPreparedMedia(prepared);
@@ -375,11 +427,15 @@ export const updateGroup = async (req: Request, res: Response) => {
             await scheduleMediaDeletion([previousImageMediaId]);
         }
 
-        res.json(updated);
+        res.json(serializeGroupSocialRecord(updated));
     } catch (error) {
         console.error('Failed to update group settings:', error);
         if (error instanceof MediaValidationError) {
             res.status(error.statusCode).json({ error: error.message, code: error.code });
+            return;
+        }
+        if (error instanceof MentionLimitError) {
+            res.status(400).json({ error: error.message, code: 'MENTION_LIMIT_EXCEEDED', limit: error.limit });
             return;
         }
         res.status(500).json({ error: 'Failed to update group settings.' });
@@ -1379,22 +1435,60 @@ export const approvePendingPost = async (req: Request, res: Response) => {
             return;
         }
 
-        const updated = await prisma.post.update({
-            where: { id: postId },
-            data: {
-                status: POST_STATUS.PUBLISHED,
-                approvedById: currentUserId,
-                approvedAt: new Date()
-            }
+        const result = await prisma.$transaction(async (tx) => {
+            const updated = await tx.post.update({
+                where: { id: postId },
+                data: {
+                    status: POST_STATUS.PUBLISHED,
+                    approvedById: currentUserId,
+                    approvedAt: new Date()
+                }
+            });
+            const mentionResult = await reconcilePostMentions(tx, {
+                postId,
+                actorUserId: post.authorId,
+                state: MentionState.ACTIVE,
+                surfaces: post.sharedFromId
+                    ? [{ surface: MentionSurface.REPOST_CAPTION, text: post.sharedCaption || '' }]
+                    : [
+                        { surface: MentionSurface.POST_TITLE, text: post.title || '' },
+                        { surface: MentionSurface.POST_DESCRIPTION, text: post.description || '' }
+                    ]
+            });
+            await reconcilePostHashtags(
+                tx,
+                postId,
+                post.sharedFromId
+                    ? [post.sharedCaption || '']
+                    : [post.title || '', post.description || '']
+            );
+            const taggedUserIds = await getCurrentPeopleTagUserIds(tx, postId);
+            const peopleTagResult = await reconcilePeopleTags(tx, {
+                postId,
+                actorUserId: post.authorId,
+                targetUserIds: taggedUserIds,
+                strict: false
+            });
+            return {
+                updated,
+                notificationIds: [...mentionResult.notificationIds, ...peopleTagResult.notificationIds]
+            };
         });
 
-        // Notify author
+        await dispatchNotificationIds(result.notificationIds);
         await notify(currentUserId, post.authorId, 'group_post_approved', `Your post "${post.title}" has been approved in ${group?.name}.`, 'post', postId);
-        await extractAndNotifyMentions(`${post.title} ${post.description}`, post.authorId, { postId });
 
-        res.json({ success: true, post: updated });
+        res.json({ success: true, post: result.updated });
     } catch (error) {
         console.error(error);
+        if (error instanceof MentionLimitError || error instanceof HashtagLimitError) {
+            res.status(400).json({ error: error.message, code: 'SOCIAL_TEXT_LIMIT_EXCEEDED', limit: error.limit });
+            return;
+        }
+        if (error instanceof PeopleTagValidationError) {
+            res.status(400).json({ error: error.message, code: error.code });
+            return;
+        }
         res.status(500).json({ error: 'Failed to approve post' });
     }
 };

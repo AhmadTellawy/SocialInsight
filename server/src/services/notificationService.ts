@@ -24,6 +24,82 @@ interface NotifyOptions {
 
 const errorName = (error: unknown): string => error instanceof Error ? error.name : 'unknown';
 
+const parseStoredPayload = (payload: string | null | undefined): Record<string, any> | undefined => {
+    if (!payload) return undefined;
+    try {
+        const parsed = JSON.parse(payload);
+        return parsed && typeof parsed === 'object' ? parsed : undefined;
+    } catch {
+        return undefined;
+    }
+};
+
+const dispatchNotificationRecord = async (
+    notification: any,
+    normalizedPayload?: Record<string, any>
+): Promise<void> => {
+    const payload = normalizedPayload
+        || withNotificationDeepLink(notification.targetType, notification.targetId, parseStoredPayload(notification.payload));
+    const realtimeNotification = {
+        id: notification.id,
+        type: notification.type,
+        message: notification.message,
+        targetId: notification.targetId || undefined,
+        targetType: notification.targetType || undefined,
+        payload,
+        deepLink: payload?.deepLink,
+        isRead: notification.isRead,
+        timestamp: notification.createdAt.toISOString(),
+        createdAt: notification.createdAt.getTime(),
+        actor: notification.actor ? serializeUserMediaRecord(notification.actor) : undefined
+    };
+
+    try {
+        const socketServer = getIO();
+        if (socketServer) {
+            socketServer.to(getUserNotificationRoom(notification.userId)).emit('newNotification', realtimeNotification);
+        }
+    } catch (error) {
+        console.error(JSON.stringify({ event: 'notification_socket_failed', type: notification.type, error: errorName(error) }));
+    }
+
+    void sendPushNotification(notification.userId, {
+        title: notification.actor ? notification.actor.name : 'SocialInsight',
+        body: notification.message,
+        type: notification.type,
+        url: payload?.deepLink || '/'
+    }).catch((error) => {
+        console.error(JSON.stringify({
+            event: notification.type === 'mention' ? 'mention_push_failed' : 'notification_push_failed',
+            type: notification.type,
+            error: errorName(error)
+        }));
+    });
+};
+
+export const dispatchNotificationById = async (notificationId: string): Promise<boolean> => {
+    const notification = await prisma.notification.findUnique({
+        where: { id: notificationId },
+        include: {
+            actor: {
+                select: { id: true, name: true, avatar: true, ...PUBLIC_AVATAR_MEDIA_SELECT }
+            }
+        }
+    });
+    if (!notification) return false;
+    await dispatchNotificationRecord(notification);
+    return true;
+};
+
+export const dispatchNotificationIds = async (notificationIds: string[]): Promise<void> => {
+    const uniqueIds = Array.from(new Set(notificationIds));
+    const outcomes = await Promise.allSettled(uniqueIds.map((notificationId) => dispatchNotificationById(notificationId)));
+    const failedCount = outcomes.filter((outcome) => outcome.status === 'rejected').length;
+    if (failedCount > 0) {
+        console.error(JSON.stringify({ event: 'notification_dispatch_batch_failed', failedCount }));
+    }
+};
+
 export const notify = async (
     actorId: string | undefined | null,
     userId: string,
@@ -114,41 +190,7 @@ export const notify = async (
             }
         });
 
-        const realtimeNotification = {
-            id: newNotification.id,
-            type: newNotification.type,
-            message: newNotification.message,
-            targetId: newNotification.targetId || undefined,
-            targetType: newNotification.targetType || undefined,
-            payload: normalizedPayload,
-            deepLink: normalizedPayload?.deepLink,
-            isRead: newNotification.isRead,
-            timestamp: newNotification.createdAt.toISOString(),
-            createdAt: newNotification.createdAt.getTime(),
-            actor: newNotification.actor ? serializeUserMediaRecord(newNotification.actor) : undefined
-        };
-
-        try {
-            const socketServer = getIO();
-            if (socketServer) {
-                socketServer.to(getUserNotificationRoom(userId)).emit('newNotification', realtimeNotification);
-            }
-        } catch (error) {
-            console.error(JSON.stringify({ event: 'notification_socket_failed', type, error: errorName(error) }));
-        }
-
-        void sendPushNotification(userId, {
-            title: newNotification.actor ? newNotification.actor.name : 'SocialInsight',
-            body: newNotification.message,
-            type: newNotification.type,
-            url: normalizedPayload?.deepLink || '/'
-        }).catch((error) => {
-            console.error(JSON.stringify({
-                event: type === 'mention' ? 'mention_push_failed' : 'notification_push_failed',
-                type,
-                error: errorName(error)
-            }));
-        });
+        await dispatchNotificationRecord(newNotification, normalizedPayload);
 
         return newNotification;
     } catch (error) {

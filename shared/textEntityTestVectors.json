@@ -34,6 +34,13 @@
     ]
   },
   {
+    "name": "numeric hashtag",
+    "text": "Planning for #2026.",
+    "entities": [
+      { "type": "hashtag", "raw": "#2026", "value": "2026", "normalizedValue": "2026" }
+    ]
+  },
+  {
     "name": "handle dots and trailing punctuation",
     "text": "@first.last... @under_score",
     "entities": [

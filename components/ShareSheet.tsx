@@ -10,6 +10,7 @@ import { UserProfile } from '../types';
 import { UserAvatar } from './UserAvatar';
 import { useTranslation } from 'react-i18next';
 import { ShareCard } from './share/ShareCard';
+import { RichMentionInput } from './RichMentionInput';
 import {
   SHARE_CARD_SIZE,
   buildCanonicalPostUrl,
@@ -240,12 +241,13 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
 
       <div className="flex gap-3 mb-4">
         <UserAvatar src={userProfile?.avatar} mediaId={userProfile?.avatarMediaId} media={userProfile?.avatarMedia} name={userProfile?.name} alt={userProfile?.name || 'You'} size={40} />
-        <textarea
-          autoFocus
+        <RichMentionInput
           value={repostCaption}
-          onChange={(e) => setRepostCaption(e.target.value)}
+          onChange={setRepostCaption}
           placeholder="Say something about this..."
           className="flex-1 bg-transparent border-none text-gray-800 placeholder-gray-400 focus:ring-0 resize-none pt-2 min-h-[120px]"
+          minRows={5}
+          autoFocus
         />
       </div>
 

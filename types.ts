@@ -38,6 +38,44 @@ export interface MediaCropSelection {
   altText?: string;
 }
 
+export interface MentionOccurrence {
+  surface: 'POST_TITLE' | 'POST_DESCRIPTION' | 'REPOST_CAPTION' | 'COMMENT_TEXT' | 'PROFILE_BIO' | 'GROUP_DESCRIPTION' | 'GROUP_RULES' | string;
+  startOffset: number;
+  endOffset: number;
+  rawText: string;
+}
+
+export interface MentionReference {
+  id: string;
+  targetUserId: string;
+  sourceType: string;
+  targetUser?: {
+    id: string;
+    name?: string;
+    handle?: string;
+    avatar?: string;
+    avatarMediaId?: string;
+    avatarMedia?: MediaPresentation;
+  };
+  occurrences: MentionOccurrence[];
+}
+
+export interface PeopleTag {
+  id: string;
+  status: 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'REMOVED';
+  taggedUserId: string;
+  taggedByUserId: string;
+  taggedUser: {
+    id: string;
+    name: string;
+    handle?: string;
+    avatar?: string;
+    avatarMediaId?: string;
+    avatarMedia?: MediaPresentation;
+  };
+  createdAt?: string;
+}
+
 export interface MediaDraft {
   clientId: string;
   file: File | null;
@@ -73,6 +111,8 @@ export interface UserProfile {
   isPrivate?: boolean;
   isFollowing?: boolean;
   groupPrivacy?: 'Public' | 'Followers' | 'Off';
+  peopleTagPermission?: 'EVERYONE' | 'FOLLOWING' | 'NO_ONE';
+  bioMentions?: MentionReference[];
   followStatus?: 'ACTIVE' | 'PENDING' | 'REJECTED' | 'NONE';
   demographics?: {
     gender?: string;
@@ -122,6 +162,7 @@ export interface Group {
   imageMedia?: MediaPresentation;
   createdAt: string;
   rules?: string;
+  mentions?: MentionReference[];
   // Settings
   joinPolicy?: 'OPEN' | 'REQUEST' | 'INVITE_ONLY';
   postingPermissions?: 'AdminsOnly' | 'AllMembers' | 'ApprovalNeeded';
@@ -179,6 +220,7 @@ export interface Comment {
   likes: number;
   isLiked?: boolean;
   replies?: Comment[];
+  mentions?: MentionReference[];
 }
 
 export interface SurveyQuestion {
@@ -295,6 +337,9 @@ export interface Survey {
   // Reposting Fields
   sharedFrom?: Survey; // Reference to original survey
   sharedCaption?: string; // User's custom text when sharing
+  mentions?: MentionReference[];
+  taggedUsers?: PeopleTag[];
+  taggedUserIds?: string[];
 
   // Layout Config
   imageLayout?: 'vertical' | 'horizontal';
@@ -315,7 +360,7 @@ export interface Survey {
 
 export interface Notification {
   id: string;
-  type: 'vote' | 'response' | 'result' | 'following_post' | 'group_invite' | 'expiry' | 'milestone' | 'follow' | 'like' | 'follow_request' | 'follow_accept' | 'mention';
+  type: 'vote' | 'response' | 'result' | 'following_post' | 'group_invite' | 'expiry' | 'milestone' | 'follow' | 'like' | 'follow_request' | 'follow_accept' | 'mention' | 'people_tag';
   actor: {
     id?: string;
     name: string;
@@ -334,6 +379,8 @@ export interface Notification {
     commentId?: string;
     replyId?: string;
     sourceType?: 'post' | 'comment' | 'reply' | string;
+    peopleTagId?: string;
+    peopleTagStatus?: 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'REMOVED';
     deepLink?: string;
   };
   createdAt?: number;

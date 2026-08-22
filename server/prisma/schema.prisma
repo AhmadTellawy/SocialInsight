@@ -28,6 +28,7 @@ model User {
   isPrivate         Boolean   @default(false) @map("is_private")
   mediaPrivacyTarget Boolean? @map("media_privacy_target")
   groupPrivacy      String    @default("Public") @map("group_privacy")
+  peopleTagPermission PeopleTagPermission @default(EVERYONE) @map("people_tag_permission")
 
   // Verification & Status
   emailVerifiedAt DateTime? @map("email_verified_at")
@@ -67,6 +68,11 @@ model User {
   avatarMedia       MediaAsset?        @relation("UserAvatarMedia", fields: [avatarMediaId], references: [id], onDelete: SetNull)
   ownedMedia        MediaAsset[]       @relation("MediaOwner")
   mediaPrivacyTransitions MediaPrivacyTransition[]
+  mentionsReceived   Mention[]          @relation("MentionTarget")
+  mentionsCreated    Mention[]          @relation("MentionActor")
+  profileMentions    Mention[]          @relation("MentionProfile")
+  peopleTagsReceived PostTaggedUser[]   @relation("PeopleTagTarget")
+  peopleTagsCreated  PostTaggedUser[]   @relation("PeopleTagActor")
 
   @@map("users")
 }
@@ -138,6 +144,7 @@ model Group {
   posts              Post[]        @relation("PrimaryGroup")
   targetedPosts      Post[]        @relation("PostTargetGroups")
   imageMedia         MediaAsset?   @relation("GroupImageMedia", fields: [imageMediaId], references: [id], onDelete: SetNull)
+  mentions           Mention[]
 
   @@index([isDeleted])
 }
@@ -223,6 +230,9 @@ model Post {
   viewCount       Int @default(0)
   uniqueViewCount Int @default(0)
   views           PostView[]
+  mentions        Mention[]
+  hashtags        PostHashtag[]
+  taggedUsers     PostTaggedUser[]
 
   @@index([authorId])
   @@index([sharedFromId])
@@ -461,6 +471,8 @@ model Comment {
   post      Post          @relation(fields: [postId], references: [id])
   user      User          @relation(fields: [userId], references: [id])
   likesList CommentLike[]
+  mentions  Mention[]
+  hashtags  CommentHashtag[]
 
   @@index([postId])
   @@index([parentId])
@@ -486,13 +498,159 @@ model Notification {
   targetType String?
   targetId   String?
   payload    String? // JSON string
+  dedupeKey  String?   @unique @map("dedupe_key")
   isRead     Boolean   @default(false)
   readAt     DateTime?
   createdAt  DateTime  @default(now())
+  mention    Mention?        @relation("MentionNotification")
+  peopleTag  PostTaggedUser? @relation("PeopleTagNotification")
 
   @@index([userId, createdAt(sort: Desc)])
   @@index([userId, isRead])
   @@map("notifications")
+}
+
+enum MentionSourceType {
+  POST
+  COMMENT
+  REPLY
+  PROFILE
+  GROUP
+}
+
+enum MentionSurface {
+  POST_TITLE
+  POST_DESCRIPTION
+  REPOST_CAPTION
+  COMMENT_TEXT
+  PROFILE_BIO
+  GROUP_DESCRIPTION
+  GROUP_RULES
+}
+
+enum MentionState {
+  STAGED
+  ACTIVE
+}
+
+enum PeopleTagPermission {
+  EVERYONE
+  FOLLOWING
+  NO_ONE
+}
+
+enum PeopleTagStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  REMOVED
+}
+
+model Mention {
+  id             String            @id @default(uuid())
+  targetUserId   String
+  actorUserId    String
+  postId         String?
+  commentId      String?
+  profileUserId  String?
+  groupId        String?
+  sourceType     MentionSourceType
+  state          MentionState      @default(ACTIVE)
+  notificationId String?           @unique
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  targetUser   User                @relation("MentionTarget", fields: [targetUserId], references: [id], onDelete: Cascade)
+  actorUser    User                @relation("MentionActor", fields: [actorUserId], references: [id], onDelete: Cascade)
+  post         Post?               @relation(fields: [postId], references: [id], onDelete: Cascade)
+  comment      Comment?            @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  profileUser  User?               @relation("MentionProfile", fields: [profileUserId], references: [id], onDelete: Cascade)
+  group        Group?              @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  notification Notification?       @relation("MentionNotification", fields: [notificationId], references: [id], onDelete: SetNull)
+  occurrences  MentionOccurrence[]
+
+  @@index([targetUserId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([postId, state])
+  @@index([commentId, state])
+  @@index([profileUserId])
+  @@index([groupId])
+}
+
+model MentionOccurrence {
+  id          String         @id @default(uuid())
+  mentionId   String
+  surface     MentionSurface
+  startOffset Int
+  endOffset   Int
+  rawText     String
+
+  mention Mention @relation(fields: [mentionId], references: [id], onDelete: Cascade)
+
+  @@unique([mentionId, surface, startOffset, endOffset])
+  @@index([mentionId, surface])
+}
+
+model Hashtag {
+  id             String   @id @default(uuid())
+  normalizedName String   @unique
+  displayName    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  posts    PostHashtag[]
+  comments CommentHashtag[]
+
+  @@index([createdAt])
+}
+
+model PostHashtag {
+  postId    String
+  hashtagId String
+  createdAt DateTime @default(now())
+
+  post    Post    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  hashtag Hashtag @relation(fields: [hashtagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, hashtagId])
+  @@index([hashtagId, postId])
+  @@index([createdAt])
+}
+
+model CommentHashtag {
+  commentId String
+  hashtagId String
+  createdAt DateTime @default(now())
+
+  comment Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  hashtag Hashtag @relation(fields: [hashtagId], references: [id], onDelete: Cascade)
+
+  @@id([commentId, hashtagId])
+  @@index([hashtagId, commentId])
+}
+
+model PostTaggedUser {
+  id             String          @id @default(uuid())
+  postId         String
+  taggedUserId   String
+  taggedByUserId String
+  status         PeopleTagStatus @default(PENDING)
+  notificationId String?         @unique
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  acceptedAt     DateTime?
+  rejectedAt     DateTime?
+  removedAt      DateTime?
+
+  post         Post          @relation(fields: [postId], references: [id], onDelete: Cascade)
+  taggedUser   User          @relation("PeopleTagTarget", fields: [taggedUserId], references: [id], onDelete: Cascade)
+  taggedByUser User          @relation("PeopleTagActor", fields: [taggedByUserId], references: [id], onDelete: Cascade)
+  notification Notification? @relation("PeopleTagNotification", fields: [notificationId], references: [id], onDelete: SetNull)
+
+  @@unique([postId, taggedUserId])
+  @@index([taggedUserId, status, createdAt])
+  @@index([taggedByUserId, createdAt])
+  @@index([postId, status])
 }
 
 model UserLike {

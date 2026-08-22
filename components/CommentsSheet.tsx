@@ -94,7 +94,9 @@ const CommentItem: React.FC<CommentItemProps> = ({ comment, isReply = false, par
           </span>
           <span className="text-xs text-gray-500">{formatRelativeTime(comment.timestamp)}</span>
         </div>
-        <p className="text-sm text-gray-800 leading-relaxed"><RichTextRenderer text={comment.text} /></p>
+        <p className="text-sm text-gray-800 leading-relaxed">
+          <RichTextRenderer text={comment.text} mentions={comment.mentions} mentionSurface="COMMENT_TEXT" />
+        </p>
       </div>
 
       {/* Actions */}
@@ -242,12 +244,12 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
           // To safely update, we recursively map or just check both levels
           return prev.map(c => {
             if (c.id === editingCommentId) {
-              return { ...c, text: updatedRaw.text };
+              return { ...c, ...updatedRaw };
             }
             if (c.replies) {
               return {
                 ...c,
-                replies: c.replies.map(r => r.id === editingCommentId ? { ...r, text: updatedRaw.text } : r)
+                replies: c.replies.map(r => r.id === editingCommentId ? { ...r, ...updatedRaw } : r)
               };
             }
             return c;

@@ -11,8 +11,9 @@
         "render-build": "prisma generate && prisma migrate deploy && ts-node src/scripts/provisionMediaStorage.ts && tsc",
         "media:provision": "ts-node src/scripts/provisionMediaStorage.ts",
         "media:backfill": "ts-node src/scripts/backfillLegacyMedia.ts",
+        "social-tags:backfill": "ts-node src/scripts/backfillSocialTags.ts",
         "start": "node dist/app.js",
-        "test": "node --test --test-concurrency=1 -r ts-node/register src/services/mediaProcessor.test.ts src/services/legacyMediaSource.test.ts src/services/mediaPolicy.test.ts src/services/mentionPolicyService.test.ts src/services/notificationService.test.ts src/services/socketService.test.ts src/utils/answerTypeValidation.test.ts src/utils/mentionLimits.test.ts src/utils/mentionSearch.test.ts src/utils/notificationTarget.test.ts src/utils/textEntities.test.ts"
+        "test": "node --test --test-concurrency=1 -r ts-node/register src/services/mediaProcessor.test.ts src/services/legacyMediaSource.test.ts src/services/mediaPolicy.test.ts src/services/mentionPolicyService.test.ts src/services/mentionLifecycleService.test.ts src/services/hashtagService.test.ts src/services/peopleTagService.test.ts src/services/postVisibilityService.test.ts src/services/notificationService.test.ts src/services/socketService.test.ts src/utils/answerTypeValidation.test.ts src/utils/mentionLimits.test.ts src/utils/mentionSearch.test.ts src/utils/notificationTarget.test.ts src/utils/textEntities.test.ts"
     },
     "keywords": [],
     "author": "",

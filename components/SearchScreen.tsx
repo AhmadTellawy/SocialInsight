@@ -9,6 +9,8 @@ import { Survey, SurveyType } from '../types';
 import { UserAvatar } from './UserAvatar';
 import { api } from '../services/api';
 import { MediaImage } from './media/MediaImage';
+import { useNavigate } from 'react-router-dom';
+import { Analytics } from '../utils/analytics';
 
 interface SearchScreenProps {
   surveys: Survey[]; // Kept for interface compatibility or fallback
@@ -49,20 +51,33 @@ const HighlightedText: React.FC<{ text: string; highlight: string; className?: s
 
 export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyClick, onAuthorClick, onGroupClick }) => {
   const { t, i18n } = useTranslation();
-  const isRtl = i18n.language === 'ar' || i18n.language === 'ur';
+  const navigate = useNavigate();
+  const isRtl = ['ar', 'ur'].includes(i18n.language?.split('-')[0]);
 
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState<'All' | 'Surveys' | 'Polls' | 'Groups' | 'Categories' | 'People'>('All');
+  const [activeFilter, setActiveFilter] = useState<'All' | 'Topics' | 'Surveys' | 'Polls' | 'Groups' | 'Categories' | 'People'>('All');
   const [isLoading, setIsLoading] = useState(false);
+  const [trendingTopics, setTrendingTopics] = useState<any[]>([]);
 
   // Unified Search Results from API
   const [searchResults, setSearchResults] = useState<{
+    topics: any[];
     surveys: any[];
     people: any[];
     groups: any[];
     categories: string[];
-  }>({ surveys: [], people: [], groups: [], categories: [] });
+  }>({ topics: [], surveys: [], people: [], groups: [], categories: [] });
+
+  useEffect(() => {
+    let active = true;
+    api.getTrendingHashtags(8)
+      .then((result) => {
+        if (active) setTrendingTopics(result.topics || []);
+      })
+      .catch((error) => console.error('Failed to fetch trending topics:', error));
+    return () => { active = false; };
+  }, []);
 
   // Persisted Recent Searches (In localStorage)
   const [recentSearches, setRecentSearches] = useState<string[]>(() => {
@@ -111,7 +126,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
   // Fetch Results from API on Debounced Query Change
   useEffect(() => {
     if (!debouncedQuery.trim() || debouncedQuery.trim().length < 2) {
-      setSearchResults({ surveys: [], people: [], groups: [], categories: [] });
+      setSearchResults({ topics: [], surveys: [], people: [], groups: [], categories: [] });
       return;
     }
 
@@ -141,6 +156,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
 
   // Filter Logic
   const showSurveys = (activeFilter === 'All' || activeFilter === 'Surveys' || activeFilter === 'Polls');
+  const showTopics = (activeFilter === 'All' || activeFilter === 'Topics');
   const showPeople = (activeFilter === 'All' || activeFilter === 'People');
   const showGroups = (activeFilter === 'All' || activeFilter === 'Groups');
   const showCategories = (activeFilter === 'All' || activeFilter === 'Categories');
@@ -152,16 +168,25 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
     return true;
   });
 
-  const hasResults = filteredSurveys.length > 0 || searchResults.people.length > 0 || searchResults.groups.length > 0 || searchResults.categories.length > 0;
+  const hasResults = searchResults.topics.length > 0 || filteredSurveys.length > 0 || searchResults.people.length > 0 || searchResults.groups.length > 0 || searchResults.categories.length > 0;
 
   const getFilterLabel = (filter: string) => {
     if (filter === 'All') return isRtl ? 'الكل' : 'All';
+    if (filter === 'Topics') return isRtl ? 'المواضيع' : 'Topics';
     if (filter === 'Surveys') return t('Surveys');
     if (filter === 'Polls') return t('Polls');
     if (filter === 'Groups') return t('Groups');
     if (filter === 'Categories') return t('Categories');
     if (filter === 'People') return isRtl ? 'الحسابات' : 'Creators';
     return filter;
+  };
+
+  const openTopic = (normalizedName: string) => {
+    Analytics.track({
+      event_type: 'HASHTAG_SEARCH_SELECTED',
+      source_surface: 'SEARCH'
+    });
+    navigate(`/hashtag/${encodeURIComponent(normalizedName)}`);
   };
 
   return (
@@ -191,7 +216,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
         {/* Filter Chips (Only show when searching) */}
         {query && (
           <div className="flex gap-2 overflow-x-auto no-scrollbar mt-3 pb-1">
-            {['All', 'Surveys', 'Polls', 'Groups', 'Categories', 'People'].map((filter) => (
+            {['All', 'Topics', 'Surveys', 'Polls', 'Groups', 'Categories', 'People'].map((filter) => (
               <button
                 key={filter}
                 onClick={() => setActiveFilter(filter as any)}
@@ -245,22 +270,22 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
             )}
 
             {/* Trending Topics */}
-            <section>
+            {trendingTopics.length > 0 && <section>
               <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-1">
                 <TrendingUp size={12} /> {isRtl ? 'رائج الآن' : 'Trending Now'}
               </h3>
               <div className="flex flex-wrap gap-2">
-                {['#RemoteWork', '#AI', '#Climate', '#CoffeeLover', '#TechTrends'].map(tag => (
+                {trendingTopics.map((topic) => (
                   <button
-                    key={tag}
-                    onClick={() => setQuery(tag.replace('#', ''))}
+                    key={topic.id}
+                    onClick={() => openTopic(topic.normalizedName)}
                     className="px-3.5 py-2 bg-blue-50 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-100 transition-colors"
                   >
-                    {tag}
+                    #{topic.displayName}
                   </button>
                 ))}
               </div>
-            </section>
+            </section>}
 
             {/* Popular Categories (Now Complete) */}
             <section>
@@ -343,7 +368,31 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
               </div>
             ) : (
               <>
-                {/* 1. Categories */}
+                {/* 1. Hashtag Topics */}
+                {showTopics && searchResults.topics.length > 0 && (
+                  <section className="animate-in fade-in slide-in-from-bottom-2">
+                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 px-1">
+                      {isRtl ? 'المواضيع' : 'Topics'}
+                    </h3>
+                    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden divide-y divide-gray-50">
+                      {searchResults.topics.map((topic) => (
+                        <button
+                          key={topic.id}
+                          onClick={() => openTopic(topic.normalizedName)}
+                          className="w-full flex items-center justify-between gap-3 p-3.5 text-start hover:bg-gray-50 transition-colors"
+                        >
+                          <span className="flex items-center gap-3 min-w-0">
+                            <span className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0"><Hash size={17} /></span>
+                            <span className="font-bold text-sm text-gray-900 truncate">#{topic.displayName}</span>
+                          </span>
+                          <span className="text-xs text-gray-500 shrink-0">{topic.postCount} {isRtl ? 'منشور' : 'posts'}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* 2. Categories */}
                 {showCategories && searchResults.categories.length > 0 && (
                   <section className="animate-in fade-in slide-in-from-bottom-2">
                     {activeFilter === 'All' && <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 px-1">{t('Categories')}</h3>}

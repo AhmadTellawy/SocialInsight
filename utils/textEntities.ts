@@ -16,6 +16,8 @@ export interface ActiveMentionQuery {
 }
 
 export const MENTION_RECIPIENT_LIMIT = 10;
+export const POST_HASHTAG_LIMIT = 20;
+export const COMMENT_HASHTAG_LIMIT = 10;
 
 const MENTION_CHARACTER = /^[A-Za-z0-9_.]$/;
 const MENTION_BOUNDARY_BLOCKER = /^[\p{L}\p{N}\p{M}_.%+\-@#]$/u;
@@ -117,6 +119,23 @@ export const getUniqueMentionHandles = (text: string): string[] => {
     .filter((entity) => entity.type === 'mention')
     .map((entity) => entity.normalizedValue);
   return Array.from(new Set(handles));
+};
+
+export interface UniqueHashtag {
+  normalizedName: string;
+  displayName: string;
+}
+
+export const getUniqueHashtags = (text: string): UniqueHashtag[] => {
+  const hashtags = new Map<string, UniqueHashtag>();
+  for (const entity of parseTextEntities(text)) {
+    if (entity.type !== 'hashtag' || hashtags.has(entity.normalizedValue)) continue;
+    hashtags.set(entity.normalizedValue, {
+      normalizedName: entity.normalizedValue,
+      displayName: entity.value.normalize('NFC')
+    });
+  }
+  return Array.from(hashtags.values());
 };
 
 export const hasMentionRecipientOverflow = (text: string): boolean =>

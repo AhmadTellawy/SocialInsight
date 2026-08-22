@@ -14,6 +14,7 @@ import { AnswerTypeSelector, CreatorAnswerType } from './options/AnswerTypeSelec
 import { OptionImagePicker, OptionImageThumbnail } from './options/OptionImagePicker';
 import { draftOptionHasImage, resolveOptionPresentation } from '../utils/optionPresentation';
 import { RatingScaleQuestion } from './Survey/RatingScaleQuestion';
+import { PeopleTagPicker, PeopleTagPerson } from './PeopleTagPicker';
 
 interface CreateSurveyModalProps {
   isOpen: boolean;
@@ -111,6 +112,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
   const [forceAnonymous, setForceAnonymous] = useState(false);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [taggedPeople, setTaggedPeople] = useState<PeopleTagPerson[]>([]);
   const [legacyCoverImage, setLegacyCoverImage] = useState<string | null>(null);
   const [postMedia, setPostMedia] = useState<MediaDraft[]>([]);
   const [mediaAspectRatio, setMediaAspectRatio] = useState<number | undefined>(undefined);
@@ -185,6 +187,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
       setResultsTiming(draft.resultsTiming || 'AnyTime');
       setAllowComments(draft.allowComments !== undefined ? draft.allowComments : true);
       setForceAnonymous(draft.forceAnonymous || false);
+      setTaggedPeople((draft.taggedUsers || []).map((tag) => tag.taggedUser).filter((person): person is PeopleTagPerson => Boolean(person?.id && person?.handle)));
       const persistedPostMedia = (draft.media || []).map((media) => createPersistedMediaDraft(media, 'POST', draft.coverImage));
       setPostMedia(persistedPostMedia);
       setMediaAspectRatio(draft.mediaAspectRatio || persistedPostMedia[0]?.aspectRatio);
@@ -436,6 +439,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
       mediaAspectRatio: postMedia.length > 0 ? mediaAspectRatio : undefined,
       targetAudience: visibility as any,
       targetGroups: visibility === 'Groups' ? selectedGroups : undefined,
+      taggedUserIds: taggedPeople.map((person) => person.id),
       resultsWho,
       resultsTiming,
       allowAnonymous: true,
@@ -1201,6 +1205,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
           {/* Engagement Settings */}
           <div className="border-t border-gray-100 pt-4 mt-6 space-y-3">
             <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest px-1">Engagement Settings</label>
+            <PeopleTagPicker selectedPeople={taggedPeople} onChange={setTaggedPeople} accent="blue" />
             <div className="bg-gray-50 rounded-2xl p-4 space-y-4 border border-gray-100">
               <button onClick={() => setAllowComments(!allowComments)} className="w-full flex items-center justify-between py-1 group">
                 <div className="flex flex-col text-left">

@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   MENTION_RECIPIENT_LIMIT,
   findActiveMentionQuery,
+  getUniqueHashtags,
   getUniqueMentionHandles,
   parseTextEntities,
 } from './textEntities.ts';
@@ -38,6 +39,13 @@ test('counts repeated handles once and detects the centralized recipient boundar
   const overLimit = `${atLimit} @one_more`;
   assert.equal(getUniqueMentionHandles(atLimit).length, MENTION_RECIPIENT_LIMIT);
   assert.equal(getUniqueMentionHandles(overLimit).length, MENTION_RECIPIENT_LIMIT + 1);
+});
+
+test('deduplicates hashtag case variants while preserving Unicode display text', () => {
+  assert.deepEqual(getUniqueHashtags('#AI #ai #Ai #كرة_القدم'), [
+    { normalizedName: 'ai', displayName: 'AI' },
+    { normalizedName: 'كرة_القدم', displayName: 'كرة_القدم' },
+  ]);
 });
 
 test('finds an active composer query but not an email fragment', () => {

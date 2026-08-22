@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { PeopleTagPermission } from '@prisma/client';
 import prisma from '../prisma';
 import { PrivacyService } from '../services/privacyService';
 import { notify } from '../services/notificationService';
@@ -16,10 +17,17 @@ import {
     serializeGroupMediaRecord,
     serializeUserMediaRecord
 } from '../services/mediaService';
+import type { PreparedMediaAttachment } from '../services/mediaService';
 import { requestMediaPrivacyTransition } from '../services/mediaPrivacyTransitionService';
 import { MediaValidationError } from '../services/mediaProcessor';
 import { withNotificationDeepLink } from '../utils/notificationTarget';
 import { buildMentionSearchWhere, MENTION_SUGGESTION_LIMIT, MENTION_USER_SELECT } from '../utils/mentionSearch';
+import {
+    ACTIVE_MENTION_REFERENCE_INCLUDE,
+    MentionLimitError,
+    reconcileProfileMentions,
+    serializeMentionReferences
+} from '../services/mentionLifecycleService';
 
 const SAFE_USER_SELECT = {
     id: true,
@@ -33,6 +41,7 @@ const SAFE_USER_SELECT = {
     isPrivate: true,
     mediaPrivacyTarget: true,
     groupPrivacy: true,
+    peopleTagPermission: true,
     verifiedBadge: true, // Renamed from isVerified
     followersCount: true,
     followingCount: true,
@@ -67,8 +76,30 @@ export const searchUsers = async (req: Request, res: Response) => {
             return res.status(400).json({ error: 'Search query is too long', code: 'INVALID_MENTION_QUERY' });
         }
 
+        const purpose = String(req.query.purpose || 'mention');
+        const baseWhere = buildMentionSearchWhere(query, userId!);
         const users = await prisma.user.findMany({
-            where: buildMentionSearchWhere(query, userId!),
+            where: purpose === 'people-tag'
+                ? {
+                    ...baseWhere,
+                    AND: [
+                        {
+                            OR: [
+                                { peopleTagPermission: PeopleTagPermission.EVERYONE },
+                                {
+                                    peopleTagPermission: PeopleTagPermission.FOLLOWING,
+                                    followedBy: {
+                                        some: {
+                                            followingId: userId!,
+                                            status: 'ACTIVE'
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                }
+                : baseWhere,
             take: MENTION_SUGGESTION_LIMIT,
             select: MENTION_USER_SELECT
         });
@@ -85,7 +116,10 @@ export const getUser = async (req: Request, res: Response) => {
     try {
         const user = await prisma.user.findUnique({
             where: { id: id as string },
-            include: { avatarMedia: { include: { variants: true } } }
+            include: {
+                avatarMedia: { include: { variants: true } },
+                profileMentions: ACTIVE_MENTION_REFERENCE_INCLUDE
+            }
         });
 
         if (!user) {
@@ -134,6 +168,7 @@ export const getUser = async (req: Request, res: Response) => {
 
         res.json({
             ...serializedUser,
+            bioMentions: serializeMentionReferences(user.profileMentions),
             followStatus,
             isFollowing: followStatus === 'ACTIVE',
             demographics: demographics || {},
@@ -160,7 +195,10 @@ export const getUserByHandle = async (req: Request, res: Response) => {
 
         const user = await prisma.user.findUnique({
             where: { handle: cleanHandle },
-            include: { avatarMedia: { include: { variants: true } } }
+            include: {
+                avatarMedia: { include: { variants: true } },
+                profileMentions: ACTIVE_MENTION_REFERENCE_INCLUDE
+            }
         });
 
         if (!user) {
@@ -209,6 +247,7 @@ export const getUserByHandle = async (req: Request, res: Response) => {
 
         res.json({
             ...serializedUser,
+            bioMentions: serializeMentionReferences(user.profileMentions),
             followStatus,
             isFollowing: followStatus === 'ACTIVE',
             demographics: demographics || {},
@@ -245,33 +284,42 @@ export const updateUser = async (req: Request, res: Response) => {
         allowedFields.forEach(field => {
             if (data[field] !== undefined) updateData[field] = data[field];
         });
+        if (data.peopleTagPermission !== undefined) {
+            if (!Object.values(PeopleTagPermission).includes(data.peopleTagPermission)) {
+                return res.status(400).json({ error: 'Invalid people tag permission', code: 'INVALID_PEOPLE_TAG_PERMISSION' });
+            }
+            updateData.peopleTagPermission = data.peopleTagPermission;
+        }
 
         let oldAvatarMediaId: string | null | undefined;
-        if (data.avatarMediaId !== undefined) {
-            oldAvatarMediaId = currentUser?.avatarMediaId;
-            if (data.avatarMediaId === null) {
-                updateData.avatarMediaId = null;
-                updateData.avatar = null;
-            } else {
-                const prepared = await prepareMediaAttachments(id, [{ id: data.avatarMediaId, purpose: 'PROFILE_AVATAR' }], 'PUBLIC');
-                try {
+        let prepared: PreparedMediaAttachment | null = null;
+        try {
+            if (data.avatarMediaId !== undefined) {
+                oldAvatarMediaId = currentUser?.avatarMediaId;
+                if (data.avatarMediaId === null) {
+                    updateData.avatarMediaId = null;
+                    updateData.avatar = null;
+                } else {
+                    prepared = await prepareMediaAttachments(id, [{ id: data.avatarMediaId, purpose: 'PROFILE_AVATAR' }], 'PUBLIC');
                     const presentation = await getStoredMediaPresentation(data.avatarMediaId);
                     if (!presentation?.src) throw new MediaValidationError('MEDIA_NOT_READY', 'Avatar variants are unavailable.', 409);
                     updateData.avatarMediaId = data.avatarMediaId;
                     updateData.avatar = presentation.src;
-                    await prisma.$transaction(async (tx) => {
-                        await tx.user.update({ where: { id }, data: updateData });
-                        await commitPreparedMedia(tx, prepared);
-                    });
-                } catch (error) {
-                    await rollbackPreparedMedia(prepared);
-                    throw error;
                 }
             }
-        }
 
-        if (data.avatarMediaId === undefined || data.avatarMediaId === null) {
-            await prisma.user.update({ where: { id }, data: updateData });
+            await prisma.$transaction(async (tx) => {
+                const updated = await tx.user.update({ where: { id }, data: updateData });
+                await reconcileProfileMentions(tx, {
+                    profileUserId: id,
+                    actorUserId: id,
+                    bio: updated.bio || ''
+                });
+                if (prepared) await commitPreparedMedia(tx, prepared);
+            });
+        } catch (error) {
+            if (prepared) await rollbackPreparedMedia(prepared);
+            throw error;
         }
 
         if (oldAvatarMediaId && oldAvatarMediaId !== data.avatarMediaId) {
@@ -367,9 +415,16 @@ export const updateUser = async (req: Request, res: Response) => {
             })
         ]);
 
-        const user = await prisma.user.findUniqueOrThrow({ where: { id }, select: SAFE_USER_SELECT });
+        const user = await prisma.user.findUniqueOrThrow({
+            where: { id },
+            select: {
+                ...SAFE_USER_SELECT,
+                profileMentions: ACTIVE_MENTION_REFERENCE_INCLUDE
+            }
+        });
         res.json({
             ...serializeUserMediaRecord(user),
+            bioMentions: serializeMentionReferences(user.profileMentions),
             isPrivate: user.mediaPrivacyTarget === true || user.isPrivate,
             demographics,
             stats: {
@@ -383,6 +438,9 @@ export const updateUser = async (req: Request, res: Response) => {
         console.error("Update User Error:", error);
         if (error instanceof MediaValidationError) {
             return res.status(error.statusCode).json({ error: error.message, code: error.code });
+        }
+        if (error instanceof MentionLimitError) {
+            return res.status(400).json({ error: error.message, code: 'MENTION_LIMIT_EXCEEDED', limit: error.limit });
         }
         if (error instanceof Error && error.message.includes('privacy transition')) {
             return res.status(409).json({ error: error.message, code: 'PRIVACY_TRANSITION_IN_PROGRESS' });

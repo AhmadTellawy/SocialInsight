@@ -10,6 +10,7 @@ import { useGroupMembership, useGroupPosts, useGroupStats, useGroupMembers } fro
 import { api } from '../services/api';
 import { UserAvatar } from './UserAvatar';
 import { MediaImage } from './media/MediaImage';
+import { RichTextRenderer } from './RichTextRenderer';
 
 const CREATE_CHIPS = [
   { type: 'Poll' as const,      color: '#3B82F6', bg: '#EFF6FF', border: '#BFDBFE', icon: BarChart2 },
@@ -510,7 +511,9 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
             <div className="space-y-2">
               <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Description</h4>
               <p className="text-sm text-gray-700 leading-relaxed bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                {group.description || 'No description provided for this group.'}
+                {group.description
+                  ? <RichTextRenderer text={group.description} mentions={group.mentions} mentionSurface="GROUP_DESCRIPTION" />
+                  : 'No description provided for this group.'}
               </p>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -544,7 +547,9 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
               <div className="flex-1">
                 <h5 className="text-xs font-bold text-blue-900">Rules &amp; Guidelines</h5>
                 <p className="text-[11px] text-blue-700 mt-1 leading-relaxed whitespace-pre-wrap">
-                  {group.rules || `Respect all members, no spamming, and ensure polls are relevant to ${group.category}.`}
+                  {group.rules
+                    ? <RichTextRenderer text={group.rules} mentions={group.mentions} mentionSurface="GROUP_RULES" />
+                    : `Respect all members, no spamming, and ensure polls are relevant to ${group.category}.`}
                 </p>
               </div>
             </div>

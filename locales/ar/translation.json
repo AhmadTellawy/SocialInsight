@@ -15,7 +15,40 @@
     "remove": "إزالة"
   },
   "mentions": {
-    "limitExceeded": "يمكنك الإشارة إلى {{limit}} أشخاص كحد أقصى."
+    "limitExceeded": "يمكنك الإشارة إلى {{limit}} أشخاص كحد أقصى.",
+    "searching": "جارٍ البحث...",
+    "noUsersFound": "لم يتم العثور على مستخدمين",
+    "searchFailed": "تعذر البحث عن المستخدمين",
+    "suggestions": "اقتراحات الإشارة",
+    "suggestionCount": "تتوفر {{count}} اقتراحات للإشارة",
+    "selected": "تمت الإشارة إلى @{{handle}}",
+    "viewProfile": "عرض ملف @{{handle}} الشخصي"
+  },
+  "hashtags": {
+    "viewTopic": "عرض موضوع #{{tag}}"
+  },
+  "peopleTags": {
+    "tagPeople": "وسم أشخاص",
+    "none": "لا أحد",
+    "openLabel": "وسم أشخاص، تم اختيار {{count}}",
+    "searchPlaceholder": "ابحث عن أشخاص",
+    "searchHint": "ابحث بالاسم أو اسم المستخدم.",
+    "searchFailed": "تعذر البحث عن الأشخاص",
+    "selected": "الأشخاص المختارون",
+    "selectedCount": "تم اختيار {{count}} من {{limit}}",
+    "clear": "مسح",
+    "removePerson": "إزالة {{name}}",
+    "limitExceeded": "يمكنك وسم {{limit}} أشخاص كحد أقصى.",
+    "done": "تم",
+    "with": "مع",
+    "and": "و",
+    "others": "آخرين",
+    "accept": "قبول",
+    "reject": "رفض",
+    "removeMine": "إزالة وسمِي",
+    "removeMineDescription": "إزالة ارتباطك بهذا المنشور",
+    "notificationMessage": "وسمك في منشور",
+    "taggedPeople": "الأشخاص الموسومون"
   },
   "media": {
     "add": "إضافة صورة",
@@ -187,6 +220,12 @@
   "Most Commented": "الأكثر تعليقاً",
   "Growing Rapidly": "ينمو بسرعة",
   "High Engagement": "تفاعل مرتفع",
+  "Who can tag you in posts?": "من يمكنه وسمك في المنشورات؟",
+  "Choose who can add your profile as a people tag. Text mentions are controlled separately.": "اختر من يمكنه إضافة ملفك الشخصي كوسم لشخص. الإشارات النصية مستقلة عن هذا الإعداد.",
+  "Everyone": "الجميع",
+  "People you follow": "الأشخاص الذين تتابعهم",
+  "No one": "لا أحد",
+  "Failed to update people tag privacy": "تعذر تحديث خصوصية الإشارة إلى الأشخاص",
   "shareCard": {
     "questions": "{{count}} أسئلة",
     "moreOptions": "+ {{count}} خيارات أخرى",

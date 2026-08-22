@@ -9,6 +9,7 @@ import { useGroupMembers, useGroupPendingRequests, useGroupPendingPosts } from '
 import { MediaPicker } from './media/MediaPicker';
 import { createPersistedMediaDraftFromId, mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds } from '../utils/mediaDrafts';
 import { UserAvatar } from './UserAvatar';
+import { RichMentionInput } from './RichMentionInput';
 
 export type JoinPolicy = 'OPEN' | 'REQUEST' | 'INVITE_ONLY';
 export type PostingPerms = 'AdminsOnly' | 'AllMembers' | 'ApprovalNeeded';
@@ -476,12 +477,12 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
               {/* Description Input */}
               <div>
                 <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Description</label>
-                <textarea
+                <RichMentionInput
                   value={description}
-                  onChange={(e) => setDescription(e.target.value)}
+                  onChange={setDescription}
                   placeholder="Describe your group..."
-                  rows={3}
                   className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 resize-none"
+                  minRows={3}
                 />
               </div>
 
@@ -515,12 +516,12 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
               {/* Rules Input */}
               <div>
                 <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Group Rules & Guidelines</label>
-                <textarea
+                <RichMentionInput
                   value={rules}
-                  onChange={(e) => setRules(e.target.value)}
+                  onChange={setRules}
                   placeholder="Define guidelines for members..."
-                  rows={4}
                   className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 resize-none"
+                  minRows={4}
                 />
               </div>
 

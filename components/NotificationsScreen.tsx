@@ -4,6 +4,7 @@ import { ArrowLeft, Trash2, User, PieChart, FileText, Users, Clock, Trophy, Bell
 import { Notification } from '../types';
 import { api } from '../services/api';
 import { UserAvatar } from './UserAvatar';
+import { useTranslation } from 'react-i18next';
 
 interface NotificationsScreenProps {
   notifications: Notification[];
@@ -20,6 +21,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
   onItemClick,
   currentUserId,
 }) => {
+  const { t } = useTranslation();
   const getTimeAgo = (dateStr: string) => {
     const date = new Date(dateStr);
     const now = new Date();
@@ -71,6 +73,34 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
       onNotificationsChange(notifications.filter(n => n.id !== id));
     } catch (err) {
       console.error('Failed to reject request', err);
+    }
+  };
+
+  const handleAcceptPeopleTag = async (notification: Notification, event: React.MouseEvent) => {
+    event.stopPropagation();
+    const tagId = notification.payload?.peopleTagId;
+    if (!tagId) return;
+    try {
+      await api.acceptPeopleTag(tagId);
+      onNotificationsChange(notifications.map((item) => item.id === notification.id ? {
+        ...item,
+        isRead: true,
+        payload: { ...item.payload, peopleTagStatus: 'ACCEPTED' }
+      } : item));
+    } catch (error) {
+      console.error('Failed to accept people tag', error);
+    }
+  };
+
+  const handleRejectPeopleTag = async (notification: Notification, event: React.MouseEvent) => {
+    event.stopPropagation();
+    const tagId = notification.payload?.peopleTagId;
+    if (!tagId) return;
+    try {
+      await api.rejectPeopleTag(tagId);
+      onNotificationsChange(notifications.filter((item) => item.id !== notification.id));
+    } catch (error) {
+      console.error('Failed to reject people tag', error);
     }
   };
 
@@ -132,6 +162,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
       case 'follow_request': icon = <UserPlus size={18} />; bgClass = 'bg-teal-100 text-teal-600'; break;
       case 'follow_accept': icon = <User size={18} />; bgClass = 'bg-teal-100 text-teal-600'; break;
       case 'mention': icon = <User size={18} />; bgClass = 'bg-pink-100 text-pink-600'; break;
+      case 'people_tag': icon = <UserPlus size={18} />; bgClass = 'bg-blue-100 text-blue-600'; break;
       default: icon = <Bell size={18} />; break;
     }
 
@@ -207,6 +238,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                       {notification.type === 'group_invite' && <div className="bg-orange-100 text-orange-600 rounded-full p-0.5"><Users size={10} /></div>}
                       {notification.type === 'like' && <div className="bg-pink-100 text-pink-600 rounded-full p-0.5"><Heart size={10} /></div>}
                       {(notification.type === 'follow' || notification.type === 'follow_request' || notification.type === 'follow_accept') && <div className="bg-teal-100 text-teal-600 rounded-full p-0.5"><UserPlus size={10} /></div>}
+                      {notification.type === 'people_tag' && <div className="bg-blue-100 text-blue-600 rounded-full p-0.5"><UserPlus size={10} /></div>}
                     </div>
                   )}
                 </div>
@@ -217,7 +249,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                       {notification.actor?.name ?? (['vote', 'response'].includes(notification.type) ? 'ضيف' : 'النظام')}
                     </span>
                     <span className={`text-sm ${notification.isRead ? 'text-gray-600' : 'text-gray-800 font-medium'}`}>
-                      {' '}{notification.message}
+                      {' '}{notification.type === 'people_tag' ? t('peopleTags.notificationMessage') : notification.message}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 mt-1">
@@ -258,6 +290,23 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                         className="flex-1 bg-gray-100 text-gray-700 text-xs font-bold py-2 rounded-xl active:scale-95 transition-all hover:bg-gray-200"
                       >
                         Decline
+                      </button>
+                    </div>
+                  )}
+
+                  {notification.type === 'people_tag' && notification.payload?.peopleTagStatus === 'PENDING' && notification.payload.peopleTagId && (
+                    <div className="flex gap-2 mt-3 mb-1">
+                      <button
+                        onClick={(event) => handleAcceptPeopleTag(notification, event)}
+                        className="flex-1 bg-blue-600 text-white text-xs font-bold py-2 rounded-lg active:scale-95 transition-transform"
+                      >
+                        {t('peopleTags.accept')}
+                      </button>
+                      <button
+                        onClick={(event) => handleRejectPeopleTag(notification, event)}
+                        className="flex-1 bg-gray-200 text-gray-800 text-xs font-bold py-2 rounded-lg active:scale-95 transition-transform"
+                      >
+                        {t('peopleTags.reject')}
                       </button>
                     </div>
                   )}
