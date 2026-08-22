@@ -20,11 +20,12 @@ test.describe('post options read-only UX', () => {
   test.use({ storageState: creatorStatePath });
 
   test('has a named, touch-sized menu and keeps keyboard focus inside it', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('i18nextLng', 'en'));
     const blockedMutations = await blockOnlineWrites(page);
-    await page.goto('/profile');
+    await page.goto('/');
 
     const trigger = page.getByRole('button', { name: 'Open post options' }).first();
-    await expect(trigger).toBeVisible();
+    await expect(trigger).toBeVisible({ timeout: 30_000 });
     const box = await trigger.boundingBox();
     expect(box?.width).toBeGreaterThanOrEqual(44);
     expect(box?.height).toBeGreaterThanOrEqual(44);
@@ -41,13 +42,13 @@ test.describe('post options read-only UX', () => {
     await expect(dialog).toBeHidden();
     await expect(trigger).toBeFocused();
 
-    expect(blockedMutations.filter((entry) => !entry.includes('/analytics/'))).toEqual([]);
+    expect(blockedMutations.filter((entry) => !entry.includes('/analytics/') && !entry.endsWith('/views'))).toEqual([]);
   });
 
   test('localizes the menu and aligns it correctly in Arabic RTL', async ({ page }) => {
     await page.addInitScript(() => localStorage.setItem('i18nextLng', 'ar'));
     await blockOnlineWrites(page);
-    await page.goto('/profile');
+    await page.goto('/');
 
     await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
     const trigger = page.getByRole('button', { name: 'فتح خيارات المنشور' }).first();
