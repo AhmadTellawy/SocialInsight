@@ -6,7 +6,8 @@ import {
   MEDIA_CONFIG,
   MEDIA_PURPOSE_CONFIG,
   clampMediaAspectRatio,
-  isAllowedMediaMime
+  isAllowedMediaMime,
+  maxInputBytesForPurpose
 } from '../config/media';
 
 export type NormalizedCrop = {
@@ -137,8 +138,9 @@ export const processMediaBuffer = async (
   declaredMime: string,
   request: MediaCropRequest
 ): Promise<ProcessedMedia> => {
-  if (input.length === 0 || input.length > MEDIA_CONFIG.maxInputBytes) {
-    throw new MediaValidationError('INVALID_FILE_SIZE', 'Image must be no larger than 15 MB.');
+  const maxInputBytes = maxInputBytesForPurpose(purpose);
+  if (input.length === 0 || input.length > maxInputBytes) {
+    throw new MediaValidationError('INVALID_FILE_SIZE', `Image must be no larger than ${Math.floor(maxInputBytes / 1024 / 1024)} MB.`);
   }
   if (!isAllowedMediaMime(declaredMime)) {
     throw new MediaValidationError('UNSUPPORTED_MEDIA_TYPE', 'Only JPEG, PNG, and WebP images are supported.');
@@ -212,6 +214,13 @@ export const processMediaBuffer = async (
       buffer: result.data
     };
   }));
+  if (
+    purpose === 'PROFILE_COVER'
+    && (normalized.data.length > MEDIA_CONFIG.maxCoverOutputBytes
+      || variants.some((variant) => variant.buffer.length > MEDIA_CONFIG.maxCoverOutputBytes))
+  ) {
+    throw new MediaValidationError('COVER_OUTPUT_TOO_LARGE', 'The processed cover image is too large.');
+  }
 
   return {
     sourceMime: detectedMime,

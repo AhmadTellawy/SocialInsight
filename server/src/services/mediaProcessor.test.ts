@@ -60,6 +60,33 @@ test('does not upscale a small avatar', async () => {
   assert.equal(result.variants[0].height, 40);
 });
 
+test('creates a real 3:1 profile cover crop and bounded responsive variants', async () => {
+  const source = await makeImage(2400, 1600, 'jpeg');
+  const result = await processMediaBuffer(source, 'PROFILE_COVER', 'image/jpeg', {});
+
+  assert.equal(result.aspectRatio, 3);
+  assert.ok(result.crop.height < 1);
+  assert.deepEqual(result.variants.map((variant) => variant.width), [600, 1200, 1500]);
+  assert.ok(result.variants.every((variant) => variant.width / variant.height === 3));
+  assert.ok(result.master.buffer.length <= MEDIA_CONFIG.maxCoverOutputBytes);
+  assert.ok(result.variants.every((variant) => variant.buffer.length <= MEDIA_CONFIG.maxCoverOutputBytes));
+});
+
+test('applies the cover-specific 10 MB raw upload limit', async () => {
+  await assert.rejects(
+    () => processMediaBuffer(Buffer.alloc(MEDIA_CONFIG.maxCoverInputBytes + 1), 'PROFILE_COVER', 'image/jpeg', {}),
+    (error: unknown) => error instanceof MediaValidationError && error.code === 'INVALID_FILE_SIZE'
+  );
+});
+
+test('rejects MIME spoofing for profile covers', async () => {
+  const png = await makeImage(1200, 400, 'png');
+  await assert.rejects(
+    () => processMediaBuffer(png, 'PROFILE_COVER', 'image/jpeg', {}),
+    (error: unknown) => error instanceof MediaValidationError && error.code === 'MIME_MISMATCH'
+  );
+});
+
 test('applies EXIF orientation before deriving dimensions', async () => {
   const source = await sharp({
     create: { width: 40, height: 80, channels: 3, background: { r: 10, g: 20, b: 30 } }

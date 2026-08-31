@@ -9,25 +9,26 @@ datasource db {
 }
 
 model User {
-  id                String    @id @default(uuid())
-  name              String
-  handle            String    @unique
-  email             String?   @unique
-  phone             String?   @unique
-  password          String? // Temporary for migration
-  passwordHash      String?   @map("password_hash") // Nullable for migration
-  passwordUpdatedAt DateTime? @map("password_updated_at")
-  avatar            String?
-  avatarMediaId     String?   @unique @map("avatar_media_id")
-  bio               String?
-  location          String?
-  website           String?
-  birthday          DateTime?
-  language          String?   @default("en")
-  country           String?
-  isPrivate         Boolean   @default(false) @map("is_private")
-  mediaPrivacyTarget Boolean? @map("media_privacy_target")
-  groupPrivacy      String    @default("Public") @map("group_privacy")
+  id                  String              @id @default(uuid())
+  name                String
+  handle              String              @unique
+  email               String?             @unique
+  phone               String?             @unique
+  password            String? // Temporary for migration
+  passwordHash        String?             @map("password_hash") // Nullable for migration
+  passwordUpdatedAt   DateTime?           @map("password_updated_at")
+  avatar              String?
+  avatarMediaId       String?             @unique @map("avatar_media_id")
+  coverMediaId        String?             @unique @map("cover_media_id")
+  bio                 String?
+  location            String?
+  website             String?
+  birthday            DateTime?           @db.Date
+  language            String?             @default("en")
+  country             String?
+  isPrivate           Boolean             @default(false) @map("is_private")
+  mediaPrivacyTarget  Boolean?            @map("media_privacy_target")
+  groupPrivacy        String              @default("Public") @map("group_privacy")
   peopleTagPermission PeopleTagPermission @default(EVERYONE) @map("people_tag_permission")
 
   // Verification & Status
@@ -56,25 +57,44 @@ model User {
   reports                Report[]              @relation("Reporter")
 
   // Existing relations to other models
-  posts             Post[]
-  comments          Comment[]
-  responses         Response[]
-  groups            GroupMember[]
-  likes             UserLike[]
-  commentLikes      CommentLike[]
-  pushSubscriptions PushSubscription[]
-  blocking          UserBlock[]        @relation("UserBlocks")
-  blockedBy         UserBlock[]        @relation("UserBlocked")
-  avatarMedia       MediaAsset?        @relation("UserAvatarMedia", fields: [avatarMediaId], references: [id], onDelete: SetNull)
-  ownedMedia        MediaAsset[]       @relation("MediaOwner")
+  posts                   Post[]
+  comments                Comment[]
+  responses               Response[]
+  groups                  GroupMember[]
+  likes                   UserLike[]
+  commentLikes            CommentLike[]
+  pushSubscriptions       PushSubscription[]
+  blocking                UserBlock[]              @relation("UserBlocks")
+  blockedBy               UserBlock[]              @relation("UserBlocked")
+  avatarMedia             MediaAsset?              @relation("UserAvatarMedia", fields: [avatarMediaId], references: [id], onDelete: SetNull)
+  coverMedia              MediaAsset?              @relation("UserCoverMedia", fields: [coverMediaId], references: [id], onDelete: SetNull)
+  ownedMedia              MediaAsset[]             @relation("MediaOwner")
   mediaPrivacyTransitions MediaPrivacyTransition[]
   mentionsReceived   Mention[]          @relation("MentionTarget")
   mentionsCreated    Mention[]          @relation("MentionActor")
   profileMentions    Mention[]          @relation("MentionProfile")
   peopleTagsReceived PostTaggedUser[]   @relation("PeopleTagTarget")
   peopleTagsCreated  PostTaggedUser[]   @relation("PeopleTagActor")
+  profileLinks       ProfileLink[]
 
   @@map("users")
+}
+
+model ProfileLink {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  title         String   @db.VarChar(50)
+  url           String   @db.VarChar(2048)
+  normalizedUrl String   @map("normalized_url") @db.VarChar(2048)
+  sortOrder     Int      @map("sort_order")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, normalizedUrl])
+  @@unique([userId, sortOrder])
+  @@map("profile_links")
 }
 
 model UserDemographics {
@@ -295,6 +315,7 @@ model Option {
 enum MediaPurpose {
   POST
   PROFILE_AVATAR
+  PROFILE_COVER
   GROUP_IMAGE
   QUESTION_IMAGE
   OPTION_IMAGE
@@ -366,6 +387,7 @@ model MediaAsset {
   variants       MediaVariant[]
   postAttachment PostMedia?
   avatarFor      User?          @relation("UserAvatarMedia")
+  coverFor       User?          @relation("UserCoverMedia")
   groupFor       Group?         @relation("GroupImageMedia")
   questionFor    Question?      @relation("QuestionImageMedia")
   optionFor      Option?        @relation("OptionImageMedia")
@@ -680,7 +702,7 @@ model PendingRegistration {
   id           String    @id @default(uuid())
   email        String    @unique
   fullName     String
-  dob          DateTime
+  dob          DateTime  @db.Date
   password     String?
   handle       String?   @unique
   currentStep  Int       @default(2)

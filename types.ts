@@ -27,7 +27,7 @@ export interface MediaPresentation {
   sources?: Array<{ src: string; width: number; height: number }>;
 }
 
-export type MediaPurpose = 'POST' | 'PROFILE_AVATAR' | 'GROUP_IMAGE' | 'QUESTION_IMAGE' | 'OPTION_IMAGE';
+export type MediaPurpose = 'POST' | 'PROFILE_AVATAR' | 'PROFILE_COVER' | 'GROUP_IMAGE' | 'QUESTION_IMAGE' | 'OPTION_IMAGE';
 export type OptionPresentation = 'text' | 'image';
 
 export interface MediaCropSelection {
@@ -93,6 +93,16 @@ export interface MediaDraft {
   replacedDraft?: MediaDraft;
 }
 
+export interface ProfileLink {
+  id: string;
+  title: string;
+  url: string;
+  normalizedUrl?: string;
+  sortOrder: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface UserProfile {
   id?: string; // Added id
   name: string;
@@ -100,13 +110,18 @@ export interface UserProfile {
   avatar: string;
   avatarMediaId?: string;
   avatarMedia?: MediaPresentation;
+  coverMediaId?: string | null;
+  coverMedia?: MediaPresentation | null;
+  coverUpdatedAt?: string | null;
   bio: string;
   location: string;
   website: string;
   email: string;
   phone: string;
   language: string;
-  birthday?: string;
+  birthday?: string | null;
+  profileLinks?: ProfileLink[];
+  updatedAt?: string;
   country?: string;
   isPrivate?: boolean;
   isFollowing?: boolean;

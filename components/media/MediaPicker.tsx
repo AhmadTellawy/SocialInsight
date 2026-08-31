@@ -55,9 +55,15 @@ type MediaPickerProps = {
   renderContent?: (controls: MediaPickerControls) => React.ReactNode;
 };
 
-const MAX_INPUT_BYTES = 15 * 1024 * 1024;
+const DEFAULT_MAX_INPUT_BYTES = 15 * 1024 * 1024;
+const COVER_MAX_INPUT_BYTES = 10 * 1024 * 1024;
 const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
-const FIXED_RATIO_PURPOSES = new Set<MediaPurpose>(['PROFILE_AVATAR', 'GROUP_IMAGE', 'OPTION_IMAGE']);
+
+const fixedRatioForPurpose = (purpose: MediaPurpose): number | undefined => {
+  if (purpose === 'PROFILE_COVER') return 3;
+  if (['PROFILE_AVATAR', 'GROUP_IMAGE', 'OPTION_IMAGE'].includes(purpose)) return 1;
+  return undefined;
+};
 
 const loadImageRatio = (url: string): Promise<number> => new Promise((resolve, reject) => {
   const image = new Image();
@@ -257,8 +263,12 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
         setValidationError(t('media.invalidType', { defaultValue: 'Use a JPEG, PNG, or WebP image.' }));
         return false;
       }
-      if (file.size > MAX_INPUT_BYTES) {
-        setValidationError(t('media.tooLarge', { defaultValue: 'Images must be 15 MB or smaller.' }));
+      const maxInputBytes = purpose === 'PROFILE_COVER' ? COVER_MAX_INPUT_BYTES : DEFAULT_MAX_INPUT_BYTES;
+      if (file.size > maxInputBytes) {
+        setValidationError(t(
+          purpose === 'PROFILE_COVER' ? 'profile.cover.tooLarge' : 'media.tooLarge',
+          { max: purpose === 'PROFILE_COVER' ? 10 : 15, defaultValue: `Images must be ${purpose === 'PROFILE_COVER' ? 10 : 15} MB or smaller.` }
+        ));
         return false;
       }
       return true;
@@ -274,8 +284,9 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
         if (purpose === 'POST' && !establishedPostRatio) {
           establishedPostRatio = Math.min(1.91, Math.max(0.8, sourceRatio));
         }
-        const established = FIXED_RATIO_PURPOSES.has(purpose)
-          ? 1
+        const fixedRatio = fixedRatioForPurpose(purpose);
+        const established = fixedRatio
+          ? fixedRatio
           : purpose === 'POST'
             ? establishedPostRatio!
             : Math.min(1.91, Math.max(0.8, sourceRatio));

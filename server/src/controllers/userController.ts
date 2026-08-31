@@ -8,6 +8,7 @@ import { GroupPermissionService } from '../services/groupPermissionService';
 import { MEMBERSHIP_STATUS, POST_STATUS } from '../utils/constants';
 import {
     commitPreparedMedia,
+    getMediaReadPresentation,
     getStoredMediaPresentation,
     PUBLIC_AVATAR_MEDIA_SELECT,
     PUBLIC_GROUP_MEDIA_INCLUDE,
@@ -28,6 +29,12 @@ import {
     reconcileProfileMentions,
     serializeMentionReferences
 } from '../services/mentionLifecycleService';
+import {
+    ProfileValidationError,
+    calculateAgeGroupFromDate,
+    formatDateOnly,
+    parseAndValidateDateOfBirth
+} from '../utils/profileValidation';
 
 const SAFE_USER_SELECT = {
     id: true,
@@ -46,9 +53,49 @@ const SAFE_USER_SELECT = {
     followersCount: true,
     followingCount: true,
     createdAt: true,
+    updatedAt: true,
     country: true,
     language: true,
     status: true
+};
+
+const PROFILE_LINK_SELECT = {
+    id: true,
+    title: true,
+    url: true,
+    normalizedUrl: true,
+    sortOrder: true,
+    createdAt: true,
+    updatedAt: true
+} as const;
+
+const publicUserPayload = (user: Record<string, any>) => {
+    const {
+        mediaPrivacyTarget: _mediaPrivacyTarget,
+        status: _status,
+        coverMedia: _coverMedia,
+        profileMentions: _profileMentions,
+        profileLinks: _profileLinks,
+        birthday: _birthday,
+        email: _email,
+        phone: _phone,
+        password: _password,
+        passwordHash: _passwordHash,
+        passwordUpdatedAt: _passwordUpdatedAt,
+        authProvider: _authProvider,
+        ...safe
+    } = user;
+    return safe;
+};
+
+const profileCoverForViewer = async (coverMediaId: string | null | undefined, viewerId?: string): Promise<any | null> => {
+    if (!coverMediaId) return null;
+    try {
+        return await getMediaReadPresentation(coverMediaId, viewerId);
+    } catch (error) {
+        if (error instanceof MediaValidationError && error.statusCode === 404) return null;
+        throw error;
+    }
 };
 
 export const getUsers = async (req: Request, res: Response) => {
@@ -111,74 +158,80 @@ export const searchUsers = async (req: Request, res: Response) => {
     }
 };
 
-export const getUser = async (req: Request, res: Response) => {
-    const { id } = req.params;
-    try {
-        const user = await prisma.user.findUnique({
-            where: { id: id as string },
-            include: {
-                avatarMedia: { include: { variants: true } },
-                profileMentions: ACTIVE_MENTION_REFERENCE_INCLUDE
-            }
-        });
+const PROFILE_READ_SELECT = {
+    ...SAFE_USER_SELECT,
+    coverMediaId: true,
+    profileMentions: ACTIVE_MENTION_REFERENCE_INCLUDE
+} as const;
 
-        if (!user) {
-            res.status(404).json({ error: 'User not found' });
-            return;
-        }
-
-        const { password: _, passwordHash: __, ...safeUser } = user;
-        const serializedUser = serializeUserMediaRecord(safeUser)!;
-
-        const demographics = await prisma.userDemographics.findUnique({
-            where: { userId: user.id }
-        });
-
-        let followStatus = 'NONE';
-        if (req.user?.userId && req.user.userId !== user.id) {
-            const blockRecord = await prisma.userBlock.findFirst({
+const sendPublicProfile = async (req: Request, res: Response, user: any): Promise<void> => {
+    const viewerId = req.user?.userId;
+    let followStatus = 'NONE';
+    let isBlocked = false;
+    if (viewerId && viewerId !== user.id) {
+        const [blockRecord, follow] = await Promise.all([
+            prisma.userBlock.findFirst({
                 where: {
                     OR: [
-                        { blockerId: req.user.userId, blockedId: user.id },
-                        { blockerId: user.id, blockedId: req.user.userId }
+                        { blockerId: viewerId, blockedId: user.id },
+                        { blockerId: user.id, blockedId: viewerId }
                     ]
-                }
-            });
-            if (blockRecord) {
-                res.status(404).json({ error: 'User not found' });
-                return;
-            }
-
-            const follow = await prisma.follow.findUnique({
-                where: { followerId_followingId: { followerId: req.user.userId, followingId: user.id } }
-            });
-            if (follow) {
-                followStatus = follow.status;
-            }
-        }
-
-        const [postsCount, responsesCount] = await Promise.all([
-            prisma.post.count({
-                where: { authorId: user.id, isDeleted: false, status: 'PUBLISHED', sharedFromId: null }
+                },
+                select: { blockerId: true }
             }),
-            prisma.response.count({
-                where: { post: { authorId: user.id, isDeleted: false, status: 'PUBLISHED' } }
+            prisma.follow.findUnique({
+                where: { followerId_followingId: { followerId: viewerId, followingId: user.id } },
+                select: { status: true }
             })
         ]);
+        if (blockRecord) {
+            isBlocked = true;
+        }
+        if (follow) followStatus = follow.status;
+    }
 
-        res.json({
-            ...serializedUser,
-            bioMentions: serializeMentionReferences(user.profileMentions),
-            followStatus,
-            isFollowing: followStatus === 'ACTIVE',
-            demographics: demographics || {},
-            stats: {
-                followers: user.followersCount,
-                following: user.followingCount,
-                posts: postsCount,
-                responses: responsesCount
-            }
-        });
+    if (isBlocked) {
+        res.status(404).json({ error: 'User not found' });
+        return;
+    }
+
+    const isPrivateProfile = user.isPrivate || user.mediaPrivacyTarget === true;
+    const canViewPrivateDetails = viewerId === user.id
+        || (!isPrivateProfile && !isBlocked)
+        || followStatus === 'ACTIVE';
+    const [demographics, postsCount, responsesCount, profileLinks, coverMedia] = await Promise.all([
+        prisma.userDemographics.findUnique({ where: { userId: user.id } }),
+        prisma.post.count({ where: { authorId: user.id, isDeleted: false, status: 'PUBLISHED', sharedFromId: null } }),
+        prisma.response.count({ where: { post: { authorId: user.id, isDeleted: false, status: 'PUBLISHED' } } }),
+        canViewPrivateDetails
+            ? prisma.profileLink.findMany({ where: { userId: user.id }, orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], select: PROFILE_LINK_SELECT })
+            : Promise.resolve([]),
+        canViewPrivateDetails ? profileCoverForViewer(user.coverMediaId, viewerId) : Promise.resolve(null)
+    ]);
+    const serializedUser = publicUserPayload(serializeUserMediaRecord(user) as any);
+    res.json({
+        ...serializedUser,
+        coverMediaId: coverMedia?.id || null,
+        coverMedia,
+        profileLinks,
+        bioMentions: serializeMentionReferences(user.profileMentions),
+        followStatus,
+        isFollowing: followStatus === 'ACTIVE',
+        demographics: demographics || {},
+        stats: {
+            followers: user.followersCount,
+            following: user.followingCount,
+            posts: postsCount,
+            responses: responsesCount
+        }
+    });
+};
+
+export const getUser = async (req: Request, res: Response) => {
+    try {
+        const user = await prisma.user.findUnique({ where: { id: req.params.id as string }, select: PROFILE_READ_SELECT });
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        await sendPublicProfile(req, res, user);
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Failed to fetch user' });
@@ -186,70 +239,44 @@ export const getUser = async (req: Request, res: Response) => {
 };
 
 export const getUserByHandle = async (req: Request, res: Response) => {
-    const { handle } = req.params;
     try {
-        let cleanHandle = handle as string;
-        if (cleanHandle.startsWith('@')) {
-            cleanHandle = cleanHandle.substring(1);
-        }
+        const cleanHandle = (req.params.handle as string).replace(/^@/, '');
+        const user = await prisma.user.findUnique({ where: { handle: cleanHandle }, select: PROFILE_READ_SELECT });
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        await sendPublicProfile(req, res, user);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Failed to fetch user by handle' });
+    }
+};
 
+export const getMe = async (req: Request, res: Response) => {
+    try {
         const user = await prisma.user.findUnique({
-            where: { handle: cleanHandle },
-            include: {
-                avatarMedia: { include: { variants: true } },
-                profileMentions: ACTIVE_MENTION_REFERENCE_INCLUDE
+            where: { id: req.user!.userId },
+            select: {
+                ...PROFILE_READ_SELECT,
+                birthday: true,
+                profileLinks: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], select: PROFILE_LINK_SELECT }
             }
         });
-
-        if (!user) {
-            res.status(404).json({ error: 'User not found' });
-            return;
-        }
-
-        const { password: _, passwordHash: __, ...safeUser } = user;
-        const serializedUser = serializeUserMediaRecord(safeUser)!;
-
-        const demographics = await prisma.userDemographics.findUnique({
-            where: { userId: user.id }
-        });
-
-        let followStatus = 'NONE';
-        if (req.user?.userId && req.user.userId !== user.id) {
-            const blockRecord = await prisma.userBlock.findFirst({
-                where: {
-                    OR: [
-                        { blockerId: req.user.userId, blockedId: user.id },
-                        { blockerId: user.id, blockedId: req.user.userId }
-                    ]
-                }
-            });
-            if (blockRecord) {
-                res.status(404).json({ error: 'User not found' });
-                return;
-            }
-
-            const follow = await prisma.follow.findUnique({
-                where: { followerId_followingId: { followerId: req.user.userId, followingId: user.id } }
-            });
-            if (follow) {
-                followStatus = follow.status;
-            }
-        }
-
-        const [postsCount, responsesCount] = await Promise.all([
-            prisma.post.count({
-                where: { authorId: user.id, isDeleted: false, status: 'PUBLISHED', sharedFromId: null }
-            }),
-            prisma.response.count({
-                where: { post: { authorId: user.id, isDeleted: false, status: 'PUBLISHED' } }
-            })
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        const [demographics, postsCount, responsesCount, coverMedia] = await Promise.all([
+            prisma.userDemographics.findUnique({ where: { userId: user.id } }),
+            prisma.post.count({ where: { authorId: user.id, isDeleted: false, status: 'PUBLISHED', sharedFromId: null } }),
+            prisma.response.count({ where: { post: { authorId: user.id, isDeleted: false, status: 'PUBLISHED' } } }),
+            profileCoverForViewer(user.coverMediaId, user.id)
         ]);
-
+        const serializedUser = publicUserPayload(serializeUserMediaRecord(user) as any);
+        res.setHeader('Cache-Control', 'private, no-store');
         res.json({
             ...serializedUser,
+            birthday: formatDateOnly(user.birthday),
+            coverMediaId: coverMedia?.id || null,
+            coverMedia,
+            profileLinks: user.profileLinks,
             bioMentions: serializeMentionReferences(user.profileMentions),
-            followStatus,
-            isFollowing: followStatus === 'ACTIVE',
+            isPrivate: user.mediaPrivacyTarget === true || user.isPrivate,
             demographics: demographics || {},
             stats: {
                 followers: user.followersCount,
@@ -260,7 +287,7 @@ export const getUserByHandle = async (req: Request, res: Response) => {
         });
     } catch (error) {
         console.error(error);
-        res.status(500).json({ error: 'Failed to fetch user by handle' });
+        res.status(500).json({ error: 'Failed to fetch current user' });
     }
 };
 
@@ -274,7 +301,45 @@ export const updateUser = async (req: Request, res: Response) => {
     const data = req.body;
 
     try {
-        const currentUser = await prisma.user.findUnique({ where: { id }, select: { avatar: true, avatarMediaId: true } });
+        const currentUser = await prisma.user.findUnique({
+            where: { id },
+            select: {
+                avatar: true,
+                avatarMediaId: true,
+                coverMediaId: true,
+                birthday: true,
+                isPrivate: true,
+                mediaPrivacyTarget: true,
+                updatedAt: true
+            }
+        });
+        if (!currentUser) return res.status(404).json({ error: 'User not found' });
+
+        const expectedUpdatedAtValue = data.expectedUpdatedAt ?? data.updatedAt;
+        let expectedUpdatedAt: Date | undefined;
+        if (expectedUpdatedAtValue !== undefined) {
+            expectedUpdatedAt = new Date(expectedUpdatedAtValue);
+            if (Number.isNaN(expectedUpdatedAt.getTime())) {
+                throw new ProfileValidationError('INVALID_PROFILE_VERSION', 'The profile version is invalid.');
+            }
+        }
+        if (data.coverMediaId !== undefined && !expectedUpdatedAt) {
+            throw new ProfileValidationError('PROFILE_VERSION_REQUIRED', 'The current profile version is required to change the cover photo.', 428);
+        }
+
+        const hasBirthday = Object.prototype.hasOwnProperty.call(data, 'birthday') || Object.prototype.hasOwnProperty.call(data, 'dateOfBirth');
+        if (data.birthday !== undefined && data.dateOfBirth !== undefined && data.birthday !== data.dateOfBirth) {
+            throw new ProfileValidationError('INVALID_DATE_OF_BIRTH', 'Provide one date of birth value.');
+        }
+        const birthdayValue = data.birthday !== undefined ? data.birthday : data.dateOfBirth;
+        if (hasBirthday && (birthdayValue === null || birthdayValue === '') && currentUser.birthday) {
+            throw new ProfileValidationError('DATE_OF_BIRTH_REQUIRED', 'Date of birth cannot be removed after it has been set.');
+        }
+        const parsedBirthday = hasBirthday
+            ? (birthdayValue === null || birthdayValue === '' ? null : parseAndValidateDateOfBirth(birthdayValue))
+            : undefined;
+        const calculatedAgeGroup = hasBirthday ? (calculateAgeGroupFromDate(parsedBirthday) || null) : undefined;
+
         if (data.avatar && data.avatarMediaId === undefined) {
             data.avatar = await processBase64Image(data.avatar, currentUser?.avatar);
         }
@@ -284,6 +349,8 @@ export const updateUser = async (req: Request, res: Response) => {
         allowedFields.forEach(field => {
             if (data[field] !== undefined) updateData[field] = data[field];
         });
+        if (hasBirthday) updateData.birthday = parsedBirthday;
+        updateData.updatedAt = new Date();
         if (data.peopleTagPermission !== undefined) {
             if (!Object.values(PeopleTagPermission).includes(data.peopleTagPermission)) {
                 return res.status(400).json({ error: 'Invalid people tag permission', code: 'INVALID_PEOPLE_TAG_PERMISSION' });
@@ -292,7 +359,9 @@ export const updateUser = async (req: Request, res: Response) => {
         }
 
         let oldAvatarMediaId: string | null | undefined;
-        let prepared: PreparedMediaAttachment | null = null;
+        let oldCoverMediaId: string | null | undefined;
+        let avatarPrepared: PreparedMediaAttachment | null = null;
+        let coverPrepared: PreparedMediaAttachment | null = null;
         try {
             if (data.avatarMediaId !== undefined) {
                 oldAvatarMediaId = currentUser?.avatarMediaId;
@@ -300,7 +369,7 @@ export const updateUser = async (req: Request, res: Response) => {
                     updateData.avatarMediaId = null;
                     updateData.avatar = null;
                 } else {
-                    prepared = await prepareMediaAttachments(id, [{ id: data.avatarMediaId, purpose: 'PROFILE_AVATAR' }], 'PUBLIC');
+                    avatarPrepared = await prepareMediaAttachments(id, [{ id: data.avatarMediaId, purpose: 'PROFILE_AVATAR' }], 'PUBLIC');
                     const presentation = await getStoredMediaPresentation(data.avatarMediaId);
                     if (!presentation?.src) throw new MediaValidationError('MEDIA_NOT_READY', 'Avatar variants are unavailable.', 409);
                     updateData.avatarMediaId = data.avatarMediaId;
@@ -308,22 +377,76 @@ export const updateUser = async (req: Request, res: Response) => {
                 }
             }
 
+            if (data.coverMediaId !== undefined) {
+                oldCoverMediaId = currentUser.coverMediaId;
+                if (data.coverMediaId === currentUser.coverMediaId) {
+                    // A persisted cover sent back unchanged is not a new attachment.
+                } else if (data.coverMediaId === null) {
+                    updateData.coverMediaId = null;
+                } else if (typeof data.coverMediaId === 'string') {
+                    const targetIsPrivate = typeof data.isPrivate === 'boolean'
+                        ? data.isPrivate
+                        : (currentUser.mediaPrivacyTarget ?? currentUser.isPrivate);
+                    coverPrepared = await prepareMediaAttachments(
+                        id,
+                        [{ id: data.coverMediaId, purpose: 'PROFILE_COVER' }],
+                        targetIsPrivate ? 'RESTRICTED' : 'PUBLIC'
+                    );
+                    const presentation = await getStoredMediaPresentation(data.coverMediaId);
+                    if (!presentation || Math.abs(presentation.aspectRatio - 3) > 0.0001) {
+                        throw new MediaValidationError('MEDIA_NOT_READY', 'Cover variants are unavailable.', 409);
+                    }
+                    updateData.coverMediaId = data.coverMediaId;
+                } else {
+                    throw new ProfileValidationError('INVALID_COVER_MEDIA', 'Cover media must be a media ID or null.');
+                }
+            }
+
             await prisma.$transaction(async (tx) => {
-                const updated = await tx.user.update({ where: { id }, data: updateData });
+                if (expectedUpdatedAt) {
+                    const versionedUpdate = await tx.user.updateMany({
+                        where: { id, updatedAt: expectedUpdatedAt },
+                        data: updateData
+                    });
+                    if (versionedUpdate.count !== 1) {
+                        throw new ProfileValidationError('PROFILE_UPDATE_CONFLICT', 'Your profile changed elsewhere. Refresh and try again.', 409);
+                    }
+                } else {
+                    await tx.user.update({ where: { id }, data: updateData });
+                }
+                const updated = await tx.user.findUniqueOrThrow({ where: { id } });
                 await reconcileProfileMentions(tx, {
                     profileUserId: id,
                     actorUserId: id,
                     bio: updated.bio || ''
                 });
-                if (prepared) await commitPreparedMedia(tx, prepared);
+                if (hasBirthday) {
+                    await tx.userDemographics.upsert({
+                        where: { userId: id },
+                        create: { userId: id, ageGroup: calculatedAgeGroup },
+                        update: { ageGroup: calculatedAgeGroup }
+                    });
+                }
+                if (avatarPrepared) await commitPreparedMedia(tx, avatarPrepared);
+                if (coverPrepared) await commitPreparedMedia(tx, coverPrepared);
+                if (oldCoverMediaId && oldCoverMediaId !== data.coverMediaId) {
+                    await tx.mediaAsset.updateMany({
+                        where: { id: oldCoverMediaId, ownerId: id, status: 'ATTACHED' },
+                        data: { status: 'PENDING_DELETE' }
+                    });
+                }
             });
         } catch (error) {
-            if (prepared) await rollbackPreparedMedia(prepared);
+            if (avatarPrepared) await rollbackPreparedMedia(avatarPrepared);
+            if (coverPrepared) await rollbackPreparedMedia(coverPrepared);
             throw error;
         }
 
         if (oldAvatarMediaId && oldAvatarMediaId !== data.avatarMediaId) {
             await scheduleMediaDeletion([oldAvatarMediaId]);
+        }
+        if (oldCoverMediaId && oldCoverMediaId !== data.coverMediaId) {
+            await scheduleMediaDeletion([oldCoverMediaId]);
         }
 
         if (typeof data.isPrivate === 'boolean') {
@@ -362,7 +485,7 @@ export const updateUser = async (req: Request, res: Response) => {
             interface DemoData {
                 gender?: string;
                 maritalStatus?: string;
-                ageGroup?: string;
+                ageGroup?: string | null;
                 educationLevel?: string;
                 employmentType?: string;
                 industry?: string;
@@ -373,7 +496,7 @@ export const updateUser = async (req: Request, res: Response) => {
             const demoData: DemoData = {
                 gender: typeof rawDemo.gender === 'string' ? rawDemo.gender : undefined,
                 maritalStatus: typeof rawDemo.maritalStatus === 'string' ? rawDemo.maritalStatus : undefined,
-                ageGroup: typeof rawDemo.ageGroup === 'string' ? rawDemo.ageGroup : undefined,
+                ageGroup: hasBirthday ? calculatedAgeGroup : (typeof rawDemo.ageGroup === 'string' ? rawDemo.ageGroup : undefined),
                 educationLevel: typeof rawDemo.educationLevel === 'string' ? rawDemo.educationLevel : undefined,
                 employmentType: typeof rawDemo.employmentType === 'string' ? rawDemo.employmentType : undefined,
                 industry: typeof rawDemo.industry === 'string' ? rawDemo.industry : undefined,
@@ -419,11 +542,21 @@ export const updateUser = async (req: Request, res: Response) => {
             where: { id },
             select: {
                 ...SAFE_USER_SELECT,
+                coverMediaId: true,
+                birthday: true,
+                profileLinks: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], select: PROFILE_LINK_SELECT },
                 profileMentions: ACTIVE_MENTION_REFERENCE_INCLUDE
             }
         });
+        const coverMedia = await profileCoverForViewer(user.coverMediaId, id);
+        const serializedUser = publicUserPayload(serializeUserMediaRecord(user) as any);
+        res.setHeader('Cache-Control', 'private, no-store');
         res.json({
-            ...serializeUserMediaRecord(user),
+            ...serializedUser,
+            birthday: formatDateOnly(user.birthday),
+            coverMediaId: coverMedia?.id || null,
+            coverMedia,
+            profileLinks: user.profileLinks,
             bioMentions: serializeMentionReferences(user.profileMentions),
             isPrivate: user.mediaPrivacyTarget === true || user.isPrivate,
             demographics,
@@ -441,6 +574,9 @@ export const updateUser = async (req: Request, res: Response) => {
         }
         if (error instanceof MentionLimitError) {
             return res.status(400).json({ error: error.message, code: 'MENTION_LIMIT_EXCEEDED', limit: error.limit });
+        }
+        if (error instanceof ProfileValidationError) {
+            return res.status(error.statusCode).json({ error: error.message, code: error.code });
         }
         if (error instanceof Error && error.message.includes('privacy transition')) {
             return res.status(409).json({ error: error.message, code: 'PRIVACY_TRANSITION_IN_PROGRESS' });
@@ -887,6 +1023,7 @@ export const deleteAccount = async (req: Request, res: Response) => {
                     passwordHash: null,
                     avatar: null,
                     avatarMediaId: null,
+                    coverMediaId: null,
                     bio: null,
                     location: null,
                     website: null,
@@ -899,6 +1036,7 @@ export const deleteAccount = async (req: Request, res: Response) => {
 
             // Delete demographics
             await tx.userDemographics.deleteMany({ where: { userId: id } });
+            await tx.profileLink.deleteMany({ where: { userId: id } });
 
             // Delete relationships
             await tx.follow.deleteMany({ where: { OR: [{ followerId: id }, { followingId: id }] } });

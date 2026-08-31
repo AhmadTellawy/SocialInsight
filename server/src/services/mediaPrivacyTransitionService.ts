@@ -16,7 +16,7 @@ export const processMediaPrivacyTransition = async (transitionId: string): Promi
     const assets = await prisma.mediaAsset.findMany({
       where: {
         ownerId: transition.userId,
-        purpose: { in: ['POST', 'QUESTION_IMAGE', 'OPTION_IMAGE'] },
+        purpose: { in: ['POST', 'PROFILE_COVER', 'QUESTION_IMAGE', 'OPTION_IMAGE'] },
         status: 'ATTACHED',
         accessScope: transition.targetIsPrivate ? 'PUBLIC' : 'RESTRICTED',
         ...(transition.cursorAssetId ? { id: { gt: transition.cursorAssetId } } : {})

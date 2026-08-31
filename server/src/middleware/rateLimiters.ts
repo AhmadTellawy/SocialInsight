@@ -10,3 +10,14 @@ export const mentionSearchLimiter = rateLimit({
         code: 'MENTION_SEARCH_RATE_LIMITED'
     }
 });
+
+export const profileMutationLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 90,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+        error: 'Too many profile changes. Please try again later.',
+        code: 'PROFILE_RATE_LIMITED'
+    }
+});

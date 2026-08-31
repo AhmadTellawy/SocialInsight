@@ -8,6 +8,8 @@
     "profile": "Profile"
   },
   "common": {
+    "back": "Back",
+    "more": "More options",
     "cancel": "Cancel",
     "apply": "Apply",
     "retry": "Retry",
@@ -411,6 +413,120 @@
   "People you follow": "People you follow",
   "No one": "No one",
   "Failed to update people tag privacy": "Failed to update people tag privacy",
+  "profile": {
+    "edit": {
+      "title": "Edit Profile",
+      "displayName": "Display name",
+      "nameRequired": "Name is required.",
+      "bio": "Bio",
+      "save": "Save",
+      "saving": "Saving...",
+      "saveFailed": "Your profile changes could not be saved. Check your connection and try again.",
+      "loadFailed": "Some private profile details could not be loaded.",
+      "conflict": "Your profile changed elsewhere. Reload and try again.",
+      "discardConfirm": "Discard your unsaved profile changes?",
+      "noChanges": "Make a change to enable Save."
+    },
+    "avatar": {
+      "alt": "Profile photo",
+      "change": "Change profile photo"
+    },
+    "cover": {
+      "actionsTitle": "Cover photo",
+      "edit": "Edit cover photo",
+      "upload": "Upload cover photo",
+      "change": "Change cover photo",
+      "remove": "Remove cover photo",
+      "removing": "Removing...",
+      "removeConfirmTitle": "Remove cover photo?",
+      "removeConfirmDescription": "Your profile will return to the default cover placeholder after you save.",
+      "removeFailed": "The cover photo could not be removed. Please try again.",
+      "processing": "Processing cover photo",
+      "uploadProgress": "Uploading cover photo, {{progress}}%",
+      "cropTitle": "Crop cover photo",
+      "tooLarge": "Cover photos must be 10 MB or smaller."
+    },
+    "links": {
+      "sheetTitle": "Links",
+      "more": "{{count}} more",
+      "viewAll": "View all {{count}} links"
+    },
+    "dateOfBirth": {
+      "label": "Date of birth",
+      "privacy": "Your date of birth is not visible to others",
+      "required": "Enter your date of birth.",
+      "invalid": "Enter a valid date of birth.",
+      "future": "Date of birth cannot be in the future.",
+      "underage": "You must be at least {{minAge}} years old.",
+      "tooOld": "Enter a date of birth within the last {{maxAge}} years."
+    }
+  },
+  "profileLinks": {
+    "manageTitle": "Manage Links",
+    "addTitle": "Add Link",
+    "editTitle": "Edit Link",
+    "count": "{{count}} of {{max}} links",
+    "listLabel": "Profile links",
+    "loading": "Loading profile links",
+    "loadErrorTitle": "Links unavailable",
+    "limitReached": "You can add up to {{max}} links.",
+    "empty": {
+      "title": "No links yet",
+      "description": "Add links to your social profiles, portfolio, or website."
+    },
+    "fields": {
+      "title": "Link title",
+      "titlePlaceholder": "e.g. LinkedIn or My Website",
+      "url": "Link URL",
+      "urlPlaceholder": "example.com",
+      "protocolHint": "If you leave out the protocol, https:// will be added automatically.",
+      "characterCount": "{{count}}/{{max}}"
+    },
+    "actions": {
+      "back": "Back",
+      "add": "Add Link",
+      "save": "Save",
+      "saving": "Saving...",
+      "cancel": "Cancel",
+      "retry": "Retry",
+      "editLink": "Edit {{title}} link",
+      "deleteLink": "Delete {{title}} link"
+    },
+    "validation": {
+      "titleRequired": "Enter a link title.",
+      "titleTooLong": "The title must be {{max}} characters or fewer.",
+      "titleControlCharacters": "The title contains unsupported characters.",
+      "titlePlainText": "Use plain text only, without HTML or Markdown.",
+      "urlRequired": "Enter a link URL.",
+      "urlTooLong": "The URL must be {{max}} characters or fewer.",
+      "urlControlCharacters": "The URL contains unsupported control characters.",
+      "urlWhitespace": "The URL cannot contain spaces.",
+      "urlProtocolRelative": "URLs beginning with // are not allowed.",
+      "urlScheme": "Only http:// and https:// links are allowed.",
+      "urlCredentials": "URLs containing a username or password are not allowed.",
+      "urlInvalid": "Enter a valid website URL.",
+      "duplicate": "You have already added this URL."
+    },
+    "delete": {
+      "title": "Delete link?",
+      "message": "Delete the {{title}} link from your profile?",
+      "confirm": "Delete",
+      "deleting": "Deleting..."
+    },
+    "errors": {
+      "load": "We couldn't load your links. Check your connection and try again.",
+      "add": "We couldn't add this link. Try again.",
+      "update": "We couldn't update this link. Try again.",
+      "delete": "We couldn't delete this link. It is still on your profile.",
+      "limit": "You can add up to five links.",
+      "duplicate": "You have already added this URL."
+    },
+    "success": {
+      "added": "Link added.",
+      "updated": "Link updated.",
+      "deleted": "Link deleted."
+    }
+  },
   "shareCard": {
     "questions": "{{count}} questions",
     "moreOptions": "+ {{count}} more options",

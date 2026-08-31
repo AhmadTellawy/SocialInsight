@@ -3,6 +3,8 @@ import { MediaPurpose, MediaVariantKind } from '@prisma/client';
 export const MEDIA_CONFIG = {
   maxPostImages: 8,
   maxInputBytes: 15 * 1024 * 1024,
+  maxCoverInputBytes: 10 * 1024 * 1024,
+  maxCoverOutputBytes: 3 * 1024 * 1024,
   maxDecodedPixels: 40_000_000,
   maxMasterEdge: 2400,
   maxUploadConcurrency: 3,
@@ -23,6 +25,7 @@ export type AllowedMediaMime = (typeof MEDIA_CONFIG.allowedMimeTypes)[number];
 type PurposeConfig = {
   widths: ReadonlyArray<{ width: number; kind: MediaVariantKind }>;
   fixedAspectRatio?: number;
+  maxInputBytes?: number;
 };
 
 export const MEDIA_PURPOSE_CONFIG: Record<MediaPurpose, PurposeConfig> = {
@@ -40,6 +43,15 @@ export const MEDIA_PURPOSE_CONFIG: Record<MediaPurpose, PurposeConfig> = {
       { width: 128, kind: 'SMALL' },
       { width: 256, kind: 'MEDIUM' },
       { width: 512, kind: 'LARGE' }
+    ]
+  },
+  PROFILE_COVER: {
+    fixedAspectRatio: 3,
+    maxInputBytes: 10 * 1024 * 1024,
+    widths: [
+      { width: 600, kind: 'SMALL' },
+      { width: 1200, kind: 'LARGE' },
+      { width: 1500, kind: 'XLARGE' }
     ]
   },
   GROUP_IMAGE: {
@@ -69,6 +81,9 @@ export const MEDIA_PURPOSE_CONFIG: Record<MediaPurpose, PurposeConfig> = {
 
 export const isAllowedMediaMime = (value: string): value is AllowedMediaMime =>
   MEDIA_CONFIG.allowedMimeTypes.includes(value as AllowedMediaMime);
+
+export const maxInputBytesForPurpose = (purpose: MediaPurpose): number =>
+  MEDIA_PURPOSE_CONFIG[purpose].maxInputBytes || MEDIA_CONFIG.maxInputBytes;
 
 export const clampMediaAspectRatio = (value: number): number =>
   Math.min(MEDIA_CONFIG.maxAspectRatio, Math.max(MEDIA_CONFIG.minAspectRatio, value));

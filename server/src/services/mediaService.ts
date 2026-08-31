@@ -6,7 +6,7 @@ import {
   Prisma
 } from '@prisma/client';
 import prisma from '../prisma';
-import { MEDIA_CONFIG, isAllowedMediaMime } from '../config/media';
+import { MEDIA_CONFIG, isAllowedMediaMime, maxInputBytesForPurpose } from '../config/media';
 import { GroupPermissionService } from './groupPermissionService';
 import { PrivacyService } from './privacyService';
 import { getMediaStorage, isMediaStorageConfigured } from './mediaStorage';
@@ -100,6 +100,11 @@ export const PUBLIC_AVATAR_MEDIA_SELECT = {
   avatarMedia: { include: { variants: true } }
 } as const;
 
+export const PROFILE_COVER_MEDIA_SELECT = {
+  coverMediaId: true,
+  coverMedia: { include: { variants: true } }
+} as const;
+
 export const PUBLIC_GROUP_MEDIA_INCLUDE = {
   imageMedia: { include: { variants: true } }
 } as const;
@@ -133,6 +138,7 @@ export const getMediaConfigResponse = () => ({
   enabled: isMediaStorageConfigured(),
   maxPostImages: MEDIA_CONFIG.maxPostImages,
   maxInputBytes: MEDIA_CONFIG.maxInputBytes,
+  maxCoverInputBytes: MEDIA_CONFIG.maxCoverInputBytes,
   maxDecodedPixels: MEDIA_CONFIG.maxDecodedPixels,
   maxUploadConcurrency: MEDIA_CONFIG.maxUploadConcurrency,
   minAspectRatio: MEDIA_CONFIG.minAspectRatio,
@@ -150,8 +156,9 @@ export const createMediaUpload = async (
   if (!isAllowedMediaMime(declaredMime)) {
     throw new MediaValidationError('UNSUPPORTED_MEDIA_TYPE', 'Only JPEG, PNG, and WebP images are supported.');
   }
-  if (!Number.isInteger(declaredSize) || declaredSize <= 0 || declaredSize > MEDIA_CONFIG.maxInputBytes) {
-    throw new MediaValidationError('INVALID_FILE_SIZE', 'Image must be no larger than 15 MB.');
+  const maxInputBytes = maxInputBytesForPurpose(purpose);
+  if (!Number.isInteger(declaredSize) || declaredSize <= 0 || declaredSize > maxInputBytes) {
+    throw new MediaValidationError('INVALID_FILE_SIZE', `Image must be no larger than ${Math.floor(maxInputBytes / 1024 / 1024)} MB.`);
   }
 
   const asset = await prisma.mediaAsset.create({
@@ -560,6 +567,7 @@ const resolveAssetPost = (asset: any): { id: string; authorId: string; groupId: 
 
 const canReadRestrictedAsset = async (asset: any, viewerId?: string): Promise<boolean> => {
   if (viewerId === asset.ownerId) return true;
+  if (asset.coverFor) return PrivacyService.canViewUserContent(viewerId, asset.ownerId);
   const post = resolveAssetPost(asset);
   if (!post) return false;
   const canViewPost = await GroupPermissionService.canViewPost(post.id, viewerId);
@@ -573,6 +581,7 @@ const assetWithAccessContext = (assetId: string) => prisma.mediaAsset.findUnique
   where: { id: assetId },
   include: {
     variants: true,
+    coverFor: { select: { id: true } },
     postAttachment: { include: { post: { select: POST_ACCESS_SELECT } } },
     questionFor: {
       include: {
@@ -596,6 +605,9 @@ const assetWithAccessContext = (assetId: string) => prisma.mediaAsset.findUnique
 export const getMediaReadPresentation = async (assetId: string, viewerId?: string): Promise<MediaPresentation> => {
   const asset = await assetWithAccessContext(assetId);
   if (!asset || asset.status !== 'ATTACHED' || !asset.aspectRatio) {
+    throw new MediaValidationError('MEDIA_NOT_FOUND', 'Media asset was not found.', 404);
+  }
+  if (asset.coverFor && !(await PrivacyService.canViewUserContent(viewerId, asset.ownerId))) {
     throw new MediaValidationError('MEDIA_NOT_FOUND', 'Media asset was not found.', 404);
   }
   if (asset.accessScope === 'PUBLIC') {
@@ -668,15 +680,17 @@ export const serializeMediaAsset = (
 
 export const serializeUserMediaRecord = <T extends Record<string, any>>(user?: T | null): T | null | undefined => {
   if (!user) return user;
-  const { avatarMedia, ...rest } = user;
+  const { avatarMedia, coverMedia, ...rest } = user;
   const presentation = serializeMediaAsset(avatarMedia);
+  const coverPresentation = serializeMediaAsset(coverMedia);
   const legacyAvatar = typeof user.avatar === 'string' && /(?:ui-avatars\.com|api\.dicebear\.com|picsum\.photos|randomuser\.me)/i.test(user.avatar)
     ? null
     : user.avatar;
   return {
     ...rest,
     avatar: presentation?.src || (!user.avatarMediaId && legacyAvatar ? legacyAvatar : ''),
-    avatarMedia: presentation
+    avatarMedia: presentation,
+    ...(Object.prototype.hasOwnProperty.call(user, 'coverMedia') ? { coverMedia: coverPresentation } : {})
   } as unknown as T;
 };
 

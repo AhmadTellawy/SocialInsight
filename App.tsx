@@ -1405,7 +1405,7 @@ const App: React.FC = () => {
             </ErrorBoundary>
           );
         }
-        return <ProfileScreen isLoading={isProfileLoading} surveys={profileSurveys} userGroups={userGroups} userProfile={userProfile!} user={selectedProfile || undefined} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onAuthorClick={navigateToProfile} onSurveyProgress={handleSurveyProgress} onShareToFeed={handleShareToFeed} onSettingsClick={() => navigate('/settings/profile')} onEditDraft={handleEditPost} onDelete={handlePostDeleted} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} onLike={handleLikePost} />;
+        return <ProfileScreen isLoading={isProfileLoading} surveys={profileSurveys} userGroups={userGroups} userProfile={userProfile!} user={selectedProfile || undefined} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onAuthorClick={navigateToProfile} onSurveyProgress={handleSurveyProgress} onShareToFeed={handleShareToFeed} onSettingsClick={() => navigate('/settings/profile')} onEditProfileClick={() => navigate('/settings/profile/edit-profile')} onEditDraft={handleEditPost} onDelete={handlePostDeleted} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} onLike={handleLikePost} />;
       case 'notifications':
         return <NotificationsScreen currentUserId={userProfile?.id || ""} notifications={notifications} onNotificationsChange={(newNotifs) => {
           if (userProfile?.id) {
@@ -1735,6 +1735,7 @@ const App: React.FC = () => {
               hasNextPage={!!profileNextCursor}
               onLoadMore={fetchMore}
               onSettingsClick={() => navigate('/settings/profile')}
+              onEditProfileClick={() => navigate('/settings/profile/edit-profile')}
               onEditDraft={handleEditPost}
               onDelete={handlePostDeleted}
               onLike={handleLikePost}

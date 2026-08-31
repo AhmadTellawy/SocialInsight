@@ -5,6 +5,12 @@ import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '../middleware/authMiddleware';
 import { z } from 'zod';
 import { PUBLIC_AVATAR_MEDIA_SELECT, serializeUserMediaRecord } from '../services/mediaService';
+import {
+    ProfileValidationError,
+    calculateAgeGroupFromDate,
+    formatDateOnly,
+    parseAndValidateDateOfBirth
+} from '../utils/profileValidation';
 
 const GENERIC_LOGIN_ERROR = 'Invalid login credentials';
 const LEGACY_REGISTER_DISABLED_ERROR = 'Use the multi-step registration flow';
@@ -45,22 +51,6 @@ const passwordValidationSchema = z.object({
         .regex(/[!@#$%^&*]/, 'Password must contain at least one special character'),
 });
 
-
-function calculateAgeGroup(dob: Date | null | undefined): string | undefined {
-    if (!dob) return undefined;
-    const now = new Date();
-    let age = now.getFullYear() - dob.getFullYear();
-    const m = now.getMonth() - dob.getMonth();
-    if (m < 0 || (m === 0 && now.getDate() < dob.getDate())) {
-        age--;
-    }
-    if (age < 18) return 'Under 18';
-    if (age <= 24) return '18-24';
-    if (age <= 34) return '25-34';
-    if (age <= 44) return '35-44';
-    if (age <= 54) return '45-54';
-    return '55+';
-}
 
 const SAFE_USER_SELECT = {
     id: true,
@@ -179,6 +169,7 @@ export const initiateRegistration = async (req: Request, res: Response) => {
     const { fullName, email, dob } = req.body;
     const lowerEmail = email?.toLowerCase();
     try {
+        const parsedDob = parseAndValidateDateOfBirth(dob);
         const existing = await prisma.user.findFirst({ where: { email: { equals: lowerEmail } } });
         if (existing) {
             res.status(400).json({ error: 'Email already registered' });
@@ -186,11 +177,14 @@ export const initiateRegistration = async (req: Request, res: Response) => {
         }
         const pending = await prisma.pendingRegistration.upsert({
             where: { email: lowerEmail },
-            update: { fullName, dob: new Date(dob), currentStep: 2 },
-            create: { email: lowerEmail, fullName, dob: new Date(dob), currentStep: 2 }
+            update: { fullName, dob: parsedDob, currentStep: 2 },
+            create: { email: lowerEmail, fullName, dob: parsedDob, currentStep: 2 }
         });
         res.json({ success: true, pendingId: pending.id });
     } catch (error) {
+        if (error instanceof ProfileValidationError) {
+            return res.status(error.statusCode).json({ error: error.message, code: error.code });
+        }
         res.status(500).json({ error: 'Registration failed' });
     }
 };
@@ -207,6 +201,7 @@ export const completeRegistration = async (req: Request, res: Response) => {
             res.status(400).json({ error: 'Registration is incomplete' });
             return;
         }
+        const validatedDob = parseAndValidateDateOfBirth(formatDateOnly(pending.dob));
 
         // 1. Verify OTP code if not bypassed in development mode
         const skipOtp = otp === 'SKIP_OTP' && process.env.NODE_ENV === 'development';
@@ -232,12 +227,12 @@ export const completeRegistration = async (req: Request, res: Response) => {
                 data: {
                     email: pending.email,
                     name: pending.fullName,
-                    birthday: pending.dob,
+                    birthday: validatedDob,
                     handle: pending.handle || 'user_' + Date.now(),
                     passwordHash: pending.password, // Store hashed password from pendingRegistration
                     authProvider: 'Email',
                     avatar: null,
-                    demographics: { create: { ageGroup: calculateAgeGroup(pending.dob) } }
+                    demographics: { create: { ageGroup: calculateAgeGroupFromDate(validatedDob) } }
                 },
                 select: SAFE_USER_SELECT
             });
@@ -262,6 +257,9 @@ export const completeRegistration = async (req: Request, res: Response) => {
         res.json({ user, token });
     } catch (error: any) {
         console.error('completeRegistration error:', error);
+        if (error instanceof ProfileValidationError) {
+            return res.status(error.statusCode).json({ error: error.message, code: error.code });
+        }
         if (error.code === 'P2002') {
             const target = error.meta?.target;
             if (Array.isArray(target)) {

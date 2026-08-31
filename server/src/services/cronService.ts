@@ -2,21 +2,10 @@ import cron from 'node-cron';
 import prisma from '../prisma';
 import { cleanupExpiredMedia } from './mediaService';
 import { resumeMediaPrivacyTransitions } from './mediaPrivacyTransitionService';
+import { calculateAgeGroupFromDate } from '../utils/profileValidation';
 
 export function calculateAgeGroup(dob: Date | null | undefined): string | undefined {
-    if (!dob) return undefined;
-    const now = new Date();
-    let age = now.getFullYear() - dob.getFullYear();
-    const m = now.getMonth() - dob.getMonth();
-    if (m < 0 || (m === 0 && now.getDate() < dob.getDate())) {
-        age--;
-    }
-    if (age < 18) return 'Under 18';
-    if (age <= 24) return '18-24';
-    if (age <= 34) return '25-34';
-    if (age <= 44) return '35-44';
-    if (age <= 54) return '45-54';
-    return '55+';
+    return calculateAgeGroupFromDate(dob);
 }
 
 export const runAgeGroupComputation = async () => {

@@ -6,16 +6,20 @@ import {
   Share2, Users, Bell, Palette, Shield, LifeBuoy, LogOut,
   Trash2, ChevronRight, Check, AlertTriangle, Smartphone,
   Languages, Type, MessageSquare, UserPlus, Camera, Edit3, Save,
-  X, Briefcase, GraduationCap, Heart, UserCircle, MapPin, Hash
+  X, Briefcase, GraduationCap, Heart, UserCircle, MapPin, Hash,
+  CalendarDays, Link2, Image as ImageIcon, Loader2, Info
 } from 'lucide-react';
 import { BottomSheet } from './BottomSheet';
 import { MediaDraft, UserProfile } from '../types';
 import { NotificationSettingsScreen } from './NotificationSettingsScreen';
 import { api } from '../services/api';
 import { useTranslation } from 'react-i18next';
-import { MediaPicker } from './media/MediaPicker';
-import { createPersistedMediaDraftFromId, mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds } from '../utils/mediaDrafts';
+import { MediaPicker, MediaPickerControls, MediaPickerHandle } from './media/MediaPicker';
+import { createPersistedMediaDraftFromId, mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds, cancelTemporaryMediaDrafts } from '../utils/mediaDrafts';
 import { RichMentionInput } from './RichMentionInput';
+import { MediaImage } from './media/MediaImage';
+import { ProfileLinksManager } from './ProfileLinksManager';
+import { PROFILE_MAX_AGE, PROFILE_MIN_AGE, calculateAgeFromDateOnly, serializeDateOnly, todayAsDateOnly, validateDateOfBirth } from '../utils/profileValidation';
 
 interface ProfileSettingsScreenProps {
   userProfile: UserProfile;
@@ -24,7 +28,7 @@ interface ProfileSettingsScreenProps {
   onLogout: () => void;
 }
 
-type SubPage = 'main' | 'edit-profile' | 'username' | 'email-phone' | 'language' | 'privacy' | 'content-visibility' | 'demographics' | 'notifications-detailed' | 'group-privacy' | 'account-privacy';
+type SubPage = 'main' | 'edit-profile' | 'links' | 'username' | 'email-phone' | 'language' | 'privacy' | 'content-visibility' | 'demographics' | 'notifications-detailed' | 'group-privacy' | 'account-privacy';
 
 const NATIONALITIES = [
   'Afghanistan', 'Albania', 'Algeria', 'Andorra', 'Angola', 'Argentina', 'Armenia', 'Australia', 'Austria', 'Azerbaijan',
@@ -44,6 +48,13 @@ const NATIONALITIES = [
   'Sweden', 'Switzerland', 'Syria', 'Taiwan', 'Tajikistan', 'Tanzania', 'Thailand', 'Togo', 'Tonga', 'Tunisia', 'Turkey',
   'Turkmenistan', 'Tuvalu', 'Uganda', 'Ukraine', 'United Arab Emirates', 'United Kingdom', 'United States', 'Uruguay', 'Uzbekistan', 'Vanuatu', 'Venezuela', 'Vietnam', 'Yemen', 'Zambia', 'Zimbabwe'
 ];
+
+const shiftDateOnlyYears = (value: string, years: number): string => {
+  const [year, month, day] = value.split('-').map(Number);
+  const targetYear = year + years;
+  const maxDay = new Date(Date.UTC(targetYear, month, 0)).getUTCDate();
+  return `${String(targetYear).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(Math.min(day, maxDay)).padStart(2, '0')}`;
+};
 
 export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   userProfile,
@@ -79,6 +90,20 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   const [avatarMedia, setAvatarMedia] = useState<MediaDraft[]>(() => userProfile.avatarMediaId
     ? [createPersistedMediaDraftFromId(userProfile.avatarMediaId, 'PROFILE_AVATAR', userProfile.avatar)]
     : []);
+  const [coverMedia, setCoverMedia] = useState<MediaDraft[]>(() => userProfile.coverMediaId
+    ? [createPersistedMediaDraftFromId(userProfile.coverMediaId, 'PROFILE_COVER', userProfile.coverMedia?.src || '', 3)]
+    : []);
+  const avatarMediaRef = React.useRef(avatarMedia);
+  const coverMediaRef = React.useRef(coverMedia);
+  const coverPickerRef = React.useRef<MediaPickerHandle>(null);
+  const coverControlsRef = React.useRef<MediaPickerControls | null>(null);
+  const [showCoverActions, setShowCoverActions] = useState(false);
+  const [confirmCoverRemoval, setConfirmCoverRemoval] = useState(false);
+  const [linkCount, setLinkCount] = useState(userProfile.profileLinks?.length || 0);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{ name?: string; birthday?: string }>({});
+  const [isPrivateProfileLoading, setIsPrivateProfileLoading] = useState(false);
+  const [privateProfileLoadError, setPrivateProfileLoadError] = useState<string | null>(null);
 
   const [activeDemographicSelector, setActiveDemographicSelector] = useState<{
     id: keyof NonNullable<UserProfile['demographics']>;
@@ -89,11 +114,8 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   const getCalculatedAgeGroup = (profile: UserProfile): string => {
     let ageGroup = profile.demographics?.ageGroup || '';
     if (!ageGroup && profile.birthday) {
-      const bd = new Date(profile.birthday);
-      if (!isNaN(bd.getTime())) {
-        let age = new Date().getFullYear() - bd.getFullYear();
-        const m = new Date().getMonth() - bd.getMonth();
-        if (m < 0 || (m === 0 && new Date().getDate() < bd.getDate())) age--;
+      const age = calculateAgeFromDateOnly(profile.birthday);
+      if (age !== null) {
         if (age < 18) ageGroup = 'Under 18';
         else if (age <= 24) ageGroup = '18-24';
         else if (age <= 34) ageGroup = '25-34';
@@ -120,7 +142,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
 
   // Sync form state when userProfile external prop updates
   React.useEffect(() => {
-    setProfileForm({
+    const nextProfile = {
       ...userProfile,
       demographics: userProfile.demographics || {
         gender: '',
@@ -130,11 +152,59 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
         employment: '',
         nationality: ''
       }
-    });
-    setAvatarMedia(userProfile.avatarMediaId
-      ? [createPersistedMediaDraftFromId(userProfile.avatarMediaId, 'PROFILE_AVATAR', userProfile.avatar)]
-      : []);
+    };
+    const preserveEditDraft = currentSubPage === 'edit-profile' || currentSubPage === 'links';
+    setProfileForm((current) => preserveEditDraft
+      ? { ...nextProfile, ...current, profileLinks: userProfile.profileLinks }
+      : nextProfile);
+    if (!preserveEditDraft) {
+      setAvatarMedia(userProfile.avatarMediaId
+        ? [createPersistedMediaDraftFromId(userProfile.avatarMediaId, 'PROFILE_AVATAR', userProfile.avatar)]
+        : []);
+      setCoverMedia(userProfile.coverMediaId
+        ? [createPersistedMediaDraftFromId(userProfile.coverMediaId, 'PROFILE_COVER', userProfile.coverMedia?.src || '', 3)]
+        : []);
+    }
+    setLinkCount(userProfile.profileLinks?.length || 0);
   }, [userProfile]);
+
+  React.useEffect(() => { avatarMediaRef.current = avatarMedia; }, [avatarMedia]);
+  React.useEffect(() => { coverMediaRef.current = coverMedia; }, [coverMedia]);
+  React.useEffect(() => () => {
+    void cancelTemporaryMediaDrafts([...avatarMediaRef.current, ...coverMediaRef.current]);
+  }, []);
+
+  React.useEffect(() => {
+    if (!userProfile.id) return;
+    let active = true;
+    setIsPrivateProfileLoading(true);
+    setPrivateProfileLoadError(null);
+    api.getMe()
+      .then((privateProfile) => {
+        if (!active) return;
+        const merged = {
+          ...userProfile,
+          ...privateProfile,
+          demographics: privateProfile.demographics || userProfile.demographics || {}
+        } as UserProfile;
+        setProfileForm(merged);
+        setAvatarMedia(merged.avatarMediaId
+          ? [createPersistedMediaDraftFromId(merged.avatarMediaId, 'PROFILE_AVATAR', merged.avatar)]
+          : []);
+        setCoverMedia(merged.coverMediaId
+          ? [createPersistedMediaDraftFromId(merged.coverMediaId, 'PROFILE_COVER', merged.coverMedia?.src || '', 3)]
+          : []);
+        setLinkCount(merged.profileLinks?.length || 0);
+        onUpdateProfile(merged);
+      })
+      .catch(() => {
+        if (active) setPrivateProfileLoadError(t('profile.edit.loadFailed', { defaultValue: 'Some private profile details could not be loaded.' }));
+      })
+      .finally(() => {
+        if (active) setIsPrivateProfileLoading(false);
+      });
+    return () => { active = false; };
+  }, [userProfile.id]);
 
   const filteredNationalities = useMemo(() => {
     if (!nationalitySearch) return NATIONALITIES.slice(0, 5); // Default common/preview
@@ -168,17 +238,100 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
     return value;
   };
 
+  const nextAvatarMediaId = readyMediaAssetIds(avatarMedia)[0] || null;
+  const nextCoverMediaId = readyMediaAssetIds(coverMedia)[0] || null;
+  const avatarMediaChanged = nextAvatarMediaId !== (userProfile.avatarMediaId || null);
+  const coverMediaChanged = nextCoverMediaId !== (userProfile.coverMediaId || null);
+  const birthdayValidation = validateDateOfBirth(profileForm.birthday || null, {
+    required: Boolean(userProfile.birthday),
+    minimumAge: PROFILE_MIN_AGE,
+    maximumAge: PROFILE_MAX_AGE
+  });
+  const hasProfileChanges = profileForm.name !== userProfile.name
+    || profileForm.bio !== userProfile.bio
+    || (profileForm.birthday || null) !== (userProfile.birthday || null)
+    || avatarMediaChanged
+    || coverMediaChanged;
+  const profileMediaReady = mediaDraftsAreReady(avatarMedia)
+    && mediaDraftsAreReady(coverMedia)
+    && !mediaDraftsHaveErrors(avatarMedia)
+    && !mediaDraftsHaveErrors(coverMedia);
+  const profileFormIsValid = profileForm.name.trim().length > 0 && birthdayValidation.valid;
+  const canSaveProfile = hasProfileChanges
+    && profileFormIsValid
+    && profileMediaReady
+    && !isPrivateProfileLoading
+    && (!coverMediaChanged || Boolean(profileForm.updatedAt || userProfile.updatedAt));
+  const todayDateOnly = serializeDateOnly(todayAsDateOnly());
+  const maximumBirthday = shiftDateOnlyYears(todayDateOnly, -PROFILE_MIN_AGE);
+  const minimumBirthday = shiftDateOnlyYears(todayDateOnly, -PROFILE_MAX_AGE);
+
+  const birthdayErrorMessage = (error: string): string => {
+    const keyByError: Record<string, string> = {
+      required: 'profile.dateOfBirth.required',
+      invalidFormat: 'profile.dateOfBirth.invalid',
+      invalidDate: 'profile.dateOfBirth.invalid',
+      future: 'profile.dateOfBirth.future',
+      underage: 'profile.dateOfBirth.underage',
+      tooOld: 'profile.dateOfBirth.tooOld'
+    };
+    return t(keyByError[error] || 'profile.dateOfBirth.invalid', {
+      minAge: PROFILE_MIN_AGE,
+      maxAge: PROFILE_MAX_AGE,
+      defaultValue: 'Enter a valid date of birth.'
+    });
+  };
+
+  React.useEffect(() => {
+    if (currentSubPage !== 'edit-profile' || !hasProfileChanges) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [currentSubPage, hasProfileChanges]);
+
+  const leaveEditProfile = (): void => {
+    if (hasProfileChanges && !window.confirm(t('profile.edit.discardConfirm', { defaultValue: 'Discard your unsaved profile changes?' }))) return;
+    setSaveError(null);
+    setFieldErrors({});
+    setProfileForm({ ...userProfile });
+    setAvatarMedia(userProfile.avatarMediaId
+      ? [createPersistedMediaDraftFromId(userProfile.avatarMediaId, 'PROFILE_AVATAR', userProfile.avatar)]
+      : []);
+    setCoverMedia(userProfile.coverMediaId
+      ? [createPersistedMediaDraftFromId(userProfile.coverMediaId, 'PROFILE_COVER', userProfile.coverMedia?.src || '', 3)]
+      : []);
+    setCurrentSubPage('main');
+  };
+
   const handleSave = async () => {
+    const nextErrors: { name?: string; birthday?: string } = {};
+    if (currentSubPage === 'edit-profile' && !profileForm.name.trim()) {
+      nextErrors.name = t('profile.edit.nameRequired', { defaultValue: 'Name is required.' });
+    }
+    if (currentSubPage === 'edit-profile' && 'error' in birthdayValidation) {
+      nextErrors.birthday = birthdayErrorMessage(birthdayValidation.error);
+    }
+    setFieldErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0 || (currentSubPage === 'edit-profile' && !canSaveProfile) || isSaving) return;
+
     setIsSaving(true);
+    setSaveError(null);
     try {
       if (!userProfile.id) return;
 
-      const nextAvatarMediaId = readyMediaAssetIds(avatarMedia)[0];
-      const avatarMediaChanged = nextAvatarMediaId !== userProfile.avatarMediaId;
-      const payload = deepStripUndefined({
+      const profileEditPayload = {
         ...(avatarMediaChanged ? { avatarMediaId: nextAvatarMediaId || null } : {}),
-        name: profileForm.name,
-        bio: profileForm.bio,
+        ...(coverMediaChanged ? { coverMediaId: nextCoverMediaId || null } : {}),
+        ...((profileForm.birthday || null) !== (userProfile.birthday || null) ? { birthday: profileForm.birthday || null } : {}),
+        expectedUpdatedAt: profileForm.updatedAt || userProfile.updatedAt,
+        name: profileForm.name.trim(),
+        bio: profileForm.bio
+      };
+      const settingsPayload = {
+        ...profileEditPayload,
         language: profileForm.language,
         location: profileForm.location,
         website: profileForm.website,
@@ -191,7 +344,8 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
           ...(userProfile.demographics || {}),
           ...(profileForm.demographics || {})
         }
-      });
+      };
+      const payload = deepStripUndefined(currentSubPage === 'edit-profile' ? profileEditPayload : settingsPayload);
 
       const updatedProfile = await api.updateUser(userProfile.id, payload);
 
@@ -202,14 +356,29 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
         demographics: updatedProfile.demographics || payload.demographics
       };
 
+      const persistedAvatarMedia = avatarMedia.map((draft) => draft.assetId === merged.avatarMediaId
+        ? { ...draft, persisted: true }
+        : draft);
+      const persistedCoverMedia = coverMedia.map((draft) => draft.assetId === merged.coverMediaId
+        ? { ...draft, persisted: true }
+        : draft);
+      avatarMediaRef.current = persistedAvatarMedia;
+      coverMediaRef.current = persistedCoverMedia;
+      setAvatarMedia(persistedAvatarMedia);
+      setCoverMedia(persistedCoverMedia);
+
       setProfileForm(merged);
       onUpdateProfile(merged);
+      setFieldErrors({});
+      setCurrentSubPage('main');
     } catch (error) {
       console.error("Failed to update profile", error);
-      alert("Failed to save profile changes");
+      const message = error instanceof Error ? error.message : '';
+      setSaveError(message.toLowerCase().includes('conflict') || message.toLowerCase().includes('changed')
+        ? t('profile.edit.conflict', { defaultValue: 'Your profile changed elsewhere. Reload and try again.' })
+        : t('profile.edit.saveFailed', { defaultValue: 'Your profile changes could not be saved. Check your connection and try again.' }));
     } finally {
       setIsSaving(false);
-      setCurrentSubPage('main');
     }
   };
 
@@ -284,7 +453,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   }) => (
     <button
       onClick={onClick}
-      className="w-full flex items-center gap-4 px-5 py-3.5 bg-white hover:bg-gray-50 transition-colors border-b border-gray-50 last:border-0 text-left"
+      className="w-full min-h-14 flex items-center gap-4 px-5 py-3.5 bg-white hover:bg-gray-50 transition-colors border-b border-gray-50 last:border-0 text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-600"
     >
       <div className={`p-2 rounded-xl ${type === 'danger' ? 'bg-red-50 text-red-500' : 'bg-gray-100 text-gray-500'}`}>
         <Icon size={18} />
@@ -293,7 +462,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
         <p className={`text-sm font-bold ${type === 'danger' ? 'text-red-600' : 'text-gray-900'}`}>{label}</p>
         {value && <p className="text-[10px] text-gray-400 font-medium truncate">{value}</p>}
       </div>
-      {type === 'navigate' && <ChevronRight size={16} className="text-gray-300" />}
+      {type === 'navigate' && <ChevronRight size={16} className="text-gray-300 rtl:rotate-180" />}
       {type === 'toggle' && (
         <div className={`w-10 h-5 rounded-full relative transition-colors ${active ? 'bg-blue-600' : 'bg-gray-200'}`}>
           <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${active ? 'left-6' : 'left-1'}`} />
@@ -305,18 +474,24 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   const PageHeader = ({ title, showSave = true }: { title: string, showSave?: boolean }) => (
     <div className="bg-white border-b border-gray-100 flex items-center justify-between px-4 h-14 sticky top-0 z-30">
       <div className="flex items-center">
-        <button onClick={() => setCurrentSubPage('main')} className="p-2 -ml-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors">
-          <ArrowLeft size={24} />
+        <button
+          type="button"
+          onClick={currentSubPage === 'edit-profile' ? leaveEditProfile : () => setCurrentSubPage('main')}
+          className="flex h-11 w-11 items-center justify-center -ms-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+          aria-label={t('common.back', { defaultValue: 'Back' })}
+        >
+          <ArrowLeft size={24} className="rtl:rotate-180" />
         </button>
-        <span className="font-bold text-lg ml-2">{title}</span>
+        <span className="font-bold text-lg ms-2">{title}</span>
       </div>
       {showSave && (
         <button
           onClick={handleSave}
-          disabled={isSaving || (currentSubPage === 'edit-profile' && (!mediaDraftsAreReady(avatarMedia) || mediaDraftsHaveErrors(avatarMedia)))}
-          className="bg-blue-600 text-white px-5 py-1.5 rounded-full text-xs font-black uppercase tracking-widest shadow-md shadow-blue-200 active:scale-95 transition-all disabled:opacity-50"
+          disabled={isSaving || (currentSubPage === 'edit-profile' && !canSaveProfile)}
+          className="flex min-h-11 min-w-20 items-center justify-center gap-2 bg-blue-600 text-white px-5 py-2 rounded-full text-xs font-black uppercase tracking-widest shadow-md shadow-blue-200 active:scale-95 transition-all disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
         >
-          {isSaving ? '...' : 'Save'}
+          {isSaving && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
+          {isSaving ? t('profile.edit.saving', { defaultValue: 'Saving...' }) : t('profile.edit.save', { defaultValue: 'Save' })}
         </button>
       )}
     </div>
@@ -324,6 +499,19 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
 
   if (currentSubPage === 'notifications-detailed') {
     return <NotificationSettingsScreen userId={userProfile.id} onBack={() => setCurrentSubPage('main')} />;
+  }
+
+  if (currentSubPage === 'links') {
+    return (
+      <ProfileLinksManager
+        onBack={() => setCurrentSubPage('edit-profile')}
+        onLinksChange={(links) => {
+          setLinkCount(links.length);
+          setProfileForm((current) => ({ ...current, profileLinks: links }));
+          onUpdateProfile({ ...userProfile, profileLinks: links });
+        }}
+      />
+    );
   }
 
   if (currentSubPage === 'demographics') {
@@ -500,9 +688,76 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   if (currentSubPage === 'edit-profile') {
     return (
       <div className="flex flex-col h-full bg-gray-50 animate-in slide-in-from-right duration-300">
-        <PageHeader title="Edit Profile" />
-        <div className="flex-1 overflow-y-auto px-5 py-6 space-y-6">
-          <div className="flex flex-col items-center">
+        <PageHeader title={t('profile.edit.title', { defaultValue: 'Edit Profile' })} />
+        <div className="flex-1 overflow-y-auto pb-10 no-scrollbar">
+          <div className="relative">
+            <MediaPicker
+              ref={coverPickerRef}
+              purpose="PROFILE_COVER"
+              value={coverMedia}
+              onChange={setCoverMedia}
+              aspectRatio={3}
+              showAddButton={false}
+              renderContent={(controls) => {
+                coverControlsRef.current = controls;
+                const current = coverMedia[0];
+                const isBusy = Boolean(current && ['editing', 'queued', 'uploading', 'processing'].includes(current.status));
+                const objectPosition = current?.crop
+                  ? `${current.crop.focalX * 100}% ${current.crop.focalY * 100}%`
+                  : '50% 50%';
+                return (
+                  <div className={`relative aspect-[3/1] w-full overflow-hidden bg-gray-100 ${current?.status === 'error' ? 'ring-2 ring-inset ring-red-500' : ''}`}>
+                    {current?.previewUrl ? (
+                      <img
+                        src={current.previewUrl}
+                        alt=""
+                        className="h-full w-full object-cover"
+                        style={{ objectPosition }}
+                      />
+                    ) : current?.assetId ? (
+                      <MediaImage
+                        mediaId={current.assetId}
+                        media={current.presentation}
+                        alt=""
+                        sizes="(max-width: 768px) 100vw, 768px"
+                        useFocalPoint
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-gray-100 via-gray-50 to-blue-50 text-gray-400" aria-hidden="true">
+                        <ImageIcon size={34} strokeWidth={1.6} />
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConfirmCoverRemoval(false);
+                        setShowCoverActions(true);
+                      }}
+                      disabled={isSaving || isBusy}
+                      className="absolute inset-0 flex items-end justify-end p-3 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-blue-500/70 disabled:cursor-wait"
+                      aria-label={t('profile.cover.edit', { defaultValue: 'Edit cover photo' })}
+                    >
+                      <span className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/70 bg-white/90 text-gray-700 shadow-lg backdrop-blur-sm" aria-hidden="true">
+                        {isBusy ? <Loader2 size={19} className="animate-spin" /> : <Camera size={19} />}
+                      </span>
+                    </button>
+                    {isBusy && current && (
+                      <div className="absolute inset-x-0 bottom-0 h-1.5 bg-black/20" role="status" aria-live="polite">
+                        <div className="h-full bg-blue-600 transition-[width]" style={{ width: `${current.status === 'processing' ? 100 : current.progress}%` }} />
+                        <span className="sr-only">
+                          {current.status === 'processing'
+                            ? t('profile.cover.processing', { defaultValue: 'Processing cover photo' })
+                            : t('profile.cover.uploadProgress', { progress: current.progress, defaultValue: `Uploading cover photo, ${current.progress}%` })}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              }}
+            />
+
+            <div className="relative z-10 -mt-12 flex justify-center">
             <MediaPicker
               purpose="PROFILE_AVATAR"
               value={avatarMedia}
@@ -512,9 +767,11 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
                 const previewUrl = current?.previewUrl || profileForm.avatar;
                 return (
                   <div className="relative">
-                    <div className={`w-24 h-24 rounded-full border-4 border-white shadow-sm overflow-hidden bg-gray-100 ${current?.status === 'error' ? 'ring-2 ring-red-400' : ''}`}>
+                    <div className={`w-24 h-24 rounded-[22%] border-4 border-white shadow-lg overflow-hidden bg-gray-100 ${current?.status === 'error' ? 'ring-2 ring-red-400' : ''}`}>
                       {previewUrl ? (
-                        <img src={previewUrl} alt={profileForm.name || 'Profile'} className="w-full h-full object-cover" />
+                        <img src={previewUrl} alt={profileForm.name || t('profile.avatar.alt', { defaultValue: 'Profile photo' })} className="w-full h-full object-cover" />
+                      ) : current?.assetId ? (
+                        <MediaImage mediaId={current.assetId} media={current.presentation} alt={profileForm.name || t('profile.avatar.alt', { defaultValue: 'Profile photo' })} sizes="96px" className="h-full w-full object-cover" />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center text-xl font-bold text-gray-500">
                           {(profileForm.name || 'U').trim().charAt(0).toUpperCase()}
@@ -525,40 +782,183 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
                       type="button"
                       onClick={() => current?.status === 'error' ? retry(current.clientId) : open()}
                       disabled={busy}
-                      className="absolute bottom-0 right-0 p-2 bg-blue-600 text-white rounded-full border-2 border-white shadow-md active:scale-90 transition-transform disabled:opacity-60"
-                      aria-label={current?.status === 'error' ? t('common.retry', { defaultValue: 'Retry' }) : t('media.add', { defaultValue: 'Add image' })}
-                      title={current?.status === 'error' ? t('common.retry', { defaultValue: 'Retry' }) : t('media.add', { defaultValue: 'Add image' })}
+                      className="absolute -bottom-1 -end-1 flex h-11 w-11 items-center justify-center bg-blue-600 text-white rounded-2xl border-[3px] border-white shadow-md active:scale-90 transition-transform disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+                      aria-label={current?.status === 'error' ? t('common.retry', { defaultValue: 'Retry' }) : t('profile.avatar.change', { defaultValue: 'Change profile photo' })}
+                      title={current?.status === 'error' ? t('common.retry', { defaultValue: 'Retry' }) : t('profile.avatar.change', { defaultValue: 'Change profile photo' })}
                     >
-                      <Camera size={14} />
+                      {busy ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
                     </button>
                   </div>
                 );
               }}
             />
+            </div>
           </div>
 
-          <div className="space-y-4">
+          <div className="space-y-5 px-5 pt-7">
+            {privateProfileLoadError && (
+              <div role="alert" className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                <Info size={18} className="mt-0.5 shrink-0" aria-hidden="true" />
+                <span>{privateProfileLoadError}</span>
+              </div>
+            )}
+            {saveError && (
+              <div role="alert" aria-live="assertive" className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">
+                {saveError}
+              </div>
+            )}
             <div>
-              <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-1">Display Name</label>
+              <label htmlFor="profile-display-name" className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ms-1">{t('profile.edit.displayName', { defaultValue: 'Display name' })}</label>
               <input
+                id="profile-display-name"
                 type="text"
                 value={profileForm.name}
-                onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })}
-                className="w-full bg-white border border-gray-100 rounded-2xl px-4 py-3.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all shadow-sm"
+                maxLength={100}
+                aria-invalid={Boolean(fieldErrors.name)}
+                aria-describedby={fieldErrors.name ? 'profile-name-error' : undefined}
+                onChange={(e) => {
+                  setProfileForm({ ...profileForm, name: e.target.value });
+                  setFieldErrors((current) => ({ ...current, name: undefined }));
+                  setSaveError(null);
+                }}
+                className={`min-h-12 w-full bg-white border rounded-2xl px-4 py-3.5 text-sm font-semibold focus:outline-none focus:ring-2 transition-all shadow-sm ${fieldErrors.name ? 'border-red-400 focus:ring-red-200' : 'border-gray-100 focus:ring-blue-500/10 focus:border-blue-500'}`}
               />
+              {fieldErrors.name && <p id="profile-name-error" role="alert" className="mt-1.5 ms-1 text-xs font-semibold text-red-600">{fieldErrors.name}</p>}
             </div>
             <div>
-              <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-1">Bio</label>
+              <div className="mb-1.5 flex items-center justify-between gap-3 px-1">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{t('profile.edit.bio', { defaultValue: 'Bio' })}</label>
+                <span className="text-[10px] tabular-nums text-gray-400" aria-hidden="true">{profileForm.bio.length}/500</span>
+              </div>
               <RichMentionInput
                 value={profileForm.bio}
-                onChange={(bio) => setProfileForm({ ...profileForm, bio })}
+                onChange={(bio) => { setProfileForm({ ...profileForm, bio: bio.slice(0, 500) }); setSaveError(null); }}
                 className="w-full bg-white border border-gray-100 rounded-2xl px-4 py-3.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all shadow-sm resize-none"
                 minRows={4}
-                ariaLabel="Bio"
+                ariaLabel={t('profile.edit.bio', { defaultValue: 'Bio' })}
               />
             </div>
+
+            <button
+              type="button"
+              onClick={() => setCurrentSubPage('links')}
+              className="flex min-h-16 w-full items-center gap-3 rounded-2xl border border-gray-100 bg-white px-4 py-3 text-start shadow-sm transition-colors hover:border-blue-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+            >
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600" aria-hidden="true"><Link2 size={19} /></span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-bold text-gray-900">{t('profile.links.sheetTitle', { defaultValue: 'Links' })}</span>
+                <span className="block text-xs text-gray-500">{linkCount > 0
+                  ? t('profileLinks.count', { count: linkCount, max: 5 })
+                  : t('profileLinks.empty.description')}</span>
+              </span>
+              <ChevronRight size={18} className="shrink-0 text-gray-300 rtl:rotate-180" aria-hidden="true" />
+            </button>
+
+            <div>
+              <label htmlFor="profile-date-of-birth" className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ms-1">{t('profile.dateOfBirth.label', { defaultValue: 'Date of birth' })}</label>
+              <div className="relative">
+                <CalendarDays size={18} className="pointer-events-none absolute start-4 top-1/2 -translate-y-1/2 text-gray-400" aria-hidden="true" />
+                <input
+                  id="profile-date-of-birth"
+                  type="date"
+                  dir="ltr"
+                  value={profileForm.birthday || ''}
+                  min={minimumBirthday}
+                  max={maximumBirthday}
+                  aria-invalid={Boolean(fieldErrors.birthday)}
+                  aria-describedby={`profile-date-privacy${fieldErrors.birthday ? ' profile-date-error' : ''}`}
+                  onChange={(event) => {
+                    const value = event.target.value || null;
+                    setProfileForm({ ...profileForm, birthday: value });
+                    const validation = validateDateOfBirth(value, { required: Boolean(userProfile.birthday), minimumAge: PROFILE_MIN_AGE, maximumAge: PROFILE_MAX_AGE });
+                    setFieldErrors((current) => ({ ...current, birthday: 'error' in validation ? birthdayErrorMessage(validation.error) : undefined }));
+                    setSaveError(null);
+                  }}
+                  className={`min-h-12 w-full rounded-2xl border bg-white py-3.5 ps-11 pe-4 text-sm font-semibold shadow-sm focus:outline-none focus:ring-2 ${fieldErrors.birthday ? 'border-red-400 focus:ring-red-200' : 'border-gray-100 focus:border-blue-500 focus:ring-blue-500/10'}`}
+                />
+              </div>
+              {fieldErrors.birthday && <p id="profile-date-error" role="alert" className="mt-1.5 ms-1 text-xs font-semibold text-red-600">{fieldErrors.birthday}</p>}
+              <p id="profile-date-privacy" className="mt-2 flex items-start gap-1.5 px-1 text-xs leading-relaxed text-gray-500">
+                <Lock size={14} className="mt-px shrink-0" aria-hidden="true" />
+                {t('profile.dateOfBirth.privacy', { defaultValue: 'Your date of birth is not visible to others' })}
+              </p>
+            </div>
+
+            {!hasProfileChanges && !isPrivateProfileLoading && (
+              <p className="text-center text-xs text-gray-400" role="status">{t('profile.edit.noChanges', { defaultValue: 'Make a change to enable Save.' })}</p>
+            )}
           </div>
         </div>
+
+        <BottomSheet
+          isOpen={showCoverActions}
+          onClose={() => {
+            setShowCoverActions(false);
+            setConfirmCoverRemoval(false);
+          }}
+          title={t('profile.cover.actionsTitle', { defaultValue: 'Cover photo' })}
+          ariaLabel={t('profile.cover.actionsTitle', { defaultValue: 'Cover photo' })}
+        >
+          {confirmCoverRemoval ? (
+            <div className="py-2 text-center">
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-red-50 text-red-600" aria-hidden="true"><Trash2 size={25} /></div>
+              <h3 className="text-base font-bold text-gray-900">{t('profile.cover.removeConfirmTitle', { defaultValue: 'Remove cover photo?' })}</h3>
+              <p className="mt-2 text-sm leading-relaxed text-gray-500">{t('profile.cover.removeConfirmDescription', { defaultValue: 'The current photo remains until you save these changes.' })}</p>
+              <div className="mt-6 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void cancelTemporaryMediaDrafts(coverMedia.filter((draft) => !draft.persisted));
+                    setCoverMedia([]);
+                    setConfirmCoverRemoval(false);
+                    setShowCoverActions(false);
+                  }}
+                  className="min-h-12 w-full rounded-2xl bg-red-600 px-4 font-bold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2"
+                >
+                  {t('profile.cover.remove', { defaultValue: 'Remove cover photo' })}
+                </button>
+                <button type="button" onClick={() => setConfirmCoverRemoval(false)} className="min-h-12 w-full rounded-2xl bg-gray-100 px-4 font-bold text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">
+                  {t('common.cancel', { defaultValue: 'Cancel' })}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2 pt-2">
+              {coverMedia[0]?.status === 'error' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    coverControlsRef.current?.retry(coverMedia[0].clientId);
+                    setShowCoverActions(false);
+                  }}
+                  className="flex min-h-14 w-full items-center gap-3 rounded-2xl px-3 text-start font-bold text-blue-700 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                >
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50" aria-hidden="true"><Loader2 size={19} /></span>
+                  {t('common.retry', { defaultValue: 'Retry' })}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => { setShowCoverActions(false); coverPickerRef.current?.open(); }}
+                className="flex min-h-14 w-full items-center gap-3 rounded-2xl px-3 text-start font-bold text-gray-900 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+              >
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600" aria-hidden="true"><Camera size={19} /></span>
+                {coverMedia.length > 0
+                  ? t('profile.cover.change', { defaultValue: 'Change cover photo' })
+                  : t('profile.cover.upload', { defaultValue: 'Upload cover photo' })}
+              </button>
+              {coverMedia.length > 0 && (
+                <button type="button" onClick={() => setConfirmCoverRemoval(true)} className="flex min-h-14 w-full items-center gap-3 rounded-2xl px-3 text-start font-bold text-red-600 hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-600">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-50" aria-hidden="true"><Trash2 size={19} /></span>
+                  {t('profile.cover.remove', { defaultValue: 'Remove cover photo' })}
+                </button>
+              )}
+              <button type="button" onClick={() => setShowCoverActions(false)} className="min-h-12 w-full rounded-2xl bg-gray-100 px-4 font-bold text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">
+                {t('common.cancel', { defaultValue: 'Cancel' })}
+              </button>
+            </div>
+          )}
+        </BottomSheet>
       </div>
     );
   }

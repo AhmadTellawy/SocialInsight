@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Settings, Users, Grid, CheckCircle2, MoreHorizontal, MapPin, Link as LinkIcon, Edit3, UserPlus, Shield, ExternalLink, ArrowLeft, Mail, FileText, PieChart, Building2, Globe as GlobeIcon, Plus, ChevronRight, Search, X, UserCircle2, Zap, Info, Lock, BarChart3, TrendingUp, Bookmark, PenTool, Activity, Repeat } from 'lucide-react';
+import { Settings, Users, Grid, CheckCircle2, MoreHorizontal, MapPin, Link as LinkIcon, Edit3, UserPlus, Shield, ExternalLink, ArrowLeft, Mail, FileText, PieChart, Building2, Globe as GlobeIcon, Plus, ChevronRight, Search, X, UserCircle2, Zap, Info, Lock, BarChart3, TrendingUp, Bookmark, PenTool, Activity, Repeat, Image as ImageIcon, Camera, Trash2, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Analytics } from '../utils/analytics';
@@ -27,6 +27,7 @@ interface ProfileScreenProps {
   onShareToFeed?: (survey: Survey, caption: string) => void;
   contextGroups?: any[];
   onSettingsClick?: () => void;
+  onEditProfileClick?: () => void;
   onEditDraft?: (survey: Survey) => void;
   onUpdateDemographics?: (demographics: Partial<NonNullable<UserProfile['demographics']>>) => void;
   onUpdateCurrentUser?: (updates: Partial<UserProfile>) => void;
@@ -40,6 +41,26 @@ interface ProfileScreenProps {
 }
 
 type ProfileTab = 'content' | 'reposts' | 'groups' | 'drafts' | 'saved';
+
+const safeExternalProfileUrl = (value: string): string | null => {
+  try {
+    const parsed = new URL(value);
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+};
+
+const compactProfileUrl = (value: string): string => {
+  try {
+    const parsed = new URL(value);
+    const suffix = `${parsed.pathname === '/' ? '' : parsed.pathname}${parsed.search}${parsed.hash}`;
+    return `${parsed.host}${suffix}`;
+  } catch {
+    return value;
+  }
+};
 
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   surveys,
@@ -55,6 +76,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onShareToFeed,
   contextGroups = [],
   onSettingsClick,
+  onEditProfileClick,
   onEditDraft,
   onUpdateDemographics,
   onUpdateCurrentUser,
@@ -74,6 +96,11 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [activeTab, setActiveTab] = useState<ProfileTab>('content');
   const [isFollowLoading, setIsFollowLoading] = useState(false);
   const [targetUser, setTargetUser] = useState<UserProfile | null>(null);
+  const [showLinksSheet, setShowLinksSheet] = useState(false);
+  const [showCoverSheet, setShowCoverSheet] = useState(false);
+  const [confirmCoverRemoval, setConfirmCoverRemoval] = useState(false);
+  const [isRemovingCover, setIsRemovingCover] = useState(false);
+  const [coverActionError, setCoverActionError] = useState<string | null>(null);
 
   const viewUserId = (!user?.id || user.id === userProfile.id) ? userProfile.id : (user as any)?.id;
   const initialFollowStatus = (user as any)?.followStatus || ((user as any)?.isFollowing ? 'ACTIVE' : 'NONE');
@@ -95,6 +122,28 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const suppliedUser = user as (Partial<UserProfile> & { isFollowing?: boolean; followStatus?: string }) | undefined;
   const resolvedTargetUser = targetUser?.id === viewUserId ? targetUser : null;
   const hasProfileStats = isMe || !!resolvedTargetUser?.stats || !!suppliedUser?.stats;
+  const ownerProfileRefreshRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (
+      !isMe
+      || !userProfile.id
+      || !onUpdateCurrentUser
+      || ownerProfileRefreshRef.current === userProfile.id
+      || (
+        userProfile.coverMediaId !== undefined
+        && userProfile.profileLinks !== undefined
+        && userProfile.updatedAt
+      )
+    ) return;
+
+    ownerProfileRefreshRef.current = userProfile.id;
+    api.getUser(userProfile.id)
+      .then((freshProfile) => onUpdateCurrentUser(freshProfile))
+      .catch(() => {
+        ownerProfileRefreshRef.current = null;
+      });
+  }, [isMe, onUpdateCurrentUser, userProfile.coverMediaId, userProfile.id, userProfile.profileLinks, userProfile.updatedAt]);
 
   useEffect(() => {
     if (activeTab === 'drafts' && isMe && userProfile.id) {
@@ -366,6 +415,37 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     if (!profileUser?.isPrivate) return true;
     return isFollowing || followStatus === 'ACTIVE';
   }, [isMe, profileUser?.isPrivate, isFollowing, followStatus]);
+
+  const visibleProfileLinks = useMemo(() => {
+    if (!canViewPrivateProfileContent) return [];
+    return [...(profileUser.profileLinks || [])]
+      .filter((link) => Boolean(safeExternalProfileUrl(link.url)))
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .slice(0, 5);
+  }, [canViewPrivateProfileContent, profileUser.profileLinks]);
+
+  const removeCoverPhoto = async (): Promise<void> => {
+    if (!isMe || !userProfile.id || isRemovingCover) return;
+    setIsRemovingCover(true);
+    setCoverActionError(null);
+    try {
+      const updated = await api.updateUser(userProfile.id, {
+        coverMediaId: null,
+        expectedUpdatedAt: userProfile.updatedAt
+      });
+      onUpdateCurrentUser?.({
+        ...updated,
+        coverMediaId: null,
+        coverMedia: null
+      });
+      setConfirmCoverRemoval(false);
+      setShowCoverSheet(false);
+    } catch {
+      setCoverActionError(t('profile.cover.removeFailed', { defaultValue: 'The cover photo could not be removed. Please try again.' }));
+    } finally {
+      setIsRemovingCover(false);
+    }
+  };
 
   const renderPrivateProfileState = () => (
     <div className="flex flex-col items-center justify-center py-20 px-8 text-center text-gray-400">
@@ -902,20 +982,23 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       <div className="bg-white flex-1 overflow-y-auto min-h-full flex flex-col no-scrollbar">
         <div className={`flex items-center px-4 h-[60px] sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-gray-50 ${onBack ? 'justify-between' : 'justify-end'}`}>
           {onBack && (
-            <button onClick={onBack} className="p-2 -ml-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors">
-              <ArrowLeft size={24} />
+            <button onClick={onBack} className="flex h-11 w-11 items-center justify-center -ms-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors" aria-label={t('common.back', { defaultValue: 'Back' })}>
+              <ArrowLeft size={24} className="rtl:rotate-180" />
             </button>
           )}
-          <button className="p-2 text-gray-400 hover:bg-gray-50 rounded-full transition-colors">
+          <button className="flex h-11 w-11 items-center justify-center text-gray-400 hover:bg-gray-50 rounded-full transition-colors" aria-label={t('common.more', { defaultValue: 'More options' })}>
             <MoreHorizontal size={22} />
           </button>
         </div>
-        <div className="relative bg-white pb-6 px-6 flex flex-col items-center pt-2">
-          <div className="w-28 h-28 rounded-[2.5rem] bg-gray-100 animate-pulse mb-6 border-4 border-white shadow-xl"></div>
+        <div className="relative bg-white pb-6">
+          <div className="aspect-[3/1] w-full animate-pulse bg-gray-100" aria-hidden="true" />
+          <div className="px-6 flex flex-col items-center">
+          <div className="-mt-14 w-28 h-28 rounded-[1.65rem] bg-gray-100 animate-pulse mb-6 border-4 border-white shadow-xl"></div>
           <div className="w-40 h-8 bg-gray-100 animate-pulse rounded-full mb-2"></div>
           <div className="w-24 h-4 bg-gray-100 animate-pulse rounded-full mb-6"></div>
           <div className="w-full max-w-sm h-12 bg-gray-50 animate-pulse rounded-2xl mb-8"></div>
           <div className="w-full bg-white rounded-[2.5rem] border border-gray-100 shadow-xl shadow-gray-200/40 px-3 py-6 h-[100px] animate-pulse"></div>
+          </div>
         </div>
       </div>
     );
@@ -934,37 +1017,76 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     <div onScroll={handleScroll} className="bg-white flex-1 overflow-y-auto min-h-full flex flex-col no-scrollbar">
       <div className={`flex items-center px-4 h-[60px] sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-gray-50 ${onBack ? 'justify-between' : 'justify-end'}`}>
         {onBack && (
-          <button onClick={onBack} className="p-2 -ml-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors">
-            <ArrowLeft size={24} />
+          <button onClick={onBack} className="flex h-11 w-11 items-center justify-center -ms-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors" aria-label={t('common.back', { defaultValue: 'Back' })}>
+            <ArrowLeft size={24} className="rtl:rotate-180" />
           </button>
         )}
         <button
           onClick={isMe ? onSettingsClick : undefined}
-          className="p-3 -mr-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors relative z-20"
-          aria-label="Settings"
+          className="flex h-11 w-11 items-center justify-center -me-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors relative z-20"
+          aria-label={isMe ? t('Settings') : t('common.more', { defaultValue: 'More options' })}
         >
           {isMe ? <Settings size={24} /> : <MoreHorizontal size={24} />}
         </button>
       </div>
 
       <div className="relative bg-white pb-6">
-        <div className="px-6 flex flex-col items-center pt-2">
-          <div className="relative mb-6">
-            <div className="w-28 h-28 rounded-[2.5rem] p-1 bg-white shadow-xl border border-gray-100 ring-4 ring-gray-50/50">
+        <div className="relative aspect-[3/1] w-full overflow-hidden bg-gray-100">
+          {profileUser.coverMediaId || profileUser.coverMedia ? (
+            <MediaImage
+              mediaId={profileUser.coverMediaId}
+              media={profileUser.coverMedia}
+              fallback={(
+                <span className="flex h-full w-full items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 text-gray-400" aria-hidden="true">
+                  <ImageIcon size={34} />
+                </span>
+              )}
+              alt=""
+              sizes="(max-width: 768px) 100vw, 768px"
+              eager
+              useFocalPoint
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-gray-100 via-gray-50 to-blue-50 text-gray-400" aria-hidden="true">
+              <ImageIcon size={34} strokeWidth={1.6} />
+            </div>
+          )}
+          {isMe && (
+            <button
+              type="button"
+              onClick={() => {
+                setCoverActionError(null);
+                setConfirmCoverRemoval(false);
+                setShowCoverSheet(true);
+              }}
+              className="absolute inset-0 flex items-end justify-end p-3 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-blue-500/70"
+              aria-label={t('profile.cover.edit', { defaultValue: 'Edit cover photo' })}
+            >
+              <span className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/70 bg-white/90 text-gray-700 shadow-lg backdrop-blur-sm" aria-hidden="true">
+                <Camera size={19} />
+              </span>
+            </button>
+          )}
+        </div>
+
+        <div className="px-6 flex flex-col items-center">
+          <div className="relative -mt-14 mb-5 z-10">
+            <div className="w-28 h-28 rounded-[22%] p-1 bg-white shadow-xl border border-gray-100 ring-4 ring-white/80">
               <MediaImage
                 mediaId={profileUser.avatarMediaId}
                 fallbackSrc={profileUser.avatar?.includes('ui-avatars') ? undefined : profileUser.avatar}
-                fallback={<span role="img" aria-label={profileUser.name || 'Profile'} className="flex h-full w-full items-center justify-center rounded-[2.25rem] bg-gray-100 text-3xl font-black text-gray-500">{(profileUser.name || 'U').trim().charAt(0).toUpperCase()}</span>}
+                fallback={<span role="img" aria-label={profileUser.name || 'Profile'} className="flex h-full w-full items-center justify-center rounded-[20%] bg-gray-100 text-3xl font-black text-gray-500">{(profileUser.name || 'U').trim().charAt(0).toUpperCase()}</span>}
                 alt={profileUser.name || 'Profile'}
                 sizes="112px"
-                className="w-full h-full rounded-[2.25rem] object-cover"
+                className="w-full h-full rounded-[20%] object-cover"
               />
             </div>
             {isMe && (
               <button
-                onClick={onSettingsClick}
-                className="absolute -bottom-2 -right-2 p-3 bg-blue-600 text-white rounded-2xl shadow-lg hover:bg-blue-700 transition-colors border-[3px] border-white active:scale-90 z-20"
-                aria-label="Edit Profile"
+                onClick={onEditProfileClick || onSettingsClick}
+                className="absolute -bottom-2 -end-2 flex h-11 w-11 items-center justify-center bg-blue-600 text-white rounded-2xl shadow-lg hover:bg-blue-700 transition-colors border-[3px] border-white active:scale-90 z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+                aria-label={t('Edit Profile')}
               >
                 <Edit3 size={18} />
               </button>
@@ -975,22 +1097,56 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             {profileUser.name}
             {profileUser.isPrivate && <Lock size={18} className="text-gray-400" />}
           </h2>
-          <p className="text-xs text-blue-600 font-black uppercase tracking-[0.2em] mb-4">@{profileUser.handle}</p>
+          <p className="text-xs text-blue-600 font-black tracking-[0.12em] mb-3" dir="ltr">@{profileUser.handle}</p>
 
-          <p className="text-sm text-gray-600 text-center max-w-sm leading-relaxed whitespace-pre-wrap mb-6 px-4">
-            <RichTextRenderer text={profileUser.bio || ''} mentions={profileUser.bioMentions} mentionSurface="PROFILE_BIO" />
-          </p>
+          {profileUser.bio && (
+            <p className="text-sm text-gray-600 text-center max-w-md leading-relaxed whitespace-pre-wrap break-words mb-4 px-2">
+              <RichTextRenderer text={profileUser.bio} mentions={profileUser.bioMentions} mentionSurface="PROFILE_BIO" />
+            </p>
+          )}
 
-          <div className="flex flex-wrap items-center justify-center gap-5 text-xs text-gray-500 mb-8 font-bold uppercase tracking-wider">
+          <div className="flex max-w-full flex-wrap items-center justify-center gap-2 text-xs text-gray-500 mb-7 font-semibold">
             {profileUser.location && (
-              <div className="flex items-center gap-1.5 bg-gray-50 px-3 py-1 rounded-lg">
+              <div className="flex max-w-full items-center gap-1.5 rounded-xl bg-gray-50 px-3 py-2">
                 <MapPin size={12} className="text-gray-400" /> {profileUser.location}
               </div>
             )}
-            {profileUser.website && (
-              <div className="flex items-center gap-1.5 text-blue-600 bg-blue-50 px-3 py-1 rounded-lg">
-                <LinkIcon size={12} /> {profileUser.website}
-              </div>
+            {visibleProfileLinks.length === 1 && safeExternalProfileUrl(visibleProfileLinks[0].url) && (
+              <a
+                href={safeExternalProfileUrl(visibleProfileLinks[0].url)!}
+                target="_blank"
+                rel="noopener noreferrer nofollow ugc"
+                aria-label={visibleProfileLinks[0].title}
+                className="flex min-h-11 max-w-full items-center gap-1.5 rounded-xl bg-blue-50 px-3 py-2 text-blue-700 hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+              >
+                <LinkIcon size={13} className="shrink-0" />
+                <span className="max-w-[15rem] truncate" dir="ltr">{compactProfileUrl(visibleProfileLinks[0].url)}</span>
+              </a>
+            )}
+            {visibleProfileLinks.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setShowLinksSheet(true)}
+                aria-label={t('profile.links.viewAll', { count: visibleProfileLinks.length, defaultValue: `View all ${visibleProfileLinks.length} links` })}
+                className="flex min-h-11 max-w-full items-center gap-1.5 rounded-xl bg-blue-50 px-3 py-2 text-blue-700 hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+              >
+                <LinkIcon size={13} className="shrink-0" />
+                <span className="max-w-[11rem] truncate" dir="ltr">{compactProfileUrl(visibleProfileLinks[0].url)}</span>
+                <span className="shrink-0 text-blue-500">
+                  {t('profile.links.more', { count: visibleProfileLinks.length - 1, defaultValue: `${visibleProfileLinks.length - 1} more` })}
+                </span>
+              </button>
+            )}
+            {visibleProfileLinks.length === 0 && profileUser.website && safeExternalProfileUrl(profileUser.website) && (
+              <a
+                href={safeExternalProfileUrl(profileUser.website)!}
+                target="_blank"
+                rel="noopener noreferrer nofollow ugc"
+                className="flex min-h-11 max-w-full items-center gap-1.5 rounded-xl bg-blue-50 px-3 py-2 text-blue-700 hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+              >
+                <LinkIcon size={13} className="shrink-0" />
+                <span className="max-w-[15rem] truncate" dir="ltr">{compactProfileUrl(profileUser.website)}</span>
+              </a>
             )}
           </div>
 
@@ -1113,6 +1269,114 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           )}
         </div>
       </div>
+
+      <BottomSheet
+        isOpen={showLinksSheet}
+        onClose={() => setShowLinksSheet(false)}
+        title={t('profile.links.sheetTitle', { defaultValue: 'Links' })}
+        ariaLabel={t('profile.links.sheetTitle', { defaultValue: 'Links' })}
+      >
+        <div className="space-y-2 pt-2">
+          {visibleProfileLinks.map((link) => {
+            const href = safeExternalProfileUrl(link.url);
+            if (!href) return null;
+            return (
+              <a
+                key={link.id}
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer nofollow ugc"
+                aria-label={link.title}
+                className="flex min-h-16 w-full items-center gap-3 rounded-2xl border border-gray-100 bg-white px-4 py-3 text-start shadow-sm transition-colors hover:border-blue-200 hover:bg-blue-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+              >
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600" aria-hidden="true">
+                  <LinkIcon size={18} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-bold text-gray-900">{link.title}</span>
+                  <span className="block truncate text-xs text-gray-500" dir="ltr">{compactProfileUrl(href)}</span>
+                </span>
+                <ExternalLink size={17} className="shrink-0 text-gray-400" aria-hidden="true" />
+              </a>
+            );
+          })}
+        </div>
+      </BottomSheet>
+
+      <BottomSheet
+        isOpen={showCoverSheet}
+        onClose={() => {
+          if (isRemovingCover) return;
+          setShowCoverSheet(false);
+          setConfirmCoverRemoval(false);
+          setCoverActionError(null);
+        }}
+        title={t('profile.cover.actionsTitle', { defaultValue: 'Cover photo' })}
+        ariaLabel={t('profile.cover.actionsTitle', { defaultValue: 'Cover photo' })}
+      >
+        {confirmCoverRemoval ? (
+          <div className="py-2 text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-red-50 text-red-600" aria-hidden="true">
+              <Trash2 size={25} />
+            </div>
+            <h4 className="text-base font-bold text-gray-900">{t('profile.cover.removeConfirmTitle', { defaultValue: 'Remove cover photo?' })}</h4>
+            <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-gray-500">{t('profile.cover.removeConfirmDescription', { defaultValue: 'Your profile will return to the default cover placeholder.' })}</p>
+            {coverActionError && <p role="alert" className="mt-3 text-sm font-semibold text-red-600">{coverActionError}</p>}
+            <div className="mt-6 space-y-2">
+              <button
+                type="button"
+                onClick={() => void removeCoverPhoto()}
+                disabled={isRemovingCover}
+                className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-red-600 px-4 font-bold text-white disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2"
+              >
+                {isRemovingCover && <Loader2 size={18} className="animate-spin" aria-hidden="true" />}
+                {isRemovingCover ? t('profile.cover.removing', { defaultValue: 'Removing...' }) : t('profile.cover.remove', { defaultValue: 'Remove cover photo' })}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setConfirmCoverRemoval(false); setCoverActionError(null); }}
+                disabled={isRemovingCover}
+                className="min-h-12 w-full rounded-2xl bg-gray-100 px-4 font-bold text-gray-700 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+              >
+                {t('common.cancel', { defaultValue: 'Cancel' })}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-2 pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                setShowCoverSheet(false);
+                (onEditProfileClick || onSettingsClick)?.();
+              }}
+              className="flex min-h-14 w-full items-center gap-3 rounded-2xl px-3 text-start font-bold text-gray-900 transition-colors hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+            >
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600" aria-hidden="true"><Camera size={19} /></span>
+              {profileUser.coverMediaId || profileUser.coverMedia
+                ? t('profile.cover.change', { defaultValue: 'Change cover photo' })
+                : t('profile.cover.upload', { defaultValue: 'Upload cover photo' })}
+            </button>
+            {(profileUser.coverMediaId || profileUser.coverMedia) && (
+              <button
+                type="button"
+                onClick={() => setConfirmCoverRemoval(true)}
+                className="flex min-h-14 w-full items-center gap-3 rounded-2xl px-3 text-start font-bold text-red-600 transition-colors hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-600"
+              >
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-50 text-red-600" aria-hidden="true"><Trash2 size={19} /></span>
+                {t('profile.cover.remove', { defaultValue: 'Remove cover photo' })}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowCoverSheet(false)}
+              className="min-h-12 w-full rounded-2xl bg-gray-100 px-4 font-bold text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+            >
+              {t('common.cancel', { defaultValue: 'Cancel' })}
+            </button>
+          </div>
+        )}
+      </BottomSheet>
 
       <BottomSheet
         isOpen={activeStatSheet !== null}

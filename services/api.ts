@@ -1,4 +1,5 @@
 import { normalizeSurvey, PostAnswerPayload } from '../types';
+import type { UserProfile } from '../types';
 
 export const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -13,6 +14,27 @@ export class ApiError extends Error {
         this.name = 'ApiError';
     }
 }
+
+export type ProfileLink = {
+    id: string;
+    title: string;
+    url: string;
+    normalizedUrl?: string;
+    sortOrder: number;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type ProfileLinkInput = {
+    title: string;
+    url: string;
+};
+
+export type CurrentUserProfile = Omit<UserProfile, 'birthday'> & {
+    birthday?: string | null;
+    profileLinks?: ProfileLink[];
+    updatedAt?: string;
+};
 
 const throwApiError = async (response: Response, fallbackMessage: string): Promise<never> => {
     let details: Record<string, unknown> = {};
@@ -370,13 +392,51 @@ export const api = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        if (!response.ok) throw new Error('Failed to update user');
+        if (!response.ok) await throwApiError(response, 'Failed to update user');
         return response.json();
+    },
+
+    getMe: async (requestOptions: RequestInit = {}): Promise<CurrentUserProfile> => {
+        const response = await authFetch(`${API_BASE_URL}/users/me`, requestOptions);
+        if (!response.ok) await throwApiError(response, 'Failed to fetch your profile');
+        return response.json();
+    },
+
+    getProfileLinks: async (requestOptions: RequestInit = {}): Promise<ProfileLink[]> => {
+        const response = await authFetch(`${API_BASE_URL}/users/me/profile-links`, requestOptions);
+        if (!response.ok) await throwApiError(response, 'Failed to fetch profile links');
+        return response.json();
+    },
+
+    createProfileLink: async (data: ProfileLinkInput): Promise<ProfileLink> => {
+        const response = await authFetch(`${API_BASE_URL}/users/me/profile-links`, {
+            method: 'POST',
+            body: JSON.stringify(data)
+        });
+        if (!response.ok) await throwApiError(response, 'Failed to add profile link');
+        return response.json();
+    },
+
+    updateProfileLink: async (linkId: string, data: ProfileLinkInput): Promise<ProfileLink> => {
+        const response = await authFetch(`${API_BASE_URL}/users/me/profile-links/${encodeURIComponent(linkId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify(data)
+        });
+        if (!response.ok) await throwApiError(response, 'Failed to update profile link');
+        return response.json();
+    },
+
+    deleteProfileLink: async (linkId: string): Promise<void> => {
+        const response = await authFetch(`${API_BASE_URL}/users/me/profile-links/${encodeURIComponent(linkId)}`, {
+            method: 'DELETE'
+        });
+        if (!response.ok) await throwApiError(response, 'Failed to delete profile link');
+        if (response.status !== 204 && response.status !== 205) await response.text();
     },
 
     getUser: async (userId: string) => {
         const response = await authFetch(`${API_BASE_URL}/users/${userId}`);
-        if (!response.ok) throw new Error('Failed to fetch user');
+        if (!response.ok) await throwApiError(response, 'Failed to fetch user');
         return response.json();
     },
 
