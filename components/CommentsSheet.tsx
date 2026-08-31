@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Send, ThumbsUp, Reply, Edit2, Trash2, X } from 'lucide-react';
+import { Send, ThumbsUp, Reply, Edit2, Trash2, X, Loader2 } from 'lucide-react';
 import { Analytics } from '../utils/analytics';
 import { Comment, UserProfile } from '../types';
 import { MOCK_COMMENTS } from '../services/mockData';
@@ -157,33 +157,51 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
   const { t } = useTranslation();
   const [comments, setComments] = useState<Comment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [newComment, setNewComment] = useState('');
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const [isLikersSheetOpen, setIsLikersSheetOpen] = useState(false);
   const [likersTargetId, setLikersTargetId] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isSubmittingRef = React.useRef(false);
+  const commentsAbortRef = React.useRef<AbortController | null>(null);
 
   // Comment Actions State
   const [actionSheetComment, setActionSheetComment] = useState<{ comment: Comment, isReply: boolean, parentId?: string } | null>(null);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
 
+  const loadCommentsPage = React.useCallback(async (cursor: string | null, append: boolean) => {
+    const controller = new AbortController();
+    if (!append) commentsAbortRef.current?.abort();
+    commentsAbortRef.current = controller;
+    append ? setIsLoadingMore(true) : setIsLoading(true);
+    setLoadError(null);
+    try {
+      const focusId = append ? undefined : (initialReplyId || initialCommentId);
+      const page = await api.getCommentsPage(surveyId, cursor, 30, controller.signal, focusId);
+      setComments(previous => {
+        const byId = new Map<string, Comment>();
+        (append ? previous : []).forEach(comment => byId.set(comment.id, comment));
+        page.items.forEach((comment: Comment) => byId.set(comment.id, comment));
+        return Array.from(byId.values());
+      });
+      setNextCursor(page.nextCursor);
+    } catch (error: any) {
+      if (error?.name !== 'AbortError') setLoadError('Failed to load comments. Please try again.');
+    } finally {
+      append ? setIsLoadingMore(false) : setIsLoading(false);
+    }
+  }, [surveyId, initialCommentId, initialReplyId]);
+
   React.useEffect(() => {
-    const loadComments = async () => {
-      setIsLoading(true);
-      try {
-        const data = await api.getComments(surveyId, userProfile?.id);
-        setComments(data);
-      } catch (e) {
-        console.error("Failed to load comments", e);
-        alert("Failed to load comments. Please try again.");
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    loadComments();
-  }, [surveyId, userProfile?.id]);
+    setComments([]);
+    setNextCursor(null);
+    void loadCommentsPage(null, false);
+    return () => commentsAbortRef.current?.abort();
+  }, [loadCommentsPage]);
 
   React.useEffect(() => {
     const targetId = initialReplyId || initialCommentId;
@@ -315,31 +333,47 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
               </div>
             ))}
           </div>
+        ) : loadError && comments.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-40 text-center text-gray-500">
+            <p className="text-sm mb-3">{loadError}</p>
+            <button onClick={() => void loadCommentsPage(null, false)} className="px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold">Retry</button>
+          </div>
         ) : comments.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 text-gray-400">
             <p>No comments yet. Be the first!</p>
           </div>
         ) : (
-          comments.map(comment => (
-            <CommentItem
-              key={comment.id}
-              comment={comment}
-              onLike={handleLike}
-              onLikersClick={(id) => {
-                setLikersTargetId(id);
-                setIsLikersSheetOpen(true);
-              }}
-              onReply={setReplyingTo}
-              onAuthorClick={onAuthorClick}
-              onLongPress={(comment, isReply, parentId) => {
-                // Determine if user owns comment
-                if (userProfile?.id === comment.author.id) {
-                  setActionSheetComment({ comment, isReply, parentId });
-                }
-              }}
-              highlightedCommentId={highlightedCommentId}
-            />
-          ))
+          <>
+            {comments.map(comment => (
+              <CommentItem
+                key={comment.id}
+                comment={comment}
+                onLike={handleLike}
+                onLikersClick={(id) => {
+                  setLikersTargetId(id);
+                  setIsLikersSheetOpen(true);
+                }}
+                onReply={setReplyingTo}
+                onAuthorClick={onAuthorClick}
+                onLongPress={(comment, isReply, parentId) => {
+                  if (userProfile?.id === comment.author.id) {
+                    setActionSheetComment({ comment, isReply, parentId });
+                  }
+                }}
+                highlightedCommentId={highlightedCommentId}
+              />
+            ))}
+            {nextCursor && (
+              <button
+                onClick={() => void loadCommentsPage(nextCursor, true)}
+                disabled={isLoadingMore}
+                className="mx-auto my-5 flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-xs font-bold text-gray-600 disabled:opacity-60"
+              >
+                {isLoadingMore && <Loader2 size={14} className="animate-spin" />}
+                Load more comments
+              </button>
+            )}
+          </>
         )}
       </div>
 

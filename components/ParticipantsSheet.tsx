@@ -12,20 +12,36 @@ interface ParticipantsSheetProps {
 export const ParticipantsSheet: React.FC<ParticipantsSheetProps> = ({ survey, onAuthorClick }) => {
   const [participants, setParticipants] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const loadPage = React.useCallback(async (cursor: string | null, append: boolean, signal?: AbortSignal) => {
+    append ? setIsLoadingMore(true) : setIsLoading(true);
+    setLoadError(null);
+    try {
+      const page = await api.getParticipantsPage(survey.id, cursor, 30, signal);
+      setParticipants(previous => {
+        const byId = new Map<string, any>();
+        (append ? previous : []).forEach(participant => byId.set(participant.id, participant));
+        page.items.forEach((participant: any) => byId.set(participant.id, participant));
+        return Array.from(byId.values());
+      });
+      setNextCursor(page.nextCursor);
+    } catch (error: any) {
+      if (error?.name !== 'AbortError') setLoadError('Failed to load participants.');
+    } finally {
+      append ? setIsLoadingMore(false) : setIsLoading(false);
+    }
+  }, [survey.id]);
 
   useEffect(() => {
-    const fetchParticipants = async () => {
-      try {
-        const data = await api.getParticipants(survey.id);
-        setParticipants(data);
-      } catch (error) {
-        console.error("Failed to load participants:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchParticipants();
-  }, [survey.id]);
+    const controller = new AbortController();
+    setParticipants([]);
+    setNextCursor(null);
+    void loadPage(null, false, controller.signal);
+    return () => controller.abort();
+  }, [loadPage]);
 
 
 
@@ -37,6 +53,11 @@ export const ParticipantsSheet: React.FC<ParticipantsSheetProps> = ({ survey, on
           <div className="flex flex-col items-center justify-center py-20">
             <Loader2 size={32} className="animate-spin text-blue-500 opacity-50" />
             <p className="text-xs text-gray-400 mt-4 font-bold uppercase tracking-widest">Fetching results...</p>
+          </div>
+        ) : loadError && participants.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-gray-500">
+            <p className="mb-3 text-sm">{loadError}</p>
+            <button onClick={() => void loadPage(null, false)} className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white">Retry</button>
           </div>
         ) : participants.length > 0 ? (
           <div className="divide-y divide-gray-50">
@@ -65,6 +86,16 @@ export const ParticipantsSheet: React.FC<ParticipantsSheetProps> = ({ survey, on
                 )}
               </div>
             ))}
+            {nextCursor && (
+              <button
+                onClick={() => void loadPage(nextCursor, true)}
+                disabled={isLoadingMore}
+                className="mx-auto my-4 flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-xs font-bold text-gray-600 disabled:opacity-60"
+              >
+                {isLoadingMore && <Loader2 size={14} className="animate-spin" />}
+                Load more participants
+              </button>
+            )}
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-20 text-gray-400">

@@ -75,19 +75,22 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
   const {
     membershipStatus, role, joinGroup, leaveGroup, requestToJoin, declineInvite,
     isLoading: isMembershipLoading
-  } = useGroupMembership(group.id, userProfile.id);
+  } = useGroupMembership(group.id, userProfile.id, {
+    status: group.membershipStatus,
+    role: group.role
+  });
 
   const {
     posts, isLoading: isPostsLoading, isFetchingNextPage: isPostsFetchingNextPage,
     error: postsError, hasMore, fetchNextPage, updatePostLikeStatus, removePosts
   } = useGroupPosts(group.id, userProfile?.id);
 
-  const { stats, isLoading: isStatsLoading } = useGroupStats(group.id);
+  const { stats, isLoading: isStatsLoading } = useGroupStats(group.id, group.stats);
 
   const {
     members, isLoading: isMembersLoading, isFetchingNextPage: isMembersFetchingNextPage,
     error: membersError, hasMore: hasMoreMembers, fetchNextPage: fetchNextPageMembers
-  } = useGroupMembers(group.id);
+  } = useGroupMembers(group.id, activeTab === 'members' || showInviteModal);
 
   const isJoined = membershipStatus === 'JOINED';
 

@@ -70,13 +70,14 @@ model User {
   coverMedia              MediaAsset?              @relation("UserCoverMedia", fields: [coverMediaId], references: [id], onDelete: SetNull)
   ownedMedia              MediaAsset[]             @relation("MediaOwner")
   mediaPrivacyTransitions MediaPrivacyTransition[]
-  mentionsReceived   Mention[]          @relation("MentionTarget")
-  mentionsCreated    Mention[]          @relation("MentionActor")
-  profileMentions    Mention[]          @relation("MentionProfile")
-  peopleTagsReceived PostTaggedUser[]   @relation("PeopleTagTarget")
-  peopleTagsCreated  PostTaggedUser[]   @relation("PeopleTagActor")
-  profileLinks       ProfileLink[]
+  mentionsReceived        Mention[]                @relation("MentionTarget")
+  mentionsCreated         Mention[]                @relation("MentionActor")
+  profileMentions         Mention[]                @relation("MentionProfile")
+  peopleTagsReceived      PostTaggedUser[]         @relation("PeopleTagTarget")
+  peopleTagsCreated       PostTaggedUser[]         @relation("PeopleTagActor")
+  profileLinks            ProfileLink[]
 
+  @@index([status, followersCount(sort: Desc), id], map: "users_status_followers_id_idx")
   @@map("users")
 }
 
@@ -141,6 +142,9 @@ model Follow {
   follower  User @relation("UserFollows", fields: [followerId], references: [id])
 
   @@unique([followerId, followingId])
+  @@index([followingId, status, followerId], map: "follows_following_status_follower_idx")
+  @@index([followingId, status, createdAt(sort: Desc), id(sort: Desc)], map: "follows_following_status_created_id_idx")
+  @@index([followerId, status, createdAt(sort: Desc), id(sort: Desc)], map: "follows_follower_status_created_id_idx")
   @@map("follows")
 }
 
@@ -167,6 +171,7 @@ model Group {
   mentions           Mention[]
 
   @@index([isDeleted])
+  @@index([isDeleted, isPublic, memberCount(sort: Desc), id], map: "Group_visibility_member_count_idx")
 }
 
 model GroupMember {
@@ -179,40 +184,42 @@ model GroupMember {
   user    User   @relation(fields: [userId], references: [id])
 
   @@unique([userId, groupId])
+  @@index([groupId, status], map: "GroupMember_group_status_idx")
+  @@index([userId, status, groupId], map: "GroupMember_user_status_group_idx")
 }
 
 model Post {
-  id             String     @id @default(uuid())
-  title          String
-  description    String
-  type           String
-  authorId       String
-  groupId        String?
-  isTrending     Boolean    @default(false)
-  expiresAt      DateTime
-  image          String?
-  mediaAspectRatio Float?
-  likesCount     Int        @default(0)
-  commentsCount  Int        @default(0)
-  responseCount  Int        @default(0)
-  category       String?
-  targetAudience String?
-  pollChoiceType String?
-  imageLayout    String?
+  id                 String      @id @default(uuid())
+  title              String
+  description        String
+  type               String
+  authorId           String
+  groupId            String?
+  isTrending         Boolean     @default(false)
+  expiresAt          DateTime
+  image              String?
+  mediaAspectRatio   Float?
+  likesCount         Int         @default(0)
+  commentsCount      Int         @default(0)
+  responseCount      Int         @default(0)
+  category           String?
+  targetAudience     String?
+  pollChoiceType     String?
+  imageLayout        String?
   optionPresentation String?
-  showOptionNames Boolean @default(true)
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
-  comments       Comment[]
-  group          Group?     @relation("PrimaryGroup", fields: [groupId], references: [id])
-  targetedGroups Group[]    @relation("PostTargetGroups")
-  targetGroups   String?
-  questions      Question[]
-  responses      Response[]
-  sections       Section[]
-  author         User       @relation(fields: [authorId], references: [id])
-  likes          UserLike[]
-  media          PostMedia[]
+  showOptionNames    Boolean     @default(true)
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  comments           Comment[]
+  group              Group?      @relation("PrimaryGroup", fields: [groupId], references: [id])
+  targetedGroups     Group[]     @relation("PostTargetGroups")
+  targetGroups       String?
+  questions          Question[]
+  responses          Response[]
+  sections           Section[]
+  author             User        @relation(fields: [authorId], references: [id])
+  likes              UserLike[]
+  media              PostMedia[]
 
   // Sharing/Reposting fields
   sharedFromId           String?
@@ -247,8 +254,8 @@ model Post {
   rejectionReason String?
 
   // View Counts
-  viewCount       Int @default(0)
-  uniqueViewCount Int @default(0)
+  viewCount       Int              @default(0)
+  uniqueViewCount Int              @default(0)
   views           PostView[]
   mentions        Mention[]
   hashtags        PostHashtag[]
@@ -261,6 +268,10 @@ model Post {
   @@index([isDeleted])
   @@index([status])
   @@index([approvedAt])
+  @@index([status, isDeleted, createdAt(sort: Desc), id(sort: Desc)], map: "Post_feed_status_deleted_created_id_idx")
+  @@index([authorId, status, isDeleted, createdAt(sort: Desc)], map: "Post_author_feed_created_idx")
+  @@index([authorId, status, isDeleted, updatedAt(sort: Desc), id(sort: Desc)], map: "Post_author_status_updated_id_idx")
+  @@index([sharedFromId, authorId], map: "Post_shared_viewer_idx")
 }
 
 model Section {
@@ -270,46 +281,53 @@ model Section {
   order     Int        @default(0)
   questions Question[]
   post      Post       @relation(fields: [postId], references: [id])
+
+  @@index([postId, order], map: "Section_post_order_idx")
 }
 
 model Question {
-  id         String   @id @default(uuid())
-  text       String
-  type       String
-  image      String?
-  imageMediaId String? @unique
-  postId     String?
-  sectionId  String?
-  order      Int      @default(0)
-  isRequired Boolean  @default(true)
+  id                 String      @id @default(uuid())
+  text               String
+  type               String
+  image              String?
+  imageMediaId       String?     @unique
+  postId             String?
+  sectionId          String?
+  order              Int         @default(0)
+  isRequired         Boolean     @default(true)
   optionPresentation String?
-  showOptionNames Boolean @default(true)
-  options    Option[]
-  answers    Answer[]
-  section    Section? @relation(fields: [sectionId], references: [id])
-  post       Post?    @relation(fields: [postId], references: [id])
-  imageMedia   MediaAsset? @relation("QuestionImageMedia", fields: [imageMediaId], references: [id], onDelete: SetNull)
+  showOptionNames    Boolean     @default(true)
+  options            Option[]
+  answers            Answer[]
+  section            Section?    @relation(fields: [sectionId], references: [id])
+  post               Post?       @relation(fields: [postId], references: [id])
+  imageMedia         MediaAsset? @relation("QuestionImageMedia", fields: [imageMediaId], references: [id], onDelete: SetNull)
+
+  @@index([postId, order], map: "Question_post_order_idx")
+  @@index([sectionId, order], map: "Question_section_order_idx")
 }
 
 model Option {
-  id             String   @id @default(uuid())
+  id             String      @id @default(uuid())
   text           String
   image          String?
-  imageMediaId   String? @unique
-  votes          Int      @default(0)
+  imageMediaId   String?     @unique
+  votes          Int         @default(0)
   questionId     String
   isCorrect      Boolean?
-  isRating       Boolean  @default(false)
-  ratingValue    Int      @default(0)
-  order          Int      @default(0)
-  withFollowUp   Boolean  @default(false)
+  isRating       Boolean     @default(false)
+  ratingValue    Int         @default(0)
+  order          Int         @default(0)
+  withFollowUp   Boolean     @default(false)
   followUpLabel  String?
-  isUserAdded    Boolean  @default(false)
+  isUserAdded    Boolean     @default(false)
   addedByUserId  String?
   addedByGuestId String?
-  question       Question @relation(fields: [questionId], references: [id])
+  question       Question    @relation(fields: [questionId], references: [id])
   answers        Answer[]
   imageMedia     MediaAsset? @relation("OptionImageMedia", fields: [imageMediaId], references: [id], onDelete: SetNull)
+
+  @@index([questionId, order], map: "Option_question_order_idx")
 }
 
 enum MediaPurpose {
@@ -464,6 +482,10 @@ model Response {
 
   @@index([guestId])
   @@index([postId])
+  @@index([postId, userId], map: "Response_post_user_idx")
+  @@index([postId, guestId], map: "Response_post_guest_idx")
+  @@index([userId, timestamp(sort: Desc)], map: "Response_user_timestamp_idx")
+  @@index([postId, timestamp(sort: Desc), id(sort: Desc)], map: "Response_post_timestamp_id_idx")
 }
 
 model Answer {
@@ -480,18 +502,18 @@ model Answer {
 }
 
 model Comment {
-  id        String        @id @default(uuid())
+  id        String           @id @default(uuid())
   text      String
   userId    String
   postId    String
   parentId  String?
-  likes     Int           @default(0)
-  createdAt DateTime      @default(now())
-  isDeleted Boolean       @default(false)
-  parent    Comment?      @relation("CommentReplies", fields: [parentId], references: [id])
-  replies   Comment[]     @relation("CommentReplies")
-  post      Post          @relation(fields: [postId], references: [id])
-  user      User          @relation(fields: [userId], references: [id])
+  likes     Int              @default(0)
+  createdAt DateTime         @default(now())
+  isDeleted Boolean          @default(false)
+  parent    Comment?         @relation("CommentReplies", fields: [parentId], references: [id])
+  replies   Comment[]        @relation("CommentReplies")
+  post      Post             @relation(fields: [postId], references: [id])
+  user      User             @relation(fields: [userId], references: [id])
   likesList CommentLike[]
   mentions  Mention[]
   hashtags  CommentHashtag[]
@@ -499,6 +521,8 @@ model Comment {
   @@index([postId])
   @@index([parentId])
   @@index([userId])
+  @@index([userId, createdAt(sort: Desc)], map: "Comment_user_created_idx")
+  @@index([postId, parentId, createdAt(sort: Desc), id(sort: Desc)], map: "Comment_post_parent_created_id_idx")
 }
 
 model NotificationSettings {
@@ -510,25 +534,26 @@ model NotificationSettings {
 }
 
 model Notification {
-  id         String    @id @default(uuid())
+  id         String          @id @default(uuid())
   userId     String
-  user       User      @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  user       User            @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
   actorId    String?
-  actor      User?     @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  actor      User?           @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
   type       String
-  message    String    @default("")
+  message    String          @default("")
   targetType String?
   targetId   String?
   payload    String? // JSON string
-  dedupeKey  String?   @unique @map("dedupe_key")
-  isRead     Boolean   @default(false)
+  dedupeKey  String?         @unique @map("dedupe_key")
+  isRead     Boolean         @default(false)
   readAt     DateTime?
-  createdAt  DateTime  @default(now())
+  createdAt  DateTime        @default(now())
   mention    Mention?        @relation("MentionNotification")
   peopleTag  PostTaggedUser? @relation("PeopleTagNotification")
 
   @@index([userId, createdAt(sort: Desc)])
   @@index([userId, isRead])
+  @@index([userId, createdAt(sort: Desc), id(sort: Desc)], map: "notifications_user_created_id_idx")
   @@map("notifications")
 }
 
@@ -686,6 +711,8 @@ model UserLike {
   @@unique([userId, postId])
   @@index([userId])
   @@index([postId])
+  @@index([userId, createdAt(sort: Desc)], map: "UserLike_user_created_idx")
+  @@index([postId, createdAt(sort: Desc), id(sort: Desc)], map: "UserLike_post_created_id_idx")
 }
 
 model OTPCode {
@@ -722,6 +749,7 @@ model SavedPost {
 
   @@unique([userId, postId])
   @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc), postId(sort: Desc)], map: "user_saved_posts_user_created_post_idx")
   @@map("user_saved_posts")
 }
 
@@ -738,19 +766,19 @@ model HiddenPost {
 }
 
 model Report {
-  id              String    @id @default(uuid())
-  reporterId      String    @map("reporter_id")
-  targetType      String    @map("target_type") // POST, COMMENT, USER
-  targetId        String    @map("target_id")
-  dedupeKey       String?   @unique @map("dedupe_key")
-  reason          String
-  description     String?
-  status          String    @default("PENDING")
-  targetSnapshot  Json?     @map("target_snapshot")
-  resolutionNote  String?   @map("resolution_note")
-  resolvedAt      DateTime? @map("resolved_at")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  id             String    @id @default(uuid())
+  reporterId     String    @map("reporter_id")
+  targetType     String    @map("target_type") // POST, COMMENT, USER
+  targetId       String    @map("target_id")
+  dedupeKey      String?   @unique @map("dedupe_key")
+  reason         String
+  description    String?
+  status         String    @default("PENDING")
+  targetSnapshot Json?     @map("target_snapshot")
+  resolutionNote String?   @map("resolution_note")
+  resolvedAt     DateTime? @map("resolved_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
 
   reporter User @relation("Reporter", fields: [reporterId], references: [id])
 
@@ -791,6 +819,7 @@ model CommentLike {
   comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
 
   @@unique([userId, commentId])
+  @@index([commentId, createdAt(sort: Desc), id(sort: Desc)], map: "CommentLike_comment_created_id_idx")
 }
 
 model UserBlock {
@@ -808,9 +837,9 @@ model UserBlock {
 model PostView {
   id            String   @id @default(uuid())
   postId        String
-  viewerKey     String   // e.g., "user:<userId>" or "session:<guestSessionId>"
-  source        String?  // e.g., "FEED", "PROFILE"
-  deviceType    String?  // e.g., "WEB", "IOS"
+  viewerKey     String // e.g., "user:<userId>" or "session:<guestSessionId>"
+  source        String? // e.g., "FEED", "PROFILE"
+  deviceType    String? // e.g., "WEB", "IOS"
   ipHash        String?
   userAgentHash String?
   viewedAt      DateTime @default(now())

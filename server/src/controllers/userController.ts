@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { PeopleTagPermission } from '@prisma/client';
+import { PeopleTagPermission, Prisma } from '@prisma/client';
 import prisma from '../prisma';
 import { PrivacyService } from '../services/privacyService';
 import { notify } from '../services/notificationService';
@@ -96,6 +96,23 @@ const profileCoverForViewer = async (coverMediaId: string | null | undefined, vi
         if (error instanceof MediaValidationError && error.statusCode === 404) return null;
         throw error;
     }
+};
+
+export const NOTIFICATION_PAGE_DEFAULT = 50;
+export const NOTIFICATION_PAGE_MAX = 100;
+export const SUGGESTION_INTERACTION_SAMPLE_LIMIT = 100;
+const SUGGESTION_LIMIT = 10;
+const INTERACTION_SUGGESTION_LIMIT = 5;
+
+const firstQueryValue = (value: unknown): string | undefined => {
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value) && typeof value[0] === 'string') return value[0];
+    return undefined;
+};
+
+const boundedPositiveInteger = (value: unknown, fallback: number, maximum: number): number => {
+    const parsed = Number(firstQueryValue(value));
+    return Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, maximum) : fallback;
 };
 
 export const getUsers = async (req: Request, res: Response) => {
@@ -602,22 +619,29 @@ export const getUserAnalytics = async (req: Request, res: Response) => {
                 return;
             }
         }
-        const posts = await prisma.post.findMany({
-            where: { authorId: id, isDeleted: false, status: 'PUBLISHED', sharedFromId: null },
-            include: {
-                responses: {
-                    include: {
-                        user: {
-                            select: {
-                                country: true,
-                                demographics: true, // This now selects the relation!
-                                // birthday: true // Removed
-                            }
-                        }
-                    }
-                }
-            }
-        });
+        const rows = await prisma.$queryRaw<Array<{
+            type: string | null;
+            country: string | null;
+            gender: string | null;
+            ageGroup: string | null;
+            count: bigint;
+        }>>(Prisma.sql`
+            SELECT
+                post."type",
+                viewer."country",
+                demographics."gender",
+                demographics."age_group" AS "ageGroup",
+                COUNT(*)::bigint AS "count"
+            FROM "Response" response
+            INNER JOIN "Post" post ON post."id" = response."postId"
+            LEFT JOIN "users" viewer ON viewer."id" = response."userId"
+            LEFT JOIN "user_demographics" demographics ON demographics."user_id" = viewer."id"
+            WHERE post."authorId" = ${id}
+              AND post."isDeleted" = FALSE
+              AND post."status" = 'PUBLISHED'
+              AND post."sharedFromId" IS NULL
+            GROUP BY post."type", viewer."country", demographics."gender", demographics."age_group"
+        `);
 
         let totalResponses = 0;
         const byType: Record<string, number> = {};
@@ -628,24 +652,14 @@ export const getUserAnalytics = async (req: Request, res: Response) => {
         ['Poll', 'Survey', 'Quiz', 'Challenge'].forEach(k => byType[k] = 0);
         ['Male', 'Female'].forEach(k => byGender[k] = 0);
 
-        posts.forEach(post => {
-            const type = post.type || 'Survey';
-            const responseCount = post.responses.length;
-            totalResponses += responseCount;
-            byType[type] = (byType[type] || 0) + responseCount;
-
-            post.responses.forEach((response: any) => {
-                const rUser = response.user;
-                if (rUser && rUser.country) {
-                    byCountry[rUser.country] = (byCountry[rUser.country] || 0) + 1;
-                }
-
-                const demo = rUser?.demographics as any;
-                if (demo) {
-                    if (demo.gender) byGender[demo.gender] = (byGender[demo.gender] || 0) + 1;
-                    if (demo.ageGroup) byAge[demo.ageGroup] = (byAge[demo.ageGroup] || 0) + 1;
-                }
-            });
+        rows.forEach(row => {
+            const count = Number(row.count);
+            const type = row.type || 'Survey';
+            totalResponses += count;
+            byType[type] = (byType[type] || 0) + count;
+            if (row.country) byCountry[row.country] = (byCountry[row.country] || 0) + count;
+            if (row.gender) byGender[row.gender] = (byGender[row.gender] || 0) + count;
+            if (row.ageGroup) byAge[row.ageGroup] = (byAge[row.ageGroup] || 0) + count;
         });
 
         res.json({ totalResponses, byType, byCountry, byGender, byAge });
@@ -658,6 +672,8 @@ export const getUserAnalytics = async (req: Request, res: Response) => {
 export const getUserFollowers = async (req: Request, res: Response) => {
     const { id } = req.params;
     const currentUserId = req.user?.userId;
+    const limit = boundedPositiveInteger(req.query.limit, 50, 100);
+    const cursor = firstQueryValue(req.query.cursor)?.trim() || undefined;
     try {
         const canView = await PrivacyService.canViewUserContent(currentUserId, id as string);
         if (!canView) {
@@ -667,6 +683,9 @@ export const getUserFollowers = async (req: Request, res: Response) => {
 
         const followers = await prisma.follow.findMany({
             where: { followingId: id as string, status: 'ACTIVE' },
+            take: limit + 1,
+            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
             include: {
                 follower: {
                     select: {
@@ -679,6 +698,12 @@ export const getUserFollowers = async (req: Request, res: Response) => {
                 }
             }
         });
+
+        const hasMore = followers.length > limit;
+        if (hasMore) followers.pop();
+        if (hasMore && followers.length > 0) {
+            res.setHeader('X-Next-Cursor', followers[followers.length - 1].id);
+        }
 
         const mapped = (followers as any[]).map(f => {
             const follower = serializeUserMediaRecord(f.follower)!;
@@ -698,6 +723,8 @@ export const getUserFollowers = async (req: Request, res: Response) => {
 export const getUserFollowing = async (req: Request, res: Response) => {
     const { id } = req.params;
     const currentUserId = req.user?.userId;
+    const limit = boundedPositiveInteger(req.query.limit, 50, 100);
+    const cursor = firstQueryValue(req.query.cursor)?.trim() || undefined;
     try {
         const canView = await PrivacyService.canViewUserContent(currentUserId, id as string);
         if (!canView) {
@@ -707,6 +734,9 @@ export const getUserFollowing = async (req: Request, res: Response) => {
 
         const following = await prisma.follow.findMany({
             where: { followerId: id as string, status: 'ACTIVE' },
+            take: limit + 1,
+            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
             include: {
                 following: {
                     select: {
@@ -719,6 +749,12 @@ export const getUserFollowing = async (req: Request, res: Response) => {
                 }
             }
         });
+
+        const hasMore = following.length > limit;
+        if (hasMore) following.pop();
+        if (hasMore && following.length > 0) {
+            res.setHeader('X-Next-Cursor', following[following.length - 1].id);
+        }
 
         const mapped = (following as any[]).map(f => {
             const followedUser = serializeUserMediaRecord(f.following)!;
@@ -737,24 +773,38 @@ export const getUserFollowing = async (req: Request, res: Response) => {
 
 
 export const getNotifications = async (req: Request, res: Response) => {
-    console.log(`[API] getNotifications requested for userId: ${req.params.id}`);
     const id = req.params.id as string;
 
     if (req.user?.userId !== id) {
         return res.status(403).json({ error: 'Forbidden' });
     }
     try {
-        console.log(`[API] Calling prisma.notification.findMany for ${id}`);
+        const limit = boundedPositiveInteger(req.query.limit, NOTIFICATION_PAGE_DEFAULT, NOTIFICATION_PAGE_MAX);
+        const cursor = firstQueryValue(req.query.cursor)?.trim() || undefined;
         const notifications = await prisma.notification.findMany({
             where: { userId: id as string },
-            orderBy: { createdAt: 'desc' },
-            include: {
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            take: limit + 1,
+            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+            select: {
+                id: true,
+                type: true,
+                message: true,
+                targetId: true,
+                targetType: true,
+                payload: true,
+                isRead: true,
+                createdAt: true,
                 actor: {
                     select: { id: true, name: true, avatar: true, ...PUBLIC_AVATAR_MEDIA_SELECT }
                 }
             }
         });
-        console.log(`[API] prisma.notification returned ${notifications.length} rows`);
+        const hasMore = notifications.length > limit;
+        if (hasMore) notifications.pop();
+        if (hasMore && notifications.length > 0) {
+            res.setHeader('X-Next-Cursor', notifications[notifications.length - 1].id);
+        }
 
         const mapped = notifications.map((n: any) => {
             const targetType = n.targetType === 'user' ? 'profile' : n.targetType;
@@ -887,32 +937,37 @@ export const getUserGroups = async (req: Request, res: Response) => {
                 group: { isDeleted: false }
             },
             include: {
-                group: { include: PUBLIC_GROUP_MEDIA_INCLUDE }
+                group: {
+                    include: {
+                        ...PUBLIC_GROUP_MEDIA_INCLUDE,
+                        _count: {
+                            select: {
+                                members: {
+                                    where: { status: MEMBERSHIP_STATUS.JOINED }
+                                },
+                                targetedPosts: {
+                                    where: {
+                                        isDeleted: false,
+                                        status: POST_STATUS.PUBLISHED
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         });
 
-        const groups = await Promise.all(memberships.map(async (m) => {
-            const [memberCount, postsCount] = await Promise.all([
-                prisma.groupMember.count({
-                    where: { groupId: m.groupId, status: MEMBERSHIP_STATUS.JOINED }
-                }),
-                prisma.post.count({
-                    where: {
-                        targetedGroups: { some: { id: m.groupId } },
-                        isDeleted: false,
-                        status: POST_STATUS.PUBLISHED
-                    }
-                })
-            ]);
-
+        const groups = memberships.map((membership) => {
+            const { _count, ...group } = membership.group;
             return {
-                ...serializeGroupMediaRecord(m.group),
-                memberCount,
-                postsCount,
-                permissions: GroupPermissionService.calculatePermissions(m.group, m.role, m.status),
-                role: m.role
+                ...serializeGroupMediaRecord(group),
+                memberCount: _count.members,
+                postsCount: _count.targetedPosts,
+                permissions: GroupPermissionService.calculatePermissions(group, membership.role, membership.status),
+                role: membership.role
             };
-        }));
+        });
 
         res.json(groups);
     } catch (error) {
@@ -924,63 +979,66 @@ export const getUserGroups = async (req: Request, res: Response) => {
 export const getSuggestedUsers = async (req: Request, res: Response) => {
     const { id } = req.params;
     try {
-        // 1. Get users I already follow to exclude them
-        const following = await prisma.follow.findMany({
-            where: { followerId: id as string },
-            select: { followingId: true }
-        });
-        const excludedIds = following.map(f => f.followingId);
-        excludedIds.push(id as string); // Also exclude myself
+        const viewerId = id as string;
+        const recentAuthors = await prisma.$queryRaw<Array<{ authorId: string }>>(Prisma.sql`
+            WITH recent_interactions AS (
+                (SELECT post."authorId", likes."createdAt" AS "interactedAt"
+                 FROM "UserLike" likes
+                 INNER JOIN "Post" post ON post."id" = likes."postId"
+                 WHERE likes."userId" = ${viewerId}
+                 ORDER BY likes."createdAt" DESC
+                 LIMIT ${SUGGESTION_INTERACTION_SAMPLE_LIMIT})
+                UNION ALL
+                (SELECT post."authorId", comment."createdAt" AS "interactedAt"
+                 FROM "Comment" comment
+                 INNER JOIN "Post" post ON post."id" = comment."postId"
+                 WHERE comment."userId" = ${viewerId}
+                 ORDER BY comment."createdAt" DESC
+                 LIMIT ${SUGGESTION_INTERACTION_SAMPLE_LIMIT})
+                UNION ALL
+                (SELECT post."authorId", response."timestamp" AS "interactedAt"
+                 FROM "Response" response
+                 INNER JOIN "Post" post ON post."id" = response."postId"
+                 WHERE response."userId" = ${viewerId}
+                 ORDER BY response."timestamp" DESC
+                 LIMIT ${SUGGESTION_INTERACTION_SAMPLE_LIMIT})
+            )
+            SELECT "authorId"
+            FROM recent_interactions
+            WHERE "authorId" <> ${viewerId}
+            GROUP BY "authorId"
+            ORDER BY MAX("interactedAt") DESC, "authorId" ASC
+            LIMIT ${INTERACTION_SUGGESTION_LIMIT}
+        `);
+        const interactedAuthorIds = recentAuthors.map((row) => row.authorId);
 
-        // 2. Find interaction-based suggestions
-        const likes = await prisma.userLike.findMany({
-            where: { userId: id as string },
-            include: { post: { select: { authorId: true } } }
-        });
-        const comments = await prisma.comment.findMany({
-            where: { userId: id as string },
-            include: { post: { select: { authorId: true } } }
-        });
-        const responses = await prisma.response.findMany({
-            where: { userId: id as string },
-            include: { post: { select: { authorId: true } } }
-        });
+        const interactionSuggestions = interactedAuthorIds.length > 0
+            ? await prisma.user.findMany({
+                where: {
+                    id: { in: interactedAuthorIds, not: viewerId },
+                    status: 'ACTIVE',
+                    following: { none: { followerId: viewerId } }
+                },
+                take: INTERACTION_SUGGESTION_LIMIT,
+                select: SAFE_USER_SELECT
+            })
+            : [];
 
-        // Collect unique authors we've interacted with (but don't follow)
-        const interactedAuthorIds = new Set<string>();
-        [...likes, ...comments, ...responses].forEach((interaction: any) => {
-            const authorId = interaction.post?.authorId;
-            if (authorId && !excludedIds.includes(authorId)) {
-                interactedAuthorIds.add(authorId);
-            }
-        });
-
-        const interactionSuggestions = await prisma.user.findMany({
-            where: {
-                id: { in: Array.from(interactedAuthorIds) },
-                status: 'ACTIVE'
-            },
-            take: 5,
-            select: SAFE_USER_SELECT
-        });
-
-        // Add a "reason" field
         const suggestedList = interactionSuggestions.map(u => ({
             ...serializeUserMediaRecord(u)!,
             suggestionReason: 'Recently interacted'
         }));
 
-        // 3. If we don't have enough (less than 10), pad with popular users
-        if (suggestedList.length < 10) {
-            const currentIds = [...excludedIds, ...suggestedList.map(u => u.id)];
-            
+        if (suggestedList.length < SUGGESTION_LIMIT) {
+            const currentIds = [viewerId, ...suggestedList.map(u => u.id)];
             const popularSuggestions = await prisma.user.findMany({
                 where: {
                     id: { notIn: currentIds },
-                    status: 'ACTIVE'
+                    status: 'ACTIVE',
+                    following: { none: { followerId: viewerId } }
                 },
-                orderBy: { followersCount: 'desc' },
-                take: 10 - suggestedList.length,
+                orderBy: [{ followersCount: 'desc' }, { id: 'asc' }],
+                take: SUGGESTION_LIMIT - suggestedList.length,
                 select: SAFE_USER_SELECT
             });
 
@@ -990,7 +1048,6 @@ export const getSuggestedUsers = async (req: Request, res: Response) => {
             })));
         }
 
-        // Shuffle the list slightly (optional) or just return
         res.json(suggestedList);
     } catch (error) {
         console.error("Get Suggested Users Error:", error);

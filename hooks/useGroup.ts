@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { MembershipStatus, Survey, normalizeSurvey } from '../types';
 import { authFetch } from '../services/api';
 
@@ -11,14 +11,26 @@ export interface GroupStats {
 // ------------------------------------------------------------------
 // 1. Membership Hook
 // ------------------------------------------------------------------
-export function useGroupMembership(groupId: string, userId?: string) {
-    const [membershipStatus, setMembershipStatus] = useState<MembershipStatus>('NOT_JOINED');
-    const [role, setRole] = useState<string | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
+export function useGroupMembership(
+    groupId: string,
+    userId?: string,
+    initial?: { status?: MembershipStatus; role?: string | null }
+) {
+    const hasInitialState = Boolean(initial?.status);
+    const [membershipStatus, setMembershipStatus] = useState<MembershipStatus>(initial?.status || 'NOT_JOINED');
+    const [role, setRole] = useState<string | null>(initial?.role || null);
+    const [isLoading, setIsLoading] = useState(!hasInitialState);
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
+        if (hasInitialState) {
+            setMembershipStatus(initial?.status || 'NOT_JOINED');
+            setRole(initial?.role || null);
+            setIsLoading(false);
+            return;
+        }
         let isMounted = true;
+        const controller = new AbortController();
         setIsLoading(true);
 
         if (!groupId) {
@@ -28,7 +40,7 @@ export function useGroupMembership(groupId: string, userId?: string) {
 
         // Fetch initial membership status
         const url = `/api/groups/${groupId}/membership`;
-        authFetch(url)
+        authFetch(url, { signal: controller.signal, timeoutMs: 10_000 })
             .then((res) => {
                 if (!res.ok) {
                     if (res.status === 403) return { status: 'NOT_JOINED' };
@@ -56,8 +68,9 @@ export function useGroupMembership(groupId: string, userId?: string) {
 
         return () => {
             isMounted = false;
+            controller.abort();
         };
-    }, [groupId, userId]);
+    }, [groupId, userId, hasInitialState, initial?.status, initial?.role]);
 
     const joinGroup = async () => {
         try {
@@ -161,10 +174,11 @@ export function useGroupPosts(groupId: string, userId?: string) {
     const [isLoading, setIsLoading] = useState(false);
     const [isFetchingNextPage, setIsFetchingNextPage] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [page, setPage] = useState(1);
+    const [nextCursor, setNextCursor] = useState<string | null>(null);
     const [hasMore, setHasMore] = useState(true);
+    const activeRequestRef = useRef<AbortController | null>(null);
 
-    const fetchPosts = useCallback(async (pageNum: number, isInitial = false) => {
+    const fetchPosts = useCallback(async (cursor: string | null, isInitial = false) => {
         if (!groupId) {
             setIsLoading(false);
             setIsFetchingNextPage(false);
@@ -176,21 +190,25 @@ export function useGroupPosts(groupId: string, userId?: string) {
             else setIsFetchingNextPage(true);
             setError(null);
 
-            const url = `/api/groups/${groupId}/posts?page=${pageNum}&limit=10`;
-            const res = await authFetch(url);
+            const controller = new AbortController();
+            if (isInitial) activeRequestRef.current?.abort();
+            activeRequestRef.current = controller;
+            const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+            const url = `/api/posts?groupId=${encodeURIComponent(groupId)}&limit=10${cursorParam}`;
+            const res = await authFetch(url, { signal: controller.signal, timeoutMs: 15_000 });
             if (!res.ok) {
                 if (res.status === 403) throw new Error('Private group posts are hidden.');
                 const errData = await res.json().catch(() => ({}));
                 throw new Error(errData.error || 'Failed to fetch posts');
             }
-            const data: { posts: any[]; hasMore: boolean } = await res.json();
+            const data: { data: any[]; nextCursor: string | null } = await res.json();
             
-            if (!data || !Array.isArray(data.posts)) {
+            if (!data || !Array.isArray(data.data)) {
                 console.error('[useGroupPosts] Unexpected group posts response:', data);
                 throw new Error('Unexpected server response format');
             }
             
-            const rawPosts = data.posts;
+            const rawPosts = data.data;
             
             const normalizedPosts = rawPosts.map(post => {
                 try {
@@ -202,9 +220,10 @@ export function useGroupPosts(groupId: string, userId?: string) {
             }).filter(Boolean) as Survey[];
 
             setPosts((prev) => (isInitial ? normalizedPosts : [...prev, ...normalizedPosts]));
-            setHasMore(data.hasMore ?? false);
+            setNextCursor(data.nextCursor || null);
+            setHasMore(Boolean(data.nextCursor));
         } catch (err: any) {
-            setError(err.message);
+            if (err?.name !== 'AbortError') setError(err.message);
         } finally {
             if (isInitial) setIsLoading(false);
             else setIsFetchingNextPage(false);
@@ -228,15 +247,14 @@ export function useGroupPosts(groupId: string, userId?: string) {
     }, []);
 
     useEffect(() => {
-        setPage(1);
-        fetchPosts(1, true);
+        setNextCursor(null);
+        fetchPosts(null, true);
+        return () => activeRequestRef.current?.abort();
     }, [fetchPosts]);
 
     const fetchNextPage = () => {
-        if (!isLoading && !isFetchingNextPage && hasMore) {
-            const nextPage = page + 1;
-            setPage(nextPage);
-            fetchPosts(nextPage);
+        if (!isLoading && !isFetchingNextPage && hasMore && nextCursor) {
+            fetchPosts(nextCursor);
         }
     };
 
@@ -255,20 +273,26 @@ export function useGroupPosts(groupId: string, userId?: string) {
 // ------------------------------------------------------------------
 // 3. Stats Hook
 // ------------------------------------------------------------------
-export function useGroupStats(groupId: string) {
-    const [stats, setStats] = useState<GroupStats | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
+export function useGroupStats(groupId: string, initialStats?: GroupStats | null) {
+    const [stats, setStats] = useState<GroupStats | null>(initialStats || null);
+    const [isLoading, setIsLoading] = useState(!initialStats);
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
+        if (initialStats) {
+            setStats(initialStats);
+            setIsLoading(false);
+            return;
+        }
         let isMounted = true;
+        const controller = new AbortController();
         setIsLoading(true);
         if (!groupId) {
             setIsLoading(false);
             return;
         }
 
-        authFetch(`/api/groups/${groupId}/stats`)
+        authFetch(`/api/groups/${groupId}/stats`, { signal: controller.signal, timeoutMs: 10_000 })
             .then(async (res) => {
                 if (!res.ok) {
                     if (res.status === 403) throw new Error('Private group stats are hidden.');
@@ -292,8 +316,9 @@ export function useGroupStats(groupId: string) {
 
         return () => {
             isMounted = false;
+            controller.abort();
         };
-    }, [groupId]);
+    }, [groupId, initialStats]);
 
     return { stats, isLoading, error };
 }
@@ -301,7 +326,7 @@ export function useGroupStats(groupId: string) {
 // ------------------------------------------------------------------
 // 4. Members Hook
 // ------------------------------------------------------------------
-export function useGroupMembers(groupId: string) {
+export function useGroupMembers(groupId: string, enabled = true) {
     const [members, setMembers] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [isFetchingNextPage, setIsFetchingNextPage] = useState(false);
@@ -321,7 +346,7 @@ export function useGroupMembers(groupId: string) {
             else setIsFetchingNextPage(true);
             setError(null);
 
-            const res = await authFetch(`/api/groups/${groupId}/members?page=${pageNum}&limit=20`);
+            const res = await authFetch(`/api/groups/${groupId}/members?page=${pageNum}&limit=20`, { timeoutMs: 10_000 });
             if (!res.ok) {
                 if (res.status === 403) throw new Error('Private group members are hidden.');
                 throw new Error('Failed to fetch members');
@@ -339,9 +364,10 @@ export function useGroupMembers(groupId: string) {
     }, [groupId]);
 
     useEffect(() => {
+        if (!enabled) return;
         setPage(1);
         fetchMembers(1, true);
-    }, [fetchMembers]);
+    }, [enabled, fetchMembers]);
 
     const fetchNextPage = () => {
         if (!isLoading && !isFetchingNextPage && hasMore) {
@@ -370,23 +396,24 @@ export function useGroupMembers(groupId: string) {
 // ------------------------------------------------------------------
 // 5. Pending Requests Hook
 // ------------------------------------------------------------------
-export function useGroupPendingRequests(groupId: string) {
+export function useGroupPendingRequests(groupId: string, enabled = true) {
     const [requests, setRequests] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const fetchRequests = useCallback(async () => {
+    const fetchRequests = useCallback(async (signal?: AbortSignal) => {
         if (!groupId) return;
         try {
             setIsLoading(true);
             setError(null);
-            const res = await authFetch(`/api/groups/${groupId}/pending-requests`);
+            const res = await authFetch(`/api/groups/${groupId}/pending-requests`, { signal, timeoutMs: 10_000 });
             if (!res.ok) {
                 throw new Error('Failed to fetch pending requests');
             }
             const data = await res.json();
             setRequests(data);
         } catch (err: any) {
+            if (err?.name === 'AbortError') return;
             setError(err.message);
         } finally {
             setIsLoading(false);
@@ -394,31 +421,34 @@ export function useGroupPendingRequests(groupId: string) {
     }, [groupId]);
 
     useEffect(() => {
-        fetchRequests();
-    }, [fetchRequests]);
+        if (!enabled) return;
+        const controller = new AbortController();
+        void fetchRequests(controller.signal);
+        return () => controller.abort();
+    }, [enabled, fetchRequests]);
 
     return {
         requests,
         isLoading,
         error,
-        refresh: fetchRequests
+        refresh: () => { void fetchRequests(); }
     };
 }
 
 // ------------------------------------------------------------------
 // 6. Pending Posts Hook
 // ------------------------------------------------------------------
-export function useGroupPendingPosts(groupId: string) {
+export function useGroupPendingPosts(groupId: string, enabled = true) {
     const [pendingPosts, setPendingPosts] = useState<Survey[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const fetchPendingPosts = useCallback(async () => {
+    const fetchPendingPosts = useCallback(async (signal?: AbortSignal) => {
         if (!groupId) return;
         try {
             setIsLoading(true);
             setError(null);
-            const res = await authFetch(`/api/groups/${groupId}/pending-posts`);
+            const res = await authFetch(`/api/groups/${groupId}/pending-posts`, { signal, timeoutMs: 10_000 });
             if (!res.ok) {
                 throw new Error('Failed to fetch pending posts');
             }
@@ -433,6 +463,7 @@ export function useGroupPendingPosts(groupId: string) {
             }).filter(Boolean) as Survey[];
             setPendingPosts(normalized);
         } catch (err: any) {
+            if (err?.name === 'AbortError') return;
             setError(err.message);
         } finally {
             setIsLoading(false);
@@ -440,13 +471,16 @@ export function useGroupPendingPosts(groupId: string) {
     }, [groupId]);
 
     useEffect(() => {
-        fetchPendingPosts();
-    }, [fetchPendingPosts]);
+        if (!enabled) return;
+        const controller = new AbortController();
+        void fetchPendingPosts(controller.signal);
+        return () => controller.abort();
+    }, [enabled, fetchPendingPosts]);
 
     return {
         pendingPosts,
         isLoading,
         error,
-        refresh: fetchPendingPosts
+        refresh: () => { void fetchPendingPosts(); }
     };
 }

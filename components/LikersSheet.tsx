@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { UserProfile } from '../types';
 import { BottomSheet } from './BottomSheet';
-import { ThumbsUp, X } from 'lucide-react';
+import { Loader2, ThumbsUp, X } from 'lucide-react';
 import { api } from '../services/api';
 import { UserAvatar } from './UserAvatar';
 
@@ -18,31 +18,49 @@ interface LikersSheetProps {
 export const LikersSheet: React.FC<LikersSheetProps> = ({ isOpen, onClose, targetId, type, onAuthorClick, currentUser, isLikedLocally }) => {
     const [likers, setLikers] = useState<UserProfile[]>([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
+    const [nextCursor, setNextCursor] = useState<string | null>(null);
+    const [loadError, setLoadError] = useState<string | null>(null);
+
+    const loadPage = React.useCallback(async (cursor: string | null, append: boolean, signal?: AbortSignal) => {
+        append ? setIsLoadingMore(true) : setIsLoading(true);
+        setLoadError(null);
+        try {
+            const page = type === 'post'
+                ? await api.getPostLikersPage(targetId, cursor, 30, signal)
+                : await api.getCommentLikersPage(targetId, cursor, 30, signal);
+            let incoming = [...page.items];
+            if (!append && currentUser && isLikedLocally !== undefined) {
+                const existsIndex = incoming.findIndex(user => user.id === currentUser.id);
+                if (isLikedLocally && existsIndex === -1) incoming.unshift(currentUser);
+                if (!isLikedLocally && existsIndex !== -1) incoming.splice(existsIndex, 1);
+            }
+            setLikers(previous => {
+                const byId = new Map<string, UserProfile>();
+                (append ? previous : []).forEach(user => byId.set(user.id, user));
+                incoming.forEach(user => byId.set(user.id, user));
+                return Array.from(byId.values());
+            });
+            setNextCursor(page.nextCursor);
+        } catch (error: any) {
+            if (error?.name !== 'AbortError') setLoadError('Failed to load likes.');
+        } finally {
+            append ? setIsLoadingMore(false) : setIsLoading(false);
+        }
+    }, [currentUser, isLikedLocally, targetId, type]);
 
     useEffect(() => {
         if (isOpen && targetId) {
-            setIsLoading(true);
-            const fetcher = type === 'post' ? api.getPostLikers : api.getCommentLikers;
-            fetcher(targetId)
-                .then(data => {
-                    let finalData = [...data];
-                    // Optimistic merge
-                    if (currentUser && isLikedLocally !== undefined) {
-                        const existsIndex = finalData.findIndex(u => u.id === currentUser.id);
-                        if (isLikedLocally && existsIndex === -1) {
-                            finalData.unshift(currentUser);
-                        } else if (!isLikedLocally && existsIndex !== -1) {
-                            finalData.splice(existsIndex, 1);
-                        }
-                    }
-                    setLikers(finalData);
-                })
-                .catch(err => console.error("Error fetching likers:", err))
-                .finally(() => setIsLoading(false));
+            const controller = new AbortController();
+            setLikers([]);
+            setNextCursor(null);
+            void loadPage(null, false, controller.signal);
+            return () => controller.abort();
         } else {
             setLikers([]);
+            setNextCursor(null);
         }
-    }, [isOpen, targetId, type]);
+    }, [isOpen, loadPage, targetId]);
 
     return (
         <BottomSheet isOpen={isOpen} onClose={onClose}>
@@ -73,6 +91,11 @@ export const LikersSheet: React.FC<LikersSheetProps> = ({ isOpen, onClose, targe
                                 </div>
                             ))}
                         </div>
+                    ) : loadError && likers.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center h-full text-center py-20">
+                            <p className="text-sm text-gray-500 mb-3">{loadError}</p>
+                            <button onClick={() => void loadPage(null, false)} className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white">Retry</button>
+                        </div>
                     ) : likers.length > 0 ? (
                         <div className="space-y-4">
                             {likers.map(user => (
@@ -91,6 +114,16 @@ export const LikersSheet: React.FC<LikersSheetProps> = ({ isOpen, onClose, targe
                                     </div>
                                 </div>
                             ))}
+                            {nextCursor && (
+                                <button
+                                    onClick={() => void loadPage(nextCursor, true)}
+                                    disabled={isLoadingMore}
+                                    className="mx-auto flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-xs font-bold text-gray-600 disabled:opacity-60"
+                                >
+                                    {isLoadingMore && <Loader2 size={14} className="animate-spin" />}
+                                    Load more
+                                </button>
+                            )}
                         </div>
                     ) : (
                         <div className="flex flex-col items-center justify-center h-full text-center py-20">

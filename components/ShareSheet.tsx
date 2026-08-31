@@ -4,7 +4,6 @@ import {
   Repeat, Check, Share2, Copy, Loader2, ExternalLink, CheckCircle2, ChevronRight
 } from 'lucide-react';
 import { Survey } from '../types';
-import html2canvas from 'html2canvas';
 import { Analytics } from '../utils/analytics';
 import { UserProfile } from '../types';
 import { UserAvatar } from './UserAvatar';
@@ -110,6 +109,9 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
     try {
       await waitForCaptureAssets(posterRef.current);
 
+      // html2canvas is large and only needed after an explicit share action.
+      // Load it on demand so opening the home feed does not download/parse it.
+      const { default: html2canvas } = await import('html2canvas');
       const canvas = await html2canvas(posterRef.current, {
         useCORS: true,
         allowTaint: false,

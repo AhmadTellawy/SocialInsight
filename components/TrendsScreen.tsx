@@ -31,6 +31,18 @@ const CATEGORIES = [
   "Entertainment", "Health", "Education", "Lifestyle", "Science"
 ];
 
+const TRENDS_CACHE_TTL_MS = 2 * 60_000;
+const readTrendsCache = (key: string): any[] | null => {
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(key) || 'null');
+    return Array.isArray(cached?.items) && Date.now() - Number(cached.cachedAt) < TRENDS_CACHE_TTL_MS
+      ? cached.items
+      : null;
+  } catch {
+    return null;
+  }
+};
+
 export const TrendsScreen: React.FC<TrendsScreenProps> = ({ onSurveyClick }) => {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === 'ar' || i18n.language === 'ur';
@@ -50,6 +62,7 @@ export const TrendsScreen: React.FC<TrendsScreenProps> = ({ onSurveyClick }) => 
   const [isLoading, setIsLoading] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [trendingItems, setTrendingItems] = useState<any[]>([]);
+  const trendsAbortRef = React.useRef<AbortController | null>(null);
 
   // 2. Temp Filter State (for Bottom Sheet)
   const [tempCountry, setTempCountry] = useState(() => {
@@ -88,24 +101,39 @@ export const TrendsScreen: React.FC<TrendsScreenProps> = ({ onSurveyClick }) => 
 
   // 4. Fetch Trends API helper
   const fetchTrends = async (silent = false) => {
+    trendsAbortRef.current?.abort();
+    const controller = new AbortController();
+    trendsAbortRef.current = controller;
+    const params = {
+      period,
+      type: contentType === 'all' ? undefined : contentType,
+      country: activeCountry === 'ALL' ? undefined : activeCountry,
+      limit,
+      category: activeCategories.length > 0 ? activeCategories.join(',') : undefined
+    };
+    const cacheKey = `si_trends_v1:${JSON.stringify(params)}`;
+    const cached = readTrendsCache(cacheKey);
+    if (cached) {
+      setTrendingItems(cached);
+      setHasError(false);
+      if (!silent) setIsLoading(false);
+    }
     if (!silent) {
-      setIsLoading(true);
+      if (!cached) setIsLoading(true);
       setHasError(false);
     }
     try {
-      const params = {
-        period,
-        type: contentType === 'all' ? undefined : contentType,
-        country: activeCountry === 'ALL' ? undefined : activeCountry,
-        limit,
-        category: activeCategories.length > 0 ? activeCategories.join(',') : undefined
-      };
-      const data = await api.getTrends(params);
+      const data = await api.getTrends(params, controller.signal);
       setTrendingItems(data || []);
+      try {
+        sessionStorage.setItem(cacheKey, JSON.stringify({ items: data || [], cachedAt: Date.now() }));
+      } catch { }
       setHasError(false);
-    } catch (err) {
-      console.error('Failed to load trends:', err);
-      setHasError(true);
+    } catch (err: any) {
+      if (err?.name !== 'AbortError' && !cached) {
+        console.error('Failed to load trends:', err);
+        setHasError(true);
+      }
     } finally {
       if (!silent) {
         setIsLoading(false);
@@ -115,7 +143,8 @@ export const TrendsScreen: React.FC<TrendsScreenProps> = ({ onSurveyClick }) => 
 
   // Fetch when active filters change
   useEffect(() => {
-    fetchTrends();
+    void fetchTrends();
+    return () => trendsAbortRef.current?.abort();
   }, [period, contentType, limit, activeCountry, activeCategories]);
 
   const handleApplyFilters = () => {

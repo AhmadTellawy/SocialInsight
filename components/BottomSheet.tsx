@@ -13,7 +13,7 @@ interface BottomSheetProps {
 }
 
 export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, children, customLayout = false, title, height, ariaLabel }) => {
-  const [isRendered, setIsRendered] = useState(false);
+  const [isRendered, setIsRendered] = useState(isOpen);
   const [isDragging, setIsDragging] = useState(false);
   const [translateY, setTranslateY] = useState(0);
   
@@ -32,15 +32,27 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
     if (isOpen) {
       setIsRendered(true);
       setTranslateY(0);
-      document.body.style.overflow = 'hidden';
-    } else {
-      const timer = setTimeout(() => {
-        setIsRendered(false);
-        setTranslateY(0);
-      }, 350);
-      document.body.style.overflow = '';
-      return () => clearTimeout(timer);
+      return;
     }
+
+    // Closed sheets are mounted once per feed card. Avoid scheduling an exit
+    // timer for sheets that have never been opened.
+    if (!isRendered) return;
+
+    const timer = window.setTimeout(() => {
+      setIsRendered(false);
+      setTranslateY(0);
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [isOpen, isRendered]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
   }, [isOpen]);
 
   useEffect(() => {

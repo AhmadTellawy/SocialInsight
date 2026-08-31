@@ -177,9 +177,10 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   React.useEffect(() => {
     if (!userProfile.id) return;
     let active = true;
+    const controller = new AbortController();
     setIsPrivateProfileLoading(true);
     setPrivateProfileLoadError(null);
-    api.getMe()
+    api.getMe({ signal: controller.signal })
       .then((privateProfile) => {
         if (!active) return;
         const merged = {
@@ -197,13 +198,17 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
         setLinkCount(merged.profileLinks?.length || 0);
         onUpdateProfile(merged);
       })
-      .catch(() => {
+      .catch((error: any) => {
+        if (error?.name === 'AbortError') return;
         if (active) setPrivateProfileLoadError(t('profile.edit.loadFailed', { defaultValue: 'Some private profile details could not be loaded.' }));
       })
       .finally(() => {
         if (active) setIsPrivateProfileLoading(false);
       });
-    return () => { active = false; };
+    return () => {
+      active = false;
+      controller.abort();
+    };
   }, [userProfile.id]);
 
   const filteredNationalities = useMemo(() => {

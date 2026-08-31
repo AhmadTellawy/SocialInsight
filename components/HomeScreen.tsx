@@ -91,35 +91,55 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     return { trendingSurveys: trending, regularSurveys: regular };
   }, [surveys]);
 
-  const [suggestedUsers, setSuggestedUsers] = useState<any[]>([]);
-  const [isSuggestedLoading, setIsSuggestedLoading] = useState(true);
+  const suggestionsCacheKey = userProfile?.id ? `si_suggestions_v1:${userProfile.id}` : '';
+  const [suggestedUsers, setSuggestedUsers] = useState<any[]>(() => {
+    if (!suggestionsCacheKey) return [];
+    try {
+      const cached = JSON.parse(sessionStorage.getItem(suggestionsCacheKey) || 'null');
+      return Array.isArray(cached?.items) && Date.now() - Number(cached.cachedAt) < 5 * 60_000 ? cached.items : [];
+    } catch {
+      return [];
+    }
+  });
+  const [isSuggestedLoading, setIsSuggestedLoading] = useState(false);
 
   useEffect(() => {
-    let isMounted = true;
-    
+    if (!suggestionsCacheKey) {
+      setSuggestedUsers([]);
+      return;
+    }
+    try {
+      const cached = JSON.parse(sessionStorage.getItem(suggestionsCacheKey) || 'null');
+      setSuggestedUsers(
+        Array.isArray(cached?.items) && Date.now() - Number(cached.cachedAt) < 5 * 60_000
+          ? cached.items
+          : []
+      );
+    } catch {
+      setSuggestedUsers([]);
+    }
+  }, [suggestionsCacheKey]);
+
+  useEffect(() => {
+    if (isLoading) return;
+    const controller = new AbortController();
     if (userProfile && userProfile.id && !userProfile.isGuest) {
-      setIsSuggestedLoading(true);
-      api.getSuggestedUsers(userProfile.id)
+      api.getSuggestedUsers(userProfile.id, controller.signal)
         .then(users => {
-          if (isMounted) {
-            setSuggestedUsers(users);
-          }
+          setSuggestedUsers(users);
+          try {
+            sessionStorage.setItem(`si_suggestions_v1:${userProfile.id}`, JSON.stringify({ items: users, cachedAt: Date.now() }));
+          } catch { }
         })
-        .catch(err => {
-          if (isMounted) console.error('Failed to fetch suggested users:', err);
-        })
-        .finally(() => {
-          if (isMounted) setIsSuggestedLoading(false);
+        .catch((err: any) => {
+          if (err?.name !== 'AbortError') console.error('Failed to fetch suggested users:', err);
         });
     } else {
       setSuggestedUsers([]);
       setIsSuggestedLoading(false);
     }
-    
-    return () => {
-      isMounted = false;
-    };
-  }, [userProfile?.id]);
+    return () => controller.abort();
+  }, [isLoading, userProfile?.id]);
 
   const observerTarget = React.useRef<HTMLDivElement>(null);
 

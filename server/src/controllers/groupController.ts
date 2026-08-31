@@ -107,27 +107,31 @@ export const getGroups = async (req: Request, res: Response) => {
             include: {
                 ...PUBLIC_GROUP_MEDIA_INCLUDE,
                 mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
-                members: currentUserId ? { where: { userId: currentUserId } } : false
-            }
+                members: currentUserId ? { where: { userId: currentUserId }, take: 1 } : false,
+                _count: {
+                    select: {
+                        targetedPosts: {
+                            where: { isDeleted: false, status: POST_STATUS.PUBLISHED }
+                        }
+                    }
+                }
+            },
+            orderBy: [{ memberCount: 'desc' }, { id: 'asc' }],
+            take: 100
         });
-        
-        const formattedGroups = await Promise.all(groups.map(async (g) => {
+
+        const formattedGroups = groups.map((g: any) => {
             const membership = currentUserId ? g.members?.[0] : null;
             const permissions = GroupPermissionService.calculatePermissions(g, membership?.role || null, membership?.status || null);
-            
-            // Fetch posts count dynamically from targetedPosts
-            const postsCount = await prisma.post.count({
-                where: { targetedGroups: { some: { id: g.id } }, isDeleted: false, status: POST_STATUS.PUBLISHED }
-            });
-
+            const { _count, ...group } = g;
             return {
-                ...serializeGroupSocialRecord(g),
+                ...serializeGroupSocialRecord(group),
                 memberCount: g.memberCount,
-                postsCount,
+                postsCount: _count.targetedPosts,
                 permissions,
                 role: membership?.role || null
             };
-        }));
+        });
         
         res.json(formattedGroups);
     } catch (error) {
@@ -140,50 +144,54 @@ export const getGroupById = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const currentUserId = req.user?.userId;
     try {
-        const group = await prisma.group.findUnique({
-            where: { id: id as string },
-            include: {
-                ...PUBLIC_GROUP_MEDIA_INCLUDE,
-                mentions: ACTIVE_MENTION_REFERENCE_INCLUDE
-            }
-        });
+        const [group, membership, postsCount, votesCount] = await Promise.all([
+            prisma.group.findUnique({
+                where: { id: id as string },
+                include: {
+                    ...PUBLIC_GROUP_MEDIA_INCLUDE,
+                    mentions: ACTIVE_MENTION_REFERENCE_INCLUDE
+                }
+            }),
+            currentUserId
+                ? prisma.groupMember.findUnique({
+                    where: { userId_groupId: { userId: currentUserId, groupId: id } },
+                    select: { role: true, status: true }
+                })
+                : Promise.resolve(null),
+            prisma.post.count({
+                where: { targetedGroups: { some: { id } }, isDeleted: false, status: POST_STATUS.PUBLISHED }
+            }),
+            prisma.response.count({
+                where: { post: { targetedGroups: { some: { id } }, isDeleted: false, status: POST_STATUS.PUBLISHED } }
+            })
+        ]);
 
         if (!group || group.isDeleted) {
             res.status(404).json({ error: 'Group not found' });
             return;
         }
 
-        const permissions = await GroupPermissionService.getPermissions(id, currentUserId);
+        const permissions = GroupPermissionService.calculatePermissions(
+            group,
+            membership?.role || null,
+            membership?.status || null
+        );
         if (!permissions.canViewGroup) {
             res.status(403).json({ error: 'Forbidden' });
             return;
         }
 
-        // Fetch paginated group members & posts
-        const groupDetails = await prisma.group.findUnique({
-            where: { id: id as string },
-            include: {
-                ...PUBLIC_GROUP_MEDIA_INCLUDE,
-                mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
-                members: {
-                    where: { status: MEMBERSHIP_STATUS.JOINED },
-                    take: 10,
-                    select: {
-                        userId: true,
-                        role: true,
-                        user: {
-                            select: { id: true, name: true, avatar: true, handle: true, ...PUBLIC_AVATAR_MEDIA_SELECT }
-                        }
-                    }
-                }
-            }
-        });
-
-        const serializedDetails = serializeGroupSocialRecord(groupDetails)!;
+        const serializedDetails = serializeGroupSocialRecord(group)!;
         res.json({
             ...serializedDetails,
-            members: serializedDetails.members?.map((member: any) => ({ ...member, user: serializeUserMediaRecord(member.user) })),
-            permissions
+            permissions,
+            role: membership?.role || null,
+            membershipStatus: membership?.status || 'NOT_JOINED',
+            stats: {
+                membersCount: group.memberCount,
+                postsCount,
+                votesCount
+            }
         });
     } catch (error) {
         console.error(error);
@@ -516,22 +524,25 @@ export const getMembership = async (req: Request, res: Response) => {
     }
 
     try {
-        const group = await prisma.group.findUnique({
-            where: { id: id as string, isDeleted: false }
-        });
+        const [group, membership] = await Promise.all([
+            prisma.group.findUnique({
+                where: { id: id as string, isDeleted: false },
+                select: { id: true }
+            }),
+            prisma.groupMember.findUnique({
+                where: {
+                    userId_groupId: {
+                        userId: currentUserId,
+                        groupId: id as string
+                    }
+                },
+                select: { status: true, role: true }
+            })
+        ]);
         if (!group) {
             res.status(404).json({ error: 'Group not found' });
             return;
         }
-
-        const membership = await prisma.groupMember.findUnique({
-            where: {
-                userId_groupId: {
-                    userId: currentUserId,
-                    groupId: id as string
-                }
-            }
-        });
 
         if (membership) {
             res.json({ status: membership.status, role: membership.role });
@@ -714,28 +725,36 @@ export const getGroupStats = async (req: Request, res: Response) => {
     const currentUserId = req.user?.userId;
 
     try {
-        const group = await prisma.group.findUnique({
-            where: { id, isDeleted: false }
-        });
+        const [group, membership, postsCount, votesCount] = await Promise.all([
+            prisma.group.findUnique({ where: { id, isDeleted: false } }),
+            currentUserId
+                ? prisma.groupMember.findUnique({
+                    where: { userId_groupId: { userId: currentUserId, groupId: id } },
+                    select: { role: true, status: true }
+                })
+                : Promise.resolve(null),
+            prisma.post.count({
+                where: { targetedGroups: { some: { id } }, isDeleted: false, status: POST_STATUS.PUBLISHED }
+            }),
+            prisma.response.count({
+                where: { post: { targetedGroups: { some: { id } }, isDeleted: false, status: POST_STATUS.PUBLISHED } }
+            })
+        ]);
 
         if (!group) {
             res.status(404).json({ error: 'Group not found' });
             return;
         }
 
-        const permissions = await GroupPermissionService.getPermissions(id, currentUserId);
+        const permissions = GroupPermissionService.calculatePermissions(
+            group,
+            membership?.role || null,
+            membership?.status || null
+        );
         if (!permissions.canViewGroup) {
             res.status(403).json({ error: 'Forbidden' });
             return;
         }
-
-        const postsCount = await prisma.post.count({
-            where: { targetedGroups: { some: { id } }, isDeleted: false, status: POST_STATUS.PUBLISHED }
-        });
-
-        const votesCount = await prisma.response.count({
-            where: { post: { targetedGroups: { some: { id } }, isDeleted: false, status: POST_STATUS.PUBLISHED } }
-        });
 
         res.json({
             membersCount: group.memberCount,
@@ -755,30 +774,40 @@ export const getGroupMembers = async (req: Request, res: Response) => {
     const currentUserId = req.user?.userId;
 
     try {
-        const group = await prisma.group.findUnique({ where: { id, isDeleted: false } });
+        const [group, membership, members, total] = await Promise.all([
+            prisma.group.findUnique({ where: { id, isDeleted: false } }),
+            currentUserId
+                ? prisma.groupMember.findUnique({
+                    where: { userId_groupId: { userId: currentUserId, groupId: id } },
+                    select: { role: true, status: true }
+                })
+                : Promise.resolve(null),
+            prisma.groupMember.findMany({
+                where: { groupId: id, status: MEMBERSHIP_STATUS.JOINED },
+                skip: (page - 1) * limit,
+                take: limit,
+                include: {
+                    user: {
+                        select: { id: true, name: true, avatar: true, handle: true, ...PUBLIC_AVATAR_MEDIA_SELECT }
+                    }
+                }
+            }),
+            prisma.groupMember.count({ where: { groupId: id, status: MEMBERSHIP_STATUS.JOINED } })
+        ]);
         if (!group) {
             res.status(404).json({ error: 'Group not found' });
             return;
         }
 
-        const permissions = await GroupPermissionService.getPermissions(id, currentUserId);
+        const permissions = GroupPermissionService.calculatePermissions(
+            group,
+            membership?.role || null,
+            membership?.status || null
+        );
         if (!permissions.canViewGroup) {
             res.status(403).json({ error: 'Forbidden' });
             return;
         }
-
-        const members = await prisma.groupMember.findMany({
-            where: { groupId: id, status: MEMBERSHIP_STATUS.JOINED },
-            skip: (page - 1) * limit,
-            take: limit,
-            include: {
-                user: {
-                    select: { id: true, name: true, avatar: true, handle: true, ...PUBLIC_AVATAR_MEDIA_SELECT }
-                }
-            }
-        });
-
-        const total = await prisma.groupMember.count({ where: { groupId: id, status: MEMBERSHIP_STATUS.JOINED } });
 
         const formattedMembers = members.map((m: any) => {
             const user = serializeUserMediaRecord(m.user)!;

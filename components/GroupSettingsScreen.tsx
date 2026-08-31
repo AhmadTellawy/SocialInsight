@@ -149,9 +149,25 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
   const [activeJoinPolicy, setActiveJoinPolicy] = useState<JoinPolicy>((group.joinPolicy as JoinPolicy) || 'OPEN');
   const [activePostingPerms, setActivePostingPerms] = useState<PostingPerms>((group.postingPermissions as PostingPerms) || 'AllMembers');
 
-  const { members, isLoading: isMembersLoading, error: membersError, refresh: refreshMembers } = useGroupMembers(group.id);
-  const { requests, isLoading: isRequestsLoading, error: requestsError, refresh: refreshRequests } = useGroupPendingRequests(group.id);
-  const { pendingPosts, isLoading: isPostsLoading, error: postsError, refresh: refreshPosts } = useGroupPendingPosts(group.id);
+  const permissions = group.permissions || {
+    canViewGroup: true,
+    canViewMembers: true,
+    postRequiresApproval: false,
+    canPost: false,
+    canManageSettings: false,
+    canManageRoles: false,
+    canManageMembers: false,
+    canDeleteGroup: false,
+    canInviteMembers: false,
+    canApproveRequests: false
+  };
+
+  const shouldLoadMembers = permissions.canViewMembers
+    && (permissions.canManageMembers || permissions.canManageRoles);
+  const shouldLoadApprovalQueues = permissions.canApproveRequests;
+  const { members, isLoading: isMembersLoading, error: membersError, refresh: refreshMembers } = useGroupMembers(group.id, shouldLoadMembers);
+  const { requests, isLoading: isRequestsLoading, error: requestsError, refresh: refreshRequests } = useGroupPendingRequests(group.id, shouldLoadApprovalQueues);
+  const { pendingPosts, isLoading: isPostsLoading, error: postsError, refresh: refreshPosts } = useGroupPendingPosts(group.id, shouldLoadApprovalQueues);
   const [bannedMembers, setBannedMembers] = useState<any[]>([]);
   const [isBannedLoading, setIsBannedLoading] = useState(false);
   const [showBannedSection, setShowBannedSection] = useState(false);
@@ -187,19 +203,6 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
 
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const permissions = group.permissions || {
-    canViewGroup: true,
-    canViewMembers: true,
-    postRequiresApproval: false,
-    canPost: false,
-    canManageSettings: false,
-    canManageRoles: false,
-    canManageMembers: false,
-    canDeleteGroup: false,
-    canInviteMembers: false,
-    canApproveRequests: false
-  };
 
   useEffect(() => {
     return () => {

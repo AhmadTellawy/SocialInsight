@@ -14,19 +14,25 @@ export const UsersTableScreen: React.FC<UsersTableScreenProps> = ({ onBack, onUs
     const [isLoading, setIsLoading] = useState(true);
     const [search, setSearch] = useState('');
     const [filterCountry, setFilterCountry] = useState('All');
+    const [loadError, setLoadError] = useState<string | null>(null);
 
     useEffect(() => {
+        const controller = new AbortController();
         const fetchUsers = async () => {
             try {
-                const data = await api.getUsers();
+                setLoadError(null);
+                const data = await api.getUsers(controller.signal);
                 setUsers(data);
-            } catch (error) {
+            } catch (error: any) {
+                if (error?.name === 'AbortError') return;
                 console.error("Failed to fetch users:", error);
+                setLoadError('Unable to load the user directory.');
             } finally {
-                setIsLoading(false);
+                if (!controller.signal.aborted) setIsLoading(false);
             }
         };
-        fetchUsers();
+        void fetchUsers();
+        return () => controller.abort();
     }, []);
 
     const countries = ['All', ...Array.from(new Set(users.map(u => u.country).filter(Boolean)))];
@@ -95,6 +101,11 @@ export const UsersTableScreen: React.FC<UsersTableScreenProps> = ({ onBack, onUs
                     <div className="flex flex-col items-center justify-center py-20">
                         <div className="w-10 h-10 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mb-4" />
                         <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">Loading Database...</p>
+                    </div>
+                ) : loadError ? (
+                    <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+                        <User size={48} className="opacity-10 mb-4" />
+                        <p className="text-sm font-bold">{loadError}</p>
                     </div>
                 ) : filteredUsers.length > 0 ? (
                     <div className="min-w-full inline-block align-middle">

@@ -60,18 +60,31 @@ export const ProfileAnalysis: React.FC<ProfileAnalysisProps> = ({ userProfile, o
   const [loading, setLoading] = useState(true);
 
   React.useEffect(() => {
+    const controller = new AbortController();
     const loadAnalytics = async () => {
       if (!userProfile?.id) return;
+      const cacheKey = `si_profile_analytics_v1:${userProfile.id}`;
       try {
-        const data = await api.getUserAnalytics(userProfile.id);
+        const cached = JSON.parse(sessionStorage.getItem(cacheKey) || 'null');
+        if (cached?.data && Date.now() - Number(cached.cachedAt) < 60_000) {
+          setAnalyticsData(cached.data);
+          setLoading(false);
+        }
+      } catch { }
+      try {
+        const data = await api.getUserAnalytics(userProfile.id, controller.signal);
         setAnalyticsData(data);
-      } catch (error) {
-        console.error("Failed to load analytics", error);
+        try {
+          sessionStorage.setItem(cacheKey, JSON.stringify({ data, cachedAt: Date.now() }));
+        } catch { }
+      } catch (error: any) {
+        if (error?.name !== 'AbortError') console.error("Failed to load analytics", error);
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     };
-    loadAnalytics();
+    void loadAnalytics();
+    return () => controller.abort();
   }, [userProfile?.id]);
 
   const totalPossibleResponses = analyticsData?.totalResponses || 0;

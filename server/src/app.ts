@@ -1,8 +1,9 @@
+import 'dotenv/config';
 import express from 'express';
 import { createServer } from 'http';
 import path from 'path';
 import cors from 'cors';
-import dotenv from 'dotenv';
+import compression from 'compression';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import hpp from 'hpp';
@@ -23,8 +24,6 @@ import { initSocket } from './services/socketService';
 import { isMediaStorageConfigured } from './services/mediaStorage';
 import prisma from './prisma';
 
-dotenv.config();
-
 const app = express();
 const httpServer = createServer(app);
 initSocket(httpServer);
@@ -34,11 +33,42 @@ const PORT = process.env.PORT || 3001;
 const corsOptions = {
     origin: process.env.CLIENT_URL || 'http://localhost:3000',
     credentials: true,
+    exposedHeaders: ['X-Next-Cursor'],
 };
 app.use(helmet());
+app.use(compression({ threshold: 1024 }));
 app.use(cors(corsOptions));
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '4mb' }));
 app.use(hpp());
+
+const requestRouteTemplate = (req: express.Request): string => {
+    const routePath = req.route?.path;
+    if (typeof routePath !== 'string') return '/api/unmatched';
+
+    const requestSegments = req.originalUrl.split('?')[0].split('/').filter(Boolean);
+    const routeSegments = routePath.split('/').filter(Boolean);
+    const mountSegments = requestSegments.slice(0, Math.max(0, requestSegments.length - routeSegments.length));
+    const suffix = routePath === '/' ? '' : routePath.startsWith('/') ? routePath : `/${routePath}`;
+    return (`/${mountSegments.join('/')}${suffix}`).replace(/\/{2,}/g, '/');
+};
+
+// Keep a low-cardinality latency signal in production logs so regressions in
+// feed/database performance are visible without logging user data or queries.
+app.use((req, res, next) => {
+    const startedAt = process.hrtime.bigint();
+    res.once('finish', () => {
+        if (!req.path.startsWith('/api/')) return;
+        const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+        console.info(JSON.stringify({
+            event: 'http_request_completed',
+            method: req.method,
+            path: requestRouteTemplate(req),
+            status: res.statusCode,
+            durationMs: Math.round(durationMs * 10) / 10
+        }));
+    });
+    next();
+});
 
 // Serve static files from the uploads directory
 app.use('/uploads', express.static(path.join(__dirname, '../public/uploads')));

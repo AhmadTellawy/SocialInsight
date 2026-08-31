@@ -58,11 +58,12 @@ export const HashtagTopicScreen: React.FC<HashtagTopicScreenProps> = ({
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
     setIsLoading(true);
     setError(null);
     setPosts([]);
     setNextCursor(null);
-    api.getHashtagPosts(name, sort)
+    api.getHashtagPosts(name, sort, undefined, 10, controller.signal)
       .then((result) => {
         if (!active) return;
         setTopic(result.topic);
@@ -70,11 +71,15 @@ export const HashtagTopicScreen: React.FC<HashtagTopicScreenProps> = ({
         setNextCursor(result.nextCursor);
       })
       .catch((requestError) => {
+        if ((requestError as any)?.name === 'AbortError') return;
         console.error('Failed to load hashtag topic:', requestError);
         if (active) setError(isRtl ? 'تعذر تحميل الموضوع.' : 'Unable to load this topic.');
       })
       .finally(() => { if (active) setIsLoading(false); });
-    return () => { active = false; };
+    return () => {
+      active = false;
+      controller.abort();
+    };
   }, [name, sort, isRtl]);
 
   const loadMore = async () => {

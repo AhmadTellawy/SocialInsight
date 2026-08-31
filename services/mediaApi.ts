@@ -29,6 +29,7 @@ export class MediaUploadError extends Error {
 }
 
 const presentationCache = new Map<string, { value: MediaPresentation; expiresAt: number }>();
+const presentationRequests = new Map<string, Promise<MediaPresentation>>();
 const PRESENTATION_CACHE_LIMIT = 200;
 const PUBLIC_PRESENTATION_TTL_MS = 10 * 60 * 1000;
 const RESTRICTED_PRESENTATION_TTL_MS = 4 * 60 * 1000;
@@ -38,6 +39,7 @@ const synchronizePresentationCacheIdentity = (): void => {
   const authToken = typeof localStorage === 'undefined' ? null : localStorage.getItem('si_token');
   if (presentationCacheAuthToken !== undefined && presentationCacheAuthToken !== authToken) {
     presentationCache.clear();
+    presentationRequests.clear();
   }
   presentationCacheAuthToken = authToken;
 };
@@ -150,12 +152,24 @@ export const mediaApi = {
     synchronizePresentationCacheIdentity();
     const cached = presentationCache.get(assetId);
     if (!forceRefresh && cached && cached.expiresAt > Date.now()) return cached.value;
+    const inFlight = presentationRequests.get(assetId);
+    if (!forceRefresh && inFlight) return inFlight;
+
     presentationCache.delete(assetId);
-    const response = await authFetch(`/api/media/${assetId}`);
-    if (!response.ok) throw await parseError(response, 'Image is unavailable.');
-    const presentation = await response.json() as MediaPresentation;
-    cachePresentation(assetId, presentation);
-    return presentation;
+    const request = (async () => {
+      const response = await authFetch(`/api/media/${assetId}`);
+      if (!response.ok) throw await parseError(response, 'Image is unavailable.');
+      const presentation = await response.json() as MediaPresentation;
+      cachePresentation(assetId, presentation);
+      return presentation;
+    })();
+
+    if (!forceRefresh) presentationRequests.set(assetId, request);
+    try {
+      return await request;
+    } finally {
+      if (presentationRequests.get(assetId) === request) presentationRequests.delete(assetId);
+    }
   },
 
   cancel: async (assetId: string): Promise<void> => {

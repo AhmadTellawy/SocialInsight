@@ -135,18 +135,20 @@ export const PostAnalysis: React.FC<PostAnalysisProps> = ({ survey, isAccessDeni
       return;
     }
 
+    const controller = new AbortController();
     const loadData = async () => {
       try {
         setIsLoadingAnalysis(true);
-        const data = await api.getPostResults(sourceSurvey.id);
+        const data = await api.getPostResults(sourceSurvey.id, controller.signal);
         setResultsData(data);
-      } catch (err) {
-        console.error("Failed to load post results:", err);
+      } catch (err: any) {
+        if (err?.name !== 'AbortError') console.error("Failed to load post results:", err);
       } finally {
-        setIsLoadingAnalysis(false);
+        if (!controller.signal.aborted) setIsLoadingAnalysis(false);
       }
     };
-    loadData();
+    void loadData();
+    return () => controller.abort();
   }, [sourceSurvey.id, isAccessDenied]);
 
   const activeFilterCount = useMemo(() => 

@@ -7,36 +7,53 @@ import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
 import { SurveyCard } from './components/SurveyCard';
 import { HomeScreen } from './components/HomeScreen';
-import { CreateSurveyModal } from './components/CreateSurveyModal';
-import { CreatePollScreen } from './components/CreatePollScreen';
 import { BottomSheet } from './components/BottomSheet';
-import { CreateQuizModal } from './components/CreateQuizModal';
-import { CreateChallengeScreen } from './components/CreateChallengeScreen';
-import { CreateAccountModal } from './components/CreateAccountModal';
-import { GroupSettingsScreen } from './components/GroupSettingsScreen';
-import { ProfileSettingsScreen } from './components/ProfileSettingsScreen';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { PullToRefresh, PullToRefreshHandle } from './components/PullToRefresh';
-import { SearchScreen } from './components/SearchScreen';
-import { ProfileScreen } from './components/ProfileScreen';
-import { NotificationsScreen } from './components/NotificationsScreen';
-import { TrendsScreen } from './components/TrendsScreen';
-import { MessagesScreen } from './components/MessagesScreen';
-import { GroupScreen } from './components/GroupScreen';
-import { PostAnalysis } from './components/PostAnalysis';
-import { AuthScreen } from './components/AuthScreen';
-import { UsersTableScreen } from './components/UsersTableScreen';
-import { PrivacyPolicyScreen } from './components/PrivacyPolicyScreen';
-import { HashtagTopicScreen } from './components/HashtagTopicScreen';
 import { PostAnswerPayload, Survey, Option, Notification, SurveyType, Group, UserProfile } from './types';
 import { readMediaSafeJson, writeMediaSafeJson } from './utils/mediaSafeStorage';
 import { getNotificationDeepLink } from './utils/notificationNavigation';
+import {
+  getFeedRetryDelayMs,
+  isAbortError,
+  shouldRetryFeedRequest,
+  waitForAbortableDelay
+} from './utils/feedRequest';
 import {
   BarChart3, PieChart, Activity, ArrowLeft, Users, MessageCircle,
   Share2, MoreVertical, Globe, ShieldCheck, ChevronRight, BarChart,
   TrendingUp, FileText, Settings, HelpCircle, PlusCircle, PenLine, Zap, X, Trash2
 } from 'lucide-react';
 import { SocketProvider } from './components/SocketContext';
+
+const CreateSurveyModal = React.lazy(() => import('./components/CreateSurveyModal').then(({ CreateSurveyModal }) => ({ default: CreateSurveyModal })));
+const CreatePollScreen = React.lazy(() => import('./components/CreatePollScreen').then(({ CreatePollScreen }) => ({ default: CreatePollScreen })));
+const CreateQuizModal = React.lazy(() => import('./components/CreateQuizModal').then(({ CreateQuizModal }) => ({ default: CreateQuizModal })));
+const CreateChallengeScreen = React.lazy(() => import('./components/CreateChallengeScreen').then(({ CreateChallengeScreen }) => ({ default: CreateChallengeScreen })));
+const CreateAccountModal = React.lazy(() => import('./components/CreateAccountModal').then(({ CreateAccountModal }) => ({ default: CreateAccountModal })));
+const GroupSettingsScreen = React.lazy(() => import('./components/GroupSettingsScreen').then(({ GroupSettingsScreen }) => ({ default: GroupSettingsScreen })));
+const ProfileSettingsScreen = React.lazy(() => import('./components/ProfileSettingsScreen').then(({ ProfileSettingsScreen }) => ({ default: ProfileSettingsScreen })));
+const SearchScreen = React.lazy(() => import('./components/SearchScreen').then(({ SearchScreen }) => ({ default: SearchScreen })));
+const ProfileScreen = React.lazy(() => import('./components/ProfileScreen').then(({ ProfileScreen }) => ({ default: ProfileScreen })));
+const NotificationsScreen = React.lazy(() => import('./components/NotificationsScreen').then(({ NotificationsScreen }) => ({ default: NotificationsScreen })));
+const TrendsScreen = React.lazy(() => import('./components/TrendsScreen').then(({ TrendsScreen }) => ({ default: TrendsScreen })));
+const MessagesScreen = React.lazy(() => import('./components/MessagesScreen').then(({ MessagesScreen }) => ({ default: MessagesScreen })));
+const GroupScreen = React.lazy(() => import('./components/GroupScreen').then(({ GroupScreen }) => ({ default: GroupScreen })));
+const PostAnalysis = React.lazy(() => import('./components/PostAnalysis').then(({ PostAnalysis }) => ({ default: PostAnalysis })));
+const AuthScreen = React.lazy(() => import('./components/AuthScreen').then(({ AuthScreen }) => ({ default: AuthScreen })));
+const UsersTableScreen = React.lazy(() => import('./components/UsersTableScreen').then(({ UsersTableScreen }) => ({ default: UsersTableScreen })));
+const PrivacyPolicyScreen = React.lazy(() => import('./components/PrivacyPolicyScreen').then(({ PrivacyPolicyScreen }) => ({ default: PrivacyPolicyScreen })));
+const HashtagTopicScreen = React.lazy(() => import('./components/HashtagTopicScreen').then(({ HashtagTopicScreen }) => ({ default: HashtagTopicScreen })));
+
+const DeferredScreenFallback = () => (
+  <div className="min-h-screen bg-gray-100/50 flex items-center justify-center">
+    <div className="w-full max-w-md h-[100dvh] max-h-screen bg-white flex flex-col items-center justify-center px-8">
+      <div className="w-16 h-16 rounded-full bg-gray-200 animate-pulse mb-5" />
+      <div className="w-40 h-4 rounded-full bg-gray-200 animate-pulse mb-3" />
+      <div className="w-28 h-3 rounded-full bg-gray-100 animate-pulse" />
+    </div>
+  </div>
+);
 
 const INITIAL_USER: UserProfile = {
   name: 'User Profile',
@@ -56,6 +73,22 @@ const INITIAL_USER: UserProfile = {
 };
 
 const getFeedCacheKey = (userId?: string | null) => `si_feed_cache:${userId || 'guest'}`;
+const FEED_REQUEST_TIMEOUT_MS = 15_000;
+const FEED_MAX_ATTEMPTS = 2;
+const GROUPS_REQUEST_TIMEOUT_MS = 10_000;
+const NOTIFICATIONS_REQUEST_TIMEOUT_MS = 10_000;
+const NOTIFICATIONS_PAGE_SIZE = 50;
+
+const mergeNotificationsById = (
+  existing: Notification[],
+  incoming: Notification[]
+): Notification[] => {
+  const notificationsById = new Map<string, Notification>();
+  incoming.forEach((notification) => notificationsById.set(notification.id, notification));
+  // Keep newer realtime/local state when an item also exists in a fetched page.
+  existing.forEach((notification) => notificationsById.set(notification.id, notification));
+  return Array.from(notificationsById.values());
+};
 
 const decodePathSegment = (value: string) => {
   try {
@@ -85,6 +118,7 @@ const App: React.FC = () => {
 
   // User Profile State
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const userProfileIdRef = useRef<string | undefined>(undefined);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authBootstrapped, setAuthBootstrapped] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
@@ -111,7 +145,7 @@ const App: React.FC = () => {
   };
 
   const getGuestId = () => localStorage.getItem('guest_id') || '';
-  const fetchInitialData = (uid?: string) => fetchData(uid, userProfile || undefined);
+  const fetchInitialData = (uid?: string) => fetchData(uid, userProfile || undefined, { force: true });
 
   const handleAuthSuccess = (authPayload: any) => {
     const authenticatedUser = authPayload?.user || authPayload;
@@ -135,7 +169,6 @@ const App: React.FC = () => {
     setActiveCreationFlow(null);
     setAccountModalType(null);
     setActiveTab('home');
-    lastFetchedUserIdRef.current = null;
     navigate('/', { replace: true });
 
     // Initialize Push Notifications if permission granted
@@ -166,7 +199,6 @@ const App: React.FC = () => {
     setActiveTab('home');
     setIsNavVisible(true);
     navigate('/', { replace: true });
-    lastFetchedUserIdRef.current = null;
     localStorage.removeItem('si_user');
     localStorage.removeItem('si_token');
     localStorage.removeItem('si_feed_cache');
@@ -293,36 +325,103 @@ const App: React.FC = () => {
 
   const [userGroups, setUserGroups] = useState<Group[]>([]);
 
-  const fetchData = async (currentUserId?: string, currentUser?: UserProfile | null, retries = 5) => {
-    try {
+  React.useEffect(() => {
+    userProfileIdRef.current = userProfile?.id;
+  }, [userProfile?.id]);
+
+  type ActiveFeedRequest = {
+    viewerKey: string;
+    userId?: string;
+    controller: AbortController;
+    promise: Promise<void>;
+  };
+
+  const feedRequestRef = useRef<ActiveFeedRequest | null>(null);
+  const loadMoreAbortRef = useRef<AbortController | null>(null);
+  const profileLoadMoreAbortRef = useRef<AbortController | null>(null);
+
+  const fetchData = (
+    currentUserId?: string,
+    currentUser?: UserProfile | null,
+    options: { force?: boolean } = {}
+  ): Promise<void> => {
+    const viewerKey = currentUserId ? `user:${currentUserId}` : 'guest';
+    const activeRequest = feedRequestRef.current;
+
+    if (!options.force
+      && activeRequest?.viewerKey === viewerKey
+      && !activeRequest.controller.signal.aborted) {
+      return activeRequest.promise;
+    }
+
+    activeRequest?.controller.abort();
+    loadMoreAbortRef.current?.abort();
+
+    const controller = new AbortController();
+    const requestPromise = (async () => {
       setIsFeedLoading(true);
-      const res = await api.getSurveys(currentUserId);
-      const surveysData = res.data;
 
-      try {
-        writeMediaSafeJson(getFeedCacheKey(currentUserId), surveysData.slice(0, 10));
-      } catch (storageError) {
-        console.warn('Failed to cache feed to localStorage due to quota limits');
+      for (let attempt = 0; attempt < FEED_MAX_ATTEMPTS; attempt += 1) {
+        try {
+          const res = await api.getSurveys(
+            currentUserId,
+            undefined,
+            10,
+            undefined,
+            undefined,
+            {
+              signal: controller.signal,
+              timeoutMs: FEED_REQUEST_TIMEOUT_MS,
+              normalize: false
+            }
+          );
+          if (controller.signal.aborted) return;
+
+          const normalizedSurveys = res.data.map((survey: any) => normalizeSurvey(survey, currentUser));
+          if (controller.signal.aborted) return;
+
+          try {
+            writeMediaSafeJson(getFeedCacheKey(currentUserId), normalizedSurveys.slice(0, 10));
+          } catch {
+            console.warn('Failed to cache feed to localStorage due to quota limits');
+          }
+
+          if (controller.signal.aborted || feedRequestRef.current?.controller !== controller) return;
+          setSurveys(normalizedSurveys);
+          setNextCursor(res.nextCursor);
+          return;
+        } catch (error) {
+          if (controller.signal.aborted || isAbortError(error)) return;
+
+          const hasAnotherAttempt = attempt + 1 < FEED_MAX_ATTEMPTS;
+          if (!hasAnotherAttempt || !shouldRetryFeedRequest(error)) {
+            console.error('Failed to refresh feed; keeping cached data', error);
+            return;
+          }
+
+          console.warn('Transient feed request failed; retrying once', error);
+          try {
+            await waitForAbortableDelay(getFeedRetryDelayMs(attempt), controller.signal);
+          } catch (delayError) {
+            if (!isAbortError(delayError)) console.error('Feed retry delay failed', delayError);
+            return;
+          }
+        }
       }
-
-      setSurveys(surveysData.map((s: any) => normalizeSurvey(s, currentUser)));
-      setNextCursor(res.nextCursor);
-
-      if (currentUserId) {
-        const groupsData = await api.getUserGroups(currentUserId);
-        setUserGroups(groupsData);
-      }
-      setIsFeedLoading(false);
-    } catch (error) {
-      console.error("Failed to load initial data", error);
-      if (retries > 0) {
-        // Cold start auto-retry
-        setTimeout(() => fetchData(currentUserId, currentUser, retries - 1), 3000);
-      } else {
-        setSurveys([]);
+    })().finally(() => {
+      if (feedRequestRef.current?.controller === controller) {
+        feedRequestRef.current = null;
         setIsFeedLoading(false);
       }
-    }
+    });
+
+    feedRequestRef.current = {
+      viewerKey,
+      userId: currentUserId,
+      controller,
+      promise: requestPromise
+    };
+    return requestPromise;
   };
 
   const fetchMore = async () => {
@@ -330,9 +429,20 @@ const App: React.FC = () => {
       if (isProfileLoadingMoreRef.current || !profileNextCursor || !selectedProfile) return;
       isProfileLoadingMoreRef.current = true;
       setIsProfileLoadingMore(true);
+      const controller = new AbortController();
+      profileLoadMoreAbortRef.current?.abort();
+      profileLoadMoreAbortRef.current = controller;
       try {
         const currentUserId = userProfile?.id || undefined;
-        const res = await api.getSurveys(currentUserId, profileNextCursor, 10, selectedProfile.id);
+        const res = await api.getSurveys(
+          currentUserId,
+          profileNextCursor,
+          10,
+          selectedProfile.id,
+          undefined,
+          { signal: controller.signal, timeoutMs: FEED_REQUEST_TIMEOUT_MS, normalize: false }
+        );
+        if (controller.signal.aborted) return;
         const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
 
         setProfileSurveys(prev => {
@@ -342,10 +452,15 @@ const App: React.FC = () => {
         });
         setProfileNextCursor(res.nextCursor);
       } catch (error) {
-        console.error("Failed to load more profile data", error);
+        if (!controller.signal.aborted && !isAbortError(error)) {
+          console.error("Failed to load more profile data", error);
+        }
       } finally {
-        isProfileLoadingMoreRef.current = false;
-        setIsProfileLoadingMore(false);
+        if (profileLoadMoreAbortRef.current === controller) {
+          profileLoadMoreAbortRef.current = null;
+          isProfileLoadingMoreRef.current = false;
+          setIsProfileLoadingMore(false);
+        }
       }
       return;
     }
@@ -353,9 +468,20 @@ const App: React.FC = () => {
     if (isLoadingMoreRef.current || !nextCursor) return;
     isLoadingMoreRef.current = true;
     setIsLoadingMore(true);
+    const controller = new AbortController();
+    loadMoreAbortRef.current?.abort();
+    loadMoreAbortRef.current = controller;
     try {
       const currentUserId = userProfile?.id || undefined;
-      const res = await api.getSurveys(currentUserId, nextCursor);
+      const res = await api.getSurveys(
+        currentUserId,
+        nextCursor,
+        10,
+        undefined,
+        undefined,
+        { signal: controller.signal, timeoutMs: FEED_REQUEST_TIMEOUT_MS, normalize: false }
+      );
+      if (controller.signal.aborted) return;
       const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
 
       setSurveys(prev => {
@@ -365,10 +491,15 @@ const App: React.FC = () => {
       });
       setNextCursor(res.nextCursor);
     } catch (error) {
-      console.error("Failed to load more data", error);
+      if (!controller.signal.aborted && !isAbortError(error)) {
+        console.error("Failed to load more data", error);
+      }
     } finally {
-      isLoadingMoreRef.current = false;
-      setIsLoadingMore(false);
+      if (loadMoreAbortRef.current === controller) {
+        loadMoreAbortRef.current = null;
+        isLoadingMoreRef.current = false;
+        setIsLoadingMore(false);
+      }
     }
   };
 
@@ -384,15 +515,15 @@ const App: React.FC = () => {
         }
       } else {
         if (!isLoadingMoreRef.current && nextCursor) {
-          if (activeTab === 'home' || activeTab === 'search') {
+          // Home pagination is owned by HomeScreen's sentinel observer. Keeping
+          // the scroll-distance trigger only for search avoids double triggers.
+          if (activeTab === 'search') {
             fetchMore();
           }
         }
       }
     }
   };
-
-  const lastFetchedUserIdRef = useRef<string | null>(null);
 
   React.useEffect(() => {
     const savedUser = readMediaSafeJson<UserProfile>('si_user');
@@ -404,17 +535,19 @@ const App: React.FC = () => {
         setAuthBootstrapped(true);
 
         // Refresh the cached profile in the background without blocking first paint.
-        api.getUser(user.id).then(freshUser => {
+        api.getMe({ timeoutMs: 15_000 }).then(freshUser => {
           setUserProfile(freshUser);
           writeMediaSafeJson('si_user', freshUser);
         }).catch(err => {
-          console.error("Failed to refresh user profile, invalidating session", err);
-          localStorage.removeItem('si_user');
-          localStorage.removeItem('si_token');
-          localStorage.removeItem(getFeedCacheKey(user.id));
-          setIsAuthenticated(false);
-          setUserProfile(null);
-          setSurveys([]);
+          if (err instanceof ApiError && err.status === 401) {
+            console.error("Failed to refresh user profile because the session expired", err);
+            localStorage.removeItem(getFeedCacheKey(user.id));
+            setIsAuthenticated(false);
+            setUserProfile(null);
+            setSurveys([]);
+            return;
+          }
+          console.warn("Failed to refresh user profile; keeping the cached session", err);
         });
       } catch (err) {
         console.error("Failed to parse cached user, starting guest session", err);
@@ -429,11 +562,13 @@ const App: React.FC = () => {
     }
 
     const handleAuthExpired = () => {
-      const expiredUserId = userProfile?.id;
+      const expiredUserId = feedRequestRef.current?.userId || userProfileIdRef.current;
+      feedRequestRef.current?.controller.abort();
+      loadMoreAbortRef.current?.abort();
+      profileLoadMoreAbortRef.current?.abort();
       setIsAuthenticated(false);
       setUserProfile(null);
       setSurveys([]);
-      lastFetchedUserIdRef.current = null;
       if (expiredUserId) localStorage.removeItem(getFeedCacheKey(expiredUserId));
     };
 
@@ -445,36 +580,132 @@ const App: React.FC = () => {
     if (!authBootstrapped) return;
 
     if (isAuthenticated && userProfile?.id) {
-      const viewerKey = `user:${userProfile.id}`;
-      if (lastFetchedUserIdRef.current === viewerKey) return;
-      lastFetchedUserIdRef.current = viewerKey;
-      fetchData(userProfile.id, userProfile);
+      void fetchData(userProfile.id, userProfile);
       return;
     }
 
     if (!isAuthenticated) {
-      const viewerKey = 'guest';
-      if (lastFetchedUserIdRef.current === viewerKey) return;
-      lastFetchedUserIdRef.current = viewerKey;
-      fetchData();
+      void fetchData();
     }
   }, [authBootstrapped, isAuthenticated, userProfile?.id]);
+
+  React.useEffect(() => {
+    if (!authBootstrapped) return;
+    if (!isAuthenticated || !userProfile?.id) {
+      setUserGroups([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    api.getUserGroups(userProfile.id, {
+      signal: controller.signal,
+      timeoutMs: GROUPS_REQUEST_TIMEOUT_MS
+    }).then(groups => {
+      if (!controller.signal.aborted) setUserGroups(groups);
+    }).catch(error => {
+      if (!controller.signal.aborted && !isAbortError(error)) {
+        console.error('Failed to refresh user groups', error);
+      }
+    });
+
+    return () => controller.abort();
+  }, [authBootstrapped, isAuthenticated, userProfile?.id]);
+
+  React.useEffect(() => () => {
+    feedRequestRef.current?.controller.abort();
+    loadMoreAbortRef.current?.abort();
+    profileLoadMoreAbortRef.current?.abort();
+  }, []);
 
 
 
   const [isNavVisible, setIsNavVisible] = useState(true);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [notificationNextCursor, setNotificationNextCursor] = useState<string | null>(null);
+  const [isNotificationsLoading, setIsNotificationsLoading] = useState(false);
+  const [isNotificationsLoadingMore, setIsNotificationsLoadingMore] = useState(false);
+  const [notificationLoadError, setNotificationLoadError] = useState<string | null>(null);
+  const notificationRequestRef = useRef<AbortController | null>(null);
+
+  const fetchNotificationPage = React.useCallback(async (
+    requestedUserId: string,
+    cursor: string | null,
+    mode: 'replace' | 'append'
+  ) => {
+    if (mode === 'append' && notificationRequestRef.current) return;
+
+    notificationRequestRef.current?.abort();
+    const controller = new AbortController();
+    notificationRequestRef.current = controller;
+    setNotificationLoadError(null);
+
+    if (mode === 'replace') {
+      setIsNotificationsLoading(true);
+      setNotifications([]);
+      setNotificationNextCursor(null);
+    } else {
+      setIsNotificationsLoadingMore(true);
+    }
+
+    try {
+      const page = await api.getNotificationsPage(
+        requestedUserId,
+        cursor || undefined,
+        NOTIFICATIONS_PAGE_SIZE,
+        {
+          signal: controller.signal,
+          timeoutMs: NOTIFICATIONS_REQUEST_TIMEOUT_MS
+        }
+      );
+      if (controller.signal.aborted
+        || notificationRequestRef.current !== controller
+        || userProfileIdRef.current !== requestedUserId) return;
+
+      setNotifications((current) => mergeNotificationsById(current, page.items));
+      setNotificationNextCursor(page.nextCursor);
+    } catch (error) {
+      if (!controller.signal.aborted && !isAbortError(error)) {
+        console.error('Failed to fetch notifications:', error);
+        setNotificationLoadError('Please check your connection and try again.');
+      }
+    } finally {
+      if (notificationRequestRef.current === controller) {
+        notificationRequestRef.current = null;
+        if (mode === 'replace') setIsNotificationsLoading(false);
+        else setIsNotificationsLoadingMore(false);
+      }
+    }
+  }, []);
 
   React.useEffect(() => {
-    if (isAuthenticated && userProfile?.id) {
-      api.getNotifications(userProfile.id)
-        .then(data => {
-          console.log("Fetched notifications:", data);
-          setNotifications(data);
-        })
-        .catch(err => console.error("Failed to fetch notifications:", err));
+    if (!isAuthenticated || !userProfile?.id) {
+      notificationRequestRef.current?.abort();
+      notificationRequestRef.current = null;
+      setNotifications([]);
+      setNotificationNextCursor(null);
+      setNotificationLoadError(null);
+      setIsNotificationsLoading(false);
+      setIsNotificationsLoadingMore(false);
+      return;
     }
-  }, [isAuthenticated, userProfile?.id]);
+
+    void fetchNotificationPage(userProfile.id, null, 'replace');
+    return () => notificationRequestRef.current?.abort();
+  }, [fetchNotificationPage, isAuthenticated, userProfile?.id]);
+
+  const loadMoreNotifications = React.useCallback(() => {
+    if (!userProfile?.id || !notificationNextCursor) return;
+    void fetchNotificationPage(userProfile.id, notificationNextCursor, 'append');
+  }, [fetchNotificationPage, notificationNextCursor, userProfile?.id]);
+
+  const retryNotifications = React.useCallback(() => {
+    if (!userProfile?.id) return;
+    if (notifications.length > 0 && notificationNextCursor) {
+      void fetchNotificationPage(userProfile.id, notificationNextCursor, 'append');
+      return;
+    }
+    void fetchNotificationPage(userProfile.id, null, 'replace');
+  }, [fetchNotificationPage, notificationNextCursor, notifications.length, userProfile?.id]);
 
   React.useEffect(() => {
     const handleRealtimeNotification = (event: Event) => {
@@ -511,6 +742,7 @@ const App: React.FC = () => {
   const [isProfileLoading, setIsProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const profileRequestRef = useRef(0);
+  const profileRequestAbortRef = useRef<AbortController | null>(null);
 
   React.useEffect(() => {
     if (!selectedProfile?.id) {
@@ -539,6 +771,8 @@ const App: React.FC = () => {
       setIsDetailLoading(false);
     }
     if (!isProfileRoute) {
+      profileRequestAbortRef.current?.abort();
+      profileRequestAbortRef.current = null;
       setSelectedProfile(null);
       setProfileError(null);
       setIsProfileLoading(false);
@@ -565,11 +799,21 @@ const App: React.FC = () => {
         navigate('/login', { replace: true });
       } else {
         const requestId = ++profileRequestRef.current;
+        profileRequestAbortRef.current?.abort();
+        const controller = new AbortController();
+        profileRequestAbortRef.current = controller;
         setIsProfileLoading(true);
         setProfileError(null);
         setSelectedProfile(null);
         setProfileSurveys([]);
-        api.getSurveys(userProfile.id, undefined, 10, userProfile.id).then(res => {
+        api.getSurveys(
+          userProfile.id,
+          undefined,
+          10,
+          userProfile.id,
+          undefined,
+          { timeoutMs: FEED_REQUEST_TIMEOUT_MS, normalize: false, signal: controller.signal }
+        ).then(res => {
           if (profileRequestRef.current !== requestId) return;
           const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
           setProfileSurveys(newSurveys);
@@ -577,6 +821,7 @@ const App: React.FC = () => {
           setSelectedProfile(userProfile);
         }).catch(err => {
           if (profileRequestRef.current !== requestId) return;
+          if (err?.name === 'AbortError') return;
           console.error(err);
           setProfileError('Failed to load profile.');
         }).finally(() => {
@@ -597,14 +842,24 @@ const App: React.FC = () => {
       const handle = decodeURIComponent(path.split('/@')[1] || '').split('/')[0];
       if (handle) {
         const requestId = ++profileRequestRef.current;
+        profileRequestAbortRef.current?.abort();
+        const controller = new AbortController();
+        profileRequestAbortRef.current = controller;
         setIsProfileLoading(true);
         setProfileError(null);
         setSelectedProfile(null);
         setProfileSurveys([]);
         const currentUserId = userProfile?.id || undefined;
         Promise.all([
-          api.getUserByHandle(handle),
-          api.getSurveys(currentUserId, undefined, 10, undefined, handle)
+          api.getUserByHandle(handle, controller.signal),
+          api.getSurveys(
+            currentUserId,
+            undefined,
+            10,
+            undefined,
+            handle,
+            { timeoutMs: FEED_REQUEST_TIMEOUT_MS, normalize: false, signal: controller.signal }
+          )
         ]).then(([user, res]) => {
           if (profileRequestRef.current !== requestId) return;
           const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
@@ -613,6 +868,7 @@ const App: React.FC = () => {
           setSelectedProfile(user);
         }).catch(err => {
           if (profileRequestRef.current !== requestId) return;
+          if (err?.name === 'AbortError') return;
           console.error(err);
           setProfileError('Failed to load profile.');
         }).finally(() => {
@@ -625,14 +881,24 @@ const App: React.FC = () => {
       const id = decodeURIComponent(path.split('/profile/')[1] || '').split('/')[0];
       if (id) {
         const requestId = ++profileRequestRef.current;
+        profileRequestAbortRef.current?.abort();
+        const controller = new AbortController();
+        profileRequestAbortRef.current = controller;
         setIsProfileLoading(true);
         setProfileError(null);
         setSelectedProfile(null);
         setProfileSurveys([]);
         const currentUserId = userProfile?.id || undefined;
         Promise.all([
-          api.getUser(id),
-          api.getSurveys(currentUserId, undefined, 10, id)
+          api.getUser(id, controller.signal),
+          api.getSurveys(
+            currentUserId,
+            undefined,
+            10,
+            id,
+            undefined,
+            { timeoutMs: FEED_REQUEST_TIMEOUT_MS, normalize: false, signal: controller.signal }
+          )
         ]).then(([user, res]) => {
           if (profileRequestRef.current !== requestId) return;
           const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
@@ -644,6 +910,7 @@ const App: React.FC = () => {
           }
         }).catch(err => {
           if (profileRequestRef.current !== requestId) return;
+          if (err?.name === 'AbortError') return;
           console.error(err);
           setProfileError('Failed to load profile.');
         }).finally(() => {
@@ -712,22 +979,25 @@ const App: React.FC = () => {
     }
 
     const requestId = ++groupRequestRef.current;
+    const controller = new AbortController();
     setIsGroupLoading(true);
     setGroupError(null);
     setExternalGroup(null);
 
-    api.getGroupById(selectedGroupId)
+    api.getGroupById(selectedGroupId, controller.signal)
       .then(group => {
         if (groupRequestRef.current === requestId) setExternalGroup(group);
       })
       .catch(err => {
         if (groupRequestRef.current !== requestId) return;
+        if (err?.name === 'AbortError') return;
         console.error(err);
         setGroupError('Failed to load group.');
       })
       .finally(() => {
         if (groupRequestRef.current === requestId) setIsGroupLoading(false);
       });
+    return () => controller.abort();
   }, [authBootstrapped, selectedGroupId]);
 
   React.useEffect(() => {
@@ -741,11 +1011,12 @@ const App: React.FC = () => {
     }
 
     const requestId = ++detailRequestRef.current;
+    const controller = new AbortController();
     setDetailSurvey(null);
     setDetailError(null);
     setIsDetailLoading(true);
 
-    api.getSurveyById(selectedSurveyId, userProfile?.id || undefined)
+    api.getSurveyById(selectedSurveyId, userProfile?.id || undefined, controller.signal)
       .then(post => {
         if (detailRequestRef.current !== requestId) return;
         const normalized = normalizeSurvey(post, userProfile);
@@ -757,12 +1028,14 @@ const App: React.FC = () => {
       })
       .catch(err => {
         if (detailRequestRef.current !== requestId) return;
+        if (err?.name === 'AbortError') return;
         console.error(err);
         setDetailError('Failed to load post.');
       })
       .finally(() => {
         if (detailRequestRef.current === requestId) setIsDetailLoading(false);
       });
+    return () => controller.abort();
   }, [authBootstrapped, selectedSurveyId, userProfile?.id]);
 
   const pullToRefreshRef = useRef<PullToRefreshHandle>(null);
@@ -799,7 +1072,7 @@ const App: React.FC = () => {
 
     // Refetch data to get suddenly accessible 'Followers Only' posts
     if (userProfile?.id) {
-      fetchData(userProfile.id, userProfile);
+      void fetchData(userProfile.id, userProfile, { force: true });
     }
   };
 
@@ -1407,7 +1680,7 @@ const App: React.FC = () => {
         }
         return <ProfileScreen isLoading={isProfileLoading} surveys={profileSurveys} userGroups={userGroups} userProfile={userProfile!} user={selectedProfile || undefined} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onAuthorClick={navigateToProfile} onSurveyProgress={handleSurveyProgress} onShareToFeed={handleShareToFeed} onSettingsClick={() => navigate('/settings/profile')} onEditProfileClick={() => navigate('/settings/profile/edit-profile')} onEditDraft={handleEditPost} onDelete={handlePostDeleted} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} onLike={handleLikePost} />;
       case 'notifications':
-        return <NotificationsScreen currentUserId={userProfile?.id || ""} notifications={notifications} onNotificationsChange={(newNotifs) => {
+        return <NotificationsScreen currentUserId={userProfile?.id || ""} notifications={notifications} hasMore={notificationNextCursor !== null} isInitialLoading={isNotificationsLoading} isLoadingMore={isNotificationsLoadingMore} loadError={notificationLoadError} onLoadMore={loadMoreNotifications} onRetry={retryNotifications} onNotificationsChange={(newNotifs) => {
           if (userProfile?.id) {
             const oldUnread = notifications.filter(n => !n.isRead);
             const newUnread = newNotifs.filter(n => !n.isRead);
@@ -1581,6 +1854,7 @@ const App: React.FC = () => {
 
   return (
     <SocketProvider user={userProfile}>
+      <React.Suspense fallback={<DeferredScreenFallback />}>
       {authModalOpen && (
         <div className="fixed inset-0 z-[100] bg-white animate-in zoom-in-95 duration-200">
           <button onClick={handleCloseAuth} className="absolute top-4 right-4 z-[110] p-2 bg-gray-100 rounded-full hover:bg-gray-200">
@@ -1824,7 +2098,7 @@ const App: React.FC = () => {
               )}
 
               {activeTab === 'home' ? (
-                <PullToRefresh ref={pullToRefreshRef} onScroll={handleScroll} onRefresh={async () => { await fetchData(userProfile?.id || undefined, userProfile); }} onScrollChange={dir => setIsNavVisible(dir === 'up')} className="flex-1 mt-16 pb-[75px] bg-white no-scrollbar">
+                <PullToRefresh ref={pullToRefreshRef} onScroll={handleScroll} onRefresh={async () => { await fetchData(userProfile?.id || undefined, userProfile, { force: true }); }} onScrollChange={dir => setIsNavVisible(dir === 'up')} className="flex-1 mt-16 pb-[75px] bg-white no-scrollbar">
                   {isFeedLoading && surveys.length > 0 && (
                     <div className="sticky top-0 z-20 h-1 bg-gray-100 overflow-hidden">
                       <div className="h-full w-1/2 bg-blue-500 rounded-r-full animate-pulse" />
@@ -1866,7 +2140,9 @@ const App: React.FC = () => {
             <CreateChallengeScreen onClose={handleCloseModal} onSubmit={handleCreateSubmit} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
           )}
 
-          <CreateAccountModal isOpen={accountModalType !== null} onClose={handleCloseModal} initialType={accountModalType} onGroupCreated={(g) => setUserGroups([...userGroups, g])} userProfile={userProfile} />
+          {accountModalType !== null && (
+            <CreateAccountModal isOpen={true} onClose={handleCloseModal} initialType={accountModalType} onGroupCreated={(g) => setUserGroups([...userGroups, g])} userProfile={userProfile} />
+          )}
         </div>
       </div>
 
@@ -1938,6 +2214,7 @@ const App: React.FC = () => {
           )}
         </div>
       </BottomSheet>
+      </React.Suspense>
     </SocketProvider>
   );
 };

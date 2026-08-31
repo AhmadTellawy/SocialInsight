@@ -4,10 +4,6 @@ import { PostAnswerPayload, Survey, SurveyType, Option, LogicRule, UserProfile, 
 import { Clock, Users, TrendingUp, MoreHorizontal, Share2, CheckCircle2, Flag, Eye, EyeOff, Bookmark, Link as LinkIcon, UserMinus, ThumbsUp, MessageCircle, FileText, PieChart, HelpCircle, Globe, Lock, Plus, AlertCircle, ImageIcon, ChevronLeft, ChevronRight, Check, ArrowRight, XCircle, Trophy, Target, X, ListChecks, Zap, Timer, Play, Repeat, UserPlus, PlusCircle, Shield, Shuffle, Heart, Search, Send, Star, Maximize2, BarChart3, Trash2, Edit3 } from 'lucide-react';
 import { Analytics } from '../utils/analytics';
 import { BottomSheet } from './BottomSheet';
-import { CommentsSheet } from './CommentsSheet';
-import { ShareSheet } from './ShareSheet';
-import { ParticipantsSheet } from './ParticipantsSheet';
-import { LikersSheet } from './LikersSheet';
 import { RichTextRenderer } from './RichTextRenderer';
 import { UserAvatar } from './UserAvatar';
 import { api } from '../services/api';
@@ -22,6 +18,17 @@ import { MediaImage } from './media/MediaImage';
 import { calculateAverageRating } from '../utils/ratingScale';
 import { shouldShowOptionNames } from '../utils/optionPresentation';
 import { getPostOptionCapabilities } from '../utils/postOptions';
+
+const CommentsSheet = React.lazy(() => import('./CommentsSheet').then(({ CommentsSheet }) => ({ default: CommentsSheet })));
+const ShareSheet = React.lazy(() => import('./ShareSheet').then(({ ShareSheet }) => ({ default: ShareSheet })));
+const ParticipantsSheet = React.lazy(() => import('./ParticipantsSheet').then(({ ParticipantsSheet }) => ({ default: ParticipantsSheet })));
+const LikersSheet = React.lazy(() => import('./LikersSheet').then(({ LikersSheet }) => ({ default: LikersSheet })));
+
+const SheetContentFallback = () => (
+  <div className="flex min-h-40 items-center justify-center p-6" aria-busy="true">
+    <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-blue-500" />
+  </div>
+);
 
 interface SurveyCardProps {
   survey: Survey;
@@ -180,7 +187,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   }, [survey.userProgress?.currentQuestionIndex]);
 
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const calculateTime = () => {
       const now = new Date().getTime();
       const targetSurvey = survey.sharedFrom || survey;
@@ -188,14 +195,14 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       if (!targetSurvey.expiresAt) {
         setTimeLeftStr('');
         setIsExpired(false);
-        return false;
+        return null;
       }
 
       const expiryDate = new Date(targetSurvey.expiresAt);
       if (isNaN(expiryDate.getTime())) {
         setTimeLeftStr('');
         setIsExpired(false);
-        return false;
+        return null;
       }
 
       const expiry = expiryDate.getTime();
@@ -204,13 +211,13 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       if (diff > 1000 * 60 * 60 * 24 * 365) {
         setTimeLeftStr('');
         setIsExpired(false);
-        return false;
+        return null;
       }
 
       if (diff <= 0) {
         setIsExpired(true);
         setTimeLeftStr(t('Expired'));
-        return true;
+        return null;
       }
 
       setIsExpired(false);
@@ -224,13 +231,20 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       else if (mins > 0) setTimeLeftStr(`${mins}m ${secs}s ${t('left')}`);
       else setTimeLeftStr(`${secs}s ${t('left')}`);
 
-      return false;
+      // Day/hour-level labels do not need a one-second wake-up per card.
+      return diff > 1000 * 60 * 60 ? 60_000 : 1_000;
     };
 
-    calculateTime();
-    interval = setInterval(calculateTime, 1000);
-    return () => clearInterval(interval);
-  }, [survey.id, survey.sharedFrom, survey.expiresAt]);
+    const scheduleNextUpdate = () => {
+      const delay = calculateTime();
+      if (delay !== null) timer = setTimeout(scheduleNextUpdate, delay);
+    };
+
+    scheduleNextUpdate();
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [survey.id, survey.sharedFrom, survey.expiresAt, t]);
 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isReportSheetOpen, setIsReportSheetOpen] = useState(false);
@@ -261,6 +275,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const [expandedImage, setExpandedImage] = useState<Option | null>(null);
   const [portraitImages, setPortraitImages] = useState<Set<string>>(new Set());
   const [isLikersSheetOpen, setIsLikersSheetOpen] = useState(false);
+  const [hasOpenedLikersSheet, setHasOpenedLikersSheet] = useState(false);
   const [isRepostMenuOpen, setIsRepostMenuOpen] = useState(false);
   const [shareSheetInitialStep, setShareSheetInitialStep] = useState<'menu' | 'repost-editor'>('menu');
 
@@ -2277,7 +2292,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           isLiked={isLiked}
           likeCount={likeCount}
           onLike={handleLike}
-          onLikersClick={(e) => { e.stopPropagation(); setIsLikersSheetOpen(true); }}
+          onLikersClick={(e) => {
+            e.stopPropagation();
+            setHasOpenedLikersSheet(true);
+            setIsLikersSheetOpen(true);
+          }}
           allowComments={survey.allowComments !== false}
           commentsCount={commentsCount}
           onCommentClick={(e) => {
@@ -2453,25 +2472,29 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         </div>
       </BottomSheet>
       <BottomSheet isOpen={isCommentsOpen} onClose={() => setIsCommentsOpen(false)} customLayout={true} title={`Comments (${commentsCount})`}>
-        <CommentsSheet
-          surveyId={interactionTarget.id}
-          userProfile={userProfile}
-          onAuthorClick={onAuthorClick}
-          sourceSurface={sourceSurface}
-          onCommentAdded={() => setCommentsCount(prev => prev + 1)}
-          initialCommentId={initialCommentId}
-          initialReplyId={initialReplyId}
-        />
+        <React.Suspense fallback={<SheetContentFallback />}>
+          <CommentsSheet
+            surveyId={interactionTarget.id}
+            userProfile={userProfile}
+            onAuthorClick={onAuthorClick}
+            sourceSurface={sourceSurface}
+            onCommentAdded={() => setCommentsCount(prev => prev + 1)}
+            initialCommentId={initialCommentId}
+            initialReplyId={initialReplyId}
+          />
+        </React.Suspense>
       </BottomSheet>
       <BottomSheet isOpen={isShareSheetOpen} onClose={() => { setIsShareSheetOpen(false); setShareSheetInitialStep('menu'); }}>
-        <ShareSheet
-          survey={survey}
-          onClose={() => { setIsShareSheetOpen(false); setShareSheetInitialStep('menu'); }}
-          onShareToFeed={onShareToFeed}
-          userProfile={userProfile}
-          sourceSurface={sourceSurface}
-          initialStep={shareSheetInitialStep}
-        />
+        <React.Suspense fallback={<SheetContentFallback />}>
+          <ShareSheet
+            survey={survey}
+            onClose={() => { setIsShareSheetOpen(false); setShareSheetInitialStep('menu'); }}
+            onShareToFeed={onShareToFeed}
+            userProfile={userProfile}
+            sourceSurface={sourceSurface}
+            initialStep={shareSheetInitialStep}
+          />
+        </React.Suspense>
       </BottomSheet>
       <BottomSheet isOpen={isRepostMenuOpen} onClose={() => setIsRepostMenuOpen(false)} customLayout={false}>
         <div className="p-2 space-y-1">
@@ -2505,7 +2528,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           )}
         </div>
       </BottomSheet>
-      <BottomSheet isOpen={isParticipantsOpen} onClose={() => setIsParticipantsOpen(false)} customLayout={true} title="Participants" height="90dvh"><ParticipantsSheet survey={sourceSurvey} onAuthorClick={onAuthorClick} /></BottomSheet>
+      <BottomSheet isOpen={isParticipantsOpen} onClose={() => setIsParticipantsOpen(false)} customLayout={true} title="Participants" height="90dvh">
+        <React.Suspense fallback={<SheetContentFallback />}>
+          <ParticipantsSheet survey={sourceSurvey} onAuthorClick={onAuthorClick} />
+        </React.Suspense>
+      </BottomSheet>
       <BottomSheet isOpen={isPeopleTagsOpen} onClose={() => setIsPeopleTagsOpen(false)} title={t('peopleTags.taggedPeople')}>
         <div className="divide-y divide-gray-100">
           {acceptedPeopleTags.map(({ id, taggedUser }) => (
@@ -2603,15 +2630,19 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         </div>
       </BottomSheet>
 
-      <LikersSheet
-        isOpen={isLikersSheetOpen}
-        onClose={() => setIsLikersSheetOpen(false)}
-        targetId={interactionTarget.id}
-        type="post"
-        onAuthorClick={onAuthorClick}
-        currentUser={userProfile}
-        isLikedLocally={isLiked}
-      />
+      {hasOpenedLikersSheet && (
+        <React.Suspense fallback={null}>
+          <LikersSheet
+            isOpen={isLikersSheetOpen}
+            onClose={() => setIsLikersSheetOpen(false)}
+            targetId={interactionTarget.id}
+            type="post"
+            onAuthorClick={onAuthorClick}
+            currentUser={userProfile}
+            isLikedLocally={isLiked}
+          />
+        </React.Suspense>
+      )}
     </>
   );
 };

@@ -1,4 +1,5 @@
 import { normalizeSurvey, PostAnswerPayload } from '../types';
+import type { Notification } from '../types';
 import type { UserProfile } from '../types';
 
 export const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
@@ -14,6 +15,28 @@ export class ApiError extends Error {
         this.name = 'ApiError';
     }
 }
+
+export type ApiRequestOptions = {
+    signal?: AbortSignal;
+    timeoutMs?: number;
+};
+
+export type SurveyRequestOptions = ApiRequestOptions & {
+    normalize?: boolean;
+};
+
+export type NotificationPage = {
+    items: Notification[];
+    nextCursor: string | null;
+};
+
+export type CursorPage<T> = {
+    items: T[];
+    nextCursor: string | null;
+};
+
+const nextCursorFrom = (response: Response): string | null =>
+    response.headers.get('X-Next-Cursor')?.trim() || null;
 
 export type ProfileLink = {
     id: string;
@@ -83,7 +106,11 @@ const resolveAssets = (obj: any): any => {
     return obj;
 };
 
-export const authFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+type AuthFetchInit = RequestInit & {
+    timeoutMs?: number;
+};
+
+export const authFetch = async (input: RequestInfo | URL, init?: AuthFetchInit): Promise<Response> => {
     const token = localStorage.getItem('si_token');
     const headers = new Headers(init?.headers);
     if (token) {
@@ -95,9 +122,40 @@ export const authFetch = async (input: RequestInfo | URL, init?: RequestInit): P
         headers.set('Content-Type', 'application/json');
     }
 
-    const modifiedInit = {
-        ...init,
-        headers
+    const { timeoutMs, signal: upstreamSignal, ...requestInit } = init || {};
+    const requestController = timeoutMs && timeoutMs > 0 ? new AbortController() : null;
+    let didTimeout = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const abortFromUpstream = () => {
+        requestController?.abort(upstreamSignal?.reason);
+        cleanupRequestControls();
+    };
+    const cleanupRequestControls = () => {
+        if (timeoutId) {
+            clearTimeout(timeoutId);
+            timeoutId = undefined;
+        }
+        upstreamSignal?.removeEventListener('abort', abortFromUpstream);
+    };
+
+    if (requestController && upstreamSignal?.aborted) {
+        abortFromUpstream();
+    } else if (requestController) {
+        upstreamSignal?.addEventListener('abort', abortFromUpstream, { once: true });
+    }
+
+    if (requestController && timeoutMs && timeoutMs > 0) {
+        timeoutId = setTimeout(() => {
+            didTimeout = true;
+            requestController.abort();
+            cleanupRequestControls();
+        }, timeoutMs);
+    }
+
+    const modifiedInit: RequestInit = {
+        ...requestInit,
+        headers,
+        signal: requestController?.signal || upstreamSignal
     };
 
     let fetchUrl = input;
@@ -109,7 +167,22 @@ export const authFetch = async (input: RequestInfo | URL, init?: RequestInit): P
         }
     }
 
-    const response = await fetch(fetchUrl, modifiedInit);
+    let response: Response;
+    try {
+        response = await fetch(fetchUrl, modifiedInit);
+    } catch (error) {
+        cleanupRequestControls();
+        if (didTimeout) {
+            throw new ApiError('Request timed out', 408, 'REQUEST_TIMEOUT');
+        }
+        if (upstreamSignal?.aborted || (error && typeof error === 'object' && (error as { name?: string }).name === 'AbortError')) {
+            throw error;
+        }
+        if (error instanceof TypeError) {
+            throw new ApiError('Network request failed', 0, 'NETWORK_ERROR');
+        }
+        throw error;
+    }
     
     if (response.status === 401) {
         // Handle unauthorized (expired token or invalid)
@@ -119,12 +192,38 @@ export const authFetch = async (input: RequestInfo | URL, init?: RequestInit): P
         window.dispatchEvent(new Event('auth_expired'));
     }
     
-    // Intercept .json() to resolve asset paths automatically
+    const consumeResponse = async <T>(reader: () => Promise<T>): Promise<T> => {
+        try {
+            return await reader();
+        } catch (error) {
+            if (didTimeout) {
+                throw new ApiError('Request timed out', 408, 'REQUEST_TIMEOUT');
+            }
+            throw error;
+        } finally {
+            cleanupRequestControls();
+        }
+    };
+
+    // Keep asset resolution centralized while ensuring request controls are
+    // released regardless of which standard body reader the caller uses.
     const originalJson = response.json.bind(response);
     response.json = async () => {
-        const data = await originalJson();
+        const data = await consumeResponse(originalJson);
         return resolveAssets(data);
     };
+    const originalText = response.text.bind(response);
+    response.text = () => consumeResponse(originalText);
+    const originalArrayBuffer = response.arrayBuffer.bind(response);
+    response.arrayBuffer = () => consumeResponse(originalArrayBuffer);
+    const originalBlob = response.blob.bind(response);
+    response.blob = () => consumeResponse(originalBlob);
+    const originalFormData = response.formData.bind(response);
+    response.formData = () => consumeResponse(originalFormData);
+
+    if (response.status === 204 || response.status === 205 || modifiedInit.method === 'HEAD') {
+        cleanupRequestControls();
+    }
     
     return response;
 };
@@ -139,7 +238,14 @@ export const api = {
         if (!response.ok) throw new Error('Failed to record view');
         return response.json();
     },
-    getSurveys: async (userId?: string, cursor?: string, limit: number = 10, authorId?: string, authorHandle?: string) => {
+    getSurveys: async (
+        userId?: string,
+        cursor?: string,
+        limit: number = 10,
+        authorId?: string,
+        authorHandle?: string,
+        requestOptions: SurveyRequestOptions = {}
+    ) => {
         const guestId = !userId ? getGuestId() : undefined;
         let url = userId ? `${API_BASE_URL}/posts?userId=${userId}&limit=${limit}` : `${API_BASE_URL}/posts?guestId=${guestId}&limit=${limit}`;
         if (cursor) {
@@ -151,36 +257,56 @@ export const api = {
         if (authorHandle) {
             url += `&authorHandle=${authorHandle}`;
         }
-        const response = await authFetch(url);
-        if (!response.ok) throw new Error('Failed to fetch posts');
+        const response = await authFetch(url, {
+            signal: requestOptions.signal,
+            timeoutMs: requestOptions.timeoutMs
+        });
+        if (!response.ok) await throwApiError(response, 'Failed to fetch posts');
         const json = await response.json();
+        if (!json || !Array.isArray(json.data)) {
+            throw new ApiError('Invalid feed response', 502, 'INVALID_FEED_RESPONSE');
+        }
         return {
-            data: json.data.map(normalizeSurvey),
+            data: requestOptions.normalize === false ? json.data : json.data.map(normalizeSurvey),
             nextCursor: json.nextCursor
         };
     },
 
-    getSurveyById: async (id: string, userId?: string) => {
+    getSurveyById: async (id: string, userId?: string, signal?: AbortSignal) => {
         const guestId = !userId ? getGuestId() : undefined;
         const url = userId ? `${API_BASE_URL}/posts/${id}?userId=${userId}` : `${API_BASE_URL}/posts/${id}?guestId=${guestId}`;
-        const response = await authFetch(url);
+        const response = await authFetch(url, { signal, timeoutMs: 20_000 });
         if (!response.ok) throw new Error('Failed to fetch post');
         const data = await response.json();
         return normalizeSurvey(data);
     },
 
-    getDrafts: async (userId: string) => {
-        const response = await authFetch(`${API_BASE_URL}/posts/drafts?userId=${userId}`);
+    getDraftsPage: async (_userId: string, cursor?: string | null, limit = 20, signal?: AbortSignal): Promise<CursorPage<any>> => {
+        const params = new URLSearchParams({ limit: String(limit) });
+        if (cursor) params.set('cursor', cursor);
+        const response = await authFetch(`${API_BASE_URL}/posts/drafts?${params.toString()}`, { signal, timeoutMs: 15_000 });
         if (!response.ok) throw new Error('Failed to fetch drafts');
         const data = await response.json();
-        return data.map(normalizeSurvey);
+        return { items: data.map(normalizeSurvey), nextCursor: nextCursorFrom(response) };
+    },
+
+    getDrafts: async (userId: string) => {
+        const page = await api.getDraftsPage(userId);
+        return page.items;
+    },
+
+    getSavedPostsPage: async (_userId: string, cursor?: string | null, limit = 20, signal?: AbortSignal): Promise<CursorPage<any>> => {
+        const params = new URLSearchParams({ limit: String(limit) });
+        if (cursor) params.set('cursor', cursor);
+        const response = await authFetch(`${API_BASE_URL}/posts/saved?${params.toString()}`, { signal, timeoutMs: 15_000 });
+        if (!response.ok) throw new Error('Failed to fetch saved posts');
+        const data = await response.json();
+        return { items: data.map(normalizeSurvey), nextCursor: nextCursorFrom(response) };
     },
 
     getSavedPosts: async (userId: string) => {
-        const response = await authFetch(`${API_BASE_URL}/posts/saved?userId=${userId}`);
-        if (!response.ok) throw new Error('Failed to fetch saved posts');
-        const data = await response.json();
-        return data.map(normalizeSurvey);
+        const page = await api.getSavedPostsPage(userId);
+        return page.items;
     },
 
     deletePost: async (postId: string, _userId?: string) => {
@@ -225,26 +351,33 @@ export const api = {
         return response.json();
     },
 
-    getParticipants: async (postId: string) => {
-        const response = await authFetch(`${API_BASE_URL}/posts/${postId}/participants`);
+    getParticipantsPage: async (postId: string, cursor?: string | null, limit = 30, signal?: AbortSignal): Promise<CursorPage<any>> => {
+        const params = new URLSearchParams({ limit: String(limit) });
+        if (cursor) params.set('cursor', cursor);
+        const response = await authFetch(`${API_BASE_URL}/posts/${postId}/participants?${params.toString()}`, { signal, timeoutMs: 15_000 });
         if (!response.ok) throw new Error('Failed to fetch participants');
-        return response.json();
+        return { items: await response.json(), nextCursor: nextCursorFrom(response) };
     },
 
-    getPostResults: async (postId: string) => {
-        const response = await authFetch(`${API_BASE_URL}/posts/${postId}/results`);
+    getParticipants: async (postId: string) => {
+        const page = await api.getParticipantsPage(postId);
+        return page.items;
+    },
+
+    getPostResults: async (postId: string, signal?: AbortSignal) => {
+        const response = await authFetch(`${API_BASE_URL}/posts/${postId}/results`, { signal, timeoutMs: 20_000 });
         if (!response.ok) throw new Error('Failed to fetch post results');
         return response.json();
     },
 
-    getUsers: async () => {
-        const response = await authFetch(`${API_BASE_URL}/users`);
+    getUsers: async (signal?: AbortSignal) => {
+        const response = await authFetch(`${API_BASE_URL}/users`, { signal, timeoutMs: 10_000 });
         if (!response.ok) throw new Error('Failed to fetch users');
         return response.json();
     },
 
-    getSuggestedUsers: async (userId: string) => {
-        const response = await authFetch(`${API_BASE_URL}/users/${userId}/suggested`);
+    getSuggestedUsers: async (userId: string, signal?: AbortSignal) => {
+        const response = await authFetch(`${API_BASE_URL}/users/${userId}/suggested`, { signal, timeoutMs: 15_000 });
         if (!response.ok) throw new Error('Failed to fetch suggested users');
         return response.json();
     },
@@ -256,9 +389,9 @@ export const api = {
         return response.json();
     },
 
-    searchAll: async (query: string) => {
+    searchAll: async (query: string, signal?: AbortSignal) => {
         if (!query) return { topics: [], surveys: [], people: [], groups: [], categories: [] };
-        const response = await authFetch(`${API_BASE_URL}/search?q=${encodeURIComponent(query)}`);
+        const response = await authFetch(`${API_BASE_URL}/search?q=${encodeURIComponent(query)}`, { signal, timeoutMs: 10_000 });
         if (!response.ok) throw new Error('Failed to fetch search results');
         return response.json();
     },
@@ -270,16 +403,16 @@ export const api = {
         return response.json();
     },
 
-    getTrendingHashtags: async (limit: number = 10) => {
-        const response = await authFetch(`${API_BASE_URL}/hashtags/trending?limit=${limit}`);
+    getTrendingHashtags: async (limit: number = 10, signal?: AbortSignal) => {
+        const response = await authFetch(`${API_BASE_URL}/hashtags/trending?limit=${limit}`, { signal, timeoutMs: 10_000 });
         if (!response.ok) throw new Error('Failed to fetch trending hashtags');
         return response.json();
     },
 
-    getHashtagPosts: async (name: string, sort: 'top' | 'recent' = 'top', cursor?: string, limit: number = 10) => {
+    getHashtagPosts: async (name: string, sort: 'top' | 'recent' = 'top', cursor?: string, limit: number = 10, signal?: AbortSignal) => {
         const params = new URLSearchParams({ sort, limit: String(limit) });
         if (cursor) params.set('cursor', cursor);
-        const response = await authFetch(`${API_BASE_URL}/hashtags/${encodeURIComponent(name.replace(/^#/, ''))}/posts?${params.toString()}`);
+        const response = await authFetch(`${API_BASE_URL}/hashtags/${encodeURIComponent(name.replace(/^#/, ''))}/posts?${params.toString()}`, { signal, timeoutMs: 15_000 });
         if (!response.ok) throw new Error('Failed to fetch hashtag topic');
         const data = await response.json();
         return {
@@ -294,7 +427,7 @@ export const api = {
         return response.json();
     },
 
-    getTrends: async (params: { period?: string; type?: string; country?: string; limit?: number; category?: string }) => {
+    getTrends: async (params: { period?: string; type?: string; country?: string; limit?: number; category?: string }, signal?: AbortSignal) => {
         const queryParams = new URLSearchParams();
         if (params.period) queryParams.append('period', params.period);
         if (params.type) queryParams.append('type', params.type);
@@ -302,7 +435,7 @@ export const api = {
         if (params.limit) queryParams.append('limit', params.limit.toString());
         if (params.category) queryParams.append('category', params.category);
 
-        const response = await authFetch(`${API_BASE_URL}/posts/trends?${queryParams.toString()}`);
+        const response = await authFetch(`${API_BASE_URL}/posts/trends?${queryParams.toString()}`, { signal, timeoutMs: 15_000 });
         if (!response.ok) throw new Error('Failed to fetch trends');
         return response.json();
     },
@@ -348,12 +481,18 @@ export const api = {
         return response.json();
     },
 
-    getComments: async (postId: string, userId?: string) => {
-        const url = userId ? `${API_BASE_URL}/posts/${postId}/comments?userId=${userId}` : `${API_BASE_URL}/posts/${postId}/comments`;
-        console.log("api.getComments called with userId:", userId);
-        const response = await authFetch(url);
+    getCommentsPage: async (postId: string, cursor?: string | null, limit = 30, signal?: AbortSignal, focusId?: string | null): Promise<CursorPage<any>> => {
+        const params = new URLSearchParams({ limit: String(limit) });
+        if (cursor) params.set('cursor', cursor);
+        if (focusId && !cursor) params.set('focusId', focusId);
+        const response = await authFetch(`${API_BASE_URL}/posts/${postId}/comments?${params.toString()}`, { signal, timeoutMs: 15_000 });
         if (!response.ok) throw new Error('Failed to fetch comments');
-        return response.json();
+        return { items: await response.json(), nextCursor: nextCursorFrom(response) };
+    },
+
+    getComments: async (postId: string, _userId?: string) => {
+        const page = await api.getCommentsPage(postId);
+        return page.items;
     },
 
     createComment: async (postId: string, text: string, parentId?: string, authorId?: string) => {
@@ -396,13 +535,13 @@ export const api = {
         return response.json();
     },
 
-    getMe: async (requestOptions: RequestInit = {}): Promise<CurrentUserProfile> => {
+    getMe: async (requestOptions: ApiRequestOptions = {}): Promise<CurrentUserProfile> => {
         const response = await authFetch(`${API_BASE_URL}/users/me`, requestOptions);
         if (!response.ok) await throwApiError(response, 'Failed to fetch your profile');
         return response.json();
     },
 
-    getProfileLinks: async (requestOptions: RequestInit = {}): Promise<ProfileLink[]> => {
+    getProfileLinks: async (requestOptions: ApiRequestOptions = {}): Promise<ProfileLink[]> => {
         const response = await authFetch(`${API_BASE_URL}/users/me/profile-links`, requestOptions);
         if (!response.ok) await throwApiError(response, 'Failed to fetch profile links');
         return response.json();
@@ -434,21 +573,21 @@ export const api = {
         if (response.status !== 204 && response.status !== 205) await response.text();
     },
 
-    getUser: async (userId: string) => {
-        const response = await authFetch(`${API_BASE_URL}/users/${userId}`);
+    getUser: async (userId: string, signal?: AbortSignal) => {
+        const response = await authFetch(`${API_BASE_URL}/users/${userId}`, { signal, timeoutMs: 15_000 });
         if (!response.ok) await throwApiError(response, 'Failed to fetch user');
         return response.json();
     },
 
-    getUserByHandle: async (handle: string) => {
+    getUserByHandle: async (handle: string, signal?: AbortSignal) => {
         let cleanHandle = handle.startsWith('@') ? handle.substring(1) : handle;
-        const response = await authFetch(`${API_BASE_URL}/users/handle/${cleanHandle}`);
+        const response = await authFetch(`${API_BASE_URL}/users/handle/${cleanHandle}`, { signal, timeoutMs: 15_000 });
         if (!response.ok) throw new Error('Failed to fetch user by handle');
         return response.json();
     },
 
-    getUserAnalytics: async (userId: string) => {
-        const response = await authFetch(`${API_BASE_URL}/users/${userId}/analytics`);
+    getUserAnalytics: async (userId: string, signal?: AbortSignal) => {
+        const response = await authFetch(`${API_BASE_URL}/users/${userId}/analytics`, { signal, timeoutMs: 15_000 });
         if (!response.ok) throw new Error('Failed to fetch user analytics');
         return response.json();
     },
@@ -471,10 +610,17 @@ export const api = {
         return response.json();
     },
 
-    getPostLikers: async (postId: string) => {
-        const response = await authFetch(`${API_BASE_URL}/posts/${postId}/likes`);
+    getPostLikersPage: async (postId: string, cursor?: string | null, limit = 30, signal?: AbortSignal): Promise<CursorPage<UserProfile>> => {
+        const params = new URLSearchParams({ limit: String(limit) });
+        if (cursor) params.set('cursor', cursor);
+        const response = await authFetch(`${API_BASE_URL}/posts/${postId}/likes?${params.toString()}`, { signal, timeoutMs: 15_000 });
         if (!response.ok) throw new Error('Failed to fetch post likers');
-        return response.json();
+        return { items: await response.json(), nextCursor: nextCursorFrom(response) };
+    },
+
+    getPostLikers: async (postId: string) => {
+        const page = await api.getPostLikersPage(postId);
+        return page.items;
     },
 
     likeComment: async (commentId: string, userId: string) => {
@@ -488,10 +634,17 @@ export const api = {
         return response.json();
     },
 
-    getCommentLikers: async (commentId: string) => {
-        const response = await authFetch(`${API_BASE_URL}/posts/comments/${commentId}/likes`);
+    getCommentLikersPage: async (commentId: string, cursor?: string | null, limit = 30, signal?: AbortSignal): Promise<CursorPage<UserProfile>> => {
+        const params = new URLSearchParams({ limit: String(limit) });
+        if (cursor) params.set('cursor', cursor);
+        const response = await authFetch(`${API_BASE_URL}/posts/comments/${commentId}/likes?${params.toString()}`, { signal, timeoutMs: 15_000 });
         if (!response.ok) throw new Error('Failed to fetch comment likers');
-        return response.json();
+        return { items: await response.json(), nextCursor: nextCursorFrom(response) };
+    },
+
+    getCommentLikers: async (commentId: string) => {
+        const page = await api.getCommentLikersPage(commentId);
+        return page.items;
     },
 
     followUser: async (userId: string, currentUserId: string) => {
@@ -666,22 +819,30 @@ export const api = {
         return responseData;
     },
 
-    getUserFollowers: async (userId: string, currentUserId?: string) => {
-        const url = currentUserId
-            ? `${API_BASE_URL}/users/${userId}/followers?currentUserId=${currentUserId}`
-            : `${API_BASE_URL}/users/${userId}/followers`;
-        const response = await authFetch(url);
+    getUserFollowersPage: async (userId: string, cursor?: string | null, limit = 50, signal?: AbortSignal): Promise<CursorPage<UserProfile>> => {
+        const params = new URLSearchParams({ limit: String(limit) });
+        if (cursor) params.set('cursor', cursor);
+        const response = await authFetch(`${API_BASE_URL}/users/${userId}/followers?${params.toString()}`, { signal, timeoutMs: 15_000 });
         if (!response.ok) throw new Error('Failed to fetch followers');
-        return response.json();
+        return { items: await response.json(), nextCursor: nextCursorFrom(response) };
     },
 
-    getUserFollowing: async (userId: string, currentUserId?: string) => {
-        const url = currentUserId
-            ? `${API_BASE_URL}/users/${userId}/following?currentUserId=${currentUserId}`
-            : `${API_BASE_URL}/users/${userId}/following`;
-        const response = await authFetch(url);
+    getUserFollowers: async (userId: string, _currentUserId?: string) => {
+        const page = await api.getUserFollowersPage(userId);
+        return page.items;
+    },
+
+    getUserFollowingPage: async (userId: string, cursor?: string | null, limit = 50, signal?: AbortSignal): Promise<CursorPage<UserProfile>> => {
+        const params = new URLSearchParams({ limit: String(limit) });
+        if (cursor) params.set('cursor', cursor);
+        const response = await authFetch(`${API_BASE_URL}/users/${userId}/following?${params.toString()}`, { signal, timeoutMs: 15_000 });
         if (!response.ok) throw new Error('Failed to fetch following');
-        return response.json();
+        return { items: await response.json(), nextCursor: nextCursorFrom(response) };
+    },
+
+    getUserFollowing: async (userId: string, _currentUserId?: string) => {
+        const page = await api.getUserFollowingPage(userId);
+        return page.items;
     },
 
     savePost: async (postId: string, _userId?: string) => {
@@ -741,10 +902,42 @@ export const api = {
         }
     },
 
-    getNotifications: async (userId: string) => {
-        const response = await authFetch(`${API_BASE_URL}/users/${userId}/notifications`);
-        if (!response.ok) throw new Error('Failed to fetch notifications');
-        return response.json();
+    getNotificationsPage: async (
+        userId: string,
+        cursor?: string,
+        limit: number = 50,
+        requestOptions: ApiRequestOptions = {}
+    ): Promise<NotificationPage> => {
+        const query = new URLSearchParams({ limit: String(limit) });
+        if (cursor) query.set('cursor', cursor);
+
+        const response = await authFetch(
+            `${API_BASE_URL}/users/${userId}/notifications?${query.toString()}`,
+            requestOptions
+        );
+        if (!response.ok) await throwApiError(response, 'Failed to fetch notifications');
+
+        const items = await response.json();
+        if (!Array.isArray(items)) {
+            throw new ApiError('Invalid notifications response', 502, 'INVALID_NOTIFICATIONS_RESPONSE');
+        }
+
+        return {
+            items,
+            nextCursor: response.headers.get('X-Next-Cursor') || null
+        };
+    },
+
+    // Preserve the existing array-returning API for callers that do not need pagination.
+    getNotifications: async (userId: string): Promise<Notification[]> => {
+        const query = new URLSearchParams({ limit: '50' });
+        const response = await authFetch(`${API_BASE_URL}/users/${userId}/notifications?${query.toString()}`);
+        if (!response.ok) await throwApiError(response, 'Failed to fetch notifications');
+        const items = await response.json();
+        if (!Array.isArray(items)) {
+            throw new ApiError('Invalid notifications response', 502, 'INVALID_NOTIFICATIONS_RESPONSE');
+        }
+        return items;
     },
 
     markNotificationsRead: async (userId: string) => {
@@ -759,8 +952,8 @@ export const api = {
         return response.json();
     },
 
-    getGroupById: async (groupId: string) => {
-        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}`);
+    getGroupById: async (groupId: string, signal?: AbortSignal) => {
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}`, { signal, timeoutMs: 15_000 });
         if (!response.ok) throw new Error('Failed to fetch group');
         return response.json();
     },
@@ -826,9 +1019,9 @@ export const api = {
         return response.json();
     },
 
-    getUserGroups: async (userId: string) => {
-        const response = await authFetch(`${API_BASE_URL}/users/${userId}/groups`);
-        if (!response.ok) throw new Error('Failed to fetch user groups');
+    getUserGroups: async (userId: string, requestOptions: ApiRequestOptions = {}) => {
+        const response = await authFetch(`${API_BASE_URL}/users/${userId}/groups`, requestOptions);
+        if (!response.ok) await throwApiError(response, 'Failed to fetch user groups');
         return response.json();
     },
 

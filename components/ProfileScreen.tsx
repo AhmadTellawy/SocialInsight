@@ -109,14 +109,21 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
   const [drafts, setDrafts] = useState<Survey[]>([]);
   const [savedPosts, setSavedPosts] = useState<Survey[]>([]);
+  const [draftNextCursor, setDraftNextCursor] = useState<string | null>(null);
+  const [savedNextCursor, setSavedNextCursor] = useState<string | null>(null);
+  const [isProfileTabLoading, setIsProfileTabLoading] = useState(false);
+  const [isProfileTabLoadingMore, setIsProfileTabLoadingMore] = useState(false);
   const [displayedGroups, setDisplayedGroups] = useState<Group[]>([]);
   const [isGroupsLoading, setIsGroupsLoading] = useState(false);
   const [groupsError, setGroupsError] = useState<string | null>(null);
   const groupsRequestRef = useRef(0);
 
-  const [analytics, setAnalytics] = useState<any>(null);
   const [connectionList, setConnectionList] = useState<any[]>([]);
   const [isConnectionLoading, setIsConnectionLoading] = useState(false);
+  const [isConnectionLoadingMore, setIsConnectionLoadingMore] = useState(false);
+  const [connectionNextCursor, setConnectionNextCursor] = useState<string | null>(null);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [connectionRetryKey, setConnectionRetryKey] = useState(0);
 
   const isMe = !user?.id || user.id === userProfile.id;
   const suppliedUser = user as (Partial<UserProfile> & { isFollowing?: boolean; followStatus?: string }) | undefined;
@@ -138,24 +145,70 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     ) return;
 
     ownerProfileRefreshRef.current = userProfile.id;
-    api.getUser(userProfile.id)
+    const controller = new AbortController();
+    api.getUser(userProfile.id, controller.signal)
       .then((freshProfile) => onUpdateCurrentUser(freshProfile))
-      .catch(() => {
+      .catch((error: any) => {
+        if (error?.name === 'AbortError') return;
         ownerProfileRefreshRef.current = null;
       });
+    return () => controller.abort();
   }, [isMe, onUpdateCurrentUser, userProfile.coverMediaId, userProfile.id, userProfile.profileLinks, userProfile.updatedAt]);
 
   useEffect(() => {
     if (activeTab === 'drafts' && isMe && userProfile.id) {
-      api.getDrafts(userProfile.id).then(setDrafts).catch(console.error);
+      const controller = new AbortController();
+      setIsProfileTabLoading(true);
+      api.getDraftsPage(userProfile.id, null, 20, controller.signal)
+        .then(page => {
+          setDrafts(page.items);
+          setDraftNextCursor(page.nextCursor);
+        })
+        .catch((error: any) => { if (error?.name !== 'AbortError') console.error(error); })
+        .finally(() => { if (!controller.signal.aborted) setIsProfileTabLoading(false); });
+      return () => controller.abort();
     }
   }, [activeTab, isMe, userProfile.id]);
 
   useEffect(() => {
     if (activeTab === 'saved' && isMe && userProfile.id) {
-      api.getSavedPosts(userProfile.id).then(setSavedPosts).catch(console.error);
+      const controller = new AbortController();
+      setIsProfileTabLoading(true);
+      api.getSavedPostsPage(userProfile.id, null, 20, controller.signal)
+        .then(page => {
+          setSavedPosts(page.items);
+          setSavedNextCursor(page.nextCursor);
+        })
+        .catch((error: any) => { if (error?.name !== 'AbortError') console.error(error); })
+        .finally(() => { if (!controller.signal.aborted) setIsProfileTabLoading(false); });
+      return () => controller.abort();
     }
   }, [activeTab, isMe, userProfile.id]);
+
+  const loadMoreProfileTab = async () => {
+    const cursor = activeTab === 'drafts' ? draftNextCursor : activeTab === 'saved' ? savedNextCursor : null;
+    if (!cursor || isProfileTabLoadingMore) return;
+    setIsProfileTabLoadingMore(true);
+    try {
+      const page = activeTab === 'drafts'
+        ? await api.getDraftsPage(userProfile.id, cursor)
+        : await api.getSavedPostsPage(userProfile.id, cursor);
+      const merge = (previous: Survey[]) => {
+        const byId = new Map(previous.map(post => [post.id, post]));
+        page.items.forEach((post: Survey) => byId.set(post.id, post));
+        return Array.from(byId.values());
+      };
+      if (activeTab === 'drafts') {
+        setDrafts(merge);
+        setDraftNextCursor(page.nextCursor);
+      } else {
+        setSavedPosts(merge);
+        setSavedNextCursor(page.nextCursor);
+      }
+    } finally {
+      setIsProfileTabLoadingMore(false);
+    }
+  };
 
   useEffect(() => {
     if (activeTab !== 'groups') return;
@@ -169,6 +222,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     }
 
     const requestId = ++groupsRequestRef.current;
+    const controller = new AbortController();
     setGroupsError(null);
     setIsGroupsLoading(true);
 
@@ -178,12 +232,13 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       setDisplayedGroups([]);
     }
 
-    api.getUserGroups(targetUserId)
+    api.getUserGroups(targetUserId, { signal: controller.signal, timeoutMs: 15_000 })
       .then(groups => {
         if (groupsRequestRef.current === requestId) setDisplayedGroups(groups);
       })
       .catch(error => {
         if (groupsRequestRef.current !== requestId) return;
+        if ((error as any)?.name === 'AbortError') return;
         console.error(error);
         setGroupsError('Failed to load groups.');
         setDisplayedGroups([]);
@@ -191,6 +246,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       .finally(() => {
         if (groupsRequestRef.current === requestId) setIsGroupsLoading(false);
       });
+    return () => controller.abort();
   }, [activeTab, isMe, userProfile.id, user, userGroups]);
 
   useEffect(() => {
@@ -204,12 +260,14 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   }, [isMe, viewUserId, suppliedUser?.followStatus, suppliedUser?.isFollowing]);
 
   useEffect(() => {
+    const controller = new AbortController();
     const loadFollowStatus = async () => {
       if (!isMe && user) {
         try {
           const userId = (user as any).id;
           if (userId) {
-            const fullUser = await api.getUser(userId);
+            const fullUser = await api.getUser(userId, controller.signal);
+            if (controller.signal.aborted) return;
             setTargetUser(fullUser);
             const nextFollowStatus = fullUser?.followStatus || 'NONE';
             setLocalFollowingState(fullUser?.isFollowing === true || nextFollowStatus === 'ACTIVE');
@@ -224,51 +282,62 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             actor_user_id: userProfile?.id,
             source_surface: 'PROFILE'
           });
-        } catch (error) {
+        } catch (error: any) {
+          if (error?.name === 'AbortError') return;
           console.error('Failed to load profile data:', error);
         }
       }
     };
 
-    const loadAnalytics = async () => {
-      const targetUserId = isMe ? userProfile.id : (user as any)?.id;
-      if (targetUserId) {
-        try {
-          const data = await api.getUserAnalytics(targetUserId);
-          setAnalytics(data);
-        } catch (e) { console.error(e); }
-      }
-    };
-
-    loadFollowStatus();
-    loadAnalytics();
+    void loadFollowStatus();
+    return () => controller.abort();
   }, [isMe, user, userProfile?.id]);
 
   useEffect(() => {
-    const loadConnections = async () => {
-      const targetUserId = isMe ? userProfile.id : (user as any)?.id;
-      if (!activeStatSheet || activeStatSheet === 'posts' || !targetUserId) return;
+    const targetUserId = isMe ? userProfile.id : viewUserId;
+    if (!activeStatSheet || activeStatSheet === 'posts' || !targetUserId) return;
+    const controller = new AbortController();
+    setIsConnectionLoading(true);
+    setConnectionList([]);
+    setConnectionNextCursor(null);
+    setConnectionError(null);
 
-      setIsConnectionLoading(true);
-      setConnectionList([]);
+    const request = activeStatSheet === 'followers'
+      ? api.getUserFollowersPage(targetUserId, null, 50, controller.signal)
+      : api.getUserFollowingPage(targetUserId, null, 50, controller.signal);
+    void request
+      .then(page => {
+        setConnectionList(page.items);
+        setConnectionNextCursor(page.nextCursor);
+      })
+      .catch((error: any) => {
+        if (error?.name !== 'AbortError') setConnectionError('Failed to load connections.');
+      })
+      .finally(() => setIsConnectionLoading(false));
+    return () => controller.abort();
+  }, [activeStatSheet, connectionRetryKey, isMe, userProfile.id, viewUserId]);
 
-      try {
-        let list = [];
-        if (activeStatSheet === 'followers') {
-          list = await api.getUserFollowers(targetUserId, userProfile.id);
-        } else {
-          list = await api.getUserFollowing(targetUserId, userProfile.id);
-        }
-        setConnectionList(list);
-      } catch (error) {
-        console.error("Failed to load connections", error);
-      } finally {
-        setIsConnectionLoading(false);
-      }
-    };
-
-    loadConnections();
-  }, [activeStatSheet, isMe, user, userProfile?.id]);
+  const loadMoreConnections = async () => {
+    const targetUserId = isMe ? userProfile.id : viewUserId;
+    if (!activeStatSheet || activeStatSheet === 'posts' || !targetUserId || !connectionNextCursor || isConnectionLoadingMore) return;
+    setIsConnectionLoadingMore(true);
+    setConnectionError(null);
+    try {
+      const page = activeStatSheet === 'followers'
+        ? await api.getUserFollowersPage(targetUserId, connectionNextCursor)
+        : await api.getUserFollowingPage(targetUserId, connectionNextCursor);
+      setConnectionList(previous => {
+        const byId = new Map(previous.map(person => [person.id, person]));
+        page.items.forEach(person => byId.set(person.id, person));
+        return Array.from(byId.values());
+      });
+      setConnectionNextCursor(page.nextCursor);
+    } catch {
+      setConnectionError('Failed to load more connections.');
+    } finally {
+      setIsConnectionLoadingMore(false);
+    }
+  };
 
   const handleConnectionAction = async (person: any) => {
     if (isMe && person.id === userProfile.id) return;
@@ -371,7 +440,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         ...userProfile,
         stats: {
           ...userProfile.stats,
-          responses: analytics?.totalResponses ?? userProfile.stats?.responses ?? 0
+          responses: userProfile.stats?.responses ?? 0
         }
       };
     }
@@ -381,7 +450,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         ...resolvedTargetUser,
         stats: {
           ...resolvedTargetUser.stats,
-          responses: analytics?.totalResponses ?? resolvedTargetUser.stats?.responses ?? 0
+          responses: resolvedTargetUser.stats?.responses ?? 0
         }
       };
     }
@@ -403,10 +472,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         followers: suppliedStats?.followers ?? 0,
         following: suppliedStats?.following ?? 0,
         posts: suppliedStats?.posts ?? 0,
-        responses: analytics?.totalResponses ?? suppliedStats?.responses ?? 0
+        responses: suppliedStats?.responses ?? 0
       }
     } as UserProfile;
-  }, [isMe, user, userProfile, analytics, resolvedTargetUser, suppliedUser]);
+  }, [isMe, user, userProfile, resolvedTargetUser, suppliedUser]);
 
   const mySurveys = surveys;
 
@@ -709,6 +778,24 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                   )}
                 </div>
               ))}
+              {connectionNextCursor && !statSearch.trim() && (
+                <button
+                  onClick={() => void loadMoreConnections()}
+                  disabled={isConnectionLoadingMore}
+                  className="mx-auto my-5 flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-xs font-bold text-gray-600 disabled:opacity-60"
+                >
+                  {isConnectionLoadingMore && <Loader2 size={14} className="animate-spin" />}
+                  {t('Load more')}
+                </button>
+              )}
+              {connectionError && connectionList.length > 0 && (
+                <p className="py-3 text-center text-xs text-red-500">{connectionError}</p>
+              )}
+            </div>
+          ) : connectionError ? (
+            <div className="py-20 px-8 text-center text-gray-500">
+              <p className="text-sm mb-3">{connectionError}</p>
+              <button onClick={() => setConnectionRetryKey(key => key + 1)} className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white">{t('Retry')}</button>
             </div>
           ) : (
             (() => {
@@ -802,6 +889,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         );
 
       case 'drafts':
+        if (isProfileTabLoading && drafts.length === 0) {
+          return <div className="flex justify-center py-20"><Loader2 size={28} className="animate-spin text-blue-500" /></div>;
+        }
         const draftPosts = drafts;
         return draftPosts.length > 0 ? (
           <div className="p-4 grid grid-cols-1 gap-4 animate-in fade-in duration-300">
@@ -828,6 +918,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 </div>
               </button>
             ))}
+            {draftNextCursor && (
+              <button onClick={() => void loadMoreProfileTab()} disabled={isProfileTabLoadingMore} className="mx-auto flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-xs font-bold text-gray-600 disabled:opacity-60">
+                {isProfileTabLoadingMore && <Loader2 size={14} className="animate-spin" />}
+                {t('Load more')}
+              </button>
+            )}
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-20 px-8 text-center text-gray-400">
@@ -837,6 +933,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         );
 
       case 'saved':
+        if (isProfileTabLoading && savedPosts.length === 0) {
+          return <div className="flex justify-center py-20"><Loader2 size={28} className="animate-spin text-blue-500" /></div>;
+        }
         return savedPosts.length > 0 ? (
           <div className="space-y-1 animate-in fade-in duration-300">
             {savedPosts.map(survey => (
@@ -861,6 +960,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 }}
               />
             ))}
+            {savedNextCursor && (
+              <button onClick={() => void loadMoreProfileTab()} disabled={isProfileTabLoadingMore} className="mx-auto my-5 flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-xs font-bold text-gray-600 disabled:opacity-60">
+                {isProfileTabLoadingMore && <Loader2 size={14} className="animate-spin" />}
+                {t('Load more')}
+              </button>
+            )}
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-20 px-8 text-center text-gray-400">

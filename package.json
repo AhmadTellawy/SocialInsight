@@ -3,11 +3,14 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=24.13.0 <25"
+  },
   "scripts": {
     "dev": "vite",
     "server": "cd server && npm run dev",
     "build": "vite build",
-    "test:unit": "node --test utils/mediaSafeStorage.test.ts utils/mediaUploadScheduler.test.ts utils/mentionAutocomplete.test.ts utils/optionPresentation.test.ts utils/postOptions.test.ts utils/profileValidation.test.ts utils/shareCard.test.ts utils/textEntities.test.ts",
+    "test:unit": "node --test utils/feedRequest.test.ts utils/mediaSafeStorage.test.ts utils/mediaUploadScheduler.test.ts utils/mentionAutocomplete.test.ts utils/optionPresentation.test.ts utils/postOptions.test.ts utils/profileValidation.test.ts utils/shareCard.test.ts utils/textEntities.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

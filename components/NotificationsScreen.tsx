@@ -12,6 +12,12 @@ interface NotificationsScreenProps {
   onBack: () => void;
   onItemClick: (notification: Notification) => void;
   currentUserId?: string;
+  hasMore?: boolean;
+  isInitialLoading?: boolean;
+  isLoadingMore?: boolean;
+  loadError?: string | null;
+  onLoadMore?: () => void;
+  onRetry?: () => void;
 }
 
 export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
@@ -20,6 +26,12 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
   onBack,
   onItemClick,
   currentUserId,
+  hasMore = false,
+  isInitialLoading = false,
+  isLoadingMore = false,
+  loadError = null,
+  onLoadMore,
+  onRetry,
 }) => {
   const { t } = useTranslation();
   const getTimeAgo = (dateStr: string) => {
@@ -207,7 +219,29 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
       </div>
 
       <div className="flex-1 overflow-y-auto pb-20 no-scrollbar bg-gray-50">
-        {filteredList.length === 0 ? (
+        {isInitialLoading && filteredList.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-[50vh] text-center px-6" role="status">
+            <div className="w-12 h-12 rounded-full border-4 border-gray-200 border-t-blue-600 animate-spin mb-4" />
+            <p className="text-gray-600 text-sm font-semibold">Loading notifications…</p>
+          </div>
+        ) : loadError && filteredList.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-[50vh] text-center px-6" role="alert">
+            <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mb-4 text-red-500">
+              <Bell size={32} />
+            </div>
+            <h3 className="text-gray-900 font-bold text-lg mb-2">Couldn't load notifications</h3>
+            <p className="text-gray-500 text-sm mb-5">{loadError}</p>
+            {onRetry && (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="px-5 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 disabled:opacity-60"
+              >
+                Try again
+              </button>
+            )}
+          </div>
+        ) : filteredList.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-[50vh] text-center px-6">
             <div className="w-16 h-16 bg-gray-200 rounded-full flex items-center justify-center mb-4 text-gray-500">
               <Bell size={32} />
@@ -216,12 +250,13 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
             <p className="text-gray-500 text-sm">When there's activity on your surveys or polls, it will show up here.</p>
           </div>
         ) : (
-          <div className="divide-y divide-gray-100">
-            {[...filteredList].sort((a, b) => {
-              const timeA = (a as any).createdAt || new Date(a.timestamp).getTime();
-              const timeB = (b as any).createdAt || new Date(b.timestamp).getTime();
-              return timeB - timeA;
-            }).map((notification) => (
+          <>
+            <div className="divide-y divide-gray-100">
+              {[...filteredList].sort((a, b) => {
+                const timeA = (a as any).createdAt || new Date(a.timestamp).getTime();
+                const timeB = (b as any).createdAt || new Date(b.timestamp).getTime();
+                return timeB - timeA;
+              }).map((notification) => (
               <div
                 key={notification.id}
                 data-notification-id={notification.id}
@@ -324,8 +359,28 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                   </button>
                 </div>
               </div>
-            ))}
-          </div>
+              ))}
+            </div>
+
+            <div className="px-4 py-6 text-center">
+              {loadError && (
+                <p className="text-sm text-red-600 mb-3" role="alert">{loadError}</p>
+              )}
+              {hasMore ? (
+                <button
+                  type="button"
+                  onClick={onLoadMore}
+                  disabled={isLoadingMore || !onLoadMore}
+                  aria-busy={isLoadingMore}
+                  className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-bold text-gray-800 shadow-sm hover:bg-gray-50 disabled:cursor-wait disabled:opacity-60"
+                >
+                  {isLoadingMore ? 'Loading more…' : loadError ? 'Try loading more again' : 'Load more notifications'}
+                </button>
+              ) : (
+                <p className="text-xs font-medium text-gray-400">You're all caught up</p>
+              )}
+            </div>
+          </>
         )}
       </div>
     </div>

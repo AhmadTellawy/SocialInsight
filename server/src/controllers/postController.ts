@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { MentionState, MentionSurface, PeopleTagStatus } from '@prisma/client';
+import { MentionState, MentionSurface, PeopleTagStatus, Prisma } from '@prisma/client';
 import prisma from '../prisma';
 import { dispatchNotificationIds, notify } from '../services/notificationService';
 import { processBase64Image } from '../utils/imageProcessor';
@@ -53,6 +53,17 @@ import {
     buildPostReportDedupeKey,
     normalizePostReportInput
 } from '../services/postOptionService';
+import {
+    attachFeedContentRelations,
+    attachFeedViewerState,
+    buildFeedCursorWhere,
+    buildFeedPostScalarSelect,
+    decodeFeedCursor,
+    encodeFeedCursor,
+    isOpaqueFeedCursor,
+    loadFeedRelationBundle,
+    parseFeedLimit
+} from '../services/postFeedService';
 
 export const SAFE_USER_SELECT = {
     id: true,
@@ -135,6 +146,23 @@ const serializePostSocialRecord = (post: any, viewerId?: string | null): any => 
     };
 };
 
+const firstQueryString = (value: unknown): string | undefined => {
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value) && typeof value[0] === 'string') return value[0];
+    return undefined;
+};
+
+const parseReadLimit = (value: unknown, fallback = 30, maximum = 100): number => {
+    const parsed = Number.parseInt(firstQueryString(value) || '', 10);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, maximum) : fallback;
+};
+
+const applyNextCursorHeader = (res: Response, items: Array<{ id: string }>, hasMore: boolean) => {
+    if (hasMore && items.length > 0) {
+        res.setHeader('X-Next-Cursor', items[items.length - 1].id);
+    }
+};
+
 const validateMentionRecipientLimit = (text: string, res: Response, surface: 'post' | 'comment'): boolean => {
     const violation = getMentionLimitViolation(text);
     if (!violation) return true;
@@ -176,6 +204,15 @@ const getMediaAttachmentRequirements = (data: any): MediaAttachmentRequirement[]
 
 const mapTargetGroups = (post: any): string[] => {
     return Array.isArray(post?.targetedGroups) ? post.targetedGroups.map((g: any) => g.id) : [];
+};
+
+const mapVisibleFeedGroupId = (post: any, viewerId?: string): string | null => {
+    const groupId = typeof post?.groupId === 'string' ? post.groupId : null;
+    if (!groupId || post?.authorId === viewerId) return groupId;
+    const visibleTargetGroupIds = mapTargetGroups(post);
+    return visibleTargetGroupIds.length === 0 || visibleTargetGroupIds.includes(groupId)
+        ? groupId
+        : null;
 };
 
 const normalizeDemographicFilters = (value: any): string | undefined => {
@@ -225,6 +262,66 @@ export const buildUserProgress = (answers: any[] = []) => {
     };
 };
 
+const mapPostForClient = (rawPost: any, userId?: string, guestId?: string) => {
+    const post = serializePostSocialRecord(rawPost, userId);
+    const actualResponse = post.sharedFrom ? post.sharedFrom.responses?.[0] : post.responses?.[0];
+    const userAnswers = actualResponse?.answers || [];
+
+    let mappedSharedFrom: any = undefined;
+    if (post.sharedFrom) {
+        mappedSharedFrom = {
+            ...post.sharedFrom,
+            options: OPTION_POST_TYPES.includes(normalizePostType(post.sharedFrom.type) || '') && post.sharedFrom.questions?.length > 0
+                ? post.sharedFrom.questions[0].options
+                : [],
+            demographics: parseJsonArray(post.sharedFrom.demographics),
+            author: post.sharedFrom.author ? {
+                ...post.sharedFrom.author,
+                isFollowing: userId ? Boolean(post.sharedFrom.author.following?.length) : false
+            } : undefined,
+            likes: post.sharedFrom.likesCount,
+            repostCount: post.sharedFrom.sharesCount || 0,
+            participants: post.sharedFrom.responseCount,
+            groupId: mapVisibleFeedGroupId(post.sharedFrom, userId),
+            targetGroups: mapTargetGroups(post.sharedFrom),
+            hasParticipated: Boolean((userId || guestId) && post.sharedFrom.responses?.length),
+            userSelectedOptions: post.sharedFrom.responses?.length
+                ? mapAnswerOptionIds(post.sharedFrom.responses[0].answers || [])
+                : [],
+            isLiked: Boolean(userId && post.sharedFrom.likes?.length),
+            hasReposted: Boolean(userId && post.sharedFrom.shares?.length),
+            isSaved: Boolean(userId && post.sharedFrom.savedBy?.length)
+        };
+    }
+
+    return {
+        ...post,
+        sharedFrom: mappedSharedFrom || post.sharedFrom,
+        likes: post.likesCount,
+        repostCount: post.sharesCount || 0,
+        participants: post.responseCount,
+        coverImage: post.coverImage,
+        hasParticipated: Boolean((userId || guestId) && actualResponse),
+        userSelectedOptions: mapAnswerOptionIds(userAnswers),
+        userProgress: buildUserProgress(userAnswers),
+        isLiked: Boolean(userId && post.likes?.length),
+        hasReposted: Boolean(userId && post.shares?.length),
+        isSaved: Boolean(userId && post.savedBy?.length),
+        options: OPTION_POST_TYPES.includes(normalizePostType(post.type) || '') && post.questions?.length > 0
+            ? post.questions[0].options
+            : [],
+        groupId: mapVisibleFeedGroupId(post, userId),
+        targetGroups: mapTargetGroups(post),
+        author: {
+            ...post.author,
+            isFollowing: userId ? Boolean(post.author?.following?.length) : false
+        },
+        allowAnonymous: post.allowAnonymous,
+        forceAnonymous: Boolean(post.forceAnonymous),
+        demographics: parseJsonArray(post.demographics)
+    };
+};
+
 const resolveInteractionTarget = async (postId: string, type: 'like' | 'comment' | 'vote' | 'share'): Promise<string> => {
     const post = await prisma.post.findUnique({
         where: { id: postId },
@@ -245,160 +342,141 @@ const resolveInteractionTarget = async (postId: string, type: 'like' | 'comment'
 
 export const getPosts = async (req: Request, res: Response) => {
     const userId = req.user?.userId;
-    const guestId = req.query.guestId as any;
-    const authorId = req.query.authorId as string | undefined;
-    const authorHandle = req.query.authorHandle as string | undefined;
-    const cursor = req.query.cursor as string | undefined;
-    const limit = parseInt(req.query.limit as string) || 10;
+    const guestId = typeof req.query.guestId === 'string' ? req.query.guestId : undefined;
+    const authorId = typeof req.query.authorId === 'string' ? req.query.authorId : undefined;
+    const authorHandle = typeof req.query.authorHandle === 'string' ? req.query.authorHandle : undefined;
+    const groupId = typeof req.query.groupId === 'string' ? req.query.groupId : undefined;
+    const cursorValue = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+    const limit = parseFeedLimit(req.query.limit);
     
     try {
-        const posts = await prisma.post.findMany({
-            take: limit + 1,
-            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-            where: {
-                AND: [
-                    {
-                        isDeleted: false,
-                        status: 'PUBLISHED',
-                        ...(authorId ? { authorId } : {}),
-                        ...(authorHandle ? { author: { handle: authorHandle } } : {}),
-                        ...(userId && !authorId && !authorHandle ? {
-                            NOT: { hiddenBy: { some: { userId } } }
-                        } : {}),
-                        ...PrivacyService.getPostPrivacyWhereClause(userId),
-                        OR: [
-                            { targetAudience: 'Public' },
-                            { targetAudience: 'PUBLIC' },
-                            { targetAudience: null },
-                            ...(userId ? [
-                                { authorId: userId },
-                                { author: { following: { some: { followerId: userId, status: 'ACTIVE' } } } }
-                            ] : [])
-                        ]
-                    },
-                    {
-                        OR: [
-                            { sharedFromId: null },
-                            { sharedFrom: { is: buildVisiblePublishedPostWhere(userId) } }
-                        ]
-                    }
-                ]
-            },
-            include: {
-                author: {
-                    select: {
-                        ...SAFE_USER_SELECT,
-                        following: userId ? {
-                            where: { followerId: userId, status: 'ACTIVE' },
-                            select: { followerId: true }
-                        } : false
-                    }
-                },
-                questions: { include: { options: { orderBy: { order: 'asc' } } } },
-                sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
-                mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
-                taggedUsers: getVisiblePeopleTagsInclude(userId),
-                media: POST_MEDIA_INCLUDE,
-                targetedGroups: true,
-                responses: (userId || guestId) ? { 
-                    where: userId ? { userId } : { guestId }, 
-                    take: 1, 
-                    include: { answers: true } 
-                } : false,
-                likes: userId ? { where: { userId }, take: 1 } : false,
-                shares: userId ? { where: { authorId: userId }, take: 1 } : false,
-                savedBy: userId ? { where: { userId }, take: 1 } : false,
-                sharedFrom: {
-                    include: {
-                        author: {
-                            select: {
-                                ...SAFE_USER_SELECT,
-                                following: userId ? {
-                                    where: { followerId: userId, status: 'ACTIVE' },
-                                    select: { followerId: true }
-                                } : false
-                            }
-                        },
-                        questions: { include: { options: { orderBy: { order: 'asc' } } } },
-                        sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
-                        mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
-                        taggedUsers: getVisiblePeopleTagsInclude(userId),
-                        media: POST_MEDIA_INCLUDE,
-                        targetedGroups: true,
-                        responses: (userId || guestId) ? { 
-                            where: userId ? { userId } : { guestId }, 
-                            take: 1, 
-                            include: { answers: true } 
-                        } : false,
-                        likes: userId ? { where: { userId }, take: 1 } : false,
-                        shares: userId ? { where: { authorId: userId }, take: 1 } : false,
-                        savedBy: userId ? { where: { userId }, take: 1 } : false,
-                    }
-                }
-            },
-            orderBy: { createdAt: 'desc' }
-        });
+        const feedWhere: Prisma.PostWhereInput = {
+            AND: [
+                buildVisiblePublishedPostWhere(userId),
+                ...(authorId ? [{ authorId }] : []),
+                ...(authorHandle ? [{ author: { handle: authorHandle } }] : []),
+                ...(groupId ? [{
+                    OR: [
+                        { groupId },
+                        { targetedGroups: { some: { id: groupId } } }
+                    ]
+                }] : [])
+            ]
+        };
 
-        const mappedPosts = posts.map((rawPost: any) => {
-            const s = serializePostSocialRecord(rawPost, userId);
-            const actualResponse = s.sharedFrom ? s.sharedFrom.responses?.[0] : s.responses?.[0];
-            const userAnswers = actualResponse?.answers || [];
-            
-            let mappedSharedFrom: any = undefined;
-            if (s.sharedFrom) {
-                mappedSharedFrom = {
-                    ...s.sharedFrom,
-                    options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(s.sharedFrom.type) || '') && s.sharedFrom.questions?.length > 0 ? s.sharedFrom.questions[0].options : [],
-                    demographics: parseJsonArray(s.sharedFrom.demographics),
-                    author: s.sharedFrom.author ? {
-                        ...s.sharedFrom.author,
-                        isFollowing: userId ? (s.sharedFrom.author.following && s.sharedFrom.author.following.length > 0) : false
-                    } : undefined,
-                    likes: s.sharedFrom.likesCount,
-                    repostCount: s.sharedFrom.sharesCount || 0,
-                    participants: s.sharedFrom.responseCount,
-                    targetGroups: mapTargetGroups(s.sharedFrom),
-                    hasParticipated: (userId || guestId) ? !!(s.sharedFrom.responses && s.sharedFrom.responses.length > 0) : false,
-                    userSelectedOptions: (s.sharedFrom.responses && s.sharedFrom.responses.length > 0) ? mapAnswerOptionIds(s.sharedFrom.responses[0].answers || []) : [],
-                    isLiked: userId ? (s.sharedFrom.likes && s.sharedFrom.likes.length > 0) : false,
-                    hasReposted: userId ? (s.sharedFrom.shares && s.sharedFrom.shares.length > 0) : false,
-                    isSaved: userId ? (s.sharedFrom.savedBy && s.sharedFrom.savedBy.length > 0) : false
-                };
+        let cursor = decodeFeedCursor(cursorValue);
+        if (cursorValue && !cursor) {
+            if (isOpaqueFeedCursor(cursorValue)) {
+                res.status(400).json({ error: 'Invalid feed cursor', code: 'INVALID_CURSOR' });
+                return;
             }
 
-            return {
-                ...s,
-                sharedFrom: mappedSharedFrom || s.sharedFrom,
-                likes: s.likesCount,
-                repostCount: s.sharesCount || 0,
-                participants: s.responseCount,
-                coverImage: s.coverImage,
-                hasParticipated: (userId || guestId) ? !!actualResponse : false,
-                userSelectedOptions: mapAnswerOptionIds(userAnswers),
-                userProgress: buildUserProgress(userAnswers),
-                isLiked: userId ? (s.likes && s.likes.length > 0) : false,
-                hasReposted: userId ? (s.shares && s.shares.length > 0) : false,
-                isSaved: userId ? (s.savedBy && s.savedBy.length > 0) : false,
-                options: OPTION_POST_TYPES.includes(normalizePostType(s.type) || '') && s.questions.length > 0 ? s.questions[0].options : [],
-                targetGroups: mapTargetGroups(s),
-                author: {
-                    ...s.author,
-                    isFollowing: userId ? (s.author.following && s.author.following.length > 0) : false
-                },
-                allowAnonymous: s.allowAnonymous,
-                forceAnonymous: !!(s as any).forceAnonymous,
-                demographics: parseJsonArray(s.demographics),
-            };
+            // Compatibility with the previous API, which exposed a bare post ID.
+            const legacyCursor = await prisma.post.findUnique({
+                where: { id: cursorValue },
+                select: { id: true, createdAt: true }
+            });
+            if (!legacyCursor) {
+                res.json({ data: [], nextCursor: null });
+                return;
+            }
+            cursor = legacyCursor;
+        }
+
+        const pageWhere: Prisma.PostWhereInput = cursor
+            ? { AND: [feedWhere, buildFeedCursorWhere(cursor)] }
+            : feedWhere;
+
+        const feedPage = await prisma.$transaction(async (tx) => {
+            // This relation-free scalar page also supplies the stable cursor
+            // keys. Only one extra scalar row is read to determine hasMore.
+            const pageRows = await tx.post.findMany({
+                where: pageWhere,
+                take: limit + 1,
+                orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+                select: buildFeedPostScalarSelect()
+            });
+            const hasMore = pageRows.length > limit;
+            const visiblePageRefs = hasMore ? pageRows.slice(0, limit) : pageRows;
+            const pageIds = visiblePageRefs.map((post) => post.id);
+
+            if (pageIds.length === 0) {
+                return { hasMore, visiblePageRefs, posts: [] as any[], relationBundle: null };
+            }
+
+            let posts = visiblePageRefs as any[];
+            const sharedPostIds = Array.from(new Set(
+                posts.map((post) => post.sharedFromId).filter(Boolean)
+            )) as string[];
+            const sharedPosts = sharedPostIds.length > 0
+                ? await tx.post.findMany({
+                    where: {
+                        AND: [
+                            { id: { in: sharedPostIds } },
+                            buildVisiblePublishedPostWhere(userId)
+                        ]
+                    },
+                    select: buildFeedPostScalarSelect()
+                })
+                : [];
+            const sharedPostsById = new Map(sharedPosts.map((post: any) => [post.id, post]));
+            posts = posts.filter((post) => !post.sharedFromId || sharedPostsById.has(post.sharedFromId));
+            const safeSharedPostIds = sharedPostIds.filter((id) => sharedPostsById.has(id));
+            const relationPostIds = Array.from(new Set([
+                ...posts.map((post) => post.id),
+                ...safeSharedPostIds
+            ]));
+            const relationBundle = await loadFeedRelationBundle(
+                tx,
+                relationPostIds,
+                userId,
+                guestId
+            );
+            for (const post of posts) {
+                post.sharedFrom = post.sharedFromId
+                    ? sharedPostsById.get(post.sharedFromId) || null
+                    : null;
+            }
+
+            return { hasMore, visiblePageRefs, posts, relationBundle };
+        }, {
+            isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+            maxWait: 3_000,
+            timeout: 10_000
         });
 
-        let nextCursor: string | null = null;
-        if (mappedPosts.length > limit) {
-            mappedPosts.pop(); // Remove the extra item
-            nextCursor = mappedPosts[mappedPosts.length - 1].id;
+        const { hasMore, visiblePageRefs, posts, relationBundle } = feedPage;
+        if (!relationBundle) {
+            res.json({ data: [], nextCursor: null });
+            return;
         }
+
+        attachFeedContentRelations(posts, relationBundle);
+        attachFeedViewerState(posts, {
+            hasResponseIdentity: Boolean(userId || guestId),
+            userId,
+            responses: relationBundle.responses,
+            answers: relationBundle.answers,
+            likes: relationBundle.likes,
+            shares: relationBundle.shares,
+            savedPosts: relationBundle.savedPosts,
+            follows: relationBundle.follows
+        });
+
+        const mappedPosts = posts.map((post) => mapPostForClient(post, userId, guestId));
+
+        const lastPageRef = visiblePageRefs[visiblePageRefs.length - 1];
+        const nextCursor = hasMore && lastPageRef
+            ? encodeFeedCursor(lastPageRef)
+            : null;
 
         res.json({ data: mappedPosts, nextCursor });
     } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2028') {
+            console.warn('Feed transaction timed out', { code: error.code });
+            res.status(503).json({ error: 'Feed is temporarily unavailable', code: 'FEED_TIMEOUT' });
+            return;
+        }
         console.error(error);
         res.status(500).json({ error: 'Failed to fetch posts' });
     }
@@ -525,152 +603,59 @@ export const getTrends = async (req: Request, res: Response) => {
 export const getPostById = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const userId = req.user?.userId;
-    const guestId = req.query.guestId as any;
+    const guestId = typeof req.query.guestId === 'string' ? req.query.guestId : undefined;
     try {
-        const post = await prisma.post.findFirst({
-            where: { id, isDeleted: false },
-            include: {
-                author: {
-                    select: {
-                        ...SAFE_USER_SELECT,
-                        following: userId ? {
-                            where: { followerId: userId, status: 'ACTIVE' },
-                            select: { followerId: true }
-                        } : false
-                    }
-                },
-                questions: { include: { options: { orderBy: { order: 'asc' } } } },
-                sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
-                mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
-                taggedUsers: getVisiblePeopleTagsInclude(userId),
-                media: POST_MEDIA_INCLUDE,
-                targetedGroups: true,
-                responses: (userId || guestId) ? { 
-                    where: userId ? { userId } : { guestId }, 
-                    take: 1, 
-                    include: { answers: true } 
-                } : false,
-                likes: userId ? { where: { userId }, take: 1 } : false,
-                shares: userId ? { where: { authorId: userId }, take: 1 } : false,
-                savedBy: userId ? { where: { userId }, take: 1 } : false,
-                comments: {
-                    include: {
-                        user: { select: SAFE_USER_SELECT },
-                        replies: { include: { user: { select: SAFE_USER_SELECT } } }
-                    }
-                },
-                sharedFrom: {
-                    include: {
-                        author: {
-                            select: {
-                                ...SAFE_USER_SELECT,
-                                following: userId ? {
-                                    where: { followerId: userId, status: 'ACTIVE' },
-                                    select: { followerId: true }
-                                } : false
-                            }
-                        },
-                        questions: { include: { options: { orderBy: { order: 'asc' } } } },
-                        sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
-                        mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
-                        taggedUsers: getVisiblePeopleTagsInclude(userId),
-                        media: POST_MEDIA_INCLUDE,
-                        targetedGroups: true,
-                        responses: (userId || guestId) ? { 
-                            where: userId ? { userId } : { guestId }, 
-                            take: 1, 
-                            include: { answers: true } 
-                        } : false,
-                        likes: userId ? { where: { userId }, take: 1 } : false,
-                        shares: userId ? { where: { authorId: userId }, take: 1 } : false,
-                        savedBy: userId ? { where: { userId }, take: 1 } : false,
-                    }
-                }
-            }
+        const detail = await prisma.$transaction(async (tx) => {
+            const post = await tx.post.findFirst({
+                where: { id, ...buildVisiblePublishedPostWhere(userId) },
+                select: buildFeedPostScalarSelect()
+            }) as any;
+            if (!post) return null;
+
+            const sharedFrom = post.sharedFromId
+                ? await tx.post.findFirst({
+                    where: { id: post.sharedFromId, ...buildVisiblePublishedPostWhere(userId) },
+                    select: buildFeedPostScalarSelect()
+                }) as any
+                : null;
+            if (post.sharedFromId && !sharedFrom) return null;
+
+            post.sharedFrom = sharedFrom;
+            const relationBundle = await loadFeedRelationBundle(
+                tx,
+                [post.id, ...(sharedFrom ? [sharedFrom.id] : [])],
+                userId,
+                guestId
+            );
+            return { post, relationBundle };
+        }, {
+            isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+            maxWait: 3_000,
+            timeout: 10_000
         });
 
-        if (!post) {
+        if (!detail) {
             res.status(404).json({ error: 'Post not found' });
             return;
         }
 
-        if (post.sharedFromId) {
-            const visibleSourceCount = await prisma.post.count({
-                where: {
-                    id: post.sharedFromId,
-                    ...buildVisiblePublishedPostWhere(userId)
-                }
-            });
-            if (visibleSourceCount === 0) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-        }
-
-        const p = serializePostSocialRecord(post as any, userId);
-        const canViewPost = await GroupPermissionService.canViewPost(id, userId);
-        if (!canViewPost) {
-            res.status(403).json({ error: 'Forbidden' });
-            return;
-        }
-
-        const targetGroupIds = mapTargetGroups(p);
-        const canViewAuthorContent = targetGroupIds.length > 0 || await PrivacyService.canViewUserContent(userId, p.authorId);
-        if (!canViewAuthorContent) {
-            res.status(403).json({ error: 'Forbidden' });
-            return;
-        }
-
-        const actualResponse = p.sharedFrom ? p.sharedFrom.responses?.[0] : p.responses?.[0];
-        const userAnswers = actualResponse?.answers || [];
-        
-        let mappedSharedFrom: any = undefined;
-        if (p.sharedFrom) {
-            mappedSharedFrom = {
-                ...p.sharedFrom,
-                options: ['Poll', 'Challenge', 'Prediction', 'Debate'].includes(normalizePostType(p.sharedFrom.type) || '') && p.sharedFrom.questions?.length > 0 ? p.sharedFrom.questions[0].options : [],
-                demographics: parseJsonArray(p.sharedFrom.demographics),
-                author: p.sharedFrom.author ? {
-                    ...p.sharedFrom.author,
-                    isFollowing: userId ? (p.sharedFrom.author.following && p.sharedFrom.author.following.length > 0) : false
-                } : undefined,
-                likes: p.sharedFrom.likesCount,
-                repostCount: p.sharedFrom.sharesCount || 0,
-                participants: p.sharedFrom.responseCount,
-                targetGroups: mapTargetGroups(p.sharedFrom),
-                hasParticipated: (userId || guestId) ? !!(p.sharedFrom.responses && p.sharedFrom.responses.length > 0) : false,
-                userSelectedOptions: (p.sharedFrom.responses && p.sharedFrom.responses.length > 0) ? mapAnswerOptionIds(p.sharedFrom.responses[0].answers || []) : [],
-                isLiked: userId ? (p.sharedFrom.likes && p.sharedFrom.likes.length > 0) : false,
-                hasReposted: userId ? (p.sharedFrom.shares && p.sharedFrom.shares.length > 0) : false,
-                isSaved: userId ? (p.sharedFrom.savedBy && p.sharedFrom.savedBy.length > 0) : false
-            };
-        }
-
-        const mappedPost = {
-            ...p,
-            sharedFrom: mappedSharedFrom || p.sharedFrom,
-            likes: p.likesCount,
-                repostCount: p.sharesCount || 0,
-            participants: p.responseCount,
-            coverImage: p.coverImage,
-            hasParticipated: (userId || guestId) ? !!actualResponse : false,
-            userSelectedOptions: mapAnswerOptionIds(userAnswers),
-            userProgress: buildUserProgress(userAnswers),
-            isLiked: userId ? (p.likes && p.likes.length > 0) : false,
-                hasReposted: userId ? (p.shares && p.shares.length > 0) : false,
-            isSaved: userId ? (p.savedBy && p.savedBy.length > 0) : false,
-            options: OPTION_POST_TYPES.includes(normalizePostType(p.type) || '') && p.questions.length > 0 ? p.questions[0].options : [],
-            targetGroups: mapTargetGroups(p),
-            author: {
-                ...p.author,
-                isFollowing: userId ? (p.author.following && p.author.following.length > 0) : false
-            },
-            allowAnonymous: p.allowAnonymous,
-            forceAnonymous: !!(p as any).forceAnonymous,
-            demographics: parseJsonArray(p.demographics)
-        };
-        res.json(mappedPost);
+        attachFeedContentRelations([detail.post], detail.relationBundle);
+        attachFeedViewerState([detail.post], {
+            hasResponseIdentity: Boolean(userId || guestId),
+            userId,
+            responses: detail.relationBundle.responses,
+            answers: detail.relationBundle.answers,
+            likes: detail.relationBundle.likes,
+            shares: detail.relationBundle.shares,
+            savedPosts: detail.relationBundle.savedPosts,
+            follows: detail.relationBundle.follows
+        });
+        res.json(mapPostForClient(detail.post, userId, guestId));
     } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2028') {
+            res.status(503).json({ error: 'Post is temporarily unavailable', code: 'POST_READ_TIMEOUT' });
+            return;
+        }
         console.error(error);
         res.status(500).json({ error: 'Failed to fetch post' });
     }
@@ -928,7 +913,7 @@ export const createPost = async (req: Request, res: Response) => {
                 createdSections: sectionsList,
                 notificationIds: [...mentionResult.notificationIds, ...peopleTagResult.notificationIds]
             };
-            });
+        });
         } catch (error) {
             await rollbackPreparedMedia(prepared);
             throw error;
@@ -1497,9 +1482,13 @@ export const updatePost = async (req: Request, res: Response) => {
 
 export const getDrafts = async (req: Request, res: Response) => {
     const userId = req.user!.userId;
+    const limit = parseReadLimit(req.query.limit, 20, 50);
+    const cursor = firstQueryString(req.query.cursor)?.trim() || undefined;
     try {
         const drafts = await prisma.post.findMany({
             where: { authorId: userId, status: { in: [POST_STATUS.DRAFT, POST_STATUS.PENDING_APPROVAL, POST_STATUS.REJECTED] }, isDeleted: false },
+            take: limit + 1,
+            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
             include: {
                 questions: { include: { options: { orderBy: { order: 'asc' } } } },
                 sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
@@ -1508,8 +1497,11 @@ export const getDrafts = async (req: Request, res: Response) => {
                 targetedGroups: true,
                 author: { select: SAFE_USER_SELECT }
             },
-            orderBy: { updatedAt: 'desc' }
+            orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }]
         });
+        const hasMore = drafts.length > limit;
+        if (hasMore) drafts.pop();
+        applyNextCursorHeader(res, drafts, hasMore);
         const mappedDrafts = drafts.map((rawDraft: any) => {
             const d = serializePostSocialRecord(rawDraft, userId);
             return {
@@ -1535,12 +1527,16 @@ export const getDrafts = async (req: Request, res: Response) => {
 
 export const getSavedPosts = async (req: Request, res: Response) => {
     const userId = req.user!.userId;
+    const limit = parseReadLimit(req.query.limit, 20, 50);
+    const cursor = firstQueryString(req.query.cursor)?.trim() || undefined;
     try {
         const saved = await prisma.savedPost.findMany({
             where: { 
                 userId, 
                 post: buildVisiblePublishedPostWhere(userId)
             },
+            take: limit + 1,
+            ...(cursor ? { cursor: { userId_postId: { userId, postId: cursor } }, skip: 1 } : {}),
             include: {
                 post: {
                     include: {
@@ -1581,8 +1577,13 @@ export const getSavedPosts = async (req: Request, res: Response) => {
                     }
                 }
             },
-            orderBy: { createdAt: 'desc' }
+            orderBy: [{ createdAt: 'desc' }, { postId: 'desc' }]
         });
+        const hasMore = saved.length > limit;
+        if (hasMore) saved.pop();
+        if (hasMore && saved.length > 0) {
+            res.setHeader('X-Next-Cursor', saved[saved.length - 1].postId);
+        }
         const posts = saved.map((s: any) => {
             const p: any = serializePostSocialRecord(s.post, userId);
             const userResponse = p.sharedFrom ? p.sharedFrom.responses?.[0] : p.responses?.[0];
@@ -1916,28 +1917,19 @@ export const votePost = async (req: Request, res: Response) => {
 
 export const getParticipants = async (req: Request, res: Response) => {
     const rawId = req.params.id as string;
+    const limit = parseReadLimit(req.query.limit, 30, 50);
+    const cursor = firstQueryString(req.query.cursor)?.trim() || undefined;
     try {
         const id = await resolveInteractionTarget(rawId, 'vote');
         const currentUserId = req.user?.userId;
-        const post = await prisma.post.findUnique({
-            where: { id },
+        const post = await prisma.post.findFirst({
+            where: { id, ...buildVisiblePublishedPostWhere(currentUserId) },
             select: {
-                authorId: true,
                 forceAnonymous: true,
-                targetAudience: true,
-                targetedGroups: { select: { id: true } },
-                status: true,
-                isDeleted: true
             } as any
         });
-        if (!post || (post as any).isDeleted || (post as any).status !== 'PUBLISHED') {
+        if (!post) {
             res.status(404).json({ error: 'Post not found' });
-            return;
-        }
-        const isAuthor = !!currentUserId && (post as any).authorId === currentUserId;
-        const canViewAuthorContent = await PrivacyService.canViewUserContent(currentUserId, (post as any).authorId);
-        if (!canViewAuthorContent) {
-            res.status(403).json({ error: 'You do not have access to this post' });
             return;
         }
 
@@ -1945,40 +1937,16 @@ export const getParticipants = async (req: Request, res: Response) => {
             return res.json([]);
         }
 
-        const targetGroupIds = mapTargetGroups(post);
-        if (!isAuthor && ((post as any).targetAudience === 'Groups' || targetGroupIds.length > 0)) {
-            if (!currentUserId) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-            const membership = await prisma.groupMember.findFirst({
-                where: { userId: currentUserId, groupId: { in: targetGroupIds }, status: 'JOINED' }
-            });
-            if (!membership) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-        }
-
-        if (!isAuthor && (post as any).targetAudience === 'Followers') {
-            if (!currentUserId) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-            const follow = await prisma.follow.findUnique({
-                where: { followerId_followingId: { followerId: currentUserId, followingId: (post as any).authorId } }
-            });
-            if (!follow || follow.status !== 'ACTIVE') {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-        }
-
         const responses = await prisma.response.findMany({
             where: { postId: id },
             include: { user: { select: SAFE_USER_SELECT } },
-            orderBy: { timestamp: 'asc' }
+            orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
+            take: limit + 1,
+            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {})
         });
+        const hasMore = responses.length > limit;
+        if (hasMore) responses.pop();
+        applyNextCursorHeader(res, responses, hasMore);
         
         let anonIdx = 1;
         let guestIdx = 1;
@@ -2009,7 +1977,7 @@ export const getParticipants = async (req: Request, res: Response) => {
                  isAnonymous: false,
                  timestamp: r.timestamp
             };
-        }).reverse();
+        });
         res.json(mapped);
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch participants' });
@@ -2022,77 +1990,46 @@ export const getPostResults = async (req: Request, res: Response) => {
         const id = await resolveInteractionTarget(rawId, 'vote');
         const currentUserId = req.user?.userId;
         const guestId = req.query.guestId as string | undefined;
-        const post = await prisma.post.findUnique({
-            where: { id },
+        const post = await prisma.post.findFirst({
+            where: { id, ...buildVisiblePublishedPostWhere(currentUserId) },
             select: {
                 authorId: true,
                 resultsWho: true,
                 resultsTiming: true,
-                targetAudience: true,
-                targetedGroups: { select: { id: true } },
                 expiresAt: true,
-                status: true,
-                isDeleted: true
             }
         });
 
-        if (!post || post.isDeleted || post.status !== 'PUBLISHED') {
+        if (!post) {
             res.status(404).json({ error: 'Post not found' });
             return;
         }
 
         const isAuthor = !!currentUserId && post.authorId === currentUserId;
-        const canViewAuthorContent = await PrivacyService.canViewUserContent(currentUserId, post.authorId);
-        if (!canViewAuthorContent) {
-            res.status(403).json({ error: 'You do not have access to these results' });
-            return;
-        }
-
-        const targetGroupIds = mapTargetGroups(post);
-        if (!isAuthor && (post.targetAudience === 'Groups' || targetGroupIds.length > 0)) {
-            if (!currentUserId) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-            const membership = await prisma.groupMember.findFirst({
-                where: { userId: currentUserId, groupId: { in: targetGroupIds }, status: 'JOINED' }
-            });
-            if (!membership) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-        }
-
-        if (!isAuthor && post.targetAudience === 'Followers' && currentUserId) {
-            const follow = await prisma.follow.findUnique({
-                where: { followerId_followingId: { followerId: currentUserId, followingId: post.authorId } }
-            });
-            if (!follow || follow.status !== 'ACTIVE') {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-        } else if (!isAuthor && post.targetAudience === 'Followers') {
-            res.status(403).json({ error: 'Forbidden' });
-            return;
-        }
+        const responseIdentity = currentUserId ? { userId: currentUserId } : guestId ? { guestId } : null;
+        const [follow, viewerResponse] = await Promise.all([
+            !isAuthor && post.resultsWho === 'Followers' && currentUserId
+                ? prisma.follow.findUnique({
+                    where: { followerId_followingId: { followerId: currentUserId, followingId: post.authorId } },
+                    select: { status: true }
+                })
+                : Promise.resolve(null),
+            responseIdentity
+                ? prisma.response.findFirst({
+                    where: { postId: id, ...responseIdentity },
+                    select: { id: true }
+                })
+                : Promise.resolve(null)
+        ]);
 
         let whoPasses = isAuthor || !post.resultsWho || post.resultsWho === 'Public';
 
-        if (!whoPasses && post.resultsWho === 'Followers' && currentUserId) {
-            const follow = await prisma.follow.findUnique({
-                where: { followerId_followingId: { followerId: currentUserId, followingId: post.authorId } }
-            });
+        if (!whoPasses && post.resultsWho === 'Followers') {
             whoPasses = follow?.status === 'ACTIVE';
         }
 
-        if (!whoPasses && post.resultsWho === 'Participants' && (currentUserId || guestId)) {
-            const response = await prisma.response.findFirst({
-                where: {
-                    postId: id,
-                    ...(currentUserId ? { userId: currentUserId } : guestId ? { guestId } : {})
-                }
-            });
-            whoPasses = !!response;
+        if (!whoPasses && post.resultsWho === 'Participants') {
+            whoPasses = Boolean(viewerResponse);
         }
 
         if (!whoPasses) {
@@ -2101,12 +2038,6 @@ export const getPostResults = async (req: Request, res: Response) => {
         }
 
         const timing = post.resultsTiming || 'AnyTime';
-        const viewerResponse = (currentUserId || guestId) ? await prisma.response.findFirst({
-            where: {
-                postId: id,
-                ...(currentUserId ? { userId: currentUserId } : { guestId })
-            }
-        }) : null;
         const timingPasses = isAuthor
             || timing === 'AnyTime'
             || (timing === 'AfterEnd' && post.expiresAt.getTime() <= Date.now())
@@ -2180,72 +2111,64 @@ const mapComment = (c: any, currentUserId?: string) => {
 export const getComments = async (req: Request, res: Response) => {
     const rawId = req.params.id as string;
     const userId = req.user?.userId;
+    const limit = parseReadLimit(req.query.limit, 30, 50);
+    const cursor = firstQueryString(req.query.cursor)?.trim() || undefined;
+    const focusId = firstQueryString(req.query.focusId)?.trim() || undefined;
     try {
         const id = await resolveInteractionTarget(rawId, 'comment');
-        const commentTarget = await prisma.post.findUnique({
-            where: { id },
+        const commentTarget = await prisma.post.findFirst({
+            where: { id, ...buildVisiblePublishedPostWhere(userId) },
             select: {
-                authorId: true,
-                targetAudience: true,
-                targetedGroups: { select: { id: true } },
-                status: true,
-                isDeleted: true
+                id: true
             }
         });
 
-        if (!commentTarget || commentTarget.isDeleted || commentTarget.status !== 'PUBLISHED') {
+        if (!commentTarget) {
             res.status(404).json({ error: 'Post not found' });
             return;
         }
 
-        const isAuthor = !!userId && commentTarget.authorId === userId;
-        const targetGroupIds = mapTargetGroups(commentTarget);
-        if (!isAuthor && (commentTarget.targetAudience === 'Groups' || targetGroupIds.length > 0)) {
-            if (!userId) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-            const membership = await prisma.groupMember.findFirst({
-                where: { userId, groupId: { in: targetGroupIds }, status: 'JOINED' }
-            });
-            if (!membership) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-        }
-
-        if (!isAuthor && commentTarget.targetAudience === 'Followers') {
-            if (!userId) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-            const follow = await prisma.follow.findUnique({
-                where: { followerId_followingId: { followerId: userId, followingId: commentTarget.authorId } }
-            });
-            if (!follow) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-        }
-
-        const comments = await prisma.comment.findMany({
-            where: { postId: id, parentId: null },
-            include: {
-                user: { select: SAFE_USER_SELECT },
-                mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
-                likesList: { select: { userId: true } },
-                replies: {
-                    orderBy: { createdAt: 'asc' },
-                    include: {
-                        user: { select: SAFE_USER_SELECT },
-                        mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
-                        likesList: { select: { userId: true } }
-                    }
+        const commentInclude = {
+            user: { select: SAFE_USER_SELECT },
+            mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+            likesList: userId ? { where: { userId }, take: 1, select: { userId: true } } : false,
+            replies: {
+                orderBy: { createdAt: 'asc' as const },
+                include: {
+                    user: { select: SAFE_USER_SELECT },
+                    mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+                    likesList: userId ? { where: { userId }, take: 1, select: { userId: true } } : false
                 }
-            },
-            orderBy: { createdAt: 'desc' }
-        });
-        res.json(comments.map(c => mapComment(c, userId)));
+            }
+        } satisfies Prisma.CommentInclude;
+
+        const [commentPage, focusedComment] = await Promise.all([
+            prisma.comment.findMany({
+                where: { postId: id, parentId: null },
+                take: limit + 1,
+                ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+                include: commentInclude,
+                orderBy: [{ createdAt: 'desc' }, { id: 'desc' }]
+            }),
+            focusId && !cursor
+                ? prisma.comment.findFirst({
+                    where: {
+                        postId: id,
+                        parentId: null,
+                        OR: [{ id: focusId }, { replies: { some: { id: focusId } } }]
+                    },
+                    include: commentInclude
+                })
+                : Promise.resolve(null)
+        ]);
+        const hasMore = commentPage.length > limit;
+        if (hasMore) commentPage.pop();
+        applyNextCursorHeader(res, commentPage, hasMore);
+
+        if (focusedComment && !commentPage.some(comment => comment.id === focusedComment.id)) {
+            commentPage.push(focusedComment);
+        }
+        res.json(commentPage.map(c => mapComment(c, userId)));
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch comments' });
     }
@@ -2450,23 +2373,29 @@ export const likeComment = async (req: Request, res: Response) => {
 
 export const getPostLikers = async (req: Request, res: Response) => {
     const rawId = req.params.id as string;
+    const limit = parseReadLimit(req.query.limit, 30, 50);
+    const cursor = firstQueryString(req.query.cursor)?.trim() || undefined;
     try {
         const id = await resolveInteractionTarget(rawId, 'like');
         const currentUserId = req.user?.userId;
-        const targetPostCheck = await prisma.post.findUnique({ where: { id }, select: { authorId: true } });
-        if (targetPostCheck && targetPostCheck.authorId && currentUserId) {
-            const canView = await PrivacyService.canViewUserContent(currentUserId, targetPostCheck.authorId);
-            if (!canView) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
+        const targetPost = await prisma.post.findFirst({
+            where: { id, ...buildVisiblePublishedPostWhere(currentUserId) },
+            select: { id: true }
+        });
+        if (!targetPost) {
+            res.status(404).json({ error: 'Post not found' });
+            return;
         }
         const likes = await prisma.userLike.findMany({
             where: { postId: id },
             include: { user: { select: SAFE_USER_SELECT } },
-            orderBy: { createdAt: 'desc' },
-            take: 50
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            take: limit + 1,
+            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {})
         });
+        const hasMore = likes.length > limit;
+        if (hasMore) likes.pop();
+        applyNextCursorHeader(res, likes, hasMore);
         res.json(likes.map(l => serializeUserMediaRecord(l.user)));
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch likers' });
@@ -2475,13 +2404,23 @@ export const getPostLikers = async (req: Request, res: Response) => {
 
 export const getCommentLikers = async (req: Request, res: Response) => {
     const id = req.params.id as string;
+    const currentUserId = req.user?.userId;
+    const limit = parseReadLimit(req.query.limit, 30, 50);
+    const cursor = firstQueryString(req.query.cursor)?.trim() || undefined;
     try {
         const likes = await prisma.commentLike.findMany({
-            where: { commentId: id },
+            where: {
+                commentId: id,
+                comment: { post: buildVisiblePublishedPostWhere(currentUserId) }
+            },
             include: { user: { select: SAFE_USER_SELECT } },
-            orderBy: { createdAt: 'desc' },
-            take: 50
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            take: limit + 1,
+            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {})
         });
+        const hasMore = likes.length > limit;
+        if (hasMore) likes.pop();
+        applyNextCursorHeader(res, likes, hasMore);
         res.json(likes.map(l => serializeUserMediaRecord(l.user)));
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch comment likers' });
@@ -3199,24 +3138,16 @@ export const getPostAnalytics = async (req: Request, res: Response) => {
     try {
         const id = await resolveInteractionTarget(rawId, 'vote');
         const currentUserId = req.user?.userId;
-        const originalPost = await prisma.post.findUnique({
-            where: { id },
+        const originalPost = await prisma.post.findFirst({
+            where: { id, ...buildVisiblePublishedPostWhere(currentUserId) },
             select: {
                 authorId: true,
                 sharesCount: true,
-                status: true,
-                isDeleted: true
             }
         });
 
-        if (!originalPost || originalPost.isDeleted || originalPost.status !== 'PUBLISHED') {
+        if (!originalPost) {
             res.status(404).json({ error: 'Post not found' });
-            return;
-        }
-
-        const canViewAuthorContent = await PrivacyService.canViewUserContent(currentUserId, originalPost.authorId);
-        if (!canViewAuthorContent) {
-            res.status(403).json({ error: 'You do not have access to this analytics data' });
             return;
         }
 

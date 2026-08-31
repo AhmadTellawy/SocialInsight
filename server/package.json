@@ -11,18 +11,23 @@
         "render-build": "prisma generate && prisma migrate deploy && ts-node src/scripts/provisionMediaStorage.ts && tsc",
         "media:provision": "ts-node src/scripts/provisionMediaStorage.ts",
         "media:backfill": "ts-node src/scripts/backfillLegacyMedia.ts",
+        "media:cleanup-base64": "ts-node src/scripts/cleanupLegacyBase64.ts",
         "social-tags:backfill": "ts-node src/scripts/backfillSocialTags.ts",
         "start": "node dist/app.js",
-        "test": "node --test --test-concurrency=1 -r ts-node/register src/controllers/profileController.test.ts src/services/mediaProcessor.test.ts src/services/legacyMediaSource.test.ts src/services/mediaPolicy.test.ts src/services/profileCoverPolicy.test.ts src/services/profileLinkService.test.ts src/services/mentionPolicyService.test.ts src/services/mentionLifecycleService.test.ts src/services/hashtagService.test.ts src/services/peopleTagService.test.ts src/services/postVisibilityService.test.ts src/services/postOptionService.test.ts src/services/notificationService.test.ts src/services/socketService.test.ts src/utils/answerTypeValidation.test.ts src/utils/mentionLimits.test.ts src/utils/mentionSearch.test.ts src/utils/notificationTarget.test.ts src/utils/profileMigration.test.ts src/utils/profileValidation.test.ts src/utils/textEntities.test.ts"
+        "test": "node --test --test-concurrency=1 -r ts-node/register src/controllers/userController.runtime.test.ts src/controllers/postController.runtime.test.ts src/controllers/profileController.test.ts src/services/postFeedService.test.ts src/services/mediaProcessor.test.ts src/services/legacyMediaSource.test.ts src/services/legacyBase64Cleanup.test.ts src/services/mediaPolicy.test.ts src/services/profileCoverPolicy.test.ts src/services/profileLinkService.test.ts src/services/mentionPolicyService.test.ts src/services/mentionLifecycleService.test.ts src/services/hashtagService.test.ts src/services/peopleTagService.test.ts src/services/postVisibilityService.test.ts src/services/postOptionService.test.ts src/services/notificationService.test.ts src/services/socketService.test.ts src/utils/answerTypeValidation.test.ts src/utils/mentionLimits.test.ts src/utils/mentionSearch.test.ts src/utils/notificationTarget.test.ts src/utils/profileMigration.test.ts src/utils/profileValidation.test.ts src/utils/textEntities.test.ts"
     },
     "keywords": [],
     "author": "",
     "license": "ISC",
+    "engines": {
+        "node": ">=24.13.0 <25"
+    },
     "dependencies": {
         "@prisma/client": "^6.3.1",
         "@supabase/supabase-js": "2.49.8",
         "@types/node-fetch": "^2.6.13",
         "bcryptjs": "^3.0.3",
+        "compression": "^1.8.1",
         "cors": "^2.8.5",
         "dotenv": "^16.4.7",
         "express": "^4.21.2",
@@ -40,6 +45,7 @@
     },
     "devDependencies": {
         "@types/bcryptjs": "^2.4.6",
+        "@types/compression": "^1.8.1",
         "@types/cors": "^2.8.17",
         "@types/express": "^5.0.0",
         "@types/hpp": "^0.2.7",

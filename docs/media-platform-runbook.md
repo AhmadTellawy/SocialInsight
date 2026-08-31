@@ -32,7 +32,9 @@ Never expose the Supabase service-role key to Vite or any browser environment va
 6. Deploy the frontend with the repository's Vercel integration.
 7. Run the legacy backfill dry-run.
 8. Run controlled backfill batches with `--apply`.
-9. Verify online functionality, privacy, payload size, and cleanup.
+9. Verify every migrated domain online, confirm storage reads, privacy, and payload size, and take a fresh recovery point.
+10. Run the legacy Base64 cleanup dry-run with exact expected counts and storage verification.
+11. Apply cleanup only after its complete preflight succeeds, then verify zero remaining legacy Base64 fields.
 
 Do not use `prisma db push --accept-data-loss` in production.
 
@@ -114,6 +116,39 @@ Verify:
 - no private signed URLs persisted in localStorage
 - no browser requests to external avatar/fallback services
 - temporary upload cleanup and replacement/deletion cleanup
+
+## Legacy Base64 Cleanup
+
+Run cleanup only after backfill and all verification gates above have passed. It is a separate maintenance command and is intentionally not part of `render-build`. The default mode is read-only:
+
+```powershell
+cd server
+npm run media:cleanup-base64 -- --batch-size=25
+```
+
+Include an actual Supabase download and image metadata check in the dry-run:
+
+```powershell
+npm run media:cleanup-base64 -- --verify-storage --batch-size=25
+```
+
+For the currently audited production set, pin both the total and per-domain counts. Re-run the dry-run immediately before applying; if the counts have changed, stop and investigate rather than changing the expectation blindly:
+
+```powershell
+npm run media:cleanup-base64 -- --verify-storage --expect-total=38 --expect=user:5,group:0,post:8,question:8,option:17
+```
+
+Apply only from the configured production backend environment after a fresh recovery point:
+
+```powershell
+npm run media:cleanup-base64 -- --apply --batch-size=25 --expect-total=38 --expect=user:5,group:0,post:8,question:8,option:17
+```
+
+Supported controls are `--domains=user,group,post,question,option`, `--batch-size`, `--limit`, `--expect-total`, and `--expect`. `--limit` is useful for audits, but apply remains fail-closed: every remaining Base64 record in each selected domain must be scanned and eligible, so a partial limit cannot silently clear only part of a domain.
+
+Eligibility requires an exact supported `data:image/*;base64` source whose SHA-256 and stored source metadata match a live `ATTACHED` MediaAsset with the authoritative owner and purpose. The asset must have a valid aspect ratio and display variant; post cleanup accepts only the exact `sortOrder=0` attachment. Public assets require a public display object; all other scopes require a private non-master display object. Apply downloads every chosen object and verifies byte size, MIME, width, and height before the first database write.
+
+The write uses exact entity/source/media/variant predicates. A concurrent edit becomes a conflict rather than clearing changed data. Any skip, storage failure, conflict, database failure, or nonzero remaining count produces a nonzero exit. Logs contain aggregate counts and reason buckets only; they never include Base64 values, object keys, URLs, or entity IDs. The command nulls legacy columns only and never deletes MediaAsset, MediaVariant, or storage objects.
 
 ## Recovery
 

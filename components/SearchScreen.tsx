@@ -33,6 +33,18 @@ const POPULAR_CATEGORIES = [
   { id: 'Entertainment', name: 'Entertainment', arName: 'ترفيه', gradient: 'from-pink-400 to-rose-550', icon: Sparkles }
 ];
 
+const TRENDING_TOPICS_CACHE_KEY = 'si_trending_topics_v1';
+const readCachedTrendingTopics = (): any[] => {
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(TRENDING_TOPICS_CACHE_KEY) || 'null');
+    return Array.isArray(cached?.items) && Date.now() - Number(cached.cachedAt) < 5 * 60_000
+      ? cached.items
+      : [];
+  } catch {
+    return [];
+  }
+};
+
 // Helper for highlighting text
 const HighlightedText: React.FC<{ text: string; highlight: string; className?: string }> = ({ text, highlight, className = "" }) => {
   if (!highlight.trim()) return <span className={className}>{text}</span>;
@@ -58,7 +70,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<'All' | 'Topics' | 'Surveys' | 'Polls' | 'Groups' | 'Categories' | 'People'>('All');
   const [isLoading, setIsLoading] = useState(false);
-  const [trendingTopics, setTrendingTopics] = useState<any[]>([]);
+  const [trendingTopics, setTrendingTopics] = useState<any[]>(readCachedTrendingTopics);
 
   // Unified Search Results from API
   const [searchResults, setSearchResults] = useState<{
@@ -70,13 +82,19 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
   }>({ topics: [], surveys: [], people: [], groups: [], categories: [] });
 
   useEffect(() => {
-    let active = true;
-    api.getTrendingHashtags(8)
+    const controller = new AbortController();
+    api.getTrendingHashtags(8, controller.signal)
       .then((result) => {
-        if (active) setTrendingTopics(result.topics || []);
+        const items = result.topics || [];
+        setTrendingTopics(items);
+        try {
+          sessionStorage.setItem(TRENDING_TOPICS_CACHE_KEY, JSON.stringify({ items, cachedAt: Date.now() }));
+        } catch { }
       })
-      .catch((error) => console.error('Failed to fetch trending topics:', error));
-    return () => { active = false; };
+      .catch((error) => {
+        if (error?.name !== 'AbortError') console.error('Failed to fetch trending topics:', error);
+      });
+    return () => controller.abort();
   }, []);
 
   // Persisted Recent Searches (In localStorage)
@@ -131,26 +149,24 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
     }
 
     setIsLoading(true);
-    let active = true;
+    const controller = new AbortController();
 
     const performSearch = async () => {
       try {
-        const data = await api.searchAll(debouncedQuery);
-        if (active) {
-          setSearchResults(data);
-          handleAddRecentSearch(debouncedQuery);
-        }
-      } catch (err) {
-        console.error('Failed to fetch search results:', err);
+        const data = await api.searchAll(debouncedQuery, controller.signal);
+        setSearchResults(data);
+        handleAddRecentSearch(debouncedQuery);
+      } catch (err: any) {
+        if (err?.name !== 'AbortError') console.error('Failed to fetch search results:', err);
       } finally {
-        if (active) setIsLoading(false);
+        if (!controller.signal.aborted) setIsLoading(false);
       }
     };
 
     performSearch();
 
     return () => {
-      active = false;
+      controller.abort();
     };
   }, [debouncedQuery]);
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ArrowLeft, MessageSquare, Repeat, Users, Mail } from 'lucide-react';
-import { authFetch } from '../services/api';
+import { API_BASE_URL, authFetch } from '../services/api';
 
 export interface NotificationSettingsScreenProps {
   userId: string;
@@ -84,17 +84,19 @@ const getLocalUpdatedAt = (userId: string): string | null => {
   }
 };
 
-async function apiGetSettings(userId: string): Promise<{ settings: NotificationSettings; updatedAt: string } | null> {
-  const res = await authFetch('/api/notification-settings');
+async function apiGetSettings(_userId: string, signal?: AbortSignal): Promise<{ settings: NotificationSettings; updatedAt: string } | null> {
+  const res = await authFetch(`${API_BASE_URL}/notification-settings`, { signal, timeoutMs: 10_000 });
   if (res.status === 204 || res.status === 404) return null;
   if (!res.ok) throw new Error('Failed to fetch settings');
   return res.json();
 }
 
-async function apiPutSettings(userId: string, payload: { settings: NotificationSettings; updatedAt: string }): Promise<{ settings: NotificationSettings; updatedAt: string }> {
-  const res = await authFetch('/api/notification-settings', {
+async function apiPutSettings(_userId: string, payload: { settings: NotificationSettings; updatedAt: string }, signal?: AbortSignal): Promise<{ settings: NotificationSettings; updatedAt: string }> {
+  const res = await authFetch(`${API_BASE_URL}/notification-settings`, {
     method: 'PUT',
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
+    signal,
+    timeoutMs: 10_000
   });
   if (!res.ok) throw new Error('Failed to update settings');
   return res.json();
@@ -230,7 +232,7 @@ export const NotificationSettingsScreen: React.FC<NotificationSettingsScreenProp
 
     setSyncStatus('saving');
     try {
-      await apiPutSettings(userId, { settings: currentSettings, updatedAt: currentUpdated });
+      await apiPutSettings(userId, { settings: currentSettings, updatedAt: currentUpdated }, abortControllerRef.current.signal);
       setSyncStatus('saved');
       setTimeout(() => setSyncStatus('idle'), 1500);
     } catch (err: any) {
@@ -238,7 +240,7 @@ export const NotificationSettingsScreen: React.FC<NotificationSettingsScreenProp
         setSyncStatus('offline');
       }
     }
-  }, []);
+  }, [userId]);
 
   const scheduleSync = useCallback((newSettings: NotificationSettings, timestamp: string) => {
     if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
@@ -251,9 +253,10 @@ export const NotificationSettingsScreen: React.FC<NotificationSettingsScreenProp
 
   // Initial Sync Strategy
   useEffect(() => {
+    const controller = new AbortController();
     const initializeSync = async () => {
       try {
-        const serverData = await apiGetSettings(userId);
+        const serverData = await apiGetSettings(userId, controller.signal);
 
         const localUpdated = getLocalUpdatedAt(userId);
         const localTime = localUpdated ? new Date(localUpdated).getTime() : 0;
@@ -271,12 +274,14 @@ export const NotificationSettingsScreen: React.FC<NotificationSettingsScreenProp
         } else {
           performSync(settings, updatedAt);
         }
-      } catch (err) {
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return;
         if (!navigator.onLine) setSyncStatus('offline');
       }
     };
 
-    initializeSync();
+    void initializeSync();
+    return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -290,6 +295,8 @@ export const NotificationSettingsScreen: React.FC<NotificationSettingsScreenProp
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+      abortControllerRef.current?.abort();
     };
   }, [settings, updatedAt, performSync]);
 

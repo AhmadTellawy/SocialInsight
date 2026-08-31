@@ -181,6 +181,12 @@ export interface Group {
   // Settings
   joinPolicy?: 'OPEN' | 'REQUEST' | 'INVITE_ONLY';
   postingPermissions?: 'AdminsOnly' | 'AllMembers' | 'ApprovalNeeded';
+  membershipStatus?: MembershipStatus;
+  stats?: {
+    postsCount: number;
+    votesCount: number;
+    membersCount: number;
+  };
 }
 
 export interface LogicRule {
