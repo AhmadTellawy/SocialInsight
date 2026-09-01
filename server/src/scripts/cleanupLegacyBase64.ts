@@ -59,7 +59,10 @@ const flagValue = (name: string): string | undefined =>
   argv.find((argument) => argument.startsWith(`--${name}=`))?.slice(name.length + 3);
 
 const apply = hasFlag('apply');
-const verifyStorage = apply || hasFlag('verify-storage');
+const rawMediaReadApiBaseUrl = flagValue('verify-api-base-url');
+const verifyViaApi = rawMediaReadApiBaseUrl !== undefined;
+const verifyStorage = !verifyViaApi && (apply || hasFlag('verify-storage'));
+const verifyMedia = verifyViaApi || verifyStorage;
 const batchSize = parseLegacyBase64BoundedInteger(flagValue('batch-size'), 25, 1, 100);
 const limit = parseLegacyBase64BoundedInteger(
   flagValue('limit'),
@@ -75,9 +78,39 @@ const expectedTotal = rawExpectedTotal === undefined ? undefined : Number(rawExp
 if (expectedTotal !== undefined && (!Number.isSafeInteger(expectedTotal) || expectedTotal < 0)) {
   throw new CleanupError('INVALID_EXPECTED_TOTAL');
 }
+if (verifyViaApi && hasFlag('verify-storage')) {
+  throw new CleanupError('AMBIGUOUS_STORAGE_VERIFICATION');
+}
 if (Object.keys(expectedCounts).some((domain) =>
   !selectedDomains.includes(domain as LegacyBase64CleanupDomain))) {
   throw new CleanupError('EXPECTED_DOMAIN_NOT_SELECTED');
+}
+
+const parseMediaReadApiBaseUrl = (raw?: string): URL | undefined => {
+  if (raw === undefined) return undefined;
+  try {
+    const parsed = new URL(raw);
+    if (!['http:', 'https:'].includes(parsed.protocol)
+        || parsed.username
+        || parsed.password
+        || parsed.search
+        || parsed.hash) {
+      throw new Error('invalid');
+    }
+    return parsed;
+  } catch {
+    throw new CleanupError('INVALID_MEDIA_READ_API_BASE_URL');
+  }
+};
+
+const mediaReadApiBaseUrl = parseMediaReadApiBaseUrl(rawMediaReadApiBaseUrl);
+const mediaReadApiToken = process.env.MEDIA_READ_API_TOKEN?.trim();
+if (verifyViaApi && !mediaReadApiToken) {
+  throw new CleanupError('MEDIA_READ_API_TOKEN_REQUIRED');
+}
+const allowAlreadyClean = hasFlag('allow-already-clean');
+if (allowAlreadyClean && !apply) {
+  throw new CleanupError('ALLOW_ALREADY_CLEAN_REQUIRES_APPLY');
 }
 const assetSelect = {
   id: true,
@@ -374,6 +407,53 @@ const storageObjectMatchesVariant = async (
     && metadata.height === variant.height;
 };
 
+const fetchWithTimeout = async (url: string, init?: RequestInit): Promise<Response> => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20_000);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal, redirect: 'follow' });
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const downloadCandidateVariant = async (candidate: EligibleCandidate): Promise<Buffer> => {
+  if (!mediaReadApiBaseUrl) {
+    return getMediaStorage().download(
+      candidate.selectedVariant.storageBucket,
+      candidate.selectedVariant.storageKey
+    );
+  }
+
+  const presentationUrl = new URL(
+    `/api/media/${encodeURIComponent(candidate.asset.id)}`,
+    mediaReadApiBaseUrl
+  );
+  const presentationResponse = await fetchWithTimeout(presentationUrl.toString(), {
+    headers: { Authorization: `Bearer ${mediaReadApiToken}` }
+  });
+  if (!presentationResponse.ok) throw new Error('MEDIA_PRESENTATION_UNAVAILABLE');
+  const presentation = await presentationResponse.json() as Record<string, unknown>;
+  if (presentation.id !== candidate.asset.id
+      || presentation.width !== candidate.selectedVariant.width
+      || presentation.height !== candidate.selectedVariant.height
+      || typeof presentation.src !== 'string') {
+    throw new Error('MEDIA_PRESENTATION_MISMATCH');
+  }
+
+  const mediaUrl = new URL(presentation.src);
+  if (mediaUrl.protocol !== 'https:') throw new Error('INSECURE_MEDIA_PRESENTATION_URL');
+  const mediaResponse = await fetchWithTimeout(mediaUrl.toString());
+  if (!mediaResponse.ok) throw new Error('MEDIA_DOWNLOAD_FAILED');
+  const contentLength = Number(mediaResponse.headers.get('content-length'));
+  if (Number.isFinite(contentLength)
+      && contentLength > 0
+      && contentLength !== candidate.selectedVariant.byteSize) {
+    throw new Error('MEDIA_CONTENT_LENGTH_MISMATCH');
+  }
+  return Buffer.from(await mediaResponse.arrayBuffer());
+};
+
 const clearCandidate = async (candidate: EligibleCandidate): Promise<number> => {
   const exactAsset = buildExactLegacyBase64AssetWhere(candidate.asset, candidate.selectedVariant);
   if (candidate.domain === 'user') {
@@ -469,12 +549,24 @@ const main = async (): Promise<void> => {
     batchSize,
     limited: limit !== Number.MAX_SAFE_INTEGER,
     expectedCountGate: expectedTotal !== undefined || Object.keys(expectedCounts).length > 0,
-    storageVerification: verifyStorage
+    storageVerification: verifyMedia,
+    verificationMethod: verifyViaApi ? 'MEDIA_READ_API' : verifyStorage ? 'STORAGE_CLIENT' : 'NONE',
+    allowAlreadyClean
   }));
 
   const eligibleCandidates: EligibleCandidate[] = [];
   for (const domain of selectedDomains) eligibleCandidates.push(...await scanDomain(domain));
   const remainingBefore = await remainingCounts();
+  if (allowAlreadyClean && selectedDomains.every((domain) => remainingBefore[domain] === 0)) {
+    console.log(JSON.stringify({
+      event: 'legacy_base64_cleanup_summary',
+      mode: 'APPLY',
+      summary,
+      remaining: remainingBefore,
+      alreadyClean: true
+    }));
+    return;
+  }
   try {
     assertExpectedCounts();
     if (apply) assertApplyPreflightIsComplete(remainingBefore);
@@ -488,14 +580,10 @@ const main = async (): Promise<void> => {
     throw error;
   }
 
-  if (verifyStorage) {
-    const storage = getMediaStorage();
+  if (verifyMedia) {
     for (const candidate of eligibleCandidates) {
       try {
-        const downloaded = await storage.download(
-          candidate.selectedVariant.storageBucket,
-          candidate.selectedVariant.storageKey
-        );
+        const downloaded = await downloadCandidateVariant(candidate);
         if (!(await storageObjectMatchesVariant(downloaded, candidate.selectedVariant))) {
           summary[candidate.domain].storageVerificationFailed += 1;
           continue;
