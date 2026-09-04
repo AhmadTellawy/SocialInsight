@@ -22,8 +22,8 @@ export const profileEditHasChanges = (
   avatarDrafts: MediaDraft[],
   coverDrafts: MediaDraft[]
 ): boolean => (
-  draft.name !== persisted.name
-  || draft.bio !== persisted.bio
+  (draft.name || '') !== (persisted.name || '')
+  || (draft.bio || '') !== (persisted.bio || '')
   || (draft.birthday || null) !== (persisted.birthday || null)
   || profileMediaDraftHasChanged(avatarDrafts, persisted.avatarMediaId)
   || profileMediaDraftHasChanged(coverDrafts, persisted.coverMediaId)

@@ -20,7 +20,7 @@ type MockProfile = {
   avatarMedia?: Record<string, unknown> | null;
   coverMediaId: string | null;
   coverMedia?: Record<string, unknown> | null;
-  bio: string;
+  bio: string | null;
   location: string;
   website: string;
   email: string;
@@ -456,5 +456,26 @@ test.describe('local mocked mobile profile editing', () => {
     await page.goto('/settings/profile/links');
     await page.getByRole('button', { name: 'Back' }).click();
     await expect(page).toHaveURL(/\/settings\/profile\/edit-profile$/);
+  });
+
+  test('normalizes a nullable private bio without crashing or enabling Save', async ({ page }) => {
+    const profile = makeProfile();
+    profile.bio = null;
+    const state: MockApiState = {
+      profile,
+      links: [],
+      mediaPurposeById: new Map(),
+      mediaSequence: 0,
+      linkCreateCalls: 0,
+      profileSaveCalls: 0,
+      failPrivateProfileLoads: false,
+      failNextProfileSave: false,
+    };
+    await installAuthenticatedMockApi(page, state);
+    await openEditProfile(page);
+
+    await expect(page.getByText('0/500', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^save$/i })).toBeDisabled();
+    expect(state.profileSaveCalls).toBe(0);
   });
 });

@@ -57,6 +57,12 @@ const shiftDateOnlyYears = (value: string, years: number): string => {
   return `${String(targetYear).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(Math.min(day, maxDay)).padStart(2, '0')}`;
 };
 
+const normalizeEditableProfile = (profile: UserProfile): UserProfile => ({
+  ...profile,
+  name: profile.name || '',
+  bio: profile.bio || ''
+});
+
 export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   userProfile,
   onUpdateProfile,
@@ -121,7 +127,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
 
   // Form state initialized from props
   const [profileForm, setProfileForm] = useState<UserProfile>(() => ({
-    ...userProfile,
+    ...normalizeEditableProfile(userProfile),
     demographics: userProfile.demographics || {
       gender: '',
       ageGroup: getCalculatedAgeGroup(userProfile),
@@ -135,7 +141,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   // Sync form state when userProfile external prop updates
   React.useEffect(() => {
     const nextProfile = {
-      ...userProfile,
+      ...normalizeEditableProfile(userProfile),
       demographics: userProfile.demographics || {
         gender: '',
         ageGroup: getCalculatedAgeGroup(userProfile),
@@ -184,15 +190,15 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
     api.getMe({ signal: controller.signal, timeoutMs: 15_000 })
       .then((privateProfile) => {
         if (!active) return;
-        const merged = {
+        const merged = normalizeEditableProfile({
           ...userProfile,
           ...privateProfile,
           demographics: privateProfile.demographics || userProfile.demographics || {}
-        } as UserProfile;
+        } as UserProfile);
         setProfileForm((current) => ({
           ...merged,
-          name: current.name !== userProfile.name ? current.name : merged.name,
-          bio: current.bio !== userProfile.bio ? current.bio : merged.bio,
+          name: (current.name || '') !== (userProfile.name || '') ? current.name : merged.name,
+          bio: (current.bio || '') !== (userProfile.bio || '') ? current.bio : merged.bio,
           birthday: (current.birthday || null) !== (userProfile.birthday || null)
             ? current.birthday
             : merged.birthday
@@ -283,7 +289,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
     setFieldErrors({});
     setShowCoverActions(false);
     setConfirmCoverRemoval(false);
-    setProfileForm({ ...userProfile });
+    setProfileForm(normalizeEditableProfile(userProfile));
     const resetAvatarMedia = userProfile.avatarMediaId
       ? [createPersistedMediaDraftFromId(userProfile.avatarMediaId, 'PROFILE_AVATAR', userProfile.avatar)]
       : [];

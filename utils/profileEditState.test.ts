@@ -76,3 +76,8 @@ test('profile and adopted media changes are composed consistently', () => {
     []
   ), true);
 });
+
+test('nullable API text fields are equivalent to empty editable fields', () => {
+  const nullablePersisted = { ...persistedProfile, bio: null } as unknown as typeof persistedProfile;
+  assert.equal(profileEditHasChanges({ ...persistedProfile, bio: '' }, nullablePersisted, [], []), false);
+});
