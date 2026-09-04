@@ -86,6 +86,7 @@ export interface MediaDraft {
   aspectRatio: number;
   crop?: MediaCropSelection;
   assetId?: string;
+  serverPrepared?: boolean;
   presentation?: MediaPresentation;
   persisted?: boolean;
   error?: string;

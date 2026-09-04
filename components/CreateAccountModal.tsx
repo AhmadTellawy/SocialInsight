@@ -1,11 +1,11 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Users, Building2, ChevronRight, Globe as GlobeIcon, Plus, Shield, MapPin, Briefcase, Info, ArrowLeft, Camera, LayoutGrid, Check, Lock } from 'lucide-react';
 import { BottomSheet } from './BottomSheet';
 import { Group, MediaDraft, UserProfile } from '../types';
 import { api } from '../services/api';
 import { MediaPicker } from './media/MediaPicker';
-import { mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds } from '../utils/mediaDrafts';
+import { cancelTemporaryMediaDrafts, mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds } from '../utils/mediaDrafts';
 
 interface CreateAccountModalProps {
   isOpen: boolean;
@@ -31,6 +31,25 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({ isOpen, 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [entityMedia, setEntityMedia] = useState<MediaDraft[]>([]);
+  const entityMediaRef = useRef<MediaDraft[]>([]);
+
+  const updateEntityMedia = (next: MediaDraft[]): void => {
+    entityMediaRef.current = next;
+    setEntityMedia(next);
+  };
+
+  useEffect(() => () => {
+    void cancelTemporaryMediaDrafts(entityMediaRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen && entityMediaRef.current.length > 0) {
+      const abandoned = entityMediaRef.current;
+      entityMediaRef.current = [];
+      setEntityMedia([]);
+      void cancelTemporaryMediaDrafts(abandoned);
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (isOpen) {
@@ -43,7 +62,7 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({ isOpen, 
       }
       setIsSuccess(false);
       setIsSubmitting(false);
-      setEntityMedia([]);
+      updateEntityMedia([]);
       setFormData({
         name: '',
         category: 'Hobby & Interests',
@@ -87,6 +106,9 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({ isOpen, 
           imageMediaId: readyMediaAssetIds(entityMedia)[0],
           creatorId: userProfile.id
         });
+
+        const persistedMedia = entityMediaRef.current.map((draft) => ({ ...draft, persisted: true }));
+        updateEntityMedia(persistedMedia);
 
         onGroupCreated({
           ...newEntity,
@@ -169,7 +191,7 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({ isOpen, 
         <MediaPicker
           purpose="GROUP_IMAGE"
           value={entityMedia}
-          onChange={setEntityMedia}
+          onChange={updateEntityMedia}
           renderContent={({ open, retry, busy }) => {
             const current = entityMedia[0];
             return (
@@ -290,7 +312,7 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({ isOpen, 
         <MediaPicker
           purpose="GROUP_IMAGE"
           value={entityMedia}
-          onChange={setEntityMedia}
+          onChange={updateEntityMedia}
           renderContent={({ open, retry, busy }) => {
             const current = entityMedia[0];
             return (

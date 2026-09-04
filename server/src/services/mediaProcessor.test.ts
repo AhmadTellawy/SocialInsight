@@ -60,6 +60,27 @@ test('does not upscale a small avatar', async () => {
   assert.equal(result.variants[0].height, 40);
 });
 
+test('preserves PNG transparency in master and responsive WebP variants', async () => {
+  const source = await sharp({
+    create: { width: 600, height: 600, channels: 4, background: { r: 25, g: 110, b: 220, alpha: 0.35 } }
+  }).png().toBuffer();
+  const result = await processMediaBuffer(source, 'POST', 'image/png', {});
+
+  assert.equal(result.master.width, 600);
+  assert.equal(result.master.height, 600);
+  assert.deepEqual(result.variants.map(({ width, height }) => [width, height]), [[480, 480]]);
+  for (const output of [result.master, ...result.variants]) {
+    const metadata = await sharp(output.buffer).metadata();
+    assert.equal(metadata.format, 'webp');
+    assert.equal(metadata.hasAlpha, true);
+    assert.equal(metadata.channels, 4);
+    const pixels = await sharp(output.buffer).ensureAlpha().raw().toBuffer();
+    const alphaValues = pixels.filter((_value, index) => index % 4 === 3);
+    assert.ok(alphaValues.length > 0);
+    assert.ok(alphaValues.every((value) => value >= 80 && value <= 100));
+  }
+});
+
 test('creates a real 3:1 profile cover crop and bounded responsive variants', async () => {
   const source = await makeImage(2400, 1600, 'jpeg');
   const result = await processMediaBuffer(source, 'PROFILE_COVER', 'image/jpeg', {});

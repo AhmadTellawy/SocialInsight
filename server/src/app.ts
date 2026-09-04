@@ -22,6 +22,7 @@ import { getNotificationSettings, updateNotificationSettings } from './controlle
 import { initCronJobs } from './services/cronService';
 import { initSocket } from './services/socketService';
 import { isMediaStorageConfigured } from './services/mediaStorage';
+import { isHeifConversionConfigured, verifyHeifConversionReadiness } from './services/heifConversionClient';
 import prisma from './prisma';
 import { requestContext } from './middleware/requestContext';
 
@@ -107,11 +108,14 @@ app.use('/api/hashtags', hashtagRoutes);
 
 app.get('/api/health', async (_req, res) => {
     const mediaStorage = isMediaStorageConfigured() ? 'configured' : 'not_configured';
+    const heifConversion = isHeifConversionConfigured()
+        ? (await verifyHeifConversionReadiness() ? 'ready' : 'unavailable')
+        : 'disabled';
 
     try {
         await prisma.$queryRaw`SELECT 1`;
     } catch {
-        res.status(503).json({ status: 'error', database: 'unavailable', migrations: 'unknown', mediaStorage });
+        res.status(503).json({ status: 'error', database: 'unavailable', migrations: 'unknown', mediaStorage, heifConversion });
         return;
     }
 
@@ -125,7 +129,7 @@ app.get('/api/health', async (_req, res) => {
         `;
         failedMigrations = Number(migrationState?.failedCount || 0);
     } catch {
-        res.status(503).json({ status: 'error', database: 'connected', migrations: 'unknown', mediaStorage });
+        res.status(503).json({ status: 'error', database: 'connected', migrations: 'unknown', mediaStorage, heifConversion });
         return;
     }
 
@@ -135,11 +139,12 @@ app.get('/api/health', async (_req, res) => {
             database: 'connected',
             migrations: 'failed',
             failedMigrations,
-            mediaStorage
+            mediaStorage,
+            heifConversion
         });
         return;
     }
-    res.json({ status: 'ok', database: 'connected', migrations: 'ok', mediaStorage });
+    res.json({ status: 'ok', database: 'connected', migrations: 'ok', mediaStorage, heifConversion });
 });
 
 app.get('/api/notification-settings', requireAuth, getNotificationSettings);

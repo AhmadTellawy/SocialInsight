@@ -97,7 +97,9 @@ export class SupabaseMediaStorage implements MediaStorage {
       const options = {
         public: definition.public,
         fileSizeLimit: MEDIA_CONFIG.maxInputBytes,
-        allowedMimeTypes: [...MEDIA_CONFIG.allowedMimeTypes]
+        allowedMimeTypes: definition.id === MEDIA_CONFIG.buckets.originals
+          ? [...MEDIA_CONFIG.allowedSourceMimeTypes]
+          : [...MEDIA_CONFIG.allowedMimeTypes]
       };
       const { data: existing } = await this.client.storage.getBucket(definition.id);
       const operation = existing

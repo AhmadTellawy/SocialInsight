@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { User } from 'lucide-react';
 import { MediaPresentation } from '../types';
 import { MediaImage } from './media/MediaImage';
@@ -22,7 +22,6 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
     className = '',
     name
 }) => {
-    const [imgError, setImgError] = useState(false);
     const usableSrc = src && !/(?:ui-avatars\.com|api\.dicebear\.com|picsum\.photos|randomuser\.me)/i.test(src) ? src : null;
     const initials = (name || alt || '')
         .trim()
@@ -31,10 +30,6 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
         .map((part) => part.charAt(0))
         .join('')
         .toUpperCase();
-
-    useEffect(() => {
-        setImgError(false);
-    }, [usableSrc]);
 
     const fallback = (
         <span
@@ -47,7 +42,7 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
         </span>
     );
 
-    if (media || mediaId) {
+    if (media || mediaId || usableSrc) {
         return (
             <MediaImage
                 media={media}
@@ -56,18 +51,6 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
                 fallback={fallback}
                 alt={alt}
                 sizes={`${size}px`}
-                className={`rounded-full object-cover ${className}`}
-                style={{ width: size, height: size }}
-            />
-        );
-    }
-
-    if (usableSrc && !imgError) {
-        return (
-            <img
-                src={usableSrc}
-                alt={alt}
-                onError={() => setImgError(true)}
                 className={`rounded-full object-cover ${className}`}
                 style={{ width: size, height: size }}
             />

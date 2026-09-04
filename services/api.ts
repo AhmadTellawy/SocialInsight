@@ -1,8 +1,7 @@
-import { normalizeSurvey, PostAnswerPayload } from '../types';
-import type { Notification } from '../types';
-import type { UserProfile } from '../types';
+import { normalizeSurvey } from '../types.ts';
+import type { Notification, PostAnswerPayload, UserProfile } from '../types.ts';
 
-export const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
+export const API_BASE_URL = import.meta.env?.VITE_API_URL || '/api';
 
 export class ApiError extends Error {
     constructor(

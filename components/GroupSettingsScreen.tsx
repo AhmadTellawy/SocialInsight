@@ -7,7 +7,7 @@ import {
 import { Group, MediaDraft, Survey } from '../types';
 import { useGroupMembers, useGroupPendingRequests, useGroupPendingPosts } from '../hooks/useGroup';
 import { MediaPicker } from './media/MediaPicker';
-import { createPersistedMediaDraftFromId, mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds } from '../utils/mediaDrafts';
+import { cancelTemporaryMediaDrafts, createPersistedMediaDraftFromId, mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds } from '../utils/mediaDrafts';
 import { UserAvatar } from './UserAvatar';
 import { RichMentionInput } from './RichMentionInput';
 
@@ -178,6 +178,11 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
   const [groupMedia, setGroupMedia] = useState<MediaDraft[]>(() => group.imageMediaId
     ? [createPersistedMediaDraftFromId(group.imageMediaId, 'GROUP_IMAGE', group.image)]
     : []);
+  const groupMediaRef = useRef<MediaDraft[]>(groupMedia);
+  const updateGroupMedia = (next: MediaDraft[]): void => {
+    groupMediaRef.current = next;
+    setGroupMedia(next);
+  };
   const [rules, setRules] = useState(group.rules || '');
   const [isSavingInfo, setIsSavingInfo] = useState(false);
   const [memberSearch, setMemberSearch] = useState('');
@@ -188,9 +193,13 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
     setName(group.name || '');
     setDescription(group.description || '');
     setCategory(group.category || 'Other');
-    setGroupMedia(group.imageMediaId
+    const previousMedia = groupMediaRef.current;
+    const nextMedia = group.imageMediaId
       ? [createPersistedMediaDraftFromId(group.imageMediaId, 'GROUP_IMAGE', group.image)]
-      : []);
+      : [];
+    groupMediaRef.current = nextMedia;
+    setGroupMedia(nextMedia);
+    void cancelTemporaryMediaDrafts(previousMedia);
     setRules(group.rules || '');
   }, [group.id, group.joinPolicy, group.postingPermissions, group.name, group.description, group.category, group.image, group.imageMediaId, group.rules]);
 
@@ -207,6 +216,7 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
   useEffect(() => {
     return () => {
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      void cancelTemporaryMediaDrafts(groupMediaRef.current);
     };
   }, []);
 
@@ -386,9 +396,13 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
         rules: rules.trim()
       });
       if (updated?.imageMediaId) {
-        setGroupMedia([createPersistedMediaDraftFromId(updated.imageMediaId, 'GROUP_IMAGE', updated.image)]);
+        updateGroupMedia([createPersistedMediaDraftFromId(updated.imageMediaId, 'GROUP_IMAGE', updated.image)]);
       } else if (updated && !updated.imageMediaId) {
-        setGroupMedia([]);
+        updateGroupMedia([]);
+      } else if (nextImageMediaId) {
+        updateGroupMedia(groupMediaRef.current.map((draft) => (
+          draft.assetId === nextImageMediaId ? { ...draft, persisted: true } : draft
+        )));
       }
       showToast('Group profile updated successfully');
     } catch (e: any) {
@@ -432,7 +446,7 @@ export const GroupSettingsScreen: React.FC<GroupSettingsScreenProps> = ({
                 <MediaPicker
                   purpose="GROUP_IMAGE"
                   value={groupMedia}
-                  onChange={setGroupMedia}
+                  onChange={updateGroupMedia}
                   renderContent={({ open, retry, busy }) => {
                     const current = groupMedia[0];
                     const previewUrl = current?.previewUrl || group.image;

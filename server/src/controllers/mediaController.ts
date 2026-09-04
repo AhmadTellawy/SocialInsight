@@ -6,7 +6,8 @@ import {
   deleteMediaAsset,
   finalizeMediaUpload,
   getMediaConfigResponse,
-  getMediaReadPresentation
+  getMediaReadPresentation,
+  prepareMediaUpload
 } from '../services/mediaService';
 import { MediaValidationError } from '../services/mediaProcessor';
 
@@ -53,8 +54,12 @@ const respondWithMediaError = (req: Request, res: Response, error: unknown): voi
   });
 };
 
-export const getMediaConfig = (_req: Request, res: Response): void => {
-  res.json(getMediaConfigResponse());
+export const getMediaConfig = async (req: Request, res: Response): Promise<void> => {
+  try {
+    res.json(await getMediaConfigResponse());
+  } catch (error) {
+    respondWithMediaError(req, res, error);
+  }
 };
 
 export const startMediaUpload = async (req: Request, res: Response): Promise<void> => {
@@ -72,6 +77,15 @@ export const finalizeMedia = async (req: Request, res: Response): Promise<void> 
   try {
     const input = finalizeSchema.parse(req.body);
     const result = await finalizeMediaUpload(req.user!.userId, req.params.id as string, input);
+    res.json(result);
+  } catch (error) {
+    respondWithMediaError(req, res, error);
+  }
+};
+
+export const prepareMedia = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const result = await prepareMediaUpload(req.user!.userId, req.params.id as string);
     res.json(result);
   } catch (error) {
     respondWithMediaError(req, res, error);

@@ -5,8 +5,16 @@ import {
   MediaVariant,
   Prisma
 } from '@prisma/client';
+import { createHash, randomUUID } from 'crypto';
+import sharp from 'sharp';
 import prisma from '../prisma';
-import { MEDIA_CONFIG, isAllowedMediaMime, maxInputBytesForPurpose } from '../config/media';
+import {
+  MEDIA_CONFIG,
+  MEDIA_PURPOSE_CONFIG,
+  isAllowedMediaSourceMime,
+  isHeifMediaMime,
+  maxInputBytesForPurpose
+} from '../config/media';
 import { GroupPermissionService } from './groupPermissionService';
 import { PrivacyService } from './privacyService';
 import { getMediaStorage, isMediaStorageConfigured } from './mediaStorage';
@@ -16,25 +24,68 @@ import {
   ProcessedMediaVariant,
   processMediaBuffer
 } from './mediaProcessor';
+import {
+  convertHeifRemotely,
+  isHeifConversionConfigured,
+  verifyHeifConversionReadiness
+} from './heifConversionClient';
+import { inspectHeifBuffer } from './heifInspection';
 
 const mimeExtension: Record<string, string> = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
-  'image/webp': 'webp'
+  'image/webp': 'webp',
+  'image/heic': 'heic',
+  'image/heif': 'heif'
 };
 
 const addHours = (date: Date, hours: number): Date => new Date(date.getTime() + hours * 60 * 60 * 1000);
+const PROCESSING_LEASE_PREFIX = 'MEDIA_PROCESSING:';
+const PROCESSING_CLEANUP_PREFIX = 'MEDIA_PROCESSING_CLEANUP:';
+const processingAttempt = (): { id: string; lease: string } => {
+  const id = randomUUID();
+  return { id, lease: `${PROCESSING_LEASE_PREFIX}${id}` };
+};
+const processingAttemptId = (value: string | null | undefined): string | null => {
+  const prefix = value?.startsWith(PROCESSING_LEASE_PREFIX)
+    ? PROCESSING_LEASE_PREFIX
+    : value?.startsWith(PROCESSING_CLEANUP_PREFIX) ? PROCESSING_CLEANUP_PREFIX : null;
+  if (!prefix) return null;
+  const id = value!.slice(prefix.length);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) ? id : null;
+};
 
-const variantKey = (asset: Pick<MediaAsset, 'id' | 'ownerId'>, visibility: 'private' | 'public', width: number): string =>
-  `${asset.ownerId}/${asset.id}/${visibility}/${width}.webp`;
+const variantKey = (
+  asset: Pick<MediaAsset, 'id' | 'ownerId'>,
+  visibility: 'private' | 'public',
+  width: number,
+  attemptId?: string
+): string => `${asset.ownerId}/${asset.id}/${visibility}/${width}${attemptId ? `-${attemptId}` : ''}.webp`;
 
-const masterKey = (asset: Pick<MediaAsset, 'id' | 'ownerId'>): string =>
-  `${asset.ownerId}/${asset.id}/master.webp`;
+const masterKey = (asset: Pick<MediaAsset, 'id' | 'ownerId'>, attemptId?: string): string =>
+  `${asset.ownerId}/${asset.id}/master${attemptId ? `-${attemptId}` : ''}.webp`;
+
+const preparedKey = (asset: Pick<MediaAsset, 'id' | 'ownerId'>, attemptId: string): string =>
+  `${asset.ownerId}/${asset.id}/prepared-${attemptId}.webp`;
 
 const sourceKey = (ownerId: string, assetId: string, mime: string): string =>
   `${ownerId}/${assetId}/upload.${mimeExtension[mime]}`;
 
 type StorageObject = { bucket: string; key: string };
+
+const processingAttemptObjects = (
+  asset: Pick<MediaAsset, 'id' | 'ownerId' | 'purpose' | 'sourceMime'>,
+  attemptId: string
+): StorageObject[] => [
+  { bucket: MEDIA_CONFIG.buckets.originals, key: masterKey(asset, attemptId) },
+  ...(asset.sourceMime && isHeifMediaMime(asset.sourceMime)
+    ? [{ bucket: MEDIA_CONFIG.buckets.originals, key: preparedKey(asset, attemptId) }]
+    : []),
+  ...MEDIA_PURPOSE_CONFIG[asset.purpose].widths.map(({ width }) => ({
+    bucket: MEDIA_CONFIG.buckets.private,
+    key: variantKey(asset, 'private', width, attemptId)
+  }))
+];
 
 const groupStorageObjects = (objects: StorageObject[]): Map<string, string[]> => {
   const grouped = new Map<string, string[]>();
@@ -44,6 +95,41 @@ const groupStorageObjects = (objects: StorageObject[]): Map<string, string[]> =>
     grouped.set(object.bucket, keys);
   }
   return grouped;
+};
+
+const failProcessingAttempt = async (
+  assetId: string,
+  lease: string,
+  attemptId: string,
+  uploadedObjects: StorageObject[],
+  errorCode: string
+): Promise<void> => {
+  if (uploadedObjects.length === 0) {
+    await prisma.mediaAsset.updateMany({
+      where: { id: assetId, status: 'PROCESSING', errorCode: lease },
+      data: { status: 'FAILED', errorCode }
+    }).catch(() => undefined);
+    return;
+  }
+  const cleanupLease = `${PROCESSING_CLEANUP_PREFIX}${attemptId}`;
+  const claimed = await prisma.mediaAsset.updateMany({
+    where: { id: assetId, status: 'PROCESSING', errorCode: lease },
+    data: { errorCode: cleanupLease }
+  }).catch(() => ({ count: 0 }));
+  try {
+    for (const [bucket, keys] of groupStorageObjects(uploadedObjects)) {
+      await getMediaStorage().remove(bucket, keys);
+    }
+  } catch {
+    // A claimed cleanup lease remains PROCESSING so the scheduled cleanup can retry safely.
+    return;
+  }
+  if (claimed.count === 1) {
+    await prisma.mediaAsset.updateMany({
+      where: { id: assetId, status: 'PROCESSING', errorCode: cleanupLease },
+      data: { status: 'FAILED', errorCode }
+    }).catch(() => undefined);
+  }
 };
 
 export type MediaPresentation = {
@@ -134,7 +220,9 @@ const publicPresentation = (
   };
 };
 
-export const getMediaConfigResponse = () => ({
+export const getMediaConfigResponse = async () => {
+  const heifServerPreparationEnabled = await verifyHeifConversionReadiness();
+  return ({
   enabled: isMediaStorageConfigured(),
   maxPostImages: MEDIA_CONFIG.maxPostImages,
   maxInputBytes: MEDIA_CONFIG.maxInputBytes,
@@ -143,8 +231,12 @@ export const getMediaConfigResponse = () => ({
   maxUploadConcurrency: MEDIA_CONFIG.maxUploadConcurrency,
   minAspectRatio: MEDIA_CONFIG.minAspectRatio,
   maxAspectRatio: MEDIA_CONFIG.maxAspectRatio,
-  allowedMimeTypes: MEDIA_CONFIG.allowedMimeTypes
-});
+  allowedMimeTypes: heifServerPreparationEnabled
+    ? MEDIA_CONFIG.allowedSourceMimeTypes
+    : MEDIA_CONFIG.allowedMimeTypes,
+  heifServerPreparationEnabled
+  });
+};
 
 export const createMediaUpload = async (
   ownerId: string,
@@ -153,8 +245,11 @@ export const createMediaUpload = async (
   declaredSize: number,
   altText?: string
 ) => {
-  if (!isAllowedMediaMime(declaredMime)) {
-    throw new MediaValidationError('UNSUPPORTED_MEDIA_TYPE', 'Only JPEG, PNG, and WebP images are supported.');
+  if (!isAllowedMediaSourceMime(declaredMime)) {
+    throw new MediaValidationError('UNSUPPORTED_MEDIA_TYPE', 'Only JPEG, PNG, WebP, HEIC, and HEIF images are supported.');
+  }
+  if (isHeifMediaMime(declaredMime) && !(await verifyHeifConversionReadiness())) {
+    throw new MediaValidationError('HEIF_CONVERTER_UNAVAILABLE', 'HEIC/HEIF conversion is temporarily unavailable.', 503);
   }
   const maxInputBytes = maxInputBytesForPurpose(purpose);
   if (!Number.isInteger(declaredSize) || declaredSize <= 0 || declaredSize > maxInputBytes) {
@@ -212,21 +307,224 @@ const uploadProcessedVariant = async (
   };
 };
 
-export const finalizeMediaUpload = async (ownerId: string, assetId: string, request: MediaCropRequest) => {
-  const asset = await prisma.mediaAsset.findUnique({ where: { id: assetId } });
+const finalizedMediaResponse = (asset: MediaAsset & { variants: MediaVariant[] }) => {
+  const largest = asset.variants
+    .filter((variant) => variant.kind !== 'MASTER' && !variant.isPublic)
+    .sort((left, right) => right.width - left.width)[0]
+    || asset.variants.filter((variant) => variant.kind === 'MASTER').sort((left, right) => right.width - left.width)[0];
+  if (!asset.aspectRatio || !largest) {
+    throw new MediaValidationError('MEDIA_NOT_READY', 'The processed image variants are unavailable.', 409);
+  }
+  return {
+    id: asset.id,
+    status: asset.status,
+    purpose: asset.purpose,
+    aspectRatio: asset.aspectRatio,
+    width: largest.width,
+    height: largest.height
+  };
+};
+
+const preparedMediaResponse = async (
+  asset: MediaAsset,
+  variant: MediaVariant,
+  signedSrc?: string
+) => ({
+  id: asset.id,
+  status: 'TEMPORARY' as const,
+  sourceMime: asset.sourceMime as 'image/heic' | 'image/heif',
+  preview: {
+    src: signedSrc || await getMediaStorage().createSignedReadUrl(
+        variant.storageBucket,
+        variant.storageKey,
+        MEDIA_CONFIG.privateUrlLifetimeSeconds
+      ),
+    mime: 'image/webp' as const,
+    width: variant.width,
+    height: variant.height,
+    aspectRatio: variant.width / variant.height,
+    expiresInSeconds: MEDIA_CONFIG.privateUrlLifetimeSeconds
+  }
+});
+
+const validatePreparedWebp = async (buffer: Buffer): Promise<{ width: number; height: number }> => {
+  if (buffer.length === 0 || buffer.length > MEDIA_CONFIG.maxPreparedOutputBytes) {
+    throw new MediaValidationError('HEIF_OUTPUT_TOO_LARGE', 'The converted image exceeds the safe output limit.');
+  }
+  try {
+    const metadata = await sharp(buffer, {
+      failOn: 'error',
+      limitInputPixels: MEDIA_CONFIG.maxDecodedPixels
+    }).metadata();
+    const width = metadata.width || 0;
+    const height = metadata.height || 0;
+    const pixels = width * height;
+    if (
+      metadata.format !== 'webp'
+      || (metadata.pages || 1) !== 1
+      || !Number.isSafeInteger(pixels)
+      || width <= 0
+      || height <= 0
+      || width > MEDIA_CONFIG.maxMasterEdge
+      || height > MEDIA_CONFIG.maxMasterEdge
+      || pixels > MEDIA_CONFIG.maxDecodedPixels
+      || metadata.exif
+      || metadata.xmp
+      || metadata.iptc
+    ) {
+      throw new Error('unsafe converted output');
+    }
+    return { width, height };
+  } catch (error) {
+    if (error instanceof MediaValidationError) throw error;
+    throw new MediaValidationError('HEIF_CONVERSION_FAILED', 'The converted HEIC/HEIF image failed validation.');
+  }
+};
+
+export const prepareMediaUpload = async (ownerId: string, assetId: string) => {
+  let asset = await prisma.mediaAsset.findUnique({ where: { id: assetId }, include: { variants: true } });
   if (!asset || asset.ownerId !== ownerId || asset.deletedAt) {
     throw new MediaValidationError('MEDIA_NOT_FOUND', 'Media asset was not found.', 404);
   }
-  if (!asset.uploadBucket || !asset.uploadKey || !asset.sourceMime) {
+  if (!asset.sourceMime || !isHeifMediaMime(asset.sourceMime)) {
+    throw new MediaValidationError('MEDIA_PREPARATION_NOT_REQUIRED', 'This image does not require server preparation.', 409);
+  }
+  if (!isHeifConversionConfigured() || !(await verifyHeifConversionReadiness())) {
+    throw new MediaValidationError('HEIF_CONVERTER_UNAVAILABLE', 'HEIC/HEIF conversion is temporarily unavailable.', 503);
+  }
+  if (asset.status === 'ATTACHED' || asset.status === 'READY') {
+    throw new MediaValidationError('MEDIA_ALREADY_FINALIZED', 'This image has already been finalized.', 409);
+  }
+  const existingPrepared = asset.variants.find((variant) => (
+    variant.kind === 'MASTER'
+    && !variant.isPublic
+    && variant.storageBucket === MEDIA_CONFIG.buckets.originals
+    && variant.mime === 'image/webp'
+    && variant.storageKey.startsWith(`${asset.ownerId}/${asset.id}/prepared-`)
+  ));
+  if (existingPrepared && (asset.status === 'TEMPORARY' || asset.status === 'FAILED')) {
+    return preparedMediaResponse(asset, existingPrepared);
+  }
+  if (!asset.uploadBucket || !asset.uploadKey || !asset.sourceByteSize) {
     throw new MediaValidationError('UPLOAD_NOT_READY', 'The source upload is not available.', 409);
+  }
+
+  const attempt = processingAttempt();
+  const lease = attempt.lease;
+  const claimed = await prisma.mediaAsset.updateMany({
+    where: { id: asset.id, status: { in: ['TEMPORARY', 'FAILED'] } },
+    data: { status: 'PROCESSING', errorCode: lease }
+  });
+  if (claimed.count !== 1) {
+    throw new MediaValidationError('MEDIA_BUSY', 'This image is already being processed.', 409);
+  }
+
+  const object = {
+    bucket: MEDIA_CONFIG.buckets.originals,
+    key: preparedKey({ id: asset.id, ownerId: asset.ownerId }, attempt.id)
+  };
+  let uploadAttempted = false;
+  try {
+    const source = await getMediaStorage().download(asset.uploadBucket, asset.uploadKey);
+    const maxInputBytes = maxInputBytesForPurpose(asset.purpose);
+    if (source.length !== asset.sourceByteSize || source.length === 0 || source.length > maxInputBytes) {
+      throw new MediaValidationError('INVALID_FILE_SIZE', `Image must be no larger than ${Math.floor(maxInputBytes / 1024 / 1024)} MB.`);
+    }
+    const inspected = inspectHeifBuffer(source);
+    if (!isHeifMediaMime(inspected.mime)) {
+      throw new MediaValidationError('MIME_MISMATCH', 'The image content does not match its declared file type.');
+    }
+    const converted = await convertHeifRemotely(source, asset.sourceMime);
+    const dimensions = await validatePreparedWebp(converted);
+    const stillOwned = await prisma.mediaAsset.updateMany({
+      where: { id: asset.id, status: 'PROCESSING', errorCode: lease },
+      data: { errorCode: lease }
+    });
+    if (stillOwned.count !== 1) {
+      throw new MediaValidationError('MEDIA_STATE_CONFLICT', 'The media state changed during preparation.', 409);
+    }
+    uploadAttempted = true;
+    await getMediaStorage().upload(object.bucket, object.key, converted, 'image/webp', '0');
+    const signedPreview = await getMediaStorage().createSignedReadUrl(
+      object.bucket,
+      object.key,
+      MEDIA_CONFIG.privateUrlLifetimeSeconds
+    );
+    const rawChecksum = createHash('sha256').update(source).digest('hex');
+    const prepared = await prisma.$transaction(async (tx) => {
+      const transitioned = await tx.mediaAsset.updateMany({
+        where: { id: asset!.id, status: 'PROCESSING', errorCode: lease },
+        data: {
+          status: 'TEMPORARY',
+          sourceMime: asset!.sourceMime,
+          sourceWidth: dimensions.width,
+          sourceHeight: dimensions.height,
+          sourceByteSize: source.length,
+          checksum: rawChecksum,
+          aspectRatio: dimensions.width / dimensions.height,
+          errorCode: null
+        }
+      });
+      if (transitioned.count !== 1) {
+        throw new MediaValidationError('MEDIA_STATE_CONFLICT', 'The media state changed during preparation.', 409);
+      }
+      await tx.mediaVariant.deleteMany({ where: { mediaAssetId: asset!.id, kind: 'MASTER', isPublic: false } });
+      return tx.mediaVariant.create({
+        data: {
+          mediaAssetId: asset!.id,
+          kind: 'MASTER',
+          storageBucket: object.bucket,
+          storageKey: object.key,
+          width: dimensions.width,
+          height: dimensions.height,
+          mime: 'image/webp',
+          byteSize: converted.length,
+          isPublic: false
+        }
+      });
+    });
+    return preparedMediaResponse(asset, prepared, signedPreview);
+  } catch (error) {
+    const code = error instanceof MediaValidationError ? error.code : 'HEIF_CONVERSION_FAILED';
+    await failProcessingAttempt(asset.id, lease, attempt.id, uploadAttempted ? [object] : [], code);
+    throw error;
+  }
+};
+
+export const finalizeMediaUpload = async (ownerId: string, assetId: string, request: MediaCropRequest) => {
+  const asset = await prisma.mediaAsset.findUnique({ where: { id: assetId }, include: { variants: true } });
+  if (!asset || asset.ownerId !== ownerId || asset.deletedAt) {
+    throw new MediaValidationError('MEDIA_NOT_FOUND', 'Media asset was not found.', 404);
   }
   if (asset.status === 'ATTACHED') {
     throw new MediaValidationError('MEDIA_ALREADY_ATTACHED', 'Attached media cannot be finalized again.', 409);
   }
+  if (asset.status === 'READY') return finalizedMediaResponse(asset);
+  if (!asset.sourceMime) {
+    throw new MediaValidationError('UPLOAD_NOT_READY', 'The source upload is not available.', 409);
+  }
+  const heifSource = isHeifMediaMime(asset.sourceMime);
+  const preparedMaster = heifSource
+    ? asset.variants.find((variant) => (
+        variant.kind === 'MASTER'
+        && !variant.isPublic
+        && variant.storageBucket === MEDIA_CONFIG.buckets.originals
+        && variant.mime === 'image/webp'
+        && variant.storageKey.startsWith(`${asset.ownerId}/${asset.id}/prepared-`)
+      ))
+    : undefined;
+  if (heifSource && !preparedMaster) {
+    throw new MediaValidationError('MEDIA_NOT_PREPARED', 'The HEIC/HEIF image must be prepared before finalization.', 409);
+  }
+  if (!heifSource && (!asset.uploadBucket || !asset.uploadKey)) {
+    throw new MediaValidationError('UPLOAD_NOT_READY', 'The source upload is not available.', 409);
+  }
 
+  const attempt = processingAttempt();
+  const lease = attempt.lease;
   const claimed = await prisma.mediaAsset.updateMany({
-    where: { id: asset.id, status: { in: ['TEMPORARY', 'FAILED', 'READY'] } },
-    data: { status: 'PROCESSING', errorCode: null }
+    where: { id: asset.id, status: { in: ['TEMPORARY', 'FAILED'] } },
+    data: { status: 'PROCESSING', errorCode: lease }
   });
   if (claimed.count !== 1) {
     throw new MediaValidationError('MEDIA_BUSY', 'This image is already being processed.', 409);
@@ -234,35 +532,42 @@ export const finalizeMediaUpload = async (ownerId: string, assetId: string, requ
 
   const uploadedObjects: Array<{ bucket: string; key: string }> = [];
   try {
-    const source = await getMediaStorage().download(asset.uploadBucket, asset.uploadKey);
-    const processed = await processMediaBuffer(source, asset.purpose, asset.sourceMime, request);
+    const source = heifSource
+      ? await getMediaStorage().download(preparedMaster!.storageBucket, preparedMaster!.storageKey)
+      : await getMediaStorage().download(asset.uploadBucket!, asset.uploadKey!);
+    const processed = await processMediaBuffer(source, asset.purpose, heifSource ? 'image/webp' : asset.sourceMime, request);
+    const stillOwned = await prisma.mediaAsset.updateMany({
+      where: { id: asset.id, status: 'PROCESSING', errorCode: lease },
+      data: { errorCode: lease }
+    });
+    if (stillOwned.count !== 1) {
+      throw new MediaValidationError('MEDIA_STATE_CONFLICT', 'The media state changed during finalization.', 409);
+    }
     const records: Awaited<ReturnType<typeof uploadProcessedVariant>>[] = [];
 
-    const masterObject = { bucket: MEDIA_CONFIG.buckets.originals, key: masterKey(asset) };
-    records.push(await uploadProcessedVariant(asset, processed.master, masterObject.bucket, masterObject.key, false));
+    const masterObject = { bucket: MEDIA_CONFIG.buckets.originals, key: masterKey(asset, attempt.id) };
     uploadedObjects.push(masterObject);
+    records.push(await uploadProcessedVariant(asset, processed.master, masterObject.bucket, masterObject.key, false));
 
     for (const variant of processed.variants) {
       const object = {
         bucket: MEDIA_CONFIG.buckets.private,
-        key: variantKey(asset, 'private', variant.width)
+        key: variantKey(asset, 'private', variant.width, attempt.id)
       };
-      records.push(await uploadProcessedVariant(asset, variant, object.bucket, object.key, false));
       uploadedObjects.push(object);
+      records.push(await uploadProcessedVariant(asset, variant, object.bucket, object.key, false));
     }
 
     const updated = await prisma.$transaction(async (tx) => {
-      await tx.mediaVariant.deleteMany({ where: { mediaAssetId: asset.id } });
-      await tx.mediaVariant.createMany({ data: records });
-      return tx.mediaAsset.update({
-        where: { id: asset.id },
+      const transitioned = await tx.mediaAsset.updateMany({
+        where: { id: asset.id, status: 'PROCESSING', errorCode: lease },
         data: {
           status: 'READY',
-          sourceMime: processed.sourceMime,
+          sourceMime: heifSource ? asset.sourceMime : processed.sourceMime,
           sourceWidth: processed.sourceWidth,
           sourceHeight: processed.sourceHeight,
-          sourceByteSize: processed.sourceByteSize,
-          checksum: processed.checksum,
+          sourceByteSize: heifSource ? asset.sourceByteSize : processed.sourceByteSize,
+          checksum: heifSource ? asset.checksum : processed.checksum,
           aspectRatio: processed.aspectRatio,
           cropX: processed.crop.x,
           cropY: processed.crop.y,
@@ -271,36 +576,42 @@ export const finalizeMediaUpload = async (ownerId: string, assetId: string, requ
           focalX: request.focalX,
           focalY: request.focalY,
           altText: request.altText?.trim() || asset.altText,
+          uploadBucket: heifSource ? preparedMaster!.storageBucket : asset.uploadBucket,
+          uploadKey: heifSource ? preparedMaster!.storageKey : asset.uploadKey,
           errorCode: null
-        },
-        include: { variants: true }
+        }
       });
+      if (transitioned.count !== 1) {
+        throw new MediaValidationError('MEDIA_STATE_CONFLICT', 'The media state changed during finalization.', 409);
+      }
+      await tx.mediaVariant.deleteMany({ where: { mediaAssetId: asset.id } });
+      await tx.mediaVariant.createMany({ data: records });
+      return tx.mediaAsset.findUniqueOrThrow({ where: { id: asset.id }, include: { variants: true } });
     });
 
     try {
-      await getMediaStorage().remove(asset.uploadBucket, [asset.uploadKey]);
-      await prisma.mediaAsset.update({
-        where: { id: asset.id },
+      const cleanupObjects: StorageObject[] = [];
+      if (asset.uploadBucket && asset.uploadKey) cleanupObjects.push({ bucket: asset.uploadBucket, key: asset.uploadKey });
+      if (preparedMaster) cleanupObjects.push({ bucket: preparedMaster.storageBucket, key: preparedMaster.storageKey });
+      for (const [bucket, keys] of groupStorageObjects(cleanupObjects)) {
+        await getMediaStorage().remove(bucket, keys);
+      }
+      await prisma.mediaAsset.updateMany({
+        where: {
+          id: asset.id,
+          uploadBucket: heifSource ? preparedMaster!.storageBucket : asset.uploadBucket,
+          uploadKey: heifSource ? preparedMaster!.storageKey : asset.uploadKey
+        },
         data: { uploadBucket: null, uploadKey: null }
       });
     } catch {
       // The cleanup job can remove this exact source object later.
     }
 
-    return {
-      id: updated.id,
-      status: updated.status,
-      purpose: updated.purpose,
-      aspectRatio: updated.aspectRatio,
-      width: processed.variants[processed.variants.length - 1]?.width || processed.master.width,
-      height: processed.variants[processed.variants.length - 1]?.height || processed.master.height
-    };
+    return finalizedMediaResponse(updated);
   } catch (error) {
-    for (const [bucket, keys] of groupStorageObjects(uploadedObjects)) {
-      await getMediaStorage().remove(bucket, keys).catch(() => undefined);
-    }
     const code = error instanceof MediaValidationError ? error.code : 'PROCESSING_FAILED';
-    await prisma.mediaAsset.update({ where: { id: asset.id }, data: { status: 'FAILED', errorCode: code } }).catch(() => undefined);
+    await failProcessingAttempt(asset.id, lease, attempt.id, uploadedObjects, code);
     throw error;
   }
 };
@@ -786,6 +1097,42 @@ export const purgeMediaAsset = async (assetId: string): Promise<void> => {
 
 export const cleanupExpiredMedia = async (limit = 100): Promise<number> => {
   if (!isMediaStorageConfigured()) return 0;
+  const processingCutoff = new Date(Date.now() - 15 * 60 * 1000);
+  const staleProcessing = await prisma.mediaAsset.findMany({
+    where: {
+      status: 'PROCESSING',
+      updatedAt: { lte: processingCutoff }
+    },
+    take: Math.min(limit, 25),
+    select: { id: true, ownerId: true, purpose: true, sourceMime: true, errorCode: true }
+  });
+  for (const asset of staleProcessing) {
+    const attemptId = processingAttemptId(asset.errorCode);
+    if (!attemptId) {
+      await prisma.mediaAsset.updateMany({
+        where: { id: asset.id, status: 'PROCESSING', errorCode: asset.errorCode, updatedAt: { lte: processingCutoff } },
+        data: { status: 'FAILED', errorCode: 'MEDIA_PROCESSING_INTERRUPTED' }
+      });
+      continue;
+    }
+    const cleanupLease = `${PROCESSING_CLEANUP_PREFIX}${attemptId}`;
+    const claimed = await prisma.mediaAsset.updateMany({
+      where: { id: asset.id, status: 'PROCESSING', errorCode: asset.errorCode, updatedAt: { lte: processingCutoff } },
+      data: { errorCode: cleanupLease }
+    });
+    if (claimed.count !== 1) continue;
+    try {
+      for (const [bucket, keys] of groupStorageObjects(processingAttemptObjects(asset, attemptId))) {
+        await getMediaStorage().remove(bucket, keys);
+      }
+      await prisma.mediaAsset.updateMany({
+        where: { id: asset.id, status: 'PROCESSING', errorCode: cleanupLease },
+        data: { status: 'FAILED', errorCode: 'MEDIA_PROCESSING_INTERRUPTED' }
+      });
+    } catch {
+      // Keep the cleanup lease in PROCESSING so no new attempt can race it.
+    }
+  }
   const staleSourceUploads = await prisma.mediaAsset.findMany({
     where: {
       status: { in: ['READY', 'ATTACHED'] },
@@ -793,12 +1140,16 @@ export const cleanupExpiredMedia = async (limit = 100): Promise<number> => {
       uploadKey: { not: null }
     },
     take: Math.min(limit, 25),
-    select: { id: true, uploadBucket: true, uploadKey: true }
+    select: { id: true, ownerId: true, sourceMime: true, uploadBucket: true, uploadKey: true }
   });
   for (const asset of staleSourceUploads) {
     if (!asset.uploadBucket || !asset.uploadKey) continue;
     try {
-      await getMediaStorage().remove(asset.uploadBucket, [asset.uploadKey]);
+      const keys = [asset.uploadKey];
+      if (asset.sourceMime && isHeifMediaMime(asset.sourceMime)) {
+        keys.push(sourceKey(asset.ownerId, asset.id, asset.sourceMime));
+      }
+      await getMediaStorage().remove(asset.uploadBucket, keys);
       await prisma.mediaAsset.updateMany({
         where: { id: asset.id, uploadBucket: asset.uploadBucket, uploadKey: asset.uploadKey },
         data: { uploadBucket: null, uploadKey: null }

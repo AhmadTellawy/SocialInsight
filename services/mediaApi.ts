@@ -1,15 +1,17 @@
-import { MediaCropSelection, MediaPresentation, MediaPurpose } from '../types';
-import { authFetch } from './api';
+import type { MediaCropSelection, MediaPresentation, MediaPurpose } from '../types.ts';
+import { authFetch } from './api.ts';
 
 export type MediaConfig = {
   enabled: boolean;
   maxPostImages: number;
   maxInputBytes: number;
+  maxCoverInputBytes: number;
   maxDecodedPixels: number;
   maxUploadConcurrency: number;
   minAspectRatio: number;
   maxAspectRatio: number;
   allowedMimeTypes: string[];
+  heifServerPreparationEnabled: boolean;
 };
 
 type SignedUploadSession = {
@@ -22,11 +24,25 @@ type SignedUploadSession = {
 };
 
 export class MediaUploadError extends Error {
-  constructor(message: string, public readonly assetId?: string, public readonly phase?: 'upload' | 'processing') {
+  constructor(message: string, public readonly assetId?: string, public readonly phase?: 'upload' | 'preparation' | 'processing') {
     super(message);
     this.name = 'MediaUploadError';
   }
 }
+
+export type PreparedMediaUpload = {
+  id: string;
+  status: 'TEMPORARY';
+  sourceMime: 'image/heic' | 'image/heif';
+  preview: {
+    src: string;
+    mime: 'image/webp';
+    width: number;
+    height: number;
+    aspectRatio: number;
+    expiresInSeconds: number;
+  };
+};
 
 const presentationCache = new Map<string, { value: MediaPresentation; expiresAt: number }>();
 const presentationRequests = new Map<string, Promise<MediaPresentation>>();
@@ -34,14 +50,17 @@ const PRESENTATION_CACHE_LIMIT = 200;
 const PUBLIC_PRESENTATION_TTL_MS = 10 * 60 * 1000;
 const RESTRICTED_PRESENTATION_TTL_MS = 4 * 60 * 1000;
 let presentationCacheAuthToken: string | null | undefined;
+let presentationCacheGeneration = 0;
 
-const synchronizePresentationCacheIdentity = (): void => {
+const synchronizePresentationCacheIdentity = (): number => {
   const authToken = typeof localStorage === 'undefined' ? null : localStorage.getItem('si_token');
   if (presentationCacheAuthToken !== undefined && presentationCacheAuthToken !== authToken) {
     presentationCache.clear();
     presentationRequests.clear();
+    presentationCacheGeneration += 1;
   }
   presentationCacheAuthToken = authToken;
+  return presentationCacheGeneration;
 };
 
 const cachePresentation = (assetId: string, value: MediaPresentation): void => {
@@ -119,6 +138,41 @@ export const mediaApi = {
     return response.json();
   },
 
+  prepare: async (assetId: string, signal?: AbortSignal): Promise<PreparedMediaUpload> => {
+    const response = await authFetch(`/api/media/${assetId}/prepare`, {
+      method: 'POST',
+      signal
+    });
+    if (!response.ok) throw await parseError(response, 'Could not prepare HEIC/HEIF image.');
+    return response.json();
+  },
+
+  uploadAndPrepare: async (
+    file: File,
+    purpose: MediaPurpose,
+    onProgress: (progress: number) => void,
+    signal?: AbortSignal
+  ): Promise<PreparedMediaUpload> => {
+    if (signal?.aborted) throw new DOMException('Upload canceled.', 'AbortError');
+    let session: SignedUploadSession | undefined;
+    try {
+      session = await mediaApi.startUpload(file, purpose);
+      if (signal?.aborted) throw new DOMException('Upload canceled.', 'AbortError');
+      await uploadToSignedUrl(session, file, onProgress, signal);
+      if (signal?.aborted) throw new DOMException('Upload canceled.', 'AbortError');
+      onProgress(100);
+      return await mediaApi.prepare(session.assetId, signal);
+    } catch (error) {
+      if (session) await mediaApi.cancel(session.assetId).catch(() => undefined);
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      throw new MediaUploadError(
+        error instanceof Error ? error.message : 'HEIC/HEIF image preparation failed.',
+        undefined,
+        'preparation'
+      );
+    }
+  },
+
   upload: async (
     file: File,
     purpose: MediaPurpose,
@@ -149,10 +203,11 @@ export const mediaApi = {
   retryFinalize: (assetId: string, crop: MediaCropSelection) => mediaApi.finalize(assetId, crop),
 
   get: async (assetId: string, forceRefresh = false): Promise<MediaPresentation> => {
-    synchronizePresentationCacheIdentity();
+    const requestGeneration = synchronizePresentationCacheIdentity();
+    const requestKey = `${requestGeneration}:${assetId}`;
     const cached = presentationCache.get(assetId);
     if (!forceRefresh && cached && cached.expiresAt > Date.now()) return cached.value;
-    const inFlight = presentationRequests.get(assetId);
+    const inFlight = presentationRequests.get(requestKey);
     if (!forceRefresh && inFlight) return inFlight;
 
     presentationCache.delete(assetId);
@@ -160,15 +215,20 @@ export const mediaApi = {
       const response = await authFetch(`/api/media/${assetId}`);
       if (!response.ok) throw await parseError(response, 'Image is unavailable.');
       const presentation = await response.json() as MediaPresentation;
-      cachePresentation(assetId, presentation);
+      // A request started by a previous signed-in identity may finish after
+      // logout/account switching. It can resolve for its original caller, but
+      // must never repopulate the shared cache for the new identity.
+      if (synchronizePresentationCacheIdentity() === requestGeneration) {
+        cachePresentation(assetId, presentation);
+      }
       return presentation;
     })();
 
-    if (!forceRefresh) presentationRequests.set(assetId, request);
+    if (!forceRefresh) presentationRequests.set(requestKey, request);
     try {
       return await request;
     } finally {
-      if (presentationRequests.get(assetId) === request) presentationRequests.delete(assetId);
+      if (presentationRequests.get(requestKey) === request) presentationRequests.delete(requestKey);
     }
   },
 

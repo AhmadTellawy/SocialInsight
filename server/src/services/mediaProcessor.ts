@@ -175,7 +175,7 @@ export const processMediaBuffer = async (
         fit: 'inside',
         withoutEnlargement: true
       })
-      .webp({ quality: 92, effort: 4 })
+      .webp({ quality: 92, alphaQuality: 100, effort: 4, smartSubsample: true })
       .toBuffer({ resolveWithObject: true });
   } catch {
     throw new MediaValidationError('IMAGE_PROCESSING_FAILED', 'The image could not be normalized.');
@@ -204,7 +204,7 @@ export const processMediaBuffer = async (
     const result = await sharp(normalized.data)
       .extract(pixelCrop)
       .resize({ width, withoutEnlargement: true })
-      .webp({ quality: 82, effort: 4 })
+      .webp({ quality: 82, alphaQuality: 100, effort: 4, smartSubsample: true })
       .toBuffer({ resolveWithObject: true });
     return {
       kind,

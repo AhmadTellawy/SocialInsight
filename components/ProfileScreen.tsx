@@ -1,9 +1,9 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Settings, Users, Grid, CheckCircle2, MoreHorizontal, MapPin, Link as LinkIcon, Edit3, UserPlus, Shield, ExternalLink, ArrowLeft, Mail, FileText, PieChart, Building2, Globe as GlobeIcon, Plus, ChevronRight, Search, X, UserCircle2, Zap, Info, Lock, BarChart3, TrendingUp, Bookmark, PenTool, Activity, Repeat, Image as ImageIcon, Camera, Trash2, Loader2 } from 'lucide-react';
+import { Settings, Users, Grid, CheckCircle2, MoreHorizontal, MapPin, Link as LinkIcon, UserPlus, Shield, ExternalLink, ArrowLeft, Mail, FileText, PieChart, Building2, Globe as GlobeIcon, Plus, ChevronRight, Search, X, UserCircle2, Zap, Info, Lock, BarChart3, TrendingUp, Bookmark, PenTool, Activity, Repeat, Image as ImageIcon, Camera, Trash2, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Analytics } from '../utils/analytics';
-import { PostAnswerPayload, Survey, SurveyType, Group, UserProfile } from '../types';
+import { PostAnswerPayload, Survey, SurveyType, Group, UserProfile, MediaDraft } from '../types';
 import { SurveyCard } from './SurveyCard';
 import { BottomSheet } from './BottomSheet';
 import { ProfileAnalysis } from './ProfileAnalysis';
@@ -11,7 +11,9 @@ import { api } from '../services/api';
 import { useFollowState } from '../hooks/useFollowState';
 import { UserAvatar } from './UserAvatar';
 import { MediaImage } from './media/MediaImage';
+import { MediaPicker, MediaPickerHandle } from './media/MediaPicker';
 import { RichTextRenderer } from './RichTextRenderer';
+import { cancelTemporaryMediaDrafts, createPersistedMediaDraft, createPersistedMediaDraftFromId } from '../utils/mediaDrafts';
 
 interface ProfileScreenProps {
   surveys: Survey[];
@@ -60,6 +62,16 @@ const compactProfileUrl = (value: string): string => {
   } catch {
     return value;
   }
+};
+
+const profileAvatarDrafts = (profile: UserProfile): MediaDraft[] => {
+  if (profile.avatarMedia?.id) {
+    return [createPersistedMediaDraft(profile.avatarMedia, 'PROFILE_AVATAR', profile.avatar || '')];
+  }
+  if (profile.avatarMediaId) {
+    return [createPersistedMediaDraftFromId(profile.avatarMediaId, 'PROFILE_AVATAR', profile.avatar || '', 1)];
+  }
+  return [];
 };
 
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({
@@ -126,10 +138,106 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [connectionRetryKey, setConnectionRetryKey] = useState(0);
 
   const isMe = !user?.id || user.id === userProfile.id;
+  const avatarPickerRef = useRef<MediaPickerHandle>(null);
+  const [avatarMedia, setAvatarMedia] = useState<MediaDraft[]>(() => profileAvatarDrafts(userProfile));
+  const avatarMediaRef = useRef(avatarMedia);
+  const avatarSaveInFlightRef = useRef<string | null>(null);
+  const avatarSaveAttemptedRef = useRef(new Set<string>());
+  const avatarMountedRef = useRef(true);
+  const [isAvatarSaving, setIsAvatarSaving] = useState(false);
+  const [avatarSaveError, setAvatarSaveError] = useState<string | null>(null);
   const suppliedUser = user as (Partial<UserProfile> & { isFollowing?: boolean; followStatus?: string }) | undefined;
   const resolvedTargetUser = targetUser?.id === viewUserId ? targetUser : null;
   const hasProfileStats = isMe || !!resolvedTargetUser?.stats || !!suppliedUser?.stats;
   const ownerProfileRefreshRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    avatarMediaRef.current = avatarMedia;
+  }, [avatarMedia]);
+
+  useEffect(() => {
+    avatarMountedRef.current = true;
+    return () => {
+      avatarMountedRef.current = false;
+      void cancelTemporaryMediaDrafts(avatarMediaRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isMe || avatarMediaRef.current.some((draft) => !draft.persisted)) return;
+    const current = avatarMediaRef.current[0];
+    const currentId = current?.assetId || null;
+    const nextId = userProfile.avatarMediaId || null;
+    const nextSrc = userProfile.avatarMedia?.src || userProfile.avatar || '';
+    if (currentId === nextId && current?.previewUrl === nextSrc) return;
+    const next = profileAvatarDrafts(userProfile);
+    avatarMediaRef.current = next;
+    setAvatarMedia(next);
+  }, [isMe, userProfile.avatar, userProfile.avatarMedia?.src, userProfile.avatarMediaId]);
+
+  const persistAvatar = React.useCallback(async (draft: MediaDraft, force = false): Promise<void> => {
+    const assetId = draft.assetId;
+    if (
+      !isMe
+      || !userProfile.id
+      || !assetId
+      || draft.persisted
+      || avatarSaveInFlightRef.current
+      || (!force && avatarSaveAttemptedRef.current.has(assetId))
+    ) return;
+
+    avatarSaveAttemptedRef.current.add(assetId);
+    avatarSaveInFlightRef.current = assetId;
+    setIsAvatarSaving(true);
+    setAvatarSaveError(null);
+    const commitPersistedAvatar = (updated: UserProfile): boolean => {
+      if (!avatarMountedRef.current || avatarSaveInFlightRef.current !== assetId) return false;
+      const merged = {
+        ...userProfile,
+        ...updated,
+        avatarMediaId: assetId,
+        avatarMedia: updated.avatarMedia || draft.presentation
+      } as UserProfile;
+      const persisted = merged.avatarMedia?.id
+        ? createPersistedMediaDraft(merged.avatarMedia, 'PROFILE_AVATAR', merged.avatar || '')
+        : { ...draft, persisted: true };
+      avatarMediaRef.current = [persisted];
+      setAvatarMedia([persisted]);
+      onUpdateCurrentUser?.(merged);
+      return true;
+    };
+    try {
+      const updated = await api.updateUser(userProfile.id, {
+        avatarMediaId: assetId,
+        expectedUpdatedAt: userProfile.updatedAt
+      });
+      commitPersistedAvatar(updated as UserProfile);
+    } catch {
+      // The mutation may have succeeded even when its response was lost, and
+      // an optimistic-version conflict needs a fresh updatedAt before retry.
+      try {
+        const latest = await api.getUser(userProfile.id);
+        if (latest.avatarMediaId === assetId && commitPersistedAvatar(latest as UserProfile)) return;
+        if (avatarMountedRef.current && avatarSaveInFlightRef.current === assetId) {
+          onUpdateCurrentUser?.({ ...userProfile, ...latest } as UserProfile);
+        }
+      } catch {
+        // Reconciliation is best-effort; keep the existing avatar and expose a
+        // bounded retry instead of assuming the mutation succeeded.
+      }
+      if (avatarMountedRef.current && avatarSaveInFlightRef.current === assetId) {
+        setAvatarSaveError(t('profile.edit.saveFailed', { defaultValue: 'Your profile photo could not be saved. Check your connection and try again.' }));
+      }
+    } finally {
+      if (avatarSaveInFlightRef.current === assetId) avatarSaveInFlightRef.current = null;
+      if (avatarMountedRef.current) setIsAvatarSaving(false);
+    }
+  }, [isMe, onUpdateCurrentUser, t, userProfile]);
+
+  useEffect(() => {
+    const readyDraft = avatarMedia.find((draft) => draft.status === 'ready' && draft.assetId && !draft.persisted);
+    if (readyDraft) void persistAvatar(readyDraft);
+  }, [avatarMedia, persistAvatar]);
 
   useEffect(() => {
     if (
@@ -1177,25 +1285,70 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
         <div className="px-6 flex flex-col items-center">
           <div className="relative -mt-14 mb-5 z-10">
-            <div className="w-28 h-28 rounded-[22%] p-1 bg-white shadow-xl border border-gray-100 ring-4 ring-white/80">
-              <MediaImage
-                mediaId={profileUser.avatarMediaId}
-                fallbackSrc={profileUser.avatar?.includes('ui-avatars') ? undefined : profileUser.avatar}
-                fallback={<span role="img" aria-label={profileUser.name || 'Profile'} className="flex h-full w-full items-center justify-center rounded-[20%] bg-gray-100 text-3xl font-black text-gray-500">{(profileUser.name || 'U').trim().charAt(0).toUpperCase()}</span>}
-                alt={profileUser.name || 'Profile'}
-                sizes="112px"
-                className="w-full h-full rounded-[20%] object-cover"
-              />
-            </div>
-            {isMe && (
-              <button
-                onClick={onEditProfileClick || onSettingsClick}
-                className="absolute -bottom-2 -end-2 flex h-11 w-11 items-center justify-center bg-blue-600 text-white rounded-2xl shadow-lg hover:bg-blue-700 transition-colors border-[3px] border-white active:scale-90 z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
-                aria-label={t('Edit Profile')}
-              >
-                <Edit3 size={18} />
-              </button>
-            )}
+            <MediaPicker
+              ref={avatarPickerRef}
+              purpose="PROFILE_AVATAR"
+              value={avatarMedia}
+              onChange={(next) => {
+                avatarMediaRef.current = next;
+                setAvatarMedia(next);
+                setAvatarSaveError(null);
+              }}
+              disabled={!isMe || isAvatarSaving}
+              showAddButton={false}
+              renderContent={({ retry, busy, canSelect }) => {
+                const current = avatarMedia[0];
+                const uploadFailed = current?.status === 'error';
+                const saveFailed = Boolean(avatarSaveError && current?.status === 'ready' && !current.persisted);
+                const previewDraft = current && !current.persisted && !uploadFailed && !saveFailed ? current : null;
+                const retryLabel = t('common.retry', { defaultValue: 'Retry profile photo' });
+                return (
+                  <div className="relative" data-avatar-preview={previewDraft ? previewDraft.status : 'persisted'}>
+                    <div className="w-28 h-28 rounded-[22%] p-1 bg-white shadow-xl border border-gray-100 ring-4 ring-white/80">
+                      {previewDraft ? (
+                        <MediaImage
+                          media={previewDraft.status === 'ready' ? previewDraft.presentation : undefined}
+                          mediaId={previewDraft.status === 'ready' ? previewDraft.assetId : undefined}
+                          fallbackSrc={previewDraft.previewUrl}
+                          alt={profileUser.name || 'Profile'}
+                          sizes="112px"
+                          eager
+                          className="w-full h-full rounded-[20%] object-cover"
+                        />
+                      ) : (
+                        <MediaImage
+                          media={profileUser.avatarMedia}
+                          mediaId={profileUser.avatarMediaId}
+                          fallbackSrc={profileUser.avatar?.includes('ui-avatars') ? undefined : profileUser.avatar}
+                          fallback={<span role="img" aria-label={profileUser.name || 'Profile'} className="flex h-full w-full items-center justify-center rounded-[20%] bg-gray-100 text-3xl font-black text-gray-500">{(profileUser.name || 'U').trim().charAt(0).toUpperCase()}</span>}
+                          alt={profileUser.name || 'Profile'}
+                          sizes="112px"
+                          className="w-full h-full rounded-[20%] object-cover"
+                        />
+                      )}
+                    </div>
+                    {isMe && (
+                      <button
+                        type="button"
+                        data-testid="profile-avatar-action"
+                        onClick={() => {
+                          if (uploadFailed && current) retry(current.clientId);
+                          else if (saveFailed && current) void persistAvatar(current, true);
+                          else avatarPickerRef.current?.open();
+                        }}
+                        disabled={busy || isAvatarSaving || (!canSelect && !uploadFailed && !saveFailed)}
+                        className={`absolute -bottom-2 -end-2 flex h-11 w-11 items-center justify-center bg-blue-600 text-white rounded-2xl shadow-lg hover:bg-blue-700 transition-colors border-[3px] border-white active:scale-90 z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-70 ${uploadFailed || saveFailed ? 'ring-2 ring-red-500 ring-offset-2' : ''}`}
+                        aria-label={uploadFailed || saveFailed ? retryLabel : t('profile.avatar.change', { defaultValue: 'Change profile photo' })}
+                        title={uploadFailed || saveFailed ? retryLabel : t('profile.avatar.change', { defaultValue: 'Change profile photo' })}
+                      >
+                        {busy || isAvatarSaving ? <Loader2 size={18} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <Camera size={18} aria-hidden="true" />}
+                      </button>
+                    )}
+                  </div>
+                );
+              }}
+            />
+            {avatarSaveError && <p data-testid="profile-avatar-save-error" role="alert" className="mt-3 max-w-64 text-center text-xs font-semibold text-red-600">{avatarSaveError}</p>}
           </div>
 
           <h2 className="text-2xl font-black text-gray-900 text-center flex items-center gap-2 tracking-tight">

@@ -1,0 +1,17 @@
+{
+  "name": "@social-insight/heif-converter",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0 <25"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test --test-reporter=spec test/*.test.js",
+    "test:coverage": "node --test --experimental-test-coverage test/*.test.js"
+  },
+  "dependencies": {
+    "sharp": "0.35.4"
+  }
+}
