@@ -16,6 +16,134 @@
     "edit": "Edit",
     "remove": "Remove"
   },
+  "auth": {
+    "backToSignIn": "Back to sign in",
+    "backToWelcome": "Back to welcome",
+    "pleaseWait": "Please wait",
+    "providers": {
+      "google": "Google",
+      "facebook": "Facebook"
+    },
+    "fields": {
+      "email": "Email address",
+      "identifier": "Email or username",
+      "identifierPlaceholder": "Email or username",
+      "password": "Password",
+      "passwordPlaceholder": "Your password",
+      "code": "Six-digit code",
+      "newPassword": "New password",
+      "newPasswordPlaceholder": "At least 8 characters",
+      "passwordHelp": "Use uppercase, lowercase, a number, and a symbol."
+    },
+    "login": {
+      "title": "Welcome back",
+      "description": "Sign in to participate, share opinions, and see your insights.",
+      "signIn": "Sign in",
+      "forgotPassword": "Forgot your password?",
+      "failed": "Sign-in failed. Please try again."
+    },
+    "reset": {
+      "requestTitle": "Reset your password",
+      "confirmTitle": "Enter your reset code",
+      "requestDescription": "Enter your account email. We will send a time-limited verification code.",
+      "confirmDescription": "Use the six-digit code from your email and choose a new password.",
+      "sendCode": "Send reset code",
+      "resetPassword": "Reset password",
+      "resend": "Resend code",
+      "resendIn": "Resend code in {{seconds}}s",
+      "codeSent": "If an account matches that email, a six-digit code has been sent.",
+      "codeResent": "If an account matches that email, a new code has been sent.",
+      "success": "Your password has been reset. Sign in with your new password.",
+      "requestFailed": "We could not process this request. Please try again.",
+      "confirmFailed": "The code could not be verified. Request a new code and try again."
+    },
+    "oauth": {
+      "divider": "Or continue with",
+      "continueWith": "Continue with {{provider}}",
+      "opening": "Opening {{provider}}…",
+      "startFailed": "Could not start {{provider}} sign-in. Please try again.",
+      "loginFailed": "Social sign-in could not be completed. Please try again.",
+      "noSession": "Social sign-in did not create a session. Please try again.",
+      "restoreFailed": "We could not restore your session. Check your connection and try again.",
+      "tryEmail": "Social sign-in could not be completed. Please try again or use email."
+    },
+    "signup": {
+      "genericError": "We could not continue registration. Please try again.",
+      "sessionUnavailable": "Your registration session is no longer available. Please start again.",
+      "dismiss": "Dismiss"
+    },
+    "signupOtp": {
+      "title": "Check your email",
+      "description": "We sent a verification code to",
+      "digitLabel": "Verification code digit {{index}} of 6",
+      "resent": "A new code has been sent. Only the latest code will work.",
+      "resendFailed": "A new code could not be sent. Please try again.",
+      "sending": "Sending a new code…",
+      "resend": "Resend code",
+      "resendIn": "Resend code in {{seconds}}s",
+      "verify": "Verify"
+    },
+    "terms": {
+      "prefix": "By continuing, you agree to our Terms of Service and",
+      "privacy": "Privacy Policy"
+    },
+    "errors": {
+      "OTP_COOLDOWN": "Please wait before requesting another code.",
+      "EMAIL_UNAVAILABLE": "That email address is not available.",
+      "EMAIL_CHANGE_INVALID": "The email or verification code is invalid.",
+      "EMAIL_VERIFICATION_INVALID": "The verification code is invalid or expired.",
+      "REAUTHENTICATION_REQUIRED": "For your security, sign in again before changing sign-in methods.",
+      "REQUEST_TIMEOUT": "The request took too long. Check your connection and try again.",
+      "NETWORK_ERROR": "We could not reach the service. Check your connection and try again."
+    },
+    "account": {
+      "title": "Email and linked accounts",
+      "menuLabel": "Email and linked accounts",
+      "email": {
+        "title": "Email address",
+        "verified": "Verified",
+        "unverified": "Not verified",
+        "missing": "No email address added",
+        "sendVerification": "Send verification code",
+        "confirmVerification": "Verify email",
+        "newEmail": "New email address",
+        "newEmailPlaceholder": "new@example.com",
+        "changeHelp": "We will send a code to the new address. Confirming it signs out your other sessions.",
+        "changeAction": "Send change code",
+        "addAction": "Add email address",
+        "confirmChange": "Confirm email change",
+        "codeLabel": "Six-digit code",
+        "enterCodeFor": "Enter the code sent to {{email}}.",
+        "resend": "Resend code",
+        "resendIn": "Resend in {{seconds}}s",
+        "codeSent": "A verification code was sent to {{email}}.",
+        "verifiedSuccess": "Your email address is verified.",
+        "changedSuccess": "Your email address was changed and verified.",
+        "sendFailed": "Could not send an email verification code. Please try again.",
+        "verifyFailed": "The code could not be verified. Request a new code and try again.",
+        "changeSendFailed": "Could not send the email change code. Please try again.",
+        "changeFailed": "The email change could not be completed. Request a new code and try again."
+      },
+      "oauth": {
+        "title": "Linked accounts",
+        "help": "Link a provider only after signing in here. Social Insight never links accounts by matching email alone.",
+        "provider": "provider",
+        "linkGoogle": "Link or reconnect Google",
+        "linkFacebook": "Link or reconnect Facebook",
+        "linked": "{{provider}} is now linked to your account.",
+        "startFailed": "Could not open the provider. Check your connection and try again.",
+        "errors": {
+          "ACCOUNT_LINK_REQUIRED": "An account already uses this email. Sign in to that account before linking the provider.",
+          "OAUTH_ACCOUNT_CONFLICT": "This provider account is linked to another Social Insight account.",
+          "OAUTH_PROVIDER_ALREADY_LINKED": "A different {{provider}} account is already linked here.",
+          "OAUTH_LINK_SESSION_INVALID": "Your linking session expired or changed. Sign in again and retry.",
+          "OAUTH_STATE_INVALID": "The provider response could not be verified. Start linking again.",
+          "OAUTH_CALLBACK_INVALID": "The provider returned an incomplete response. Start linking again.",
+          "OAUTH_AUTHENTICATION_FAILED": "Account linking could not be completed. Please try again."
+        }
+      }
+    }
+  },
   "mentions": {
     "limitExceeded": "You can mention up to {{limit}} people.",
     "searching": "Searching...",

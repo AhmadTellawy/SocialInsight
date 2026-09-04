@@ -3,7 +3,7 @@ import { sendOTP, verifyOTP } from '../controllers/otpController';
 
 const router = Router();
 
-router.post('/send', sendOTP);
-router.post('/verify', verifyOTP);
+router.all('/send', sendOTP);
+router.all('/verify', verifyOTP);
 
 export default router;

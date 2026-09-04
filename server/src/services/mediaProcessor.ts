@@ -146,7 +146,7 @@ export const processMediaBuffer = async (
     throw new MediaValidationError('UNSUPPORTED_MEDIA_TYPE', 'Only JPEG, PNG, and WebP images are supported.');
   }
 
-  let metadata: sharp.Metadata;
+  let metadata: { format?: string };
   try {
     metadata = await sharp(input, {
       failOn: 'error',
@@ -161,7 +161,7 @@ export const processMediaBuffer = async (
     throw new MediaValidationError('MIME_MISMATCH', 'The image content does not match its declared file type.');
   }
 
-  let normalized: { data: Buffer; info: sharp.OutputInfo };
+  let normalized: { data: Buffer; info: { width: number; height: number } };
   try {
     normalized = await sharp(input, {
       failOn: 'error',

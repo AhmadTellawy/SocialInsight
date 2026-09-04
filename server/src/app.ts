@@ -27,14 +27,34 @@ import prisma from './prisma';
 import { requestContext } from './middleware/requestContext';
 
 const app = express();
+// Render terminates TLS and supplies the client address through one trusted proxy.
+// Express needs this for secure-cookie behavior and accurate IP rate limiting.
+app.set('trust proxy', 1);
 const httpServer = createServer(app);
 initSocket(httpServer);
 
 const PORT = process.env.PORT || 3001;
 
-const corsOptions = {
-    origin: process.env.CLIENT_URL || 'http://localhost:3000',
+const allowedOrigins = new Set(
+    (process.env.AUTH_ALLOWED_ORIGINS || process.env.CLIENT_URL || 'http://localhost:3000,http://localhost:5173')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .map((value) => {
+            try { return new URL(value).origin; } catch { return ''; }
+        })
+        .filter(Boolean)
+);
+
+const corsOptions: cors.CorsOptions = {
+    origin: (origin, callback) => {
+        // Non-browser callers do not send Origin; browser origins are exact-match only.
+        if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+        callback(new Error('Origin is not allowed'));
+    },
     credentials: true,
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'X-CSRF-Token', 'Authorization'],
     exposedHeaders: ['X-Next-Cursor', 'X-Request-Id'],
 };
 app.use(requestContext);
@@ -82,15 +102,10 @@ const apiLimiter = rateLimit({
     limit: 500,
     standardHeaders: true,
     legacyHeaders: false,
-    message: 'Too many requests from this IP, please try again after 15 minutes'
-});
-
-const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    limit: 10,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: 'Too many authentication attempts, please try again after 15 minutes'
+    message: 'Too many requests from this IP, please try again after 15 minutes',
+    // Authentication has durable, identity-aware database throttles. Avoid a
+    // second proxy-IP MemoryStore bucket that could aggregate all Vercel users.
+    skip: (req) => req.path.startsWith('/auth') || req.path.startsWith('/otp')
 });
 
 app.use('/api/', apiLimiter);
@@ -98,8 +113,8 @@ app.use('/api/', apiLimiter);
 app.use('/api/posts', postRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/groups', groupRoutes);
-app.use('/api/auth', authLimiter, authRoutes);
-app.use('/api/otp', authLimiter, otpRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/otp', otpRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/push', pushRoutes);
 app.use('/api/search', searchRoutes);

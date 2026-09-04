@@ -10,7 +10,7 @@
     "dev": "vite",
     "server": "cd server && npm run dev",
     "build": "vite build",
-    "test:unit": "node --experimental-transform-types --test services/mediaApi.test.ts utils/feedRequest.test.ts utils/mediaFileValidation.test.ts utils/mediaSafeStorage.test.ts utils/mediaUploadRegistry.test.ts utils/mediaUploadScheduler.test.ts utils/mentionAutocomplete.test.ts utils/optionPresentation.test.ts utils/postOptions.test.ts utils/profileEditState.test.ts utils/profileLinkErrors.test.ts utils/profileValidation.test.ts utils/shareCard.test.ts utils/textEntities.test.ts",
+    "test:unit": "node --experimental-transform-types --test services/authApi.test.ts services/mediaApi.test.ts utils/authUi.test.ts utils/feedRequest.test.ts utils/mediaFileValidation.test.ts utils/mediaSafeStorage.test.ts utils/mediaUploadRegistry.test.ts utils/mediaUploadScheduler.test.ts utils/mentionAutocomplete.test.ts utils/optionPresentation.test.ts utils/postOptions.test.ts utils/profileEditState.test.ts utils/profileLinkErrors.test.ts utils/profileValidation.test.ts utils/shareCard.test.ts utils/textEntities.test.ts",
     "test:e2e:profile": "playwright test --config=playwright.profile.config.ts",
     "preview": "vite preview"
   },
@@ -27,7 +27,7 @@
     "react-dom": "^19.2.3",
     "react-easy-crop": "6.2.3",
     "react-i18next": "^17.0.6",
-    "react-router-dom": "^7.14.2",
+    "react-router-dom": "7.18.3",
     "socket.io-client": "^4.8.3"
   },
   "devDependencies": {

@@ -1,0 +1,225 @@
+import { createHmac, randomInt } from 'crypto';
+import { Prisma } from '@prisma/client';
+import bcrypt from 'bcryptjs';
+import prisma from '../prisma';
+import { AuthEmailPurpose, sendAuthEmail } from './emailService';
+
+export type OtpPurpose = AuthEmailPurpose;
+
+interface IssueOtpInput {
+    destination: string;
+    purpose: OtpPurpose;
+    subject: string;
+    requestIp?: string;
+    userAgent?: string;
+}
+
+interface VerifyOtpInput {
+    destination: string;
+    purpose: OtpPurpose;
+    subject: string;
+    code: string;
+}
+
+export class OtpError extends Error {
+    constructor(public readonly code: 'OTP_COOLDOWN' | 'OTP_INVALID' | 'OTP_DELIVERY_FAILED', message: string) {
+        super(message);
+    }
+}
+
+const boundedInt = (name: string, fallback: number, min: number, max: number): number => {
+    const parsed = Number.parseInt(process.env[name] || '', 10);
+    return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback;
+};
+
+const secret = (): string => process.env.OTP_HASH_SECRET?.trim()
+    || process.env.AUTH_SESSION_HASH_SECRET?.trim()
+    || process.env.JWT_SECRET?.trim()
+    || (() => { throw new Error('OTP_HASH_SECRET or AUTH_SESSION_HASH_SECRET must be configured'); })();
+
+const digest = (value: string): string => createHmac('sha256', secret()).update(value).digest('hex');
+const normalizeEmail = (value: string): string => value.trim().toLowerCase();
+const db = prisma as any;
+
+const localLocks = new Map<string, Promise<void>>();
+const withLocalLock = async <T>(key: string, work: () => Promise<T>): Promise<T> => {
+    const previous = localLocks.get(key) || Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    const tail = previous.then(() => current);
+    localLocks.set(key, tail);
+    await previous;
+    try {
+        return await work();
+    } finally {
+        release();
+        if (localLocks.get(key) === tail) localLocks.delete(key);
+    }
+};
+
+const acquireDatabaseLock = async (tx: any, key: string): Promise<void> => {
+    await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
+};
+
+const issueEmailOtpInternal = async (input: IssueOtpInput): Promise<{ cooldownUntil: Date }> => {
+    const destination = normalizeEmail(input.destination);
+    const destinationHash = digest(destination);
+    const issuanceKey = `${destinationHash}:${input.purpose}:${input.subject}`;
+    const now = new Date();
+    const code = randomInt(100000, 1000000).toString();
+    const codeHash = await bcrypt.hash(`${input.purpose}:${input.subject}:${code}`, boundedInt('OTP_BCRYPT_ROUNDS', 10, 8, 14));
+    const ttlSeconds = boundedInt('OTP_TTL_SECONDS', 600, 120, 1800);
+    const expiresAt = new Date(now.getTime() + ttlSeconds * 1000);
+    const cooldownUntil = new Date(now.getTime() + boundedInt('OTP_COOLDOWN_SECONDS', 60, 15, 600) * 1000);
+    const maxAttempts = boundedInt('OTP_MAX_ATTEMPTS', 5, 3, 10);
+
+    let challenge: any;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+            challenge = await db.$transaction(async (tx: any) => {
+                await acquireDatabaseLock(tx, issuanceKey);
+                const active = await tx.otpChallenge.findFirst({
+                    where: {
+                        destinationHash,
+                        purpose: input.purpose,
+                        subject: input.subject,
+                        deliveryStatus: { in: ['PENDING', 'SENT'] },
+                        consumedAt: null,
+                        invalidatedAt: null,
+                        expiresAt: { gt: now },
+                        cooldownUntil: { gt: now }
+                    },
+                    select: { cooldownUntil: true }
+                });
+                if (active) return { existing: true, cooldownUntil: active.cooldownUntil };
+                const latest = await tx.otpChallenge.findFirst({
+                    where: { destinationHash, purpose: input.purpose, subject: input.subject },
+                    orderBy: { version: 'desc' },
+                    select: { version: true }
+                });
+                await tx.otpChallenge.updateMany({
+                    where: { destinationHash, purpose: input.purpose, subject: input.subject, consumedAt: null, invalidatedAt: null },
+                    data: { invalidatedAt: now, deliveryStatus: 'FAILED' }
+                });
+                return tx.otpChallenge.create({
+                    data: {
+                        destination,
+                        destinationHash,
+                        purpose: input.purpose,
+                        subject: input.subject,
+                        codeHash,
+                        deliveryStatus: 'PENDING',
+                        attempts: 0,
+                        maxAttempts,
+                        expiresAt,
+                        cooldownUntil,
+                        version: (latest?.version || 0) + 1,
+                        ipHash: input.requestIp ? digest(input.requestIp) : null,
+                        userAgentHash: input.userAgent ? digest(input.userAgent.slice(0, 512)) : null
+                    }
+                });
+            });
+            if (challenge.existing) throw new OtpError('OTP_COOLDOWN', 'Please wait before requesting another code');
+            break;
+        } catch (error: any) {
+            if (error instanceof OtpError) throw error;
+            if (error?.code !== 'P2002' || attempt === 2) throw error;
+        }
+    }
+    if (!challenge) throw new OtpError('OTP_DELIVERY_FAILED', 'Unable to send verification code');
+
+    try {
+        await sendAuthEmail({
+            to: destination,
+            code,
+            purpose: input.purpose,
+            idempotencyKey: `otp-${challenge.id}-v${challenge.version}`,
+            expiresInMinutes: ttlSeconds / 60
+        });
+        const updated = await db.otpChallenge.updateMany({
+            where: { id: challenge.id, version: challenge.version, deliveryStatus: 'PENDING', invalidatedAt: null },
+            data: { deliveryStatus: 'SENT' }
+        });
+        if (updated.count !== 1) throw Object.assign(new Error('Challenge was invalidated during delivery'), { code: 'OTP_STATE_CHANGED' });
+        return { cooldownUntil };
+    } catch (error) {
+        await db.otpChallenge.updateMany({
+            where: { id: challenge.id, deliveryStatus: 'PENDING' },
+            data: { deliveryStatus: 'FAILED', invalidatedAt: new Date() }
+        }).catch(() => undefined);
+        throw new OtpError('OTP_DELIVERY_FAILED', 'Unable to send verification code');
+    }
+};
+
+export const issueEmailOtp = async (input: IssueOtpInput): Promise<{ cooldownUntil: Date }> => {
+    const key = `issue:${digest(`${normalizeEmail(input.destination)}:${input.purpose}:${input.subject}`)}`;
+    return withLocalLock(key, () => issueEmailOtpInternal(input));
+};
+
+export const consumeEmailOtp = async <T = undefined>(
+    input: VerifyOtpInput,
+    onConsume?: (tx: any) => Promise<T>
+): Promise<{ challengeId: string; value: T | undefined }> => {
+    if (!/^\d{6}$/.test(input.code)) throw new OtpError('OTP_INVALID', 'Invalid or expired code');
+    const destinationHash = digest(normalizeEmail(input.destination));
+    const now = new Date();
+    const challenge = await db.otpChallenge.findFirst({
+        where: {
+            destinationHash,
+            purpose: input.purpose,
+            subject: input.subject,
+            deliveryStatus: 'SENT',
+            consumedAt: null,
+            invalidatedAt: null,
+            expiresAt: { gt: now }
+        },
+        orderBy: { createdAt: 'desc' }
+    });
+    if (!challenge || challenge.attempts >= challenge.maxAttempts) throw new OtpError('OTP_INVALID', 'Invalid or expired code');
+
+    const result = await withLocalLock<{ valid: boolean; affected: number; value?: T }>(`verify:${challenge.id}`, () => db.$transaction(async (tx: any) => {
+        await acquireDatabaseLock(tx, `otp-verify:${challenge.id}`);
+        const current = await tx.otpChallenge.findUnique({ where: { id: challenge.id } });
+        const transactionNow = new Date();
+        if (!current || current.deliveryStatus !== 'SENT' || current.consumedAt || current.invalidatedAt
+            || current.expiresAt <= transactionNow || current.attempts >= current.maxAttempts) {
+            return { valid: false, affected: 0 };
+        }
+
+        const valid = await bcrypt.compare(`${input.purpose}:${input.subject}:${input.code}`, current.codeHash);
+        if (valid) {
+            const consumed = await tx.otpChallenge.updateMany({
+                where: {
+                    id: current.id,
+                    deliveryStatus: 'SENT',
+                    consumedAt: null,
+                    invalidatedAt: null,
+                    expiresAt: { gt: transactionNow },
+                    attempts: current.attempts
+                },
+                data: { consumedAt: transactionNow }
+            });
+            if (consumed.count !== 1) return { valid: false, affected: 0 };
+            const value = onConsume ? await onConsume(tx) : undefined;
+            return { valid: true, affected: 1, value };
+        }
+
+        const attempts = current.attempts + 1;
+        const incremented = await tx.otpChallenge.updateMany({
+            where: {
+                id: current.id,
+                deliveryStatus: 'SENT',
+                consumedAt: null,
+                invalidatedAt: null,
+                attempts: current.attempts
+            },
+            data: {
+                attempts,
+                ...(attempts >= current.maxAttempts ? { invalidatedAt: transactionNow, deliveryStatus: 'FAILED' } : {})
+            }
+        });
+        return { valid: false, affected: incremented.count };
+    }));
+    if (!result.valid || result.affected !== 1) throw new OtpError('OTP_INVALID', 'Invalid or expired code');
+    return { challengeId: challenge.id, value: result.value };
+};

@@ -1,12 +1,18 @@
-import { Server as HttpServer } from 'http';
-import jwt, { JwtPayload } from 'jsonwebtoken';
+import { Server as HttpServer, IncomingMessage } from 'http';
+import type { Request } from 'express';
 import { Server, Socket } from 'socket.io';
-import prisma from '../prisma';
-import { JWT_SECRET } from '../middleware/authMiddleware';
+import {
+    AuthenticatedSession,
+    onSessionRevocation,
+    readCookies,
+    resolveSession,
+    SESSION_COOKIE_NAME
+} from './sessionService';
 
 let io: Server;
+let removeRevocationListener: (() => void) | undefined;
 
-type SocketAuthFailureCode = 'missing_token' | 'invalid_token' | 'inactive_account';
+type SocketAuthFailureCode = 'untrusted_origin' | 'missing_session' | 'invalid_session' | 'inactive_account';
 
 export class SocketAuthenticationError extends Error {
     constructor(public readonly code: SocketAuthFailureCode) {
@@ -16,77 +22,107 @@ export class SocketAuthenticationError extends Error {
 }
 
 export interface SocketAuthDependencies {
-    verifyToken: (token: string) => string;
-    findAccountStatus: (userId: string) => Promise<string | null>;
+    resolveRequestSession: (request: Request) => Promise<AuthenticatedSession | null>;
+    isRequestOriginTrusted: (request: Request) => boolean;
 }
 
-export const verifySocketJwt = (token: string, secret: string = JWT_SECRET): string => {
-    const decoded = jwt.verify(token, secret) as JwtPayload | string;
-    if (typeof decoded === 'string' || typeof decoded.userId !== 'string' || !decoded.userId) {
-        throw new SocketAuthenticationError('invalid_token');
+const toAuthRequest = (request: IncomingMessage): Request => ({
+    headers: request.headers,
+    header: (name: string) => {
+        const value = request.headers[name.toLowerCase()];
+        return Array.isArray(value) ? value[0] : value;
     }
-    return decoded.userId;
+} as unknown as Request);
+
+const allowedOrigins = (): Set<string> => new Set(
+    (process.env.AUTH_ALLOWED_ORIGINS || process.env.CLIENT_URL || 'http://localhost:3000')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .map((value) => {
+            try { return new URL(value).origin; } catch { return ''; }
+        })
+        .filter(Boolean)
+);
+
+const isSocketOriginTrusted = (request: Request): boolean => {
+    const origin = request.header('origin');
+    return Boolean(origin && allowedOrigins().has(origin));
 };
 
 const defaultSocketAuthDependencies: SocketAuthDependencies = {
-    verifyToken: verifySocketJwt,
-    findAccountStatus: async (userId) => {
-        const account = await prisma.user.findUnique({
-            where: { id: userId },
-            select: { status: true }
-        });
-        return account?.status || null;
-    }
+    resolveRequestSession: resolveSession,
+    isRequestOriginTrusted: isSocketOriginTrusted
 };
 
 export const getUserNotificationRoom = (userId: string): string => `user:${userId}`;
 
-export const authenticateSocketToken = async (
-    token: unknown,
+interface SocketIdentity {
+    userId: string;
+    sessionId?: string;
+}
+
+const authenticateSocketIdentityRequest = async (
+    request: IncomingMessage,
+    dependencies: SocketAuthDependencies = defaultSocketAuthDependencies
+): Promise<SocketIdentity> => {
+    const authRequest = toAuthRequest(request);
+
+    if (!dependencies.isRequestOriginTrusted(authRequest)) {
+        throw new SocketAuthenticationError('untrusted_origin');
+    }
+    if (!readCookies(authRequest)[SESSION_COOKIE_NAME]) {
+        throw new SocketAuthenticationError('missing_session');
+    }
+
+    let session: AuthenticatedSession | null;
+    try { session = await dependencies.resolveRequestSession(authRequest); } catch {
+        throw new SocketAuthenticationError('invalid_session');
+    }
+    if (!session) throw new SocketAuthenticationError('invalid_session');
+    if (session.user.status !== 'ACTIVE') throw new SocketAuthenticationError('inactive_account');
+    return { userId: session.userId, sessionId: session.id };
+};
+
+export const authenticateSocketRequest = async (
+    request: IncomingMessage,
     dependencies: SocketAuthDependencies = defaultSocketAuthDependencies
 ): Promise<string> => {
-    if (typeof token !== 'string' || !token.trim()) {
-        throw new SocketAuthenticationError('missing_token');
-    }
-
-    let userId: string;
-    try {
-        userId = dependencies.verifyToken(token);
-    } catch (error) {
-        if (error instanceof SocketAuthenticationError) throw error;
-        throw new SocketAuthenticationError('invalid_token');
-    }
-
-    const status = await dependencies.findAccountStatus(userId);
-    if (status !== 'ACTIVE') {
-        throw new SocketAuthenticationError('inactive_account');
-    }
-
-    return userId;
+    return (await authenticateSocketIdentityRequest(request, dependencies)).userId;
 };
 
 interface SocketServerOptions {
-    authenticate?: (token: unknown) => Promise<string>;
+    authenticate?: (request: IncomingMessage) => Promise<string | SocketIdentity>;
 }
+
+const isConfiguredOriginTrusted = (origin: string | undefined): boolean => {
+    if (!origin) return false;
+    const request = {
+        headers: { origin },
+        header: (name: string) => name.toLowerCase() === 'origin' ? origin : undefined
+    } as unknown as Request;
+    return isSocketOriginTrusted(request);
+};
 
 export const initSocket = (server: HttpServer, options: SocketServerOptions = {}) => {
     io = new Server(server, {
         cors: {
-            origin: process.env.CLIENT_URL || 'http://localhost:3000',
+            origin: (origin, callback) => callback(null, isConfiguredOriginTrusted(origin)),
             methods: ['GET', 'POST'],
             credentials: true,
         }
     });
 
-    const authenticate = options.authenticate || authenticateSocketToken;
+    const authenticate = options.authenticate || authenticateSocketIdentityRequest;
 
     io.use(async (socket, next) => {
         try {
-            const userId = await authenticate(socket.handshake.auth?.token);
-            socket.data.userId = userId;
+            const identity = await authenticate(socket.request);
+            socket.data.userId = typeof identity === 'string' ? identity : identity.userId;
+            socket.data.sessionId = typeof identity === 'string' ? undefined : identity.sessionId;
             next();
         } catch (error) {
-            const reason = error instanceof SocketAuthenticationError ? error.code : 'invalid_token';
+            const reason = error instanceof SocketAuthenticationError ? error.code : 'invalid_session';
             console.warn(JSON.stringify({ event: 'socket_auth_failed', reason }));
             next(new Error('unauthorized'));
         }
@@ -94,16 +130,31 @@ export const initSocket = (server: HttpServer, options: SocketServerOptions = {}
 
     io.on('connection', (socket: Socket) => {
         const userId = socket.data.userId as string;
-        const room = getUserNotificationRoom(userId);
-        socket.join(room);
-        console.info(JSON.stringify({ event: 'socket_connected', userId }));
+        socket.join(getUserNotificationRoom(userId));
+        console.info(JSON.stringify({ event: 'socket_connected' }));
 
         socket.on('disconnect', () => {
-            console.info(JSON.stringify({ event: 'socket_disconnected', userId }));
+            console.info(JSON.stringify({ event: 'socket_disconnected' }));
         });
     });
 
+    removeRevocationListener?.();
+    removeRevocationListener = onSessionRevocation(({ sessionId, userId }) => {
+        for (const socket of io.sockets.sockets.values()) {
+            if ((sessionId && socket.data.sessionId === sessionId) || (userId && socket.data.userId === userId)) {
+                socket.disconnect(true);
+            }
+        }
+    });
+
     return io;
+};
+
+export const disconnectUserSockets = (userId: string): void => {
+    if (!io) return;
+    for (const socket of io.sockets.sockets.values()) {
+        if (socket.data.userId === userId) socket.disconnect(true);
+    }
 };
 
 export const getIO = () => {

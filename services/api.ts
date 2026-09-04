@@ -1,7 +1,11 @@
 import { normalizeSurvey } from '../types.ts';
 import type { Notification, PostAnswerPayload, UserProfile } from '../types.ts';
 
-export const API_BASE_URL = import.meta.env?.VITE_API_URL || '/api';
+// Production HTTP auth is deliberately same-origin. Vercel proxies /api to the
+// Render service, so session cookies are first-party even when browsers block
+// third-party cookies. VITE_API_URL remains available for local development.
+export const API_BASE_URL = import.meta.env?.PROD ? '/api' : (import.meta.env?.VITE_API_URL || '/api');
+export const AUTH_REQUEST_TIMEOUT_MS = 15_000;
 
 export class ApiError extends Error {
     constructor(
@@ -60,6 +64,11 @@ export type CurrentUserProfile = Omit<UserProfile, 'birthday'> & {
     updatedAt?: string;
 };
 
+export type AuthSessionPayload = {
+    user: CurrentUserProfile;
+    csrfToken?: string;
+};
+
 const throwApiError = async (response: Response, fallbackMessage: string): Promise<never> => {
     let details: Record<string, unknown> = {};
     try {
@@ -90,8 +99,11 @@ const resolveAssets = (obj: any): any => {
     if (!obj) return obj;
     if (typeof obj === 'string') {
         if (obj.startsWith('/uploads/')) {
-            // Local dev falls back to :3001, otherwise extract from the API URL
-            const baseUrl = API_BASE_URL === '/api' ? 'http://localhost:3001' : API_BASE_URL.replace(/\/api\/?$/, '');
+            // Same-origin production assets pass through the /uploads proxy;
+            // local development keeps the standalone API server fallback.
+            const baseUrl = API_BASE_URL === '/api'
+                ? (import.meta.env?.PROD ? window.location.origin : 'http://localhost:3001')
+                : API_BASE_URL.replace(/\/api\/?$/, '');
             return `${baseUrl}${obj}`;
         }
         return obj;
@@ -109,13 +121,78 @@ const resolveAssets = (obj: any): any => {
 
 type AuthFetchInit = RequestInit & {
     timeoutMs?: number;
+    suppressAuthExpired?: boolean;
 };
 
+const CSRF_SESSION_KEY = 'si_csrf_token';
+const AUTH_IDENTITY_SESSION_KEY = 'si_auth_identity';
+let csrfTokenInMemory: string | null = null;
+let authIdentityInMemory: string | null = null;
+
+const getSessionStorage = (): Storage | null => {
+    try {
+        return typeof sessionStorage === 'undefined' ? null : sessionStorage;
+    } catch {
+        return null;
+    }
+};
+
+const getCsrfToken = (): string | null => {
+    if (csrfTokenInMemory) return csrfTokenInMemory;
+    csrfTokenInMemory = getSessionStorage()?.getItem(CSRF_SESSION_KEY) || null;
+    return csrfTokenInMemory;
+};
+
+const rememberCsrfToken = (value: unknown): void => {
+    if (typeof value !== 'string' || value.length < 16 || value.length > 512) return;
+    csrfTokenInMemory = value;
+    getSessionStorage()?.setItem(CSRF_SESSION_KEY, value);
+};
+
+const rememberSessionPayload = (payload: unknown): void => {
+    if (!payload || typeof payload !== 'object') return;
+    const record = payload as Record<string, unknown>;
+    rememberCsrfToken(record.csrfToken);
+    if (record.user && typeof record.user === 'object') {
+        const nestedUser = record.user as Record<string, unknown>;
+        if (typeof nestedUser.id === 'string') {
+            authIdentityInMemory = nestedUser.id;
+            getSessionStorage()?.setItem(AUTH_IDENTITY_SESSION_KEY, nestedUser.id);
+        }
+    }
+};
+
+export const getAuthSessionIdentity = (): string | null => {
+    if (authIdentityInMemory) return authIdentityInMemory;
+    authIdentityInMemory = getSessionStorage()?.getItem(AUTH_IDENTITY_SESSION_KEY) || null;
+    return authIdentityInMemory;
+};
+
+const clearSessionMetadata = (): void => {
+    csrfTokenInMemory = null;
+    authIdentityInMemory = null;
+    const storage = getSessionStorage();
+    storage?.removeItem(CSRF_SESSION_KEY);
+    storage?.removeItem(AUTH_IDENTITY_SESSION_KEY);
+};
+
+const isUnsafeMethod = (method?: string): boolean =>
+    !['GET', 'HEAD', 'OPTIONS'].includes((method || 'GET').toUpperCase());
+
 export const authFetch = async (input: RequestInfo | URL, init?: AuthFetchInit): Promise<Response> => {
-    const token = localStorage.getItem('si_token');
+    let fetchUrl = input;
+    if (typeof input === 'string') {
+        if (input.startsWith('/api')) {
+            fetchUrl = input.replace(/^\/api/, API_BASE_URL);
+        } else if (input.startsWith('/') && !input.startsWith('http')) {
+            fetchUrl = `${API_BASE_URL}${input}`;
+        }
+    }
+
     const headers = new Headers(init?.headers);
-    if (token) {
-        headers.set('Authorization', `Bearer ${token}`);
+    const csrfToken = getCsrfToken();
+    if (csrfToken && isUnsafeMethod(init?.method) && !headers.has('X-CSRF-Token')) {
+        headers.set('X-CSRF-Token', csrfToken);
     }
     
     // Default Content-Type if body exists and no content-type is set
@@ -123,8 +200,9 @@ export const authFetch = async (input: RequestInfo | URL, init?: AuthFetchInit):
         headers.set('Content-Type', 'application/json');
     }
 
-    const { timeoutMs, signal: upstreamSignal, ...requestInit } = init || {};
-    const requestController = timeoutMs && timeoutMs > 0 ? new AbortController() : null;
+    const { timeoutMs, suppressAuthExpired, signal: upstreamSignal, ...requestInit } = init || {};
+    const effectiveTimeoutMs = timeoutMs ?? AUTH_REQUEST_TIMEOUT_MS;
+    const requestController = effectiveTimeoutMs > 0 ? new AbortController() : null;
     let didTimeout = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const abortFromUpstream = () => {
@@ -145,28 +223,20 @@ export const authFetch = async (input: RequestInfo | URL, init?: AuthFetchInit):
         upstreamSignal?.addEventListener('abort', abortFromUpstream, { once: true });
     }
 
-    if (requestController && timeoutMs && timeoutMs > 0) {
+    if (requestController && effectiveTimeoutMs > 0) {
         timeoutId = setTimeout(() => {
             didTimeout = true;
             requestController.abort();
             cleanupRequestControls();
-        }, timeoutMs);
+        }, effectiveTimeoutMs);
     }
 
     const modifiedInit: RequestInit = {
         ...requestInit,
+        credentials: requestInit.credentials ?? 'include',
         headers,
         signal: requestController?.signal || upstreamSignal
     };
-
-    let fetchUrl = input;
-    if (typeof input === 'string') {
-        if (input.startsWith('/api')) {
-            fetchUrl = input.replace(/^\/api/, API_BASE_URL);
-        } else if (input.startsWith('/') && !input.startsWith('http')) {
-            fetchUrl = `${API_BASE_URL}${input}`;
-        }
-    }
 
     let response: Response;
     try {
@@ -185,11 +255,11 @@ export const authFetch = async (input: RequestInfo | URL, init?: AuthFetchInit):
         throw error;
     }
     
-    if (response.status === 401) {
-        // Handle unauthorized (expired token or invalid)
-        console.error('Authentication expired. Logging out...');
-        localStorage.removeItem('si_token');
-        localStorage.removeItem('si_user');
+    const responseCsrfToken = response.headers.get('X-CSRF-Token');
+    if (responseCsrfToken) rememberCsrfToken(responseCsrfToken);
+
+    if (response.status === 401 && !suppressAuthExpired) {
+        clearSessionMetadata();
         window.dispatchEvent(new Event('auth_expired'));
     }
     
@@ -211,6 +281,9 @@ export const authFetch = async (input: RequestInfo | URL, init?: AuthFetchInit):
     const originalJson = response.json.bind(response);
     response.json = async () => {
         const data = await consumeResponse(originalJson);
+        if (data && typeof data === 'object') {
+            rememberCsrfToken((data as Record<string, unknown>).csrfToken);
+        }
         return resolveAssets(data);
     };
     const originalText = response.text.bind(response);
@@ -704,17 +777,155 @@ export const api = {
         const response = await authFetch(`${API_BASE_URL}/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
+            body: JSON.stringify(data),
+            suppressAuthExpired: true
         });
         if (!response.ok) {
             const errorData = await response.json();
             throw new Error(errorData.error || 'Login failed');
         }
         const responseData = await response.json();
-        if (responseData.token) {
-            localStorage.setItem('si_token', responseData.token);
-        }
+        rememberSessionPayload(responseData);
         return responseData;
+    },
+
+    getSession: async (requestOptions: ApiRequestOptions & { retryOnce?: boolean } = {}): Promise<AuthSessionPayload | null> => {
+        const load = async (): Promise<AuthSessionPayload | null> => {
+            const response = await authFetch(`${API_BASE_URL}/auth/session`, {
+                signal: requestOptions.signal,
+                timeoutMs: requestOptions.timeoutMs ?? 15_000,
+                suppressAuthExpired: true
+            });
+            if (response.status === 401) {
+                clearSessionMetadata();
+                return null;
+            }
+            if (!response.ok) await throwApiError(response, 'Failed to restore your session');
+            const payload = await response.json() as AuthSessionPayload | CurrentUserProfile;
+            const normalized = payload && typeof payload === 'object' && 'user' in payload
+                ? payload as AuthSessionPayload
+                : { user: payload as CurrentUserProfile };
+            rememberSessionPayload(normalized);
+            return normalized;
+        };
+
+        try {
+            return await load();
+        } catch (error) {
+            const retryable = requestOptions.retryOnce
+                && !requestOptions.signal?.aborted
+                && (error instanceof ApiError ? error.status === 0 || error.status >= 500 : false);
+            if (!retryable) throw error;
+            await new Promise<void>((resolve, reject) => {
+                const onAbort = () => {
+                    clearTimeout(timer);
+                    reject(requestOptions.signal?.reason || new DOMException('Aborted', 'AbortError'));
+                };
+                const timer = setTimeout(() => {
+                    requestOptions.signal?.removeEventListener('abort', onAbort);
+                    resolve();
+                }, 300);
+                requestOptions.signal?.addEventListener('abort', onAbort, { once: true });
+            });
+            return load();
+        }
+    },
+
+    logout: async (): Promise<void> => {
+        const response = await authFetch(`${API_BASE_URL}/auth/logout`, {
+            method: 'POST',
+            suppressAuthExpired: true
+        });
+        if (!response.ok && response.status !== 401) await throwApiError(response, 'Failed to log out');
+        clearSessionMetadata();
+    },
+
+    startOAuth: async (provider: 'google' | 'facebook'): Promise<string> => {
+        const response = await authFetch(`${API_BASE_URL}/auth/oauth/${provider}/start`, {
+            method: 'POST',
+            suppressAuthExpired: true
+        });
+        if (!response.ok) await throwApiError(response, `Could not start ${provider} sign-in`);
+        const payload = await response.json() as { authorizationUrl?: unknown };
+        if (typeof payload.authorizationUrl !== 'string') {
+            throw new ApiError('The social sign-in provider returned an invalid address', 502, 'INVALID_OAUTH_REDIRECT');
+        }
+        let authorizationUrl: URL;
+        try {
+            authorizationUrl = new URL(payload.authorizationUrl);
+        } catch {
+            throw new ApiError('The social sign-in provider returned an invalid address', 502, 'INVALID_OAUTH_REDIRECT');
+        }
+        const allowedHost = provider === 'google' ? 'accounts.google.com' : 'www.facebook.com';
+        if (authorizationUrl.protocol !== 'https:' || authorizationUrl.hostname !== allowedHost) {
+            throw new ApiError('The social sign-in provider returned an unsafe address', 502, 'INVALID_OAUTH_REDIRECT');
+        }
+        return authorizationUrl.toString();
+    },
+
+    requestPasswordReset: async (email: string): Promise<void> => {
+        const response = await authFetch(`${API_BASE_URL}/auth/password-reset/request`, {
+            method: 'POST',
+            body: JSON.stringify({ email }),
+            suppressAuthExpired: true
+        });
+        if (!response.ok) await throwApiError(response, 'We could not process this password reset request');
+    },
+
+    confirmPasswordReset: async (email: string, code: string, password: string): Promise<void> => {
+        const response = await authFetch(`${API_BASE_URL}/auth/password-reset/confirm`, {
+            method: 'POST',
+            body: JSON.stringify({ email, code, password }),
+            suppressAuthExpired: true
+        });
+        if (!response.ok) await throwApiError(response, 'The reset code could not be verified');
+    },
+
+    requestEmailVerification: async (): Promise<void> => {
+        const response = await authFetch(`${API_BASE_URL}/auth/email-verification/request`, { method: 'POST' });
+        if (!response.ok) await throwApiError(response, 'Could not send an email verification code');
+    },
+
+    confirmEmailVerification: async (code: string): Promise<void> => {
+        const response = await authFetch(`${API_BASE_URL}/auth/email-verification/confirm`, {
+            method: 'POST',
+            body: JSON.stringify({ code })
+        });
+        if (!response.ok) await throwApiError(response, 'The email verification code could not be verified');
+    },
+
+    requestEmailChange: async (email: string): Promise<void> => {
+        const response = await authFetch(`${API_BASE_URL}/auth/email-change/request`, {
+            method: 'POST',
+            body: JSON.stringify({ email })
+        });
+        if (!response.ok) await throwApiError(response, 'Could not send an email change code');
+    },
+
+    confirmEmailChange: async (email: string, code: string): Promise<{ success: boolean; email: string; csrfToken?: string }> => {
+        const response = await authFetch(`${API_BASE_URL}/auth/email-change/confirm`, {
+            method: 'POST',
+            body: JSON.stringify({ email, code })
+        });
+        if (!response.ok) await throwApiError(response, 'The email change code could not be verified');
+        const payload = await response.json() as { success: boolean; email: string; csrfToken?: string };
+        rememberSessionPayload(payload);
+        return payload;
+    },
+
+    startOAuthLink: async (provider: 'google' | 'facebook'): Promise<string> => {
+        const response = await authFetch(`${API_BASE_URL}/auth/oauth/${provider}/link`, { method: 'POST' });
+        if (!response.ok) await throwApiError(response, `Could not start ${provider} account linking`);
+        const payload = await response.json() as { authorizationUrl?: unknown };
+        if (typeof payload.authorizationUrl !== 'string') {
+            throw new ApiError('The social provider returned an invalid address', 502, 'INVALID_OAUTH_REDIRECT');
+        }
+        const authorizationUrl = new URL(payload.authorizationUrl);
+        const allowedHost = provider === 'google' ? 'accounts.google.com' : 'www.facebook.com';
+        if (authorizationUrl.protocol !== 'https:' || authorizationUrl.hostname !== allowedHost) {
+            throw new ApiError('The social provider returned an unsafe address', 502, 'INVALID_OAUTH_REDIRECT');
+        }
+        return authorizationUrl.toString();
     },
 
     sendOTP: async (identifier: string, type: 'email' | 'phone') => {
@@ -795,10 +1006,7 @@ export const api = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ pendingId })
         });
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || 'Failed to send OTP');
-        }
+        if (!response.ok) await throwApiError(response, 'Failed to send verification code');
         return response.json();
     },
 
@@ -806,16 +1014,14 @@ export const api = {
         const response = await authFetch(`${API_BASE_URL}/auth/register/complete`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pendingId, code })
+            body: JSON.stringify({ pendingId, otp: code })
         });
         if (!response.ok) {
             const errorData = await response.json();
             throw new Error(errorData.error || 'Failed to complete registration');
         }
         const responseData = await response.json();
-        if (responseData.token) {
-            localStorage.setItem('si_token', responseData.token);
-        }
+        rememberSessionPayload(responseData);
         return responseData;
     },
 
@@ -1186,14 +1392,14 @@ export const api = {
         return response.json();
     },
 
-    setupPushNotifications: async (token?: string) => {
+    setupPushNotifications: async () => {
         if (!('serviceWorker' in navigator) || !('PushManager' in window)) return false;
         try {
             const permission = await Notification.requestPermission();
             if (permission !== 'granted') return false;
 
             const registration = await navigator.serviceWorker.ready;
-            const res = await fetch(`${API_BASE_URL}/push/vapid-public-key`);
+            const res = await authFetch(`${API_BASE_URL}/push/vapid-public-key`);
             if (!res.ok) throw new Error('Failed to fetch vapid key');
             const { publicKey } = await res.json();
 
@@ -1210,13 +1416,9 @@ export const api = {
                 applicationServerKey: outputArray
             });
 
-            const headers = new Headers({ 'Content-Type': 'application/json' });
-            const authToken = token || localStorage.getItem('si_token');
-            if (authToken) headers.set('Authorization', `Bearer ${authToken}`);
-
-            await fetch(`${API_BASE_URL}/push/subscribe`, {
+            await authFetch(`${API_BASE_URL}/push/subscribe`, {
                 method: 'POST',
-                headers,
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ subscription })
             });
             return true;

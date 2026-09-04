@@ -2,6 +2,18 @@
   "buildCommand": "vite build",
   "rewrites": [
     {
+      "source": "/api/:path*",
+      "destination": "https://socialinsight-api.onrender.com/api/:path*"
+    },
+    {
+      "source": "/socket.io/:path*",
+      "destination": "https://socialinsight-api.onrender.com/socket.io/:path*"
+    },
+    {
+      "source": "/uploads/:path*",
+      "destination": "https://socialinsight-api.onrender.com/uploads/:path*"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

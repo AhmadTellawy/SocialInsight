@@ -7,7 +7,7 @@ import {
   Trash2, ChevronRight, Check, AlertTriangle, Smartphone,
   Languages, Type, MessageSquare, UserPlus, Camera, Edit3, Save,
   X, Briefcase, GraduationCap, Heart, UserCircle, MapPin, Hash,
-  CalendarDays, Link2, Image as ImageIcon, Loader2, Info, RefreshCw
+  CalendarDays, Link2, Image as ImageIcon, Loader2, Info, RefreshCw, ShieldCheck
 } from 'lucide-react';
 import { BottomSheet } from './BottomSheet';
 import { MediaDraft, UserProfile } from '../types';
@@ -19,6 +19,8 @@ import { createPersistedMediaDraftFromId, mediaDraftsAreReady, mediaDraftsHaveEr
 import { RichMentionInput } from './RichMentionInput';
 import { MediaImage } from './media/MediaImage';
 import { ProfileLinksManager } from './ProfileLinksManager';
+import { AccountAccessScreen } from './AccountAccessScreen';
+import { OAuthFeedback } from '../utils/authUi';
 import { PROFILE_MAX_AGE, PROFILE_MIN_AGE, calculateAgeGroupFromDateOnly, serializeDateOnly, todayAsDateOnly, validateDateOfBirth } from '../utils/profileValidation';
 import { profileEditHasChanges, profileMediaDraftHasChanged } from '../utils/profileEditState';
 
@@ -27,9 +29,10 @@ interface ProfileSettingsScreenProps {
   onUpdateProfile: (profile: UserProfile) => void;
   onBack: () => void;
   onLogout: () => void;
+  oauthFeedback?: OAuthFeedback | null;
 }
 
-type SubPage = 'main' | 'edit-profile' | 'links' | 'username' | 'email-phone' | 'language' | 'privacy' | 'content-visibility' | 'demographics' | 'notifications-detailed' | 'group-privacy' | 'account-privacy';
+type SubPage = 'main' | 'edit-profile' | 'links' | 'account-access' | 'username' | 'email-phone' | 'language' | 'privacy' | 'content-visibility' | 'demographics' | 'notifications-detailed' | 'group-privacy' | 'account-privacy';
 
 const NATIONALITIES = [
   'Afghanistan', 'Albania', 'Algeria', 'Andorra', 'Angola', 'Argentina', 'Armenia', 'Australia', 'Austria', 'Azerbaijan',
@@ -67,7 +70,8 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   userProfile,
   onUpdateProfile,
   onBack,
-  onLogout
+  onLogout,
+  oauthFeedback
 }) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -592,6 +596,20 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
           setLinkCount(links.length);
           setProfileForm((current) => ({ ...current, profileLinks: links }));
           onUpdateProfile({ ...userProfile, profileLinks: links });
+        }}
+      />
+    );
+  }
+
+  if (currentSubPage === 'account-access') {
+    return (
+      <AccountAccessScreen
+        userProfile={profileForm}
+        oauthFeedback={oauthFeedback}
+        onBack={() => setCurrentSubPage('main')}
+        onUpdateProfile={(updatedProfile) => {
+          setProfileForm(updatedProfile);
+          onUpdateProfile(updatedProfile);
         }}
       />
     );
@@ -1290,6 +1308,12 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
             label={t('Edit Profile')}
             value={`${profileForm.name}, Bio, Links`}
             onClick={() => setCurrentSubPage('edit-profile')}
+          />
+          <SettingItem
+            icon={ShieldCheck}
+            label={t('auth.account.menuLabel')}
+            value={profileForm.email}
+            onClick={() => setCurrentSubPage('account-access')}
           />
           <SettingItem
             icon={MapPin}

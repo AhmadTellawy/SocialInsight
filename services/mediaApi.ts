@@ -1,5 +1,7 @@
 import type { MediaCropSelection, MediaPresentation, MediaPurpose } from '../types.ts';
-import { authFetch } from './api.ts';
+import { authFetch, getAuthSessionIdentity } from './api.ts';
+
+export const MEDIA_PROCESSING_TIMEOUT_MS = 120_000;
 
 export type MediaConfig = {
   enabled: boolean;
@@ -49,17 +51,17 @@ const presentationRequests = new Map<string, Promise<MediaPresentation>>();
 const PRESENTATION_CACHE_LIMIT = 200;
 const PUBLIC_PRESENTATION_TTL_MS = 10 * 60 * 1000;
 const RESTRICTED_PRESENTATION_TTL_MS = 4 * 60 * 1000;
-let presentationCacheAuthToken: string | null | undefined;
+let presentationCacheAuthIdentity: string | null | undefined;
 let presentationCacheGeneration = 0;
 
 const synchronizePresentationCacheIdentity = (): number => {
-  const authToken = typeof localStorage === 'undefined' ? null : localStorage.getItem('si_token');
-  if (presentationCacheAuthToken !== undefined && presentationCacheAuthToken !== authToken) {
+  const authIdentity = getAuthSessionIdentity();
+  if (presentationCacheAuthIdentity !== undefined && presentationCacheAuthIdentity !== authIdentity) {
     presentationCache.clear();
     presentationRequests.clear();
     presentationCacheGeneration += 1;
   }
-  presentationCacheAuthToken = authToken;
+  presentationCacheAuthIdentity = authIdentity;
   return presentationCacheGeneration;
 };
 
@@ -132,7 +134,8 @@ export const mediaApi = {
   finalize: async (assetId: string, crop: MediaCropSelection): Promise<{ id: string; aspectRatio: number; width: number; height: number }> => {
     const response = await authFetch(`/api/media/${assetId}/finalize`, {
       method: 'POST',
-      body: JSON.stringify(crop)
+      body: JSON.stringify(crop),
+      timeoutMs: MEDIA_PROCESSING_TIMEOUT_MS
     });
     if (!response.ok) throw await parseError(response, 'Could not process image.');
     return response.json();
@@ -141,7 +144,8 @@ export const mediaApi = {
   prepare: async (assetId: string, signal?: AbortSignal): Promise<PreparedMediaUpload> => {
     const response = await authFetch(`/api/media/${assetId}/prepare`, {
       method: 'POST',
-      signal
+      signal,
+      timeoutMs: MEDIA_PROCESSING_TIMEOUT_MS
     });
     if (!response.ok) throw await parseError(response, 'Could not prepare HEIC/HEIF image.');
     return response.json();

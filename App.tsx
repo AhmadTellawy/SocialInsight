@@ -12,6 +12,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { PullToRefresh, PullToRefreshHandle } from './components/PullToRefresh';
 import { PostAnswerPayload, Survey, Option, Notification, SurveyType, Group, UserProfile } from './types';
 import { readMediaSafeJson, writeMediaSafeJson } from './utils/mediaSafeStorage';
+import { OAuthFeedback } from './utils/authUi';
 import { getNotificationDeepLink } from './utils/notificationNavigation';
 import {
   getFeedRetryDelayMs,
@@ -148,6 +149,8 @@ const App: React.FC = () => {
   const [authBootstrapped, setAuthBootstrapped] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalType, setAuthModalType] = useState<'flow' | 'login'>('flow');
+  const [authRecoveryMessage, setAuthRecoveryMessage] = useState<string | null>(null);
+  const [accountAccessFeedback, setAccountAccessFeedback] = useState<OAuthFeedback | null>(null);
 
   const handleCloseAuth = () => {
     if (window.history.state && window.history.state.idx > 0) {
@@ -174,16 +177,12 @@ const App: React.FC = () => {
 
   const handleAuthSuccess = (authPayload: any) => {
     const authenticatedUser = authPayload?.user || authPayload;
-    const authToken = authPayload?.token || authenticatedUser?.token;
-    const { token: _token, ...profile } = authenticatedUser || {};
-
-    if (authToken) {
-      localStorage.setItem('si_token', authToken);
-    }
+    const profile = authenticatedUser || {};
     writeMediaSafeJson('si_user', profile);
     setUserProfile(profile);
     setIsAuthenticated(true);
     setAuthBootstrapped(true);
+    setAuthRecoveryMessage(null);
     setAuthModalOpen(false);
     setAuthModalType('flow');
     setSelectedSurveyId(null);
@@ -200,7 +199,7 @@ const App: React.FC = () => {
     api.setupPushNotifications().catch(console.error);
   };
 
-  const handleLogout = () => {
+  const clearAuthenticatedState = () => {
     const previousUserId = userProfile?.id;
     setIsAuthenticated(false);
     setUserProfile(null);
@@ -225,9 +224,18 @@ const App: React.FC = () => {
     setIsNavVisible(true);
     navigate('/', { replace: true });
     localStorage.removeItem('si_user');
-    localStorage.removeItem('si_token');
     localStorage.removeItem('si_feed_cache');
     if (previousUserId) localStorage.removeItem(getFeedCacheKey(previousUserId));
+  };
+
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+      clearAuthenticatedState();
+    } catch (error) {
+      console.warn('The server could not end the current session', error);
+      setAuthRecoveryMessage('We could not log you out. Check your connection and try again.');
+    }
   };
 
   // Creation Flow State
@@ -551,40 +559,83 @@ const App: React.FC = () => {
   };
 
   React.useEffect(() => {
-    const savedUser = readMediaSafeJson<UserProfile>('si_user');
-    if (savedUser) {
-      try {
-        const user = savedUser;
-        setUserProfile(user);
-        setIsAuthenticated(true);
-        setAuthBootstrapped(true);
+    let cancelled = false;
+    const controller = new AbortController();
 
-        // Refresh the cached profile in the background without blocking first paint.
-        api.getMe({ timeoutMs: 15_000 }).then(freshUser => {
-          setUserProfile(freshUser);
-          writeMediaSafeJson('si_user', freshUser);
-        }).catch(err => {
-          if (err instanceof ApiError && err.status === 401) {
-            console.error("Failed to refresh user profile because the session expired", err);
-            localStorage.removeItem(getFeedCacheKey(user.id));
-            setIsAuthenticated(false);
-            setUserProfile(null);
-            setSurveys([]);
-            return;
-          }
-          console.warn("Failed to refresh user profile; keeping the cached session", err);
-        });
-      } catch (err) {
-        console.error("Failed to parse cached user, starting guest session", err);
-        localStorage.removeItem('si_user');
-        setIsAuthenticated(false);
-        setUserProfile(null);
-        setSurveys([]);
-        setAuthBootstrapped(true);
-      }
-    } else {
-      setAuthBootstrapped(true);
+    // Remove credentials issued by versions that predate HttpOnly sessions.
+    localStorage.removeItem('si_token');
+
+    const query = new URLSearchParams(window.location.search);
+    const oauthStatus = query.get('oauth') || query.get('oauth_status');
+    const oauthError = query.get('oauth_error') || query.get('oauthError');
+    const oauthProviderValue = query.get('oauth_provider');
+    const oauthProvider = oauthProviderValue === 'google' || oauthProviderValue === 'facebook'
+      ? oauthProviderValue
+      : undefined;
+    if (oauthStatus || oauthError) {
+      query.delete('oauth');
+      query.delete('oauth_status');
+      query.delete('oauth_error');
+      query.delete('oauthError');
+      query.delete('oauth_provider');
+      const nextSearch = query.toString();
+      window.history.replaceState({}, '', `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`);
     }
+
+    const bootstrapSession = async () => {
+      let restoredSession = false;
+      try {
+        const session = await api.getSession({ signal: controller.signal, timeoutMs: 15_000, retryOnce: true });
+        if (cancelled) return;
+        if (session?.user) {
+          restoredSession = true;
+          setUserProfile(session.user as UserProfile);
+          writeMediaSafeJson('si_user', session.user);
+          setIsAuthenticated(true);
+          setAuthRecoveryMessage(null);
+          if (oauthStatus === 'linked' || oauthError) {
+            setAccountAccessFeedback({
+              tone: oauthStatus === 'linked' ? 'success' : 'error',
+              code: oauthStatus === 'linked' ? 'linked' : oauthError || 'OAUTH_AUTHENTICATION_FAILED',
+              provider: oauthProvider
+            });
+            setActiveTab('profile');
+            setIsProfileSettingsOpen(true);
+            navigate('/settings/profile/account-access', { replace: true });
+          }
+        } else {
+          localStorage.removeItem('si_user');
+          setUserProfile(null);
+          setIsAuthenticated(false);
+          if (oauthStatus || oauthError) {
+            setAuthRecoveryMessage(oauthError
+              ? t('auth.oauth.loginFailed')
+              : t('auth.oauth.noSession'));
+            setAuthModalType('login');
+            setAuthModalOpen(true);
+            navigate('/login', { replace: true });
+          }
+        }
+      } catch (error) {
+        if (cancelled || (error && typeof error === 'object' && (error as { name?: string }).name === 'AbortError')) return;
+        localStorage.removeItem('si_user');
+        setUserProfile(null);
+        setIsAuthenticated(false);
+        setAuthRecoveryMessage(t('auth.oauth.restoreFailed'));
+      } finally {
+        if (!cancelled) {
+          setAuthBootstrapped(true);
+          if (oauthError && !restoredSession) {
+            setAuthRecoveryMessage(t('auth.oauth.tryEmail'));
+            setAuthModalType('login');
+            setAuthModalOpen(true);
+            navigate('/login', { replace: true });
+          }
+        }
+      }
+    };
+
+    void bootstrapSession();
 
     const handleAuthExpired = () => {
       const expiredUserId = feedRequestRef.current?.userId || userProfileIdRef.current;
@@ -594,11 +645,16 @@ const App: React.FC = () => {
       setIsAuthenticated(false);
       setUserProfile(null);
       setSurveys([]);
+      localStorage.removeItem('si_user');
       if (expiredUserId) localStorage.removeItem(getFeedCacheKey(expiredUserId));
     };
 
     window.addEventListener('auth_expired', handleAuthExpired);
-    return () => window.removeEventListener('auth_expired', handleAuthExpired);
+    return () => {
+      cancelled = true;
+      controller.abort();
+      window.removeEventListener('auth_expired', handleAuthExpired);
+    };
   }, []);
 
   React.useEffect(() => {
@@ -1711,6 +1767,7 @@ const App: React.FC = () => {
                 onUpdateProfile={handleProfileUpdated}
                 onBack={() => navigate(userProfile.handle ? `/@${userProfile.handle}` : `/profile/${userProfile.id}`, { replace: true })}
                 onLogout={handleLogout}
+                oauthFeedback={accountAccessFeedback}
               />
             </ErrorBoundary>
           );
@@ -1898,7 +1955,12 @@ const App: React.FC = () => {
           <button onClick={handleCloseAuth} className="absolute top-4 right-4 z-[110] p-2 bg-gray-100 rounded-full hover:bg-gray-200">
             <X size={20} />
           </button>
-          <AuthScreen key={authModalType} onAuthSuccess={handleAuthSuccess} initialViewMode={authModalType} />
+          <AuthScreen
+            key={authModalType}
+            onAuthSuccess={handleAuthSuccess}
+            initialViewMode={authModalType}
+            initialError={authRecoveryMessage}
+          />
         </div>
       )}
       <div className="min-h-screen bg-gray-100/50 flex justify-center items-center">

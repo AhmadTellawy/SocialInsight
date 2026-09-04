@@ -17,6 +17,7 @@ model User {
   password            String? // Temporary for migration
   passwordHash        String?             @map("password_hash") // Nullable for migration
   passwordUpdatedAt   DateTime?           @map("password_updated_at")
+  authInvalidatedAt   DateTime?           @map("auth_invalidated_at")
   avatar              String?
   avatarMediaId       String?             @unique @map("avatar_media_id")
   coverMediaId        String?             @unique @map("cover_media_id")
@@ -76,6 +77,9 @@ model User {
   peopleTagsReceived      PostTaggedUser[]         @relation("PeopleTagTarget")
   peopleTagsCreated       PostTaggedUser[]         @relation("PeopleTagActor")
   profileLinks            ProfileLink[]
+  authSessions            AuthSession[]
+  oauthAccounts           OAuthAccount[]
+  linkingOAuthStates      OAuthState[]             @relation("OAuthStateLinkingUser")
 
   @@index([status, followersCount(sort: Desc), id], map: "users_status_followers_id_idx")
   @@map("users")
@@ -725,18 +729,125 @@ model OTPCode {
   @@index([identifier])
 }
 
+enum OAuthStateMode {
+  LOGIN
+  LINK
+}
+
+enum OtpDeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model AuthSession {
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  tokenHash  String    @unique @map("token_hash") @db.Char(64)
+  csrfHash   String    @map("csrf_hash") @db.Char(64)
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  lastUsedAt DateTime? @map("last_used_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt, expiresAt], map: "auth_sessions_user_revoked_expires_idx")
+  @@index([expiresAt], map: "auth_sessions_expires_idx")
+  @@map("auth_sessions")
+}
+
+model OAuthAccount {
+  id                String   @id @default(uuid())
+  userId            String   @map("user_id")
+  provider          String   @db.VarChar(32)
+  providerAccountId String   @map("provider_account_id") @db.VarChar(255)
+  emailSnapshot     String?  @map("email_snapshot") @db.VarChar(320)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId], map: "oauth_accounts_provider_account_key")
+  @@unique([userId, provider], map: "oauth_accounts_user_provider_key")
+  @@map("oauth_accounts")
+}
+
+model OAuthState {
+  id            String         @id @default(uuid())
+  stateHash     String         @unique @map("state_hash") @db.Char(64)
+  provider      String         @db.VarChar(32)
+  pkceVerifier  String         @map("pkce_verifier") @db.VarChar(128)
+  nonce         String         @db.VarChar(255)
+  mode          OAuthStateMode @default(LOGIN)
+  linkingUserId String?        @map("linking_user_id")
+  expiresAt     DateTime       @map("expires_at")
+  consumedAt    DateTime?      @map("consumed_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+
+  linkingUser User? @relation("OAuthStateLinkingUser", fields: [linkingUserId], references: [id], onDelete: Cascade)
+
+  @@index([provider, expiresAt], map: "oauth_states_provider_expires_idx")
+  @@index([linkingUserId, consumedAt], map: "oauth_states_linking_user_consumed_idx")
+  @@index([expiresAt], map: "oauth_states_expires_idx")
+  @@map("oauth_states")
+}
+
+model OtpChallenge {
+  id              String            @id @default(uuid())
+  destination     String            @db.VarChar(320)
+  destinationHash String            @map("destination_hash") @db.Char(64)
+  purpose         String            @db.VarChar(64)
+  subject         String            @db.VarChar(255)
+  codeHash        String            @map("code_hash") @db.VarChar(255)
+  deliveryStatus  OtpDeliveryStatus @default(PENDING) @map("delivery_status")
+  attempts        Int               @default(0)
+  maxAttempts     Int               @default(5) @map("max_attempts")
+  expiresAt       DateTime          @map("expires_at")
+  cooldownUntil   DateTime          @map("cooldown_until")
+  version         Int               @default(1)
+  consumedAt      DateTime?         @map("consumed_at")
+  invalidatedAt   DateTime?         @map("invalidated_at")
+  ipHash          String?           @map("ip_hash") @db.Char(64)
+  userAgentHash   String?           @map("user_agent_hash") @db.Char(64)
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  @@unique([destinationHash, purpose, subject, version], map: "otp_challenges_destination_purpose_subject_version_key")
+  @@index([destinationHash, purpose, createdAt(sort: Desc)], map: "otp_challenges_destination_purpose_created_idx")
+  @@index([subject, purpose, createdAt(sort: Desc)], map: "otp_challenges_subject_purpose_created_idx")
+  @@index([deliveryStatus, createdAt], map: "otp_challenges_delivery_created_idx")
+  @@index([expiresAt], map: "otp_challenges_expires_idx")
+  @@map("otp_challenges")
+}
+
+model AuthRateLimit {
+  keyHash         String   @id @map("key_hash") @db.Char(64)
+  count           Int      @default(1)
+  windowStartedAt DateTime @map("window_started_at")
+  expiresAt       DateTime @map("expires_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([expiresAt], map: "auth_rate_limits_expires_idx")
+  @@map("auth_rate_limits")
+}
+
 model PendingRegistration {
-  id           String    @id @default(uuid())
-  email        String    @unique
-  fullName     String
-  dob          DateTime  @db.Date
-  password     String?
-  handle       String?   @unique
-  currentStep  Int       @default(2)
-  otpCode      String?
-  otpExpiresAt DateTime?
-  updatedAt    DateTime  @updatedAt
-  createdAt    DateTime  @default(now())
+  id                String    @id @default(uuid())
+  email             String
+  browserSecretHash String?   @db.Char(64)
+  fullName          String
+  dob               DateTime  @db.Date
+  password          String?
+  handle            String?   @unique
+  currentStep       Int       @default(2)
+  otpCode           String?
+  otpExpiresAt      DateTime?
+  updatedAt         DateTime  @updatedAt
+  createdAt         DateTime  @default(now())
+
+  @@index([email])
 }
 
 model SavedPost {

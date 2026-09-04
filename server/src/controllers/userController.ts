@@ -29,6 +29,7 @@ import {
     reconcileProfileMentions,
     serializeMentionReferences
 } from '../services/mentionLifecycleService';
+import { clearSessionCookies, notifyUserSessionsRevoked } from '../services/sessionService';
 import {
     ProfileValidationError,
     calculateAgeGroupFromDate,
@@ -91,6 +92,7 @@ const publicUserPayload = (user: Record<string, any>) => {
         password: _password,
         passwordHash: _passwordHash,
         passwordUpdatedAt: _passwordUpdatedAt,
+        authInvalidatedAt: _authInvalidatedAt,
         authProvider: _authProvider,
         ...safe
     } = user;
@@ -1082,11 +1084,34 @@ export const deleteAccount = async (req: Request, res: Response) => {
         return res.status(403).json({ error: 'Forbidden: You can only delete your own account' });
     }
     try {
-        const ownedMediaIds = (await prisma.mediaAsset.findMany({
-            where: { ownerId: id, status: { not: 'DELETED' } },
-            select: { id: true }
-        })).map((asset) => asset.id);
+        const [ownedMedia, account] = await Promise.all([
+            prisma.mediaAsset.findMany({
+                where: { ownerId: id, status: { not: 'DELETED' } },
+                select: { id: true }
+            }),
+            prisma.user.findUnique({ where: { id }, select: { email: true } })
+        ]);
+        const ownedMediaIds = ownedMedia.map((asset) => asset.id);
         await prisma.$transaction(async (tx) => {
+            // Revoke and remove authentication material before anonymizing the
+            // user. The user row is intentionally retained for survey integrity,
+            // so FK cascades alone would not run here.
+            await tx.authSession.deleteMany({ where: { userId: id } });
+            await tx.oAuthState.deleteMany({ where: { linkingUserId: id } });
+            await tx.oAuthAccount.deleteMany({ where: { userId: id } });
+            await tx.otpChallenge.deleteMany({
+                where: {
+                    OR: [
+                        { subject: id },
+                        ...(account?.email ? [{ destination: account.email.toLowerCase() }] : [])
+                    ]
+                }
+            });
+            if (account?.email) {
+                await tx.oTPCode.deleteMany({ where: { identifier: account.email.toLowerCase() } });
+                await tx.pendingRegistration.deleteMany({ where: { email: account.email.toLowerCase() } });
+            }
+
             // Nullify user PII and soft delete
             await tx.user.update({
                 where: { id },
@@ -1136,6 +1161,8 @@ export const deleteAccount = async (req: Request, res: Response) => {
 
         await scheduleMediaDeletion(ownedMediaIds);
 
+        notifyUserSessionsRevoked(id);
+        clearSessionCookies(res);
         res.json({ success: true, message: 'Account deleted and anonymized successfully' });
     } catch (error) {
         logUserRequestFailure(req, 'account_delete_failed', error);

@@ -117,7 +117,8 @@ export interface UserProfile {
   bio: string;
   location: string;
   website: string;
-  email: string;
+  email: string | null;
+  emailVerifiedAt?: string | null;
   phone: string;
   language: string;
   birthday?: string | null;

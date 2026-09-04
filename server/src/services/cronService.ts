@@ -3,6 +3,7 @@ import prisma from '../prisma';
 import { cleanupExpiredMedia } from './mediaService';
 import { resumeMediaPrivacyTransitions } from './mediaPrivacyTransitionService';
 import { calculateAgeGroupFromDate } from '../utils/profileValidation';
+import { cleanupExpiredAuthArtifacts } from './authRetentionService';
 
 export function calculateAgeGroup(dob: Date | null | undefined): string | undefined {
     return calculateAgeGroupFromDate(dob);
@@ -62,5 +63,14 @@ export const initCronJobs = () => {
         if (cleaned > 0) console.log(`[Cron] Cleaned ${cleaned} expired media assets.`);
     });
 
-    console.log('[Cron] Age Group and media cleanup jobs initialized.');
+    cron.schedule('17 * * * *', () => {
+        void cleanupExpiredAuthArtifacts().then((result) => {
+            const deleted = Object.values(result).reduce((sum, count) => sum + count, 0);
+            if (deleted > 0) console.info(JSON.stringify({ event: 'auth_retention_cleanup_completed', deleted }));
+        }).catch(() => {
+            console.error(JSON.stringify({ event: 'auth_retention_cleanup_failed' }));
+        });
+    }, { timezone: 'UTC' });
+
+    console.log('[Cron] Age Group, media, and authentication cleanup jobs initialized.');
 };
