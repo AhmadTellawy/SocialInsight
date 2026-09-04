@@ -1,13 +1,13 @@
 
 import React, { useState, useMemo } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useBlocker, useNavigate, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, User, Mail, Globe, Lock, Eye, Search, Activity,
   Share2, Users, Bell, Palette, Shield, LifeBuoy, LogOut,
   Trash2, ChevronRight, Check, AlertTriangle, Smartphone,
   Languages, Type, MessageSquare, UserPlus, Camera, Edit3, Save,
   X, Briefcase, GraduationCap, Heart, UserCircle, MapPin, Hash,
-  CalendarDays, Link2, Image as ImageIcon, Loader2, Info
+  CalendarDays, Link2, Image as ImageIcon, Loader2, Info, RefreshCw
 } from 'lucide-react';
 import { BottomSheet } from './BottomSheet';
 import { MediaDraft, UserProfile } from '../types';
@@ -19,7 +19,8 @@ import { createPersistedMediaDraftFromId, mediaDraftsAreReady, mediaDraftsHaveEr
 import { RichMentionInput } from './RichMentionInput';
 import { MediaImage } from './media/MediaImage';
 import { ProfileLinksManager } from './ProfileLinksManager';
-import { PROFILE_MAX_AGE, PROFILE_MIN_AGE, calculateAgeFromDateOnly, serializeDateOnly, todayAsDateOnly, validateDateOfBirth } from '../utils/profileValidation';
+import { PROFILE_MAX_AGE, PROFILE_MIN_AGE, calculateAgeGroupFromDateOnly, serializeDateOnly, todayAsDateOnly, validateDateOfBirth } from '../utils/profileValidation';
+import { profileEditHasChanges, profileMediaDraftHasChanged } from '../utils/profileEditState';
 
 interface ProfileSettingsScreenProps {
   userProfile: UserProfile;
@@ -70,11 +71,9 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
 
   const setCurrentSubPage = (page: SubPage) => {
     if (page === 'main') {
-      if (window.history.length > 2) {
-        navigate(-1);
-      } else {
-        navigate('/settings/profile', { replace: true });
-      }
+      // A global history length cannot prove that the previous entry belongs
+      // to SocialInsight. Profile subpages always return to their known parent.
+      navigate('/settings/profile', { replace: true });
     } else {
       navigate(`/settings/profile/${page}`);
     }
@@ -101,9 +100,13 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   const [confirmCoverRemoval, setConfirmCoverRemoval] = useState(false);
   const [linkCount, setLinkCount] = useState(userProfile.profileLinks?.length || 0);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [privacySaveError, setPrivacySaveError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<{ name?: string; birthday?: string }>({});
   const [isPrivateProfileLoading, setIsPrivateProfileLoading] = useState(false);
   const [privateProfileLoadError, setPrivateProfileLoadError] = useState<string | null>(null);
+  const [privateProfileRetryKey, setPrivateProfileRetryKey] = useState(0);
+  const saveLatchRef = React.useRef(false);
+  const allowNextProfileNavigationRef = React.useRef(false);
 
   const [activeDemographicSelector, setActiveDemographicSelector] = useState<{
     id: keyof NonNullable<UserProfile['demographics']>;
@@ -112,19 +115,8 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   } | null>(null);
 
   const getCalculatedAgeGroup = (profile: UserProfile): string => {
-    let ageGroup = profile.demographics?.ageGroup || '';
-    if (!ageGroup && profile.birthday) {
-      const age = calculateAgeFromDateOnly(profile.birthday);
-      if (age !== null) {
-        if (age < 18) ageGroup = 'Under 18';
-        else if (age <= 24) ageGroup = '18-24';
-        else if (age <= 34) ageGroup = '25-34';
-        else if (age <= 44) ageGroup = '35-44';
-        else if (age <= 54) ageGroup = '45-54';
-        else ageGroup = '55+';
-      }
-    }
-    return ageGroup;
+    if (profile.birthday) return calculateAgeGroupFromDateOnly(profile.birthday) || '';
+    return profile.demographics?.ageGroup || '';
   };
 
   // Form state initialized from props
@@ -155,7 +147,16 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
     };
     const preserveEditDraft = currentSubPage === 'edit-profile' || currentSubPage === 'links';
     setProfileForm((current) => preserveEditDraft
-      ? { ...nextProfile, ...current, profileLinks: userProfile.profileLinks }
+      ? {
+          ...nextProfile,
+          ...current,
+          avatarMediaId: nextProfile.avatarMediaId,
+          avatarMedia: nextProfile.avatarMedia,
+          coverMediaId: nextProfile.coverMediaId,
+          coverMedia: nextProfile.coverMedia,
+          updatedAt: nextProfile.updatedAt,
+          profileLinks: userProfile.profileLinks
+        }
       : nextProfile);
     if (!preserveEditDraft) {
       setAvatarMedia(userProfile.avatarMediaId
@@ -180,7 +181,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
     const controller = new AbortController();
     setIsPrivateProfileLoading(true);
     setPrivateProfileLoadError(null);
-    api.getMe({ signal: controller.signal })
+    api.getMe({ signal: controller.signal, timeoutMs: 15_000 })
       .then((privateProfile) => {
         if (!active) return;
         const merged = {
@@ -188,13 +189,36 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
           ...privateProfile,
           demographics: privateProfile.demographics || userProfile.demographics || {}
         } as UserProfile;
-        setProfileForm(merged);
-        setAvatarMedia(merged.avatarMediaId
+        setProfileForm((current) => ({
+          ...merged,
+          name: current.name !== userProfile.name ? current.name : merged.name,
+          bio: current.bio !== userProfile.bio ? current.bio : merged.bio,
+          birthday: (current.birthday || null) !== (userProfile.birthday || null)
+            ? current.birthday
+            : merged.birthday
+        }));
+        const freshAvatarMedia = merged.avatarMediaId
           ? [createPersistedMediaDraftFromId(merged.avatarMediaId, 'PROFILE_AVATAR', merged.avatar)]
-          : []);
-        setCoverMedia(merged.coverMediaId
+          : [];
+        const freshCoverMedia = merged.coverMediaId
           ? [createPersistedMediaDraftFromId(merged.coverMediaId, 'PROFILE_COVER', merged.coverMedia?.src || '', 3)]
-          : []);
+          : [];
+        setAvatarMedia((current) => {
+          const next = current.some((draft) => !draft.persisted)
+            || profileMediaDraftHasChanged(current, userProfile.avatarMediaId)
+            ? current
+            : freshAvatarMedia;
+          avatarMediaRef.current = next;
+          return next;
+        });
+        setCoverMedia((current) => {
+          const next = current.some((draft) => !draft.persisted)
+            || profileMediaDraftHasChanged(current, userProfile.coverMediaId)
+            ? current
+            : freshCoverMedia;
+          coverMediaRef.current = next;
+          return next;
+        });
         setLinkCount(merged.profileLinks?.length || 0);
         onUpdateProfile(merged);
       })
@@ -209,7 +233,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
       active = false;
       controller.abort();
     };
-  }, [userProfile.id]);
+  }, [userProfile.id, privateProfileRetryKey]);
 
   const filteredNationalities = useMemo(() => {
     if (!nationalitySearch) return NATIONALITIES.slice(0, 5); // Default common/preview
@@ -245,18 +269,50 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
 
   const nextAvatarMediaId = readyMediaAssetIds(avatarMedia)[0] || null;
   const nextCoverMediaId = readyMediaAssetIds(coverMedia)[0] || null;
-  const avatarMediaChanged = nextAvatarMediaId !== (userProfile.avatarMediaId || null);
-  const coverMediaChanged = nextCoverMediaId !== (userProfile.coverMediaId || null);
+  const avatarMediaChanged = profileMediaDraftHasChanged(avatarMedia, userProfile.avatarMediaId);
+  const coverMediaChanged = profileMediaDraftHasChanged(coverMedia, userProfile.coverMediaId);
   const birthdayValidation = validateDateOfBirth(profileForm.birthday || null, {
     required: Boolean(userProfile.birthday),
     minimumAge: PROFILE_MIN_AGE,
     maximumAge: PROFILE_MAX_AGE
   });
-  const hasProfileChanges = profileForm.name !== userProfile.name
-    || profileForm.bio !== userProfile.bio
-    || (profileForm.birthday || null) !== (userProfile.birthday || null)
-    || avatarMediaChanged
-    || coverMediaChanged;
+  const hasProfileChanges = profileEditHasChanges(profileForm, userProfile, avatarMedia, coverMedia);
+  const resetProfileEditDraft = React.useCallback((): void => {
+    void cancelTemporaryMediaDrafts([...avatarMediaRef.current, ...coverMediaRef.current]);
+    setSaveError(null);
+    setFieldErrors({});
+    setShowCoverActions(false);
+    setConfirmCoverRemoval(false);
+    setProfileForm({ ...userProfile });
+    const resetAvatarMedia = userProfile.avatarMediaId
+      ? [createPersistedMediaDraftFromId(userProfile.avatarMediaId, 'PROFILE_AVATAR', userProfile.avatar)]
+      : [];
+    const resetCoverMedia = userProfile.coverMediaId
+      ? [createPersistedMediaDraftFromId(userProfile.coverMediaId, 'PROFILE_COVER', userProfile.coverMedia?.src || '', 3)]
+      : [];
+    avatarMediaRef.current = resetAvatarMedia;
+    coverMediaRef.current = resetCoverMedia;
+    setAvatarMedia(resetAvatarMedia);
+    setCoverMedia(resetCoverMedia);
+    allowNextProfileNavigationRef.current = false;
+  }, [userProfile]);
+  const shouldBlockProfileNavigation = React.useCallback(({ currentLocation, nextLocation }: {
+    currentLocation: { pathname: string };
+    nextLocation: { pathname: string };
+  }): boolean => {
+    if (allowNextProfileNavigationRef.current) {
+      allowNextProfileNavigationRef.current = false;
+      return false;
+    }
+    if (!hasProfileChanges) return false;
+    const editTransactionPaths = ['/settings/profile/edit-profile', '/settings/profile/links'];
+    if (!editTransactionPaths.includes(currentLocation.pathname)) return false;
+    // Links is a nested part of the same edit transaction. Moving between the
+    // two screens retains the draft; every route outside it requires consent.
+    return !editTransactionPaths.includes(nextLocation.pathname)
+      && nextLocation.pathname !== currentLocation.pathname;
+  }, [hasProfileChanges]);
+  const profileNavigationBlocker = useBlocker(shouldBlockProfileNavigation);
   const profileMediaReady = mediaDraftsAreReady(avatarMedia)
     && mediaDraftsAreReady(coverMedia)
     && !mediaDraftsHaveErrors(avatarMedia)
@@ -266,6 +322,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
     && profileFormIsValid
     && profileMediaReady
     && !isPrivateProfileLoading
+    && !privateProfileLoadError
     && (!coverMediaChanged || Boolean(profileForm.updatedAt || userProfile.updatedAt));
   const todayDateOnly = serializeDateOnly(todayAsDateOnly());
   const maximumBirthday = shiftDateOnlyYears(todayDateOnly, -PROFILE_MIN_AGE);
@@ -288,7 +345,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   };
 
   React.useEffect(() => {
-    if (currentSubPage !== 'edit-profile' || !hasProfileChanges) return;
+    if ((currentSubPage !== 'edit-profile' && currentSubPage !== 'links') || !hasProfileChanges) return;
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = '';
@@ -297,17 +354,21 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [currentSubPage, hasProfileChanges]);
 
+  React.useEffect(() => {
+    if (profileNavigationBlocker.state !== 'blocked') return;
+    const discard = window.confirm(t('profile.edit.discardConfirm', { defaultValue: 'Discard your unsaved profile changes?' }));
+    if (discard) {
+      resetProfileEditDraft();
+      profileNavigationBlocker.proceed();
+    } else {
+      profileNavigationBlocker.reset();
+    }
+  }, [profileNavigationBlocker, resetProfileEditDraft, t]);
+
   const leaveEditProfile = (): void => {
     if (hasProfileChanges && !window.confirm(t('profile.edit.discardConfirm', { defaultValue: 'Discard your unsaved profile changes?' }))) return;
-    setSaveError(null);
-    setFieldErrors({});
-    setProfileForm({ ...userProfile });
-    setAvatarMedia(userProfile.avatarMediaId
-      ? [createPersistedMediaDraftFromId(userProfile.avatarMediaId, 'PROFILE_AVATAR', userProfile.avatar)]
-      : []);
-    setCoverMedia(userProfile.coverMediaId
-      ? [createPersistedMediaDraftFromId(userProfile.coverMediaId, 'PROFILE_COVER', userProfile.coverMedia?.src || '', 3)]
-      : []);
+    resetProfileEditDraft();
+    allowNextProfileNavigationRef.current = true;
     setCurrentSubPage('main');
   };
 
@@ -320,13 +381,20 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
       nextErrors.birthday = birthdayErrorMessage(birthdayValidation.error);
     }
     setFieldErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0 || (currentSubPage === 'edit-profile' && !canSaveProfile) || isSaving) return;
+    if (
+      Object.keys(nextErrors).length > 0
+      || privateProfileLoadError
+      || isPrivateProfileLoading
+      || (currentSubPage === 'edit-profile' && !canSaveProfile)
+      || isSaving
+      || saveLatchRef.current
+      || !userProfile.id
+    ) return;
 
+    saveLatchRef.current = true;
     setIsSaving(true);
     setSaveError(null);
     try {
-      if (!userProfile.id) return;
-
       const profileEditPayload = {
         ...(avatarMediaChanged ? { avatarMediaId: nextAvatarMediaId || null } : {}),
         ...(coverMediaChanged ? { coverMediaId: nextCoverMediaId || null } : {}),
@@ -335,6 +403,11 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
         name: profileForm.name.trim(),
         bio: profileForm.bio
       };
+      const settingsDemographics = {
+        ...(userProfile.demographics || {}),
+        ...(profileForm.demographics || {})
+      };
+      delete settingsDemographics.ageGroup;
       const settingsPayload = {
         ...profileEditPayload,
         language: profileForm.language,
@@ -345,10 +418,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
         groupPrivacy: profileForm.groupPrivacy,
         isPrivate: profileForm.isPrivate,
         peopleTagPermission: profileForm.peopleTagPermission,
-        demographics: {
-          ...(userProfile.demographics || {}),
-          ...(profileForm.demographics || {})
-        }
+        demographics: settingsDemographics
       };
       const payload = deepStripUndefined(currentSubPage === 'edit-profile' ? profileEditPayload : settingsPayload);
 
@@ -375,6 +445,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
       setProfileForm(merged);
       onUpdateProfile(merged);
       setFieldErrors({});
+      allowNextProfileNavigationRef.current = true;
       setCurrentSubPage('main');
     } catch (error) {
       console.error("Failed to update profile", error);
@@ -383,6 +454,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
         ? t('profile.edit.conflict', { defaultValue: 'Your profile changed elsewhere. Reload and try again.' })
         : t('profile.edit.saveFailed', { defaultValue: 'Your profile changes could not be saved. Check your connection and try again.' }));
     } finally {
+      saveLatchRef.current = false;
       setIsSaving(false);
     }
   };
@@ -487,12 +559,12 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
         >
           <ArrowLeft size={24} className="rtl:rotate-180" />
         </button>
-        <span className="font-bold text-lg ms-2">{title}</span>
+        <h1 className="font-bold text-lg ms-2">{title}</h1>
       </div>
       {showSave && (
         <button
           onClick={handleSave}
-          disabled={isSaving || (currentSubPage === 'edit-profile' && !canSaveProfile)}
+          disabled={isSaving || isPrivateProfileLoading || Boolean(privateProfileLoadError) || (currentSubPage === 'edit-profile' && !canSaveProfile)}
           className="flex min-h-11 min-w-20 items-center justify-center gap-2 bg-blue-600 text-white px-5 py-2 rounded-full text-xs font-black uppercase tracking-widest shadow-md shadow-blue-200 active:scale-95 transition-all disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
         >
           {isSaving && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
@@ -509,7 +581,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   if (currentSubPage === 'links') {
     return (
       <ProfileLinksManager
-        onBack={() => setCurrentSubPage('edit-profile')}
+        onBack={() => navigate('/settings/profile/edit-profile', { replace: true })}
         onLinksChange={(links) => {
           setLinkCount(links.length);
           setProfileForm((current) => ({ ...current, profileLinks: links }));
@@ -700,8 +772,12 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
               ref={coverPickerRef}
               purpose="PROFILE_COVER"
               value={coverMedia}
-              onChange={setCoverMedia}
+              onChange={(next) => {
+                coverMediaRef.current = next;
+                setCoverMedia(next);
+              }}
               aspectRatio={3}
+              disabled={isSaving || isPrivateProfileLoading}
               showAddButton={false}
               renderContent={(controls) => {
                 coverControlsRef.current = controls;
@@ -712,14 +788,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
                   : '50% 50%';
                 return (
                   <div className={`relative aspect-[3/1] w-full overflow-hidden bg-gray-100 ${current?.status === 'error' ? 'ring-2 ring-inset ring-red-500' : ''}`}>
-                    {current?.previewUrl ? (
-                      <img
-                        src={current.previewUrl}
-                        alt=""
-                        className="h-full w-full object-cover"
-                        style={{ objectPosition }}
-                      />
-                    ) : current?.assetId ? (
+                    {current?.status === 'ready' && current.assetId ? (
                       <MediaImage
                         mediaId={current.assetId}
                         media={current.presentation}
@@ -727,6 +796,13 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
                         sizes="(max-width: 768px) 100vw, 768px"
                         useFocalPoint
                         className="h-full w-full object-cover"
+                      />
+                    ) : current?.previewUrl ? (
+                      <img
+                        src={current.previewUrl}
+                        alt=""
+                        className="h-full w-full object-cover"
+                        style={{ objectPosition }}
                       />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-gray-100 via-gray-50 to-blue-50 text-gray-400" aria-hidden="true">
@@ -739,7 +815,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
                         setConfirmCoverRemoval(false);
                         setShowCoverActions(true);
                       }}
-                      disabled={isSaving || isBusy}
+                      disabled={isSaving || isPrivateProfileLoading || isBusy}
                       className="absolute inset-0 flex items-end justify-end p-3 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-blue-500/70 disabled:cursor-wait"
                       aria-label={t('profile.cover.edit', { defaultValue: 'Edit cover photo' })}
                     >
@@ -766,17 +842,21 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
             <MediaPicker
               purpose="PROFILE_AVATAR"
               value={avatarMedia}
-              onChange={setAvatarMedia}
-              renderContent={({ open, retry, busy }) => {
+              onChange={(next) => {
+                avatarMediaRef.current = next;
+                setAvatarMedia(next);
+              }}
+              disabled={isSaving || isPrivateProfileLoading}
+              renderContent={({ open, retry, busy, canSelect }) => {
                 const current = avatarMedia[0];
                 const previewUrl = current?.previewUrl || profileForm.avatar;
                 return (
                   <div className="relative">
-                    <div className={`w-24 h-24 rounded-[22%] border-4 border-white shadow-lg overflow-hidden bg-gray-100 ${current?.status === 'error' ? 'ring-2 ring-red-400' : ''}`}>
-                      {previewUrl ? (
-                        <img src={previewUrl} alt={profileForm.name || t('profile.avatar.alt', { defaultValue: 'Profile photo' })} className="w-full h-full object-cover" />
-                      ) : current?.assetId ? (
+                    <div className={`w-24 h-24 rounded-full border-4 border-white shadow-lg overflow-hidden bg-gray-100 ${current?.status === 'error' ? 'ring-2 ring-red-400' : ''}`}>
+                      {current?.status === 'ready' && current.assetId ? (
                         <MediaImage mediaId={current.assetId} media={current.presentation} alt={profileForm.name || t('profile.avatar.alt', { defaultValue: 'Profile photo' })} sizes="96px" className="h-full w-full object-cover" />
+                      ) : previewUrl ? (
+                        <img src={previewUrl} alt={profileForm.name || t('profile.avatar.alt', { defaultValue: 'Profile photo' })} className="w-full h-full object-cover" />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center text-xl font-bold text-gray-500">
                           {(profileForm.name || 'U').trim().charAt(0).toUpperCase()}
@@ -786,8 +866,8 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
                     <button
                       type="button"
                       onClick={() => current?.status === 'error' ? retry(current.clientId) : open()}
-                      disabled={busy}
-                      className="absolute -bottom-1 -end-1 flex h-11 w-11 items-center justify-center bg-blue-600 text-white rounded-2xl border-[3px] border-white shadow-md active:scale-90 transition-transform disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+                      disabled={busy || !canSelect}
+                      className="absolute -bottom-1 -end-1 flex h-11 w-11 items-center justify-center bg-blue-600 text-white rounded-full border-[3px] border-white shadow-md active:scale-90 transition-transform disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
                       aria-label={current?.status === 'error' ? t('common.retry', { defaultValue: 'Retry' }) : t('profile.avatar.change', { defaultValue: 'Change profile photo' })}
                       title={current?.status === 'error' ? t('common.retry', { defaultValue: 'Retry' }) : t('profile.avatar.change', { defaultValue: 'Change profile photo' })}
                     >
@@ -802,9 +882,17 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
 
           <div className="space-y-5 px-5 pt-7">
             {privateProfileLoadError && (
-              <div role="alert" className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                <Info size={18} className="mt-0.5 shrink-0" aria-hidden="true" />
-                <span>{privateProfileLoadError}</span>
+              <div role="alert" className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                <Info size={18} className="shrink-0" aria-hidden="true" />
+                <span className="min-w-0 flex-1">{privateProfileLoadError}</span>
+                <button
+                  type="button"
+                  onClick={() => setPrivateProfileRetryKey((current) => current + 1)}
+                  className="flex min-h-10 shrink-0 items-center gap-1.5 rounded-xl bg-white px-3 text-xs font-bold text-amber-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600"
+                >
+                  <RefreshCw size={14} aria-hidden="true" />
+                  {t('common.retry', { defaultValue: 'Retry' })}
+                </button>
               </div>
             )}
             {saveError && (
@@ -914,6 +1002,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
                   type="button"
                   onClick={() => {
                     void cancelTemporaryMediaDrafts(coverMedia.filter((draft) => !draft.persisted));
+                    coverMediaRef.current = [];
                     setCoverMedia([]);
                     setConfirmCoverRemoval(false);
                     setShowCoverActions(false);
@@ -1018,28 +1107,42 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
           <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
             <div className="flex items-center justify-between mb-4">
               <span className="text-base font-bold text-gray-900">{t('Private account')}</span>
-              <div 
-                className={`w-12 h-6 rounded-full transition-colors cursor-pointer relative ${profileForm.isPrivate ? 'bg-blue-600' : 'bg-gray-200'}`}
+              <button
+                type="button"
+                role="switch"
+                aria-checked={profileForm.isPrivate}
+                aria-label={t('Private account')}
+                disabled={isSaving}
+                className={`w-12 h-6 rounded-full transition-colors cursor-pointer relative disabled:cursor-wait disabled:opacity-60 ${profileForm.isPrivate ? 'bg-blue-600' : 'bg-gray-200'}`}
                 onClick={async () => {
+                  if (isSaving || !userProfile.id) return;
                   const newVal = !profileForm.isPrivate;
                   if (!newVal) {
                     const confirmPublic = window.confirm(t('Switching to Public will automatically accept all pending follow requests. Do you want to continue?'));
                     if (!confirmPublic) return;
                   }
-                  
-                  setProfileForm({ ...profileForm, isPrivate: newVal });
+
+                  setPrivacySaveError(null);
+                  setIsSaving(true);
+                  setProfileForm((current) => ({ ...current, isPrivate: newVal }));
                   try {
-                    await api.updateUser(userProfile.id, { isPrivate: newVal });
-                    onUpdateProfile({ ...userProfile, isPrivate: newVal });
-                  } catch (e) {
-                    console.error('Failed to update privacy', e);
-                    setProfileForm({ ...profileForm, isPrivate: !newVal }); // revert
+                    const updatedProfile = await api.updateUser(userProfile.id, { isPrivate: newVal });
+                    const merged = { ...userProfile, ...updatedProfile, isPrivate: newVal };
+                    setProfileForm((current) => ({ ...current, ...updatedProfile, isPrivate: newVal }));
+                    onUpdateProfile(merged);
+                  } catch {
+                    setProfileForm((current) => ({ ...current, isPrivate: !newVal }));
+                    setPrivacySaveError(t('profile.privacy.saveFailed', { defaultValue: 'Account privacy could not be updated. Please try again.' }));
+                  } finally {
+                    setIsSaving(false);
                   }
                 }}
               >
                 <div className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${profileForm.isPrivate ? 'translate-x-6' : 'translate-x-0'}`} />
-              </div>
+              </button>
             </div>
+
+            {privacySaveError && <p className="mb-4 text-sm font-semibold text-red-600" role="alert">{privacySaveError}</p>}
             
             <p className="text-sm text-gray-500 leading-relaxed mb-4">
               {t("When your account is public, your profile and posts can be seen by anyone, on or off SocialInsight, even if they don't have a SocialInsight account.")}
@@ -1162,8 +1265,13 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   return (
     <div className="flex flex-col h-full bg-gray-50 animate-in slide-in-from-right duration-300 z-50">
       <div className="bg-white border-b border-gray-100 flex items-center px-4 h-14 sticky top-0 z-30">
-        <button onClick={onBack} className="p-2 -ml-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors">
-          <ArrowLeft size={24} />
+        <button
+          type="button"
+          onClick={onBack}
+          aria-label={t('common.back', { defaultValue: 'Back' })}
+          className="flex h-11 w-11 items-center justify-center -ms-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+        >
+          <ArrowLeft size={24} className="rtl:rotate-180" />
         </button>
         <span className="font-bold text-lg ml-2">{t('Settings')}</span>
       </div>

@@ -33,7 +33,8 @@ import {
     ProfileValidationError,
     calculateAgeGroupFromDate,
     formatDateOnly,
-    parseAndValidateDateOfBirth
+    parseAndValidateDateOfBirth,
+    withDerivedAgeGroup
 } from '../utils/profileValidation';
 
 const SAFE_USER_SELECT = {
@@ -57,6 +58,14 @@ const SAFE_USER_SELECT = {
     country: true,
     language: true,
     status: true
+};
+
+const logUserRequestFailure = (req: Request, event: string, error: unknown): void => {
+    const errorCode = typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code?: unknown }).code || 'UNKNOWN')
+        : 'UNKNOWN';
+    const requestId = (req as Request & { requestId?: string }).requestId;
+    console.error(JSON.stringify({ event, requestId, errorCode }));
 };
 
 const PROFILE_LINK_SELECT = {
@@ -123,7 +132,7 @@ export const getUsers = async (req: Request, res: Response) => {
         });
         res.json(users.map((user) => serializeUserMediaRecord(user)));
     } catch (error) {
-        console.error(error);
+        logUserRequestFailure(req, 'users_list_failed', error);
         res.status(500).json({ error: 'Failed to fetch users' });
     }
 };
@@ -170,7 +179,7 @@ export const searchUsers = async (req: Request, res: Response) => {
 
         res.json(users.map((user) => serializeUserMediaRecord(user)));
     } catch (error) {
-        console.error('Failed to search users:', error);
+        logUserRequestFailure(req, 'users_search_failed', error);
         res.status(500).json({ error: 'Failed to search users' });
     }
 };
@@ -178,8 +187,54 @@ export const searchUsers = async (req: Request, res: Response) => {
 const PROFILE_READ_SELECT = {
     ...SAFE_USER_SELECT,
     coverMediaId: true,
+    // Selected internally so ageGroup can be derived at serialization time;
+    // publicUserPayload always removes the private DOB itself.
+    birthday: true,
     profileMentions: ACTIVE_MENTION_REFERENCE_INCLUDE
 } as const;
+
+type EditableDemographics = {
+    gender?: string;
+    maritalStatus?: string;
+    educationLevel?: string;
+    employmentType?: string;
+    industry?: string;
+    employmentSector?: string;
+};
+
+const parseEditableDemographics = (value: unknown): EditableDemographics | undefined => {
+    if (value === undefined || value === null) return undefined;
+
+    let parsed: unknown = value;
+    if (typeof value === 'string') {
+        try {
+            parsed = JSON.parse(value);
+        } catch {
+            throw new ProfileValidationError('INVALID_DEMOGRAPHICS', 'Demographics must be a JSON object.');
+        }
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new ProfileValidationError('INVALID_DEMOGRAPHICS', 'Demographics must be an object.');
+    }
+
+    const source = parsed as Record<string, unknown>;
+    const stringField = (...keys: string[]): string | undefined => {
+        for (const key of keys) {
+            if (typeof source[key] === 'string') return source[key] as string;
+        }
+        return undefined;
+    };
+
+    // ageGroup is deliberately excluded: it is a cache derived from the private DOB.
+    return {
+        gender: stringField('gender'),
+        maritalStatus: stringField('maritalStatus'),
+        educationLevel: stringField('educationLevel', 'education'),
+        employmentType: stringField('employmentType', 'employment'),
+        industry: stringField('industry'),
+        employmentSector: stringField('employmentSector', 'sector')
+    };
+};
 
 const sendPublicProfile = async (req: Request, res: Response, user: any): Promise<void> => {
     const viewerId = req.user?.userId;
@@ -216,8 +271,7 @@ const sendPublicProfile = async (req: Request, res: Response, user: any): Promis
     const canViewPrivateDetails = viewerId === user.id
         || (!isPrivateProfile && !isBlocked)
         || followStatus === 'ACTIVE';
-    const [demographics, postsCount, responsesCount, profileLinks, coverMedia] = await Promise.all([
-        prisma.userDemographics.findUnique({ where: { userId: user.id } }),
+    const [postsCount, responsesCount, profileLinks, coverMedia] = await Promise.all([
         prisma.post.count({ where: { authorId: user.id, isDeleted: false, status: 'PUBLISHED', sharedFromId: null } }),
         prisma.response.count({ where: { post: { authorId: user.id, isDeleted: false, status: 'PUBLISHED' } } }),
         canViewPrivateDetails
@@ -234,7 +288,9 @@ const sendPublicProfile = async (req: Request, res: Response, user: any): Promis
         bioMentions: serializeMentionReferences(user.profileMentions),
         followStatus,
         isFollowing: followStatus === 'ACTIVE',
-        demographics: demographics || {},
+        // Demographics are private survey attributes used only for aggregate
+        // analysis. Never attach them to a publicly addressable user DTO.
+        demographics: {},
         stats: {
             followers: user.followersCount,
             following: user.followingCount,
@@ -250,7 +306,7 @@ export const getUser = async (req: Request, res: Response) => {
         if (!user) return res.status(404).json({ error: 'User not found' });
         await sendPublicProfile(req, res, user);
     } catch (error) {
-        console.error(error);
+        logUserRequestFailure(req, 'public_profile_read_failed', error);
         res.status(500).json({ error: 'Failed to fetch user' });
     }
 };
@@ -262,7 +318,7 @@ export const getUserByHandle = async (req: Request, res: Response) => {
         if (!user) return res.status(404).json({ error: 'User not found' });
         await sendPublicProfile(req, res, user);
     } catch (error) {
-        console.error(error);
+        logUserRequestFailure(req, 'public_profile_handle_read_failed', error);
         res.status(500).json({ error: 'Failed to fetch user by handle' });
     }
 };
@@ -273,7 +329,6 @@ export const getMe = async (req: Request, res: Response) => {
             where: { id: req.user!.userId },
             select: {
                 ...PROFILE_READ_SELECT,
-                birthday: true,
                 profileLinks: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], select: PROFILE_LINK_SELECT }
             }
         });
@@ -294,7 +349,7 @@ export const getMe = async (req: Request, res: Response) => {
             profileLinks: user.profileLinks,
             bioMentions: serializeMentionReferences(user.profileMentions),
             isPrivate: user.mediaPrivacyTarget === true || user.isPrivate,
-            demographics: demographics || {},
+            demographics: withDerivedAgeGroup(demographics, user.birthday),
             stats: {
                 followers: user.followersCount,
                 following: user.followingCount,
@@ -303,7 +358,7 @@ export const getMe = async (req: Request, res: Response) => {
             }
         });
     } catch (error) {
-        console.error(error);
+        logUserRequestFailure(req, 'private_profile_read_failed', error);
         res.status(500).json({ error: 'Failed to fetch current user' });
     }
 };
@@ -315,7 +370,7 @@ export const updateUser = async (req: Request, res: Response) => {
         return res.status(403).json({ error: 'Forbidden: You can only update your own profile' });
     }
 
-    const data = req.body;
+    const data = req.body || {};
 
     try {
         const currentUser = await prisma.user.findUnique({
@@ -355,7 +410,10 @@ export const updateUser = async (req: Request, res: Response) => {
         const parsedBirthday = hasBirthday
             ? (birthdayValue === null || birthdayValue === '' ? null : parseAndValidateDateOfBirth(birthdayValue))
             : undefined;
-        const calculatedAgeGroup = hasBirthday ? (calculateAgeGroupFromDate(parsedBirthday) || null) : undefined;
+        const authoritativeBirthday = hasBirthday ? parsedBirthday : currentUser.birthday;
+        const calculatedAgeGroup = calculateAgeGroupFromDate(authoritativeBirthday) || null;
+        const editableDemographics = parseEditableDemographics(data.demographics);
+        const shouldPersistDemographics = editableDemographics !== undefined || hasBirthday || Boolean(authoritativeBirthday);
 
         if (data.avatar && data.avatarMediaId === undefined) {
             data.avatar = await processBase64Image(data.avatar, currentUser?.avatar);
@@ -437,11 +495,12 @@ export const updateUser = async (req: Request, res: Response) => {
                     actorUserId: id,
                     bio: updated.bio || ''
                 });
-                if (hasBirthday) {
+                if (shouldPersistDemographics) {
+                    const editable = editableDemographics || {};
                     await tx.userDemographics.upsert({
                         where: { userId: id },
-                        create: { userId: id, ageGroup: calculatedAgeGroup },
-                        update: { ageGroup: calculatedAgeGroup }
+                        create: { userId: id, ...editable, ageGroup: calculatedAgeGroup },
+                        update: { ...editable, ageGroup: calculatedAgeGroup }
                     });
                 }
                 if (avatarPrepared) await commitPreparedMedia(tx, avatarPrepared);
@@ -497,55 +556,6 @@ export const updateUser = async (req: Request, res: Response) => {
             }
         }
 
-        let demographics = null;
-        if (data.demographics) {
-            interface DemoData {
-                gender?: string;
-                maritalStatus?: string;
-                ageGroup?: string | null;
-                educationLevel?: string;
-                employmentType?: string;
-                industry?: string;
-                sector?: string;
-            }
-            const rawDemo: any = typeof data.demographics === 'string' ? JSON.parse(data.demographics) : data.demographics;
-            // Force type assertion to avoid ambiguity
-            const demoData: DemoData = {
-                gender: typeof rawDemo.gender === 'string' ? rawDemo.gender : undefined,
-                maritalStatus: typeof rawDemo.maritalStatus === 'string' ? rawDemo.maritalStatus : undefined,
-                ageGroup: hasBirthday ? calculatedAgeGroup : (typeof rawDemo.ageGroup === 'string' ? rawDemo.ageGroup : undefined),
-                educationLevel: typeof rawDemo.educationLevel === 'string' ? rawDemo.educationLevel : undefined,
-                employmentType: typeof rawDemo.employmentType === 'string' ? rawDemo.employmentType : undefined,
-                industry: typeof rawDemo.industry === 'string' ? rawDemo.industry : undefined,
-                sector: typeof rawDemo.sector === 'string' ? rawDemo.sector : undefined
-            };
-
-            demographics = await prisma.userDemographics.upsert({
-                where: { userId: id },
-                create: {
-                    userId: id,
-                    gender: demoData.gender,
-                    maritalStatus: demoData.maritalStatus,
-                    ageGroup: demoData.ageGroup,
-                    educationLevel: demoData.educationLevel,
-                    employmentType: demoData.employmentType,
-                    industry: demoData.industry,
-                    employmentSector: demoData.sector
-                },
-                update: {
-                    gender: demoData.gender,
-                    maritalStatus: demoData.maritalStatus,
-                    ageGroup: demoData.ageGroup,
-                    educationLevel: demoData.educationLevel,
-                    employmentType: demoData.employmentType,
-                    industry: demoData.industry,
-                    employmentSector: demoData.sector
-                }
-            });
-        } else {
-            demographics = await prisma.userDemographics.findUnique({ where: { userId: id } });
-        }
-
         const [postsCount, responsesCount] = await Promise.all([
             prisma.post.count({
                 where: { authorId: id as string, isDeleted: false, status: 'PUBLISHED', sharedFromId: null }
@@ -561,6 +571,7 @@ export const updateUser = async (req: Request, res: Response) => {
                 ...SAFE_USER_SELECT,
                 coverMediaId: true,
                 birthday: true,
+                demographics: true,
                 profileLinks: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], select: PROFILE_LINK_SELECT },
                 profileMentions: ACTIVE_MENTION_REFERENCE_INCLUDE
             }
@@ -576,7 +587,7 @@ export const updateUser = async (req: Request, res: Response) => {
             profileLinks: user.profileLinks,
             bioMentions: serializeMentionReferences(user.profileMentions),
             isPrivate: user.mediaPrivacyTarget === true || user.isPrivate,
-            demographics,
+            demographics: withDerivedAgeGroup(user.demographics, user.birthday),
             stats: {
                 followers: user.followersCount,
                 following: user.followingCount,
@@ -585,7 +596,6 @@ export const updateUser = async (req: Request, res: Response) => {
             }
         });
     } catch (error) {
-        console.error("Update User Error:", error);
         if (error instanceof MediaValidationError) {
             return res.status(error.statusCode).json({ error: error.message, code: error.code });
         }
@@ -598,6 +608,7 @@ export const updateUser = async (req: Request, res: Response) => {
         if (error instanceof Error && error.message.includes('privacy transition')) {
             return res.status(409).json({ error: error.message, code: 'PRIVACY_TRANSITION_IN_PROGRESS' });
         }
+        logUserRequestFailure(req, 'profile_update_failed', error);
         res.status(500).json({ error: 'Failed to update user' });
     }
 };
@@ -630,7 +641,15 @@ export const getUserAnalytics = async (req: Request, res: Response) => {
                 post."type",
                 viewer."country",
                 demographics."gender",
-                demographics."age_group" AS "ageGroup",
+                CASE
+                    WHEN viewer."birthday" IS NULL THEN NULL
+                    WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) < 18 THEN 'Under 18'
+                    WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) <= 24 THEN '18-24'
+                    WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) <= 34 THEN '25-34'
+                    WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) <= 44 THEN '35-44'
+                    WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) <= 54 THEN '45-54'
+                    ELSE '55+'
+                END AS "ageGroup",
                 COUNT(*)::bigint AS "count"
             FROM "Response" response
             INNER JOIN "Post" post ON post."id" = response."postId"
@@ -640,7 +659,7 @@ export const getUserAnalytics = async (req: Request, res: Response) => {
               AND post."isDeleted" = FALSE
               AND post."status" = 'PUBLISHED'
               AND post."sharedFromId" IS NULL
-            GROUP BY post."type", viewer."country", demographics."gender", demographics."age_group"
+            GROUP BY 1, 2, 3, 4
         `);
 
         let totalResponses = 0;
@@ -664,7 +683,7 @@ export const getUserAnalytics = async (req: Request, res: Response) => {
 
         res.json({ totalResponses, byType, byCountry, byGender, byAge });
     } catch (error) {
-        console.error("Analytics Error:", error);
+        logUserRequestFailure(req, 'profile_analytics_read_failed', error);
         res.status(500).json({ error: 'Failed to fetch analytics' });
     }
 };
@@ -715,7 +734,7 @@ export const getUserFollowers = async (req: Request, res: Response) => {
 
         res.json(mapped);
     } catch (error) {
-        console.error("Get Followers Error:", error);
+        logUserRequestFailure(req, 'followers_read_failed', error);
         res.status(500).json({ error: 'Failed to fetch followers' });
     }
 };
@@ -766,7 +785,7 @@ export const getUserFollowing = async (req: Request, res: Response) => {
 
         res.json(mapped);
     } catch (error) {
-        console.error("Get Following Error:", error);
+        logUserRequestFailure(req, 'following_read_failed', error);
         res.status(500).json({ error: 'Failed to fetch following' });
     }
 };
@@ -826,7 +845,7 @@ export const getNotifications = async (req: Request, res: Response) => {
 
         res.json(mapped);
     } catch (error) {
-        console.error("Get Notifications Error:", error);
+        logUserRequestFailure(req, 'notifications_read_failed', error);
         res.status(500).json({ error: 'Failed to fetch notifications' });
     }
 };
@@ -889,7 +908,7 @@ export const markNotificationsRead = async (req: Request, res: Response) => {
         });
         res.json({ success: true });
     } catch (error) {
-        console.error("Mark Notifications Read Error:", error);
+        logUserRequestFailure(req, 'notifications_mark_read_failed', error);
         res.status(500).json({ error: 'Failed to mark notifications read' });
     }
 };
@@ -908,7 +927,7 @@ export const markSingleNotificationRead = async (req: Request, res: Response) =>
         });
         res.json({ success: true });
     } catch (error) {
-        console.error("Mark Single Notification Read Error:", error);
+        logUserRequestFailure(req, 'notification_mark_read_failed', error);
         res.status(500).json({ error: 'Failed to mark single notification read' });
     }
 };
@@ -971,15 +990,16 @@ export const getUserGroups = async (req: Request, res: Response) => {
 
         res.json(groups);
     } catch (error) {
-        console.error("Get User Groups Error:", error);
+        logUserRequestFailure(req, 'user_groups_read_failed', error);
         res.status(500).json({ error: 'Failed to fetch user groups' });
     }
 };
 
 export const getSuggestedUsers = async (req: Request, res: Response) => {
-    const { id } = req.params;
     try {
-        const viewerId = id as string;
+        // Keep the legacy /users/:id/suggested route shape for clients, but
+        // derive the subject exclusively from the authenticated actor.
+        const viewerId = req.user!.userId;
         const recentAuthors = await prisma.$queryRaw<Array<{ authorId: string }>>(Prisma.sql`
             WITH recent_interactions AS (
                 (SELECT post."authorId", likes."createdAt" AS "interactedAt"
@@ -1050,7 +1070,7 @@ export const getSuggestedUsers = async (req: Request, res: Response) => {
 
         res.json(suggestedList);
     } catch (error) {
-        console.error("Get Suggested Users Error:", error);
+        logUserRequestFailure(req, 'suggested_users_read_failed', error);
         res.status(500).json({ error: 'Failed to fetch suggested users' });
     }
 };
@@ -1118,7 +1138,7 @@ export const deleteAccount = async (req: Request, res: Response) => {
 
         res.json({ success: true, message: 'Account deleted and anonymized successfully' });
     } catch (error) {
-        console.error("Delete Account Error:", error);
+        logUserRequestFailure(req, 'account_delete_failed', error);
         res.status(500).json({ error: 'Failed to delete account' });
     }
 };

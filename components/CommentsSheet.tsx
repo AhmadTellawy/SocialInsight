@@ -204,6 +204,32 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
   }, [loadCommentsPage]);
 
   React.useEffect(() => {
+    if (!userProfile?.id) return;
+
+    const refreshCurrentAuthor = (comment: Comment): Comment => ({
+      ...comment,
+      author: comment.author.id === userProfile.id
+        ? {
+            ...comment.author,
+            name: userProfile.name,
+            avatar: userProfile.avatar,
+            avatarMediaId: userProfile.avatarMediaId,
+            avatarMedia: userProfile.avatarMedia
+          }
+        : comment.author,
+      replies: comment.replies?.map(refreshCurrentAuthor)
+    });
+
+    setComments((current) => current.map(refreshCurrentAuthor));
+  }, [
+    userProfile?.id,
+    userProfile?.name,
+    userProfile?.avatar,
+    userProfile?.avatarMediaId,
+    userProfile?.avatarMedia
+  ]);
+
+  React.useEffect(() => {
     const targetId = initialReplyId || initialCommentId;
     if (isLoading || !targetId) return;
 
@@ -239,7 +265,7 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
         setComments(prev => prev.map(c => c.id === commentId ? { ...c, likes: c.isLiked ? c.likes - 1 : c.likes + 1, isLiked: !c.isLiked } : c));
       }
 
-      await api.likeComment(commentId, userProfile.id);
+      await api.likeComment(commentId);
     } catch (e) {
       console.error("Failed to like comment", e);
       // Revert optimistic update on failure could be added here
@@ -256,7 +282,7 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
     try {
       if (editingCommentId) {
         // Handle Edit Update
-        const updatedRaw = await api.updateComment(editingCommentId, newComment, userProfile?.id || '');
+        const updatedRaw = await api.updateComment(editingCommentId, newComment);
         setComments(prev => {
           // It could be a reply or a top level comment
           // To safely update, we recursively map or just check both levels
@@ -277,8 +303,7 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
         setEditingCommentId(null);
       } else {
         // Handle New Comment
-        console.log("Sending comment:", newComment);
-        const createdComment = await api.createComment(surveyId, newComment, replyingTo || undefined, userProfile?.id);
+        const createdComment = await api.createComment(surveyId, newComment, replyingTo || undefined);
 
         if (replyingTo) {
           setComments(prev => prev.map(c => {
@@ -459,7 +484,7 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
               onClick={async () => {
                 if (window.confirm("Are you sure you want to delete this comment?")) {
                   try {
-                    await api.deleteComment(actionSheetComment.comment.id, userProfile?.id || '');
+                    await api.deleteComment(actionSheetComment.comment.id);
                     setComments(prev => {
                       if (actionSheetComment.isReply && actionSheetComment.parentId) {
                         return prev.map(c => c.id === actionSheetComment.parentId ? { ...c, replies: c.replies?.filter(r => r.id !== actionSheetComment.comment.id) } : c);

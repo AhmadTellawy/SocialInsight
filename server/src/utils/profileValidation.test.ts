@@ -8,7 +8,8 @@ import {
   formatDateOnly,
   normalizeProfileLinkInput,
   normalizeProfileLinkUrl,
-  parseAndValidateDateOfBirth
+  parseAndValidateDateOfBirth,
+  withDerivedAgeGroup
 } from './profileValidation';
 
 test('normalizes domains without a protocol and canonicalizes host casing', () => {
@@ -27,6 +28,14 @@ test('keeps display fragments but removes them from the duplicate key', () => {
     normalizeProfileLinkUrl('https://example.com/path#other').normalizedUrl,
     'https://example.com/path'
   );
+});
+
+test('accepts the Facebook share URL used by the add-link flow', () => {
+  assert.deepEqual(normalizeProfileLinkInput('Facebook', 'https://www.facebook.com/share/19LFpJK7Y5'), {
+    title: 'Facebook',
+    url: 'https://www.facebook.com/share/19LFpJK7Y5',
+    normalizedUrl: 'https://www.facebook.com/share/19LFpJK7Y5'
+  });
 });
 
 test('rejects dangerous, relative, credentialed, malformed, and control-character URLs', () => {
@@ -73,4 +82,40 @@ test('enforces real dates, future dates, age 13, and a logical maximum age', () 
   assert.throws(() => parseAndValidateDateOfBirth('2027-01-01', today), ProfileValidationError);
   assert.throws(() => parseAndValidateDateOfBirth('2024-02-30', today), ProfileValidationError);
   assert.throws(() => parseAndValidateDateOfBirth('1900-01-01', today), ProfileValidationError);
+});
+
+test('age calculation changes on the UTC birthday and respects every band boundary', () => {
+  const dayBefore = new Date('2026-08-31T23:59:59.999Z');
+  const birthday = new Date('2008-09-01T00:00:00.000Z');
+  assert.equal(ageOnDate(birthday, dayBefore), 17);
+  assert.equal(calculateAgeGroupFromDate(birthday, dayBefore), 'Under 18');
+
+  const onBirthday = new Date('2026-09-01T00:00:00.000Z');
+  assert.equal(ageOnDate(birthday, onBirthday), 18);
+  assert.equal(calculateAgeGroupFromDate(birthday, onBirthday), '18-24');
+
+  const bandCases = [
+    ['2002-09-01', '18-24'],
+    ['2001-09-01', '25-34'],
+    ['1992-09-01', '25-34'],
+    ['1991-09-01', '35-44'],
+    ['1982-09-01', '35-44'],
+    ['1981-09-01', '45-54'],
+    ['1972-09-01', '45-54'],
+    ['1971-09-01', '55+']
+  ] as const;
+  for (const [dob, expected] of bandCases) {
+    assert.equal(calculateAgeGroupFromDate(new Date(`${dob}T00:00:00.000Z`), onBirthday), expected, dob);
+  }
+});
+
+test('DOB-derived age group overwrites stale or client-supplied cached values', () => {
+  const today = new Date('2026-09-01T12:00:00.000Z');
+  const demographics = withDerivedAgeGroup(
+    { gender: 'Female', ageGroup: '18-24' },
+    new Date('1986-09-01T00:00:00.000Z'),
+    today
+  );
+  assert.deepEqual(demographics, { gender: 'Female', ageGroup: '35-44' });
+  assert.deepEqual(withDerivedAgeGroup({ ageGroup: '55+', gender: 'Male' }, null, today), { gender: 'Male' });
 });

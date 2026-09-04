@@ -2,13 +2,23 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   PROFILE_LINK_TITLE_MAX_LENGTH,
+  calculateAgeGroupFromDateOnly,
   calculateAgeFromDateOnly,
   formatDateOnly,
   normalizeProfileLinkUrl,
   parseDateOnly,
+  todayAsDateOnly,
   validateDateOfBirth,
   validateProfileLinkTitle
 } from './profileValidation.ts';
+
+test('today date-only uses the same UTC boundary as the backend', () => {
+  assert.deepEqual(todayAsDateOnly(new Date('2026-09-01T23:30:00-03:00')), {
+    year: 2026,
+    month: 9,
+    day: 2
+  });
+});
 
 test('profile link titles are trimmed and plain text', () => {
   assert.deepEqual(validateProfileLinkTitle('  My Website  '), { valid: true, value: 'My Website' });
@@ -48,6 +58,17 @@ test('profile URLs add HTTPS and produce a stable duplicate key', () => {
   assert.equal(normalizeProfileLinkUrl('https://xn--mgbh0fb.xn--kgbechtv').valid, true);
 });
 
+test('accepts the Facebook share URL used by the add-link flow', () => {
+  assert.deepEqual(normalizeProfileLinkUrl('https://www.facebook.com/share/19LFpJK7Y5'), {
+    valid: true,
+    value: {
+      url: 'https://www.facebook.com/share/19LFpJK7Y5',
+      normalizedUrl: 'https://www.facebook.com/share/19LFpJK7Y5',
+      protocolAdded: false
+    }
+  });
+});
+
 test('profile URLs reject unsafe and malformed input without network access', () => {
   for (const value of [
     'javascript:alert(1)',
@@ -79,6 +100,21 @@ test('date-of-birth validation enforces exact age boundaries without Date parsin
   assert.deepEqual(validateDateOfBirth('1904-08-30', { today: '2025-08-31' }), { valid: false, error: 'tooOld' });
   assert.equal(calculateAgeFromDateOnly('2000-09-01', '2025-08-31'), 24);
   assert.equal(calculateAgeFromDateOnly('2000-08-31', '2025-08-31'), 25);
+});
+
+test('derived age groups use exact birthday boundaries', () => {
+  const today = '2025-08-31';
+  assert.equal(calculateAgeGroupFromDateOnly('2007-09-01', today), 'Under 18');
+  assert.equal(calculateAgeGroupFromDateOnly('2007-08-31', today), '18-24');
+  assert.equal(calculateAgeGroupFromDateOnly('2000-09-01', today), '18-24');
+  assert.equal(calculateAgeGroupFromDateOnly('2000-08-31', today), '25-34');
+  assert.equal(calculateAgeGroupFromDateOnly('1990-09-01', today), '25-34');
+  assert.equal(calculateAgeGroupFromDateOnly('1990-08-31', today), '35-44');
+  assert.equal(calculateAgeGroupFromDateOnly('1980-09-01', today), '35-44');
+  assert.equal(calculateAgeGroupFromDateOnly('1980-08-31', today), '45-54');
+  assert.equal(calculateAgeGroupFromDateOnly('1970-09-01', today), '45-54');
+  assert.equal(calculateAgeGroupFromDateOnly('1970-08-31', today), '55+');
+  assert.equal(calculateAgeGroupFromDateOnly('not-a-date', today), null);
 });
 
 test('optional empty dates remain null and localized formatting keeps the calendar day', () => {

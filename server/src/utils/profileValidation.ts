@@ -185,3 +185,17 @@ export const calculateAgeGroupFromDate = (dateOfBirth: Date | null | undefined, 
   if (age <= 54) return '45-54';
   return '55+';
 };
+
+/**
+ * Builds an API-safe demographics object whose age group always comes from
+ * the canonical DOB. A stale or client-supplied cached value is never exposed.
+ */
+export const withDerivedAgeGroup = (
+  demographics: Record<string, unknown> | null | undefined,
+  dateOfBirth: Date | null | undefined,
+  today: Date = new Date()
+): Record<string, unknown> => {
+  const { ageGroup: _cachedAgeGroup, ...editable } = demographics || {};
+  const ageGroup = calculateAgeGroupFromDate(dateOfBirth, today);
+  return ageGroup ? { ...editable, ageGroup } : editable;
+};

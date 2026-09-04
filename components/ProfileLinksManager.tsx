@@ -21,6 +21,7 @@ import {
   validateProfileLinkTitle
 } from '../utils/profileValidation';
 import type { ProfileLinkTitleError, ProfileLinkUrlError } from '../utils/profileValidation';
+import { profileLinkApiErrorKey, shouldReconcileProfileLinkMutation } from '../utils/profileLinkErrors';
 import { BottomSheet } from './BottomSheet';
 
 export type ProfileLinksManagerProps = {
@@ -57,18 +58,17 @@ const urlErrorKey = (error: ProfileLinkUrlError): string => ({
 })[error];
 
 const apiErrorKey = (error: unknown, fallback: 'load' | 'add' | 'update' | 'delete'): string => {
-  if (error instanceof ApiError) {
-    if (['PROFILE_LINK_LIMIT', 'PROFILE_LINK_LIMIT_REACHED', 'MAX_PROFILE_LINKS'].includes(error.code || '')) {
-      return 'profileLinks.errors.limit';
-    }
-    if (['DUPLICATE_PROFILE_LINK', 'PROFILE_LINK_DUPLICATE'].includes(error.code || '')) {
-      return 'profileLinks.errors.duplicate';
-    }
-    if (['INVALID_PROFILE_LINK_URL', 'INVALID_URL'].includes(error.code || '')) {
-      return 'profileLinks.validation.urlInvalid';
-    }
-  }
-  return `profileLinks.errors.${fallback}`;
+  return profileLinkApiErrorKey(error instanceof ApiError ? error : null, fallback);
+};
+
+const shouldReconcileMutationError = (error: unknown): boolean => {
+  return shouldReconcileProfileLinkMutation(error instanceof ApiError ? error : null);
+};
+
+const normalizedUrlForLink = (link: Pick<ProfileLink, 'url' | 'normalizedUrl'>): string | null => {
+  if (link.normalizedUrl) return link.normalizedUrl;
+  const normalized = normalizeProfileLinkUrl(link.url);
+  return normalized.valid ? normalized.value.normalizedUrl : null;
 };
 
 const ScreenHeader: React.FC<{
@@ -102,6 +102,7 @@ export const ProfileLinksManager: React.FC<ProfileLinksManagerProps> = ({ onBack
   const [deleteTarget, setDeleteTarget] = useState<ProfileLink | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteInFlightRef = useRef(false);
   const onLinksChangeRef = useRef(onLinksChange);
 
   useEffect(() => {
@@ -114,18 +115,24 @@ export const ProfileLinksManager: React.FC<ProfileLinksManagerProps> = ({ onBack
     onLinksChangeRef.current?.(sorted);
   }, []);
 
+  const reconcileLinks = useCallback(async (signal?: AbortSignal): Promise<ProfileLink[]> => {
+    const result = await api.getProfileLinks({ signal });
+    const sorted = sortProfileLinks(result);
+    if (!signal?.aborted) publishLinks(sorted);
+    return sorted;
+  }, [publishLinks]);
+
   const loadLinks = useCallback(async (signal?: AbortSignal) => {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const result = await api.getProfileLinks({ signal });
-      if (!signal?.aborted) publishLinks(result);
+      if (!signal?.aborted) await reconcileLinks(signal);
     } catch (error) {
       if (!signal?.aborted) setLoadError(t(apiErrorKey(error, 'load')));
     } finally {
       if (!signal?.aborted) setIsLoading(false);
     }
-  }, [publishLinks, t]);
+  }, [reconcileLinks, t]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -135,6 +142,7 @@ export const ProfileLinksManager: React.FC<ProfileLinksManagerProps> = ({ onBack
 
   const atLimit = links.length >= PROFILE_LINK_LIMIT;
   const openAddForm = () => {
+    if (isLoading || loadError) return;
     if (atLimit) {
       setNotice({ type: 'error', message: t('profileLinks.limitReached', { max: PROFILE_LINK_LIMIT }) });
       return;
@@ -154,7 +162,8 @@ export const ProfileLinksManager: React.FC<ProfileLinksManagerProps> = ({ onBack
   };
 
   const confirmDelete = async () => {
-    if (!deleteTarget || isDeleting) return;
+    if (!deleteTarget || deleteInFlightRef.current) return;
+    deleteInFlightRef.current = true;
     setIsDeleting(true);
     setDeleteError(null);
     try {
@@ -163,8 +172,21 @@ export const ProfileLinksManager: React.FC<ProfileLinksManagerProps> = ({ onBack
       setDeleteTarget(null);
       setNotice({ type: 'success', message: t('profileLinks.success.deleted') });
     } catch (error) {
+      if (shouldReconcileMutationError(error)) {
+        try {
+          const reconciled = await reconcileLinks();
+          if (!reconciled.some((link) => link.id === deleteTarget.id)) {
+            setDeleteTarget(null);
+            setNotice({ type: 'success', message: t('profileLinks.success.deleted') });
+            return;
+          }
+        } catch {
+          // Preserve the original mutation error; reconciliation is best-effort.
+        }
+      }
       setDeleteError(t(apiErrorKey(error, 'delete')));
     } finally {
+      deleteInFlightRef.current = false;
       setIsDeleting(false);
     }
   };
@@ -173,7 +195,7 @@ export const ProfileLinksManager: React.FC<ProfileLinksManagerProps> = ({ onBack
     <button
       type="button"
       onClick={openAddForm}
-      disabled={atLimit || isLoading}
+      disabled={atLimit || isLoading || Boolean(loadError)}
       className="flex h-11 w-11 items-center justify-center rounded-full text-blue-600 transition-colors hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:text-gray-300"
       aria-label={atLimit
         ? t('profileLinks.limitReached', { max: PROFILE_LINK_LIMIT })
@@ -191,6 +213,7 @@ export const ProfileLinksManager: React.FC<ProfileLinksManagerProps> = ({ onBack
       <ProfileLinkForm
         link={view.link}
         links={links}
+        onReconcile={reconcileLinks}
         onBack={() => setView({ kind: 'manage' })}
         onSaved={(saved) => {
           const next = view.link
@@ -363,9 +386,10 @@ export const ProfileLinksManager: React.FC<ProfileLinksManagerProps> = ({ onBack
 const ProfileLinkForm: React.FC<{
   link: ProfileLink | null;
   links: ProfileLink[];
+  onReconcile: () => Promise<ProfileLink[]>;
   onBack: () => void;
   onSaved: (link: ProfileLink) => void;
-}> = ({ link, links, onBack, onSaved }) => {
+}> = ({ link, links, onReconcile, onBack, onSaved }) => {
   const { t, i18n } = useTranslation();
   const [title, setTitle] = useState(link?.title || '');
   const [url, setUrl] = useState(link?.url || '');
@@ -373,6 +397,7 @@ const ProfileLinkForm: React.FC<{
   const [urlTouched, setUrlTouched] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const submitInFlightRef = useRef(false);
 
   const titleValidation = useMemo(() => validateProfileLinkTitle(title), [title]);
   const urlValidation = useMemo(() => normalizeProfileLinkUrl(url), [url]);
@@ -402,8 +427,9 @@ const ProfileLinkForm: React.FC<{
     setTitleTouched(true);
     setUrlTouched(true);
     setSubmitError(null);
-    if (!titleValidation.valid || !urlValidation.valid || isDuplicate || !hasChanges || isSubmitting) return;
+    if (!titleValidation.valid || !urlValidation.valid || isDuplicate || !hasChanges || submitInFlightRef.current) return;
 
+    submitInFlightRef.current = true;
     setIsSubmitting(true);
     try {
       const payload = { title: titleValidation.value, url: urlValidation.value.url };
@@ -412,8 +438,25 @@ const ProfileLinkForm: React.FC<{
         : await api.createProfileLink(payload);
       onSaved(saved);
     } catch (error) {
+      if (shouldReconcileMutationError(error)) {
+        try {
+          const reconciled = await onReconcile();
+          const recovered = reconciled.find((item) => {
+            if (link && item.id !== link.id) return false;
+            return item.title === titleValidation.value
+              && normalizedUrlForLink(item) === urlValidation.value.normalizedUrl;
+          });
+          if (recovered) {
+            onSaved(recovered);
+            return;
+          }
+        } catch {
+          // Keep the user's draft and surface the original mutation error.
+        }
+      }
       setSubmitError(t(apiErrorKey(error, link ? 'update' : 'add')));
     } finally {
+      submitInFlightRef.current = false;
       setIsSubmitting(false);
     }
   };

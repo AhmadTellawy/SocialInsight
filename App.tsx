@@ -79,6 +79,29 @@ const GROUPS_REQUEST_TIMEOUT_MS = 10_000;
 const NOTIFICATIONS_REQUEST_TIMEOUT_MS = 10_000;
 const NOTIFICATIONS_PAGE_SIZE = 50;
 
+const syncSurveyAuthorWithProfile = (survey: Survey, profile: UserProfile): Survey => {
+  const sharedFrom = survey.sharedFrom
+    ? syncSurveyAuthorWithProfile(survey.sharedFrom, profile)
+    : undefined;
+  const isCurrentUserAuthor = Boolean(profile.id) && survey.author.id === profile.id;
+  if (!isCurrentUserAuthor && sharedFrom === survey.sharedFrom) return survey;
+  return {
+    ...survey,
+    ...(isCurrentUserAuthor ? {
+      author: {
+        ...survey.author,
+        name: profile.name,
+        handle: profile.handle,
+        avatar: profile.avatar,
+        avatarMediaId: profile.avatarMediaId,
+        avatarMedia: profile.avatarMedia,
+        isPrivate: profile.isPrivate
+      }
+    } : {}),
+    ...(sharedFrom !== survey.sharedFrom ? { sharedFrom } : {})
+  };
+};
+
 const mergeNotificationsById = (
   existing: Notification[],
   incoming: Notification[]
@@ -102,6 +125,8 @@ const App: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { t, i18n } = useTranslation();
+  const isProfileSettingsRoute = location.pathname === '/settings/profile'
+    || location.pathname.startsWith('/settings/profile/');
 
   React.useEffect(() => {
     if (['ar', 'ur'].includes(i18n.language?.split('-')[0])) {
@@ -729,7 +754,7 @@ const App: React.FC = () => {
   const detailRequestRef = useRef(0);
   const [detailTab, setDetailTab] = useState<'post' | 'analysis'>('post');
 
-  const [selectedProfile, setSelectedProfile] = useState<{ id: string; name: string; avatar: string; handle?: string } | null>(null);
+  const [selectedProfile, setSelectedProfile] = useState<(Partial<UserProfile> & { id: string; name: string; avatar: string; handle?: string }) | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [externalGroup, setExternalGroup] = useState<Group | null>(null);
   const [isGroupLoading, setIsGroupLoading] = useState(false);
@@ -1040,26 +1065,39 @@ const App: React.FC = () => {
 
   const pullToRefreshRef = useRef<PullToRefreshHandle>(null);
 
+  const handleProfileUpdated = React.useCallback((profile: UserProfile) => {
+    setUserProfile(profile);
+    writeMediaSafeJson('si_user', profile);
+    setSurveys(current => current.map(survey => syncSurveyAuthorWithProfile(survey, profile)));
+    setProfileSurveys(current => current.map(survey => syncSurveyAuthorWithProfile(survey, profile)));
+    setDetailSurvey(current => current ? syncSurveyAuthorWithProfile(current, profile) : current);
+    setSelectedProfile(current => current?.id === profile.id ? {
+      ...current,
+      name: profile.name,
+      handle: profile.handle,
+      avatar: profile.avatar,
+      avatarMediaId: profile.avatarMediaId,
+      avatarMedia: profile.avatarMedia,
+      isPrivate: profile.isPrivate
+    } : current);
+  }, []);
+
   const handleUpdateDemographics = async (newDemographics: Partial<NonNullable<UserProfile['demographics']>>) => {
     if (!userProfile?.id) return;
-
-    // 1. Optimistic Update
-    const updatedProfile = {
-      ...userProfile,
-      demographics: {
-        ...(userProfile.demographics || {}),
-        ...newDemographics
-      }
+    const demographics = {
+      ...(userProfile.demographics || {}),
+      ...newDemographics
     };
-    setUserProfile(updatedProfile);
-    writeMediaSafeJson('si_user', updatedProfile);
-
-    // 2. Server Update
-    try {
-      await api.updateUser(userProfile.id, { demographics: updatedProfile.demographics });
-    } catch (error) {
-      console.error("Failed to update demographics on server:", error);
-    }
+    delete demographics.ageGroup;
+    const updated = await api.updateUser(userProfile.id, { demographics });
+    handleProfileUpdated({
+      ...userProfile,
+      ...updated,
+      demographics: {
+        ...demographics,
+        ...(updated.demographics || {})
+      }
+    });
   };
 
   const handleFollowChange = (targetUserId: string, isFollowing: boolean) => {
@@ -1099,8 +1137,6 @@ const App: React.FC = () => {
   }, []);
 
   const handleCreateSubmit = async (newSurveyData: Partial<Survey>) => {
-    console.log("handleCreateSubmit called with data:", newSurveyData);
-
     if (!userProfile || !userProfile.id) {
       console.error("No user profile available");
       alert("Please log in to create a post");
@@ -1185,8 +1221,6 @@ const App: React.FC = () => {
             authorId: userProfile.id
           });
         }
-
-        console.log("API Result:", resultSurvey);
 
         // Replace optimistic entry or update feed
         if (resultSurvey && status === 'PUBLISHED') {
@@ -1287,8 +1321,6 @@ const App: React.FC = () => {
 
 
   const handleSaveDraft = async (draftData: Partial<Survey>) => {
-    console.log("handleSaveDraft called with data:", draftData);
-
     if (!userProfile) {
       console.error("No user profile available");
       alert("Please log in to save a draft");
@@ -1604,7 +1636,7 @@ const App: React.FC = () => {
 
     // Server Call with Rollback
     if (userProfile?.id) {
-      api.likeSurvey(surveyId, userProfile.id)
+      api.likeSurvey(surveyId)
         .catch(error => {
           console.error("Failed to like post, rolling back:", error);
           setSurveys(previousSurveys);
@@ -1674,7 +1706,12 @@ const App: React.FC = () => {
           if (!userProfile) return <div className="flex-1 flex items-center justify-center p-8 text-center"><h2 className="text-xl font-bold">Please log in to view settings.</h2></div>;
           return (
             <ErrorBoundary>
-              <ProfileSettingsScreen userProfile={userProfile} onUpdateProfile={(prof) => { setUserProfile(prof); writeMediaSafeJson('si_user', prof); }} onBack={() => window.history.length > 2 ? navigate(-1) : navigate('/profile', { replace: true })} onLogout={handleLogout} />
+              <ProfileSettingsScreen
+                userProfile={userProfile}
+                onUpdateProfile={handleProfileUpdated}
+                onBack={() => navigate(userProfile.handle ? `/@${userProfile.handle}` : `/profile/${userProfile.id}`, { replace: true })}
+                onLogout={handleLogout}
+              />
             </ErrorBoundary>
           );
         }
@@ -1902,7 +1939,7 @@ const App: React.FC = () => {
                 onBack={() => window.history.length > 2 ? navigate(-1) : navigate(`/group/${activeGroup.id}`, { replace: true })}
                 onUpdateGroup={async (id, updates) => {
                   const updatedGroup = await api.updateGroup(id, updates);
-                  setActiveGroup(prev => prev && prev.id === id ? { ...prev, ...updatedGroup } : prev);
+                  setExternalGroup(prev => prev && prev.id === id ? { ...prev, ...updatedGroup } : prev);
                   setUserGroups(prev => prev.map(g => g.id === id ? { ...g, ...updatedGroup } : g));
                   return updatedGroup;
                 }}
@@ -2108,19 +2145,21 @@ const App: React.FC = () => {
                   {renderContent()}
                 </PullToRefresh>
               ) : (
-                <div onScroll={handleScroll} className={`flex-1 ${activeTab !== 'search' && activeTab !== 'profile' && activeTab !== 'notifications' && activeTab !== 'messages' ? 'mt-16' : ''} pb-[75px] bg-white overflow-y-auto no-scrollbar`}>
+                <div onScroll={handleScroll} className={`flex-1 ${activeTab !== 'search' && activeTab !== 'profile' && activeTab !== 'notifications' && activeTab !== 'messages' ? 'mt-16' : ''} ${isProfileSettingsRoute ? 'pb-0' : 'pb-[75px]'} bg-white overflow-y-auto no-scrollbar`}>
                   {renderContent()}
                 </div>
               )}
 
-              <BottomNav
-                activeTab={activeTab} onTabChange={handleTabChange}
-                onAddClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
-                isVisible={(isNavVisible || activeTab !== 'home') && activeTab !== 'messages'}
-                isAddMenuOpen={isAddMenuOpen}
-                onAddMenuOption={handleAddMenuOption}
-                unreadNotificationsCount={unreadNotificationsCount}
-              />
+              {!isProfileSettingsRoute && (
+                <BottomNav
+                  activeTab={activeTab} onTabChange={handleTabChange}
+                  onAddClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
+                  isVisible={(isNavVisible || activeTab !== 'home') && activeTab !== 'messages'}
+                  isAddMenuOpen={isAddMenuOpen}
+                  onAddMenuOption={handleAddMenuOption}
+                  unreadNotificationsCount={unreadNotificationsCount}
+                />
+              )}
             </>
           )}
 

@@ -25,7 +25,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   const { t } = useTranslation();
   
   return (
-    <nav className={`fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-100 pb-safe h-[60px] max-w-md mx-auto shadow-[0_-5px_10px_rgba(0,0,0,0.02)] transition-transform duration-300 ease-in-out ${
+    <nav data-testid="bottom-navigation" className={`fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-100 pb-safe h-[60px] max-w-md mx-auto shadow-[0_-5px_10px_rgba(0,0,0,0.02)] transition-transform duration-300 ease-in-out ${
       isVisible ? 'translate-y-0' : 'translate-y-[110%]'
     }`}>
       

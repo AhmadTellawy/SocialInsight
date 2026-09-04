@@ -32,7 +32,7 @@ const finalizeSchema = z.object({
   altText: z.string().trim().max(1000).optional()
 });
 
-const respondWithMediaError = (res: Response, error: unknown): void => {
+const respondWithMediaError = (req: Request, res: Response, error: unknown): void => {
   if (error instanceof z.ZodError) {
     res.status(400).json({ error: 'Invalid media request.', code: 'INVALID_MEDIA_REQUEST' });
     return;
@@ -41,8 +41,16 @@ const respondWithMediaError = (res: Response, error: unknown): void => {
     res.status(error.statusCode).json({ error: error.message, code: error.code });
     return;
   }
-  console.error('Media operation failed:', error instanceof Error ? error.message : 'unknown error');
-  res.status(503).json({ error: 'Media service is temporarily unavailable.', code: 'MEDIA_SERVICE_UNAVAILABLE' });
+  const errorCode = typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code || 'UNKNOWN')
+    : 'UNKNOWN';
+  const requestId = (req as Request & { requestId?: string }).requestId;
+  console.error(JSON.stringify({ event: 'media_operation_failed', requestId, errorCode }));
+  res.status(503).json({
+    error: 'Media service is temporarily unavailable.',
+    code: 'MEDIA_SERVICE_UNAVAILABLE',
+    requestId
+  });
 };
 
 export const getMediaConfig = (_req: Request, res: Response): void => {
@@ -56,7 +64,7 @@ export const startMediaUpload = async (req: Request, res: Response): Promise<voi
     const upload = await createMediaUpload(ownerId, input.purpose, input.mime, input.size, input.altText);
     res.status(201).json(upload);
   } catch (error) {
-    respondWithMediaError(res, error);
+    respondWithMediaError(req, res, error);
   }
 };
 
@@ -66,7 +74,7 @@ export const finalizeMedia = async (req: Request, res: Response): Promise<void> 
     const result = await finalizeMediaUpload(req.user!.userId, req.params.id as string, input);
     res.json(result);
   } catch (error) {
-    respondWithMediaError(res, error);
+    respondWithMediaError(req, res, error);
   }
 };
 
@@ -76,7 +84,7 @@ export const getMedia = async (req: Request, res: Response): Promise<void> => {
     res.setHeader('Cache-Control', presentation.access === 'PUBLIC' ? 'public, max-age=300' : 'private, no-store');
     res.json(presentation);
   } catch (error) {
-    respondWithMediaError(res, error);
+    respondWithMediaError(req, res, error);
   }
 };
 
@@ -85,6 +93,6 @@ export const cancelMedia = async (req: Request, res: Response): Promise<void> =>
     await deleteMediaAsset(req.user!.userId, req.params.id as string);
     res.status(204).send();
   } catch (error) {
-    respondWithMediaError(res, error);
+    respondWithMediaError(req, res, error);
   }
 };

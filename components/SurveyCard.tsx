@@ -41,7 +41,7 @@ interface SurveyCardProps {
   onSurveyProgress?: (surveyId: string, progress: { index: number, answers: Record<string, any>, followUpAnswers?: Record<string, string>, historyStack?: number[], isAnonymous?: boolean }) => void;
   onAuthorClick?: (author: { id: string; name: string; avatar: string; handle?: string }) => void;
   onShareToFeed?: (survey: Survey, caption: string) => void;
-  onUpdateDemographics?: (demographics: Partial<NonNullable<UserProfile['demographics']>>) => void;
+  onUpdateDemographics?: (demographics: Partial<NonNullable<UserProfile['demographics']>>) => void | Promise<void>;
   positionInFeed?: number;
   sourceSurface?: 'FEED' | 'PROFILE' | 'SAVED' | 'SEARCH' | 'DEEP_LINK' | 'SHARE_CAPTURE';
   onAnalysisClick?: () => void;
@@ -288,6 +288,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const [pendingDemoSteps, setPendingDemoSteps] = useState<string[]>([]);
   const [currentDemoIdx, setCurrentDemoIdx] = useState(0);
   const [isDemoSuccess, setIsDemoSuccess] = useState(false);
+  const [isSavingDemographic, setIsSavingDemographic] = useState(false);
+  const [demographicSaveError, setDemographicSaveError] = useState<string | null>(null);
   const [imageError, setImageError] = useState(false);
 
   const isQuote = !!(survey.sharedFrom && survey.sharedCaption && survey.sharedCaption.trim() !== '');
@@ -549,6 +551,10 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
     // Filter to only demographics requested by creator that are MISSING from user profile
     const pending = sourceSurvey.demographics.filter(d => {
+      // Age is derived exclusively from the private date of birth. Asking the
+      // viewer to select it here would let a stale, user-entered value replace
+      // the canonical DOB-derived group.
+      if (d === 'age_group') return false;
       const config = DEM_CONFIG[d];
       if (!config) return false;
       return !userProfile.demographics?.[config.profileKey];
@@ -558,19 +564,30 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       setPendingDemoSteps(pending);
       setCurrentDemoIdx(0);
       setIsDemoSuccess(false);
+      setDemographicSaveError(null);
+      setIsSavingDemographic(false);
       setTimeout(() => {
         setIsDemographicSheetOpen(true);
       }, 800);
     }
   };
 
-  const handleDemographicSelection = (option: string) => {
+  const handleDemographicSelection = async (option: string) => {
+    if (isSavingDemographic) return;
     const currentAttr = pendingDemoSteps[currentDemoIdx];
     const config = DEM_CONFIG[currentAttr];
 
-    if (onUpdateDemographics && config) {
-      onUpdateDemographics({ [config.profileKey]: option });
+    if (!onUpdateDemographics || !config) return;
+    setIsSavingDemographic(true);
+    setDemographicSaveError(null);
+    try {
+      await onUpdateDemographics({ [config.profileKey]: option });
+    } catch {
+      setDemographicSaveError(t('demographicFlow.saveFailed', { defaultValue: 'Your information could not be saved. Please try again.' }));
+      setIsSavingDemographic(false);
+      return;
     }
+    setIsSavingDemographic(false);
 
     // Move to next step or finish
     if (currentDemoIdx < pendingDemoSteps.length - 1) {
@@ -1051,7 +1068,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     } else {
       // Fallback for isolated cards without parents
       try {
-        await api.likeSurvey(interactionTarget.id, userProfile.id);
+        await api.likeSurvey(interactionTarget.id);
       } catch (error) {
         console.error("Failed to like survey", error);
         setIsLiked(previousLiked);
@@ -2031,13 +2048,16 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           {config.options.map((opt) => (
             <button
               key={opt}
-              onClick={() => handleDemographicSelection(opt)}
-              className={`py-4 px-4 bg-white border border-gray-100 rounded-2xl font-bold text-gray-800 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600 transition-all active:scale-[0.98] shadow-sm text-sm ${opt === 'Prefer not to say' && config.options.length % 2 !== 0 ? 'col-span-2' : ''}`}
+              onClick={() => void handleDemographicSelection(opt)}
+              disabled={isSavingDemographic}
+              className={`py-4 px-4 bg-white border border-gray-100 rounded-2xl font-bold text-gray-800 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600 transition-all active:scale-[0.98] shadow-sm text-sm disabled:cursor-wait disabled:opacity-60 ${opt === 'Prefer not to say' && config.options.length % 2 !== 0 ? 'col-span-2' : ''}`}
             >
               {t(opt)}
             </button>
           ))}
         </div>
+
+        {demographicSaveError && <p role="alert" className="text-sm font-semibold text-red-600">{demographicSaveError}</p>}
 
         {pendingDemoSteps.length > 1 && (
           <div className="flex items-center justify-center gap-2 pt-2">
@@ -2593,7 +2613,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       {/* Unified Demographic Collection Flow */}
       <BottomSheet
         isOpen={isDemographicSheetOpen}
-        onClose={() => !isDemoSuccess && setIsDemographicSheetOpen(false)}
+        onClose={() => !isDemoSuccess && !isSavingDemographic && setIsDemographicSheetOpen(false)}
         title="Help Us Improve"
       >
         {renderDemographicStep()}

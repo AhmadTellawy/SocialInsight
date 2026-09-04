@@ -27,6 +27,6 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "include": ["src", "hooks", "services", "utils", "components", "types.ts", "vite.config.ts"],
+  "include": ["App.tsx", "index.tsx", "src", "hooks", "services", "utils", "components", "types.ts", "vite.config.ts"],
   "exclude": ["node_modules", "server", "dist", "scratch"]
 }

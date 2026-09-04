@@ -23,6 +23,7 @@ import { initCronJobs } from './services/cronService';
 import { initSocket } from './services/socketService';
 import { isMediaStorageConfigured } from './services/mediaStorage';
 import prisma from './prisma';
+import { requestContext } from './middleware/requestContext';
 
 const app = express();
 const httpServer = createServer(app);
@@ -33,8 +34,9 @@ const PORT = process.env.PORT || 3001;
 const corsOptions = {
     origin: process.env.CLIENT_URL || 'http://localhost:3000',
     credentials: true,
-    exposedHeaders: ['X-Next-Cursor'],
+    exposedHeaders: ['X-Next-Cursor', 'X-Request-Id'],
 };
+app.use(requestContext);
 app.use(helmet());
 app.use(compression({ threshold: 1024 }));
 app.use(cors(corsOptions));
@@ -64,6 +66,7 @@ app.use((req, res, next) => {
             method: req.method,
             path: requestRouteTemplate(req),
             status: res.statusCode,
+            requestId: req.requestId,
             durationMs: Math.round(durationMs * 10) / 10
         }));
     });
@@ -107,10 +110,36 @@ app.get('/api/health', async (_req, res) => {
 
     try {
         await prisma.$queryRaw`SELECT 1`;
-        res.json({ status: 'ok', database: 'connected', mediaStorage });
     } catch {
-        res.status(503).json({ status: 'error', database: 'unavailable', mediaStorage });
+        res.status(503).json({ status: 'error', database: 'unavailable', migrations: 'unknown', mediaStorage });
+        return;
     }
+
+    let failedMigrations: number;
+    try {
+        const [migrationState] = await prisma.$queryRaw<Array<{ failedCount: bigint }>>`
+            SELECT COUNT(*)::bigint AS "failedCount"
+            FROM "_prisma_migrations"
+            WHERE "finished_at" IS NULL
+              AND "rolled_back_at" IS NULL
+        `;
+        failedMigrations = Number(migrationState?.failedCount || 0);
+    } catch {
+        res.status(503).json({ status: 'error', database: 'connected', migrations: 'unknown', mediaStorage });
+        return;
+    }
+
+    if (failedMigrations > 0) {
+        res.status(503).json({
+            status: 'error',
+            database: 'connected',
+            migrations: 'failed',
+            failedMigrations,
+            mediaStorage
+        });
+        return;
+    }
+    res.json({ status: 'ok', database: 'connected', migrations: 'ok', mediaStorage });
 });
 
 app.get('/api/notification-settings', requireAuth, getNotificationSettings);

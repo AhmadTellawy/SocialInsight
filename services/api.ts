@@ -53,6 +53,8 @@ export type ProfileLinkInput = {
     url: string;
 };
 
+const PROFILE_LINK_REQUEST_TIMEOUT_MS = 15_000;
+
 export type CurrentUserProfile = Omit<UserProfile, 'birthday'> & {
     birthday?: string | null;
     profileLinks?: ProfileLink[];
@@ -495,31 +497,29 @@ export const api = {
         return page.items;
     },
 
-    createComment: async (postId: string, text: string, parentId?: string, authorId?: string) => {
+    createComment: async (postId: string, text: string, parentId?: string) => {
         const response = await authFetch(`${API_BASE_URL}/posts/${postId}/comments`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text, parentId, userId: authorId })
+            body: JSON.stringify({ text, parentId })
         });
         if (!response.ok) await throwApiError(response, 'Failed to create comment');
         return response.json();
     },
 
-    updateComment: async (commentId: string, text: string, userId: string) => {
+    updateComment: async (commentId: string, text: string) => {
         const response = await authFetch(`${API_BASE_URL}/posts/comments/${commentId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text, userId })
+            body: JSON.stringify({ text })
         });
         if (!response.ok) throw new Error('Failed to update comment');
         return response.json();
     },
 
-    deleteComment: async (commentId: string, userId: string) => {
+    deleteComment: async (commentId: string) => {
         const response = await authFetch(`${API_BASE_URL}/posts/comments/${commentId}`, {
-            method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId })
+            method: 'DELETE'
         });
         if (!response.ok) throw new Error('Failed to delete comment');
         return response.json();
@@ -542,7 +542,10 @@ export const api = {
     },
 
     getProfileLinks: async (requestOptions: ApiRequestOptions = {}): Promise<ProfileLink[]> => {
-        const response = await authFetch(`${API_BASE_URL}/users/me/profile-links`, requestOptions);
+        const response = await authFetch(`${API_BASE_URL}/users/me/profile-links`, {
+            ...requestOptions,
+            timeoutMs: requestOptions.timeoutMs ?? PROFILE_LINK_REQUEST_TIMEOUT_MS
+        });
         if (!response.ok) await throwApiError(response, 'Failed to fetch profile links');
         return response.json();
     },
@@ -550,7 +553,8 @@ export const api = {
     createProfileLink: async (data: ProfileLinkInput): Promise<ProfileLink> => {
         const response = await authFetch(`${API_BASE_URL}/users/me/profile-links`, {
             method: 'POST',
-            body: JSON.stringify(data)
+            body: JSON.stringify(data),
+            timeoutMs: PROFILE_LINK_REQUEST_TIMEOUT_MS
         });
         if (!response.ok) await throwApiError(response, 'Failed to add profile link');
         return response.json();
@@ -559,7 +563,8 @@ export const api = {
     updateProfileLink: async (linkId: string, data: ProfileLinkInput): Promise<ProfileLink> => {
         const response = await authFetch(`${API_BASE_URL}/users/me/profile-links/${encodeURIComponent(linkId)}`, {
             method: 'PATCH',
-            body: JSON.stringify(data)
+            body: JSON.stringify(data),
+            timeoutMs: PROFILE_LINK_REQUEST_TIMEOUT_MS
         });
         if (!response.ok) await throwApiError(response, 'Failed to update profile link');
         return response.json();
@@ -567,10 +572,11 @@ export const api = {
 
     deleteProfileLink: async (linkId: string): Promise<void> => {
         const response = await authFetch(`${API_BASE_URL}/users/me/profile-links/${encodeURIComponent(linkId)}`, {
-            method: 'DELETE'
+            method: 'DELETE',
+            timeoutMs: PROFILE_LINK_REQUEST_TIMEOUT_MS
         });
         if (!response.ok) await throwApiError(response, 'Failed to delete profile link');
-        if (response.status !== 204 && response.status !== 205) await response.text();
+        await response.text();
     },
 
     getUser: async (userId: string, signal?: AbortSignal) => {
@@ -600,11 +606,9 @@ export const api = {
         return response.json();
     },
 
-    likeSurvey: async (postId: string, userId: string) => {
+    likeSurvey: async (postId: string) => {
         const response = await authFetch(`${API_BASE_URL}/posts/${postId}/like`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId })
+            method: 'POST'
         });
         if (!response.ok) throw new Error('Failed to like post');
         return response.json();
@@ -623,12 +627,9 @@ export const api = {
         return page.items;
     },
 
-    likeComment: async (commentId: string, userId: string) => {
-        console.log("api.likeComment called with:", { commentId, userId });
+    likeComment: async (commentId: string) => {
         const response = await authFetch(`${API_BASE_URL}/posts/comments/${commentId}/like`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId })
+            method: 'POST'
         });
         if (!response.ok) throw new Error('Failed to like comment');
         return response.json();

@@ -180,7 +180,10 @@ test('getSuggestedUsers samples recent interactions and excludes followed candid
         };
 
         const { response, state } = createResponse();
-        await getSuggestedUsers({ params: { id: 'viewer-1' } } as any, response);
+        await getSuggestedUsers({
+            params: { id: 'victim-user' },
+            user: { userId: 'viewer-1' }
+        } as any, response);
 
         assert.equal(interactionCalls.length, 1);
         assert.equal(interactionCalls[0].strings.join('').includes('UNION ALL'), true);

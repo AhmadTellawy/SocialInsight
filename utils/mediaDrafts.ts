@@ -46,8 +46,12 @@ export const mediaDraftsHaveErrors = (drafts: MediaDraft[]): boolean => drafts.s
 );
 
 export const cancelTemporaryMediaDrafts = async (drafts: MediaDraft[]): Promise<void> => {
+  const collectDraftChain = (draft: MediaDraft): MediaDraft[] => [
+    draft,
+    ...(draft.replacedDraft ? collectDraftChain(draft.replacedDraft) : [])
+  ];
   const allDrafts = Array.from(new Map<string, MediaDraft>(
-    drafts.flatMap((draft) => draft.replacedDraft ? [draft, draft.replacedDraft] : [draft])
+    drafts.flatMap(collectDraftChain)
       .map((draft): [string, MediaDraft] => [draft.clientId, draft])
   ).values());
   allDrafts.forEach((draft) => {

@@ -53,6 +53,7 @@ import {
     buildPostReportDedupeKey,
     normalizePostReportInput
 } from '../services/postOptionService';
+import { calculateAgeGroupFromDate } from '../utils/profileValidation';
 import {
     attachFeedContentRelations,
     attachFeedViewerState,
@@ -64,6 +65,14 @@ import {
     loadFeedRelationBundle,
     parseFeedLimit
 } from '../services/postFeedService';
+
+const logPostRequestFailure = (req: Request, event: string, error: unknown): void => {
+    const errorCode = typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code?: unknown }).code || 'UNKNOWN')
+        : 'UNKNOWN';
+    const requestId = (req as Request & { requestId?: string }).requestId;
+    console.error(JSON.stringify({ event, requestId, errorCode }));
+};
 
 export const SAFE_USER_SELECT = {
     id: true,
@@ -477,7 +486,7 @@ export const getPosts = async (req: Request, res: Response) => {
             res.status(503).json({ error: 'Feed is temporarily unavailable', code: 'FEED_TIMEOUT' });
             return;
         }
-        console.error(error);
+        logPostRequestFailure(req, 'posts_feed_read_failed', error);
         res.status(500).json({ error: 'Failed to fetch posts' });
     }
 };
@@ -656,7 +665,7 @@ export const getPostById = async (req: Request, res: Response) => {
             res.status(503).json({ error: 'Post is temporarily unavailable', code: 'POST_READ_TIMEOUT' });
             return;
         }
-        console.error(error);
+        logPostRequestFailure(req, 'post_detail_read_failed', error);
         res.status(500).json({ error: 'Failed to fetch post' });
     }
 };
@@ -968,7 +977,7 @@ export const createPost = async (req: Request, res: Response) => {
 
         res.json(mappedPost);
     } catch (error) {
-        console.error(error);
+        logPostRequestFailure(req, 'post_create_failed', error);
         if (error instanceof MediaValidationError) {
             res.status(error.statusCode).json({ error: error.message, code: error.code });
             return;
@@ -1463,7 +1472,7 @@ export const updatePost = async (req: Request, res: Response) => {
 
         res.json(mappedPost);
     } catch (error) {
-        console.error('Failed to update post:', error);
+        logPostRequestFailure(req, 'post_update_failed', error);
         if (error instanceof MediaValidationError) {
             res.status(error.statusCode).json({ error: error.message, code: error.code });
             return;
@@ -2053,7 +2062,11 @@ export const getPostResults = async (req: Request, res: Response) => {
             include: {
                 answers: true,
                 user: {
-                    include: {
+                    // Used only to derive the age band below. The DOB itself is
+                    // never copied into the results DTO.
+                    select: {
+                        birthday: true,
+                        country: true,
                         demographics: true
                     }
                 }
@@ -2069,7 +2082,7 @@ export const getPostResults = async (req: Request, res: Response) => {
                 textValue: a.textValue
             })),
             demographics: {
-                age: r.user?.demographics?.ageGroup || 'Unknown',
+                age: calculateAgeGroupFromDate(r.user?.birthday) || 'Unknown',
                 gender: r.user?.demographics?.gender || 'Unknown',
                 country: r.user?.country || 'Unknown',
                 education: r.user?.demographics?.educationLevel || 'Unknown',
@@ -2313,7 +2326,7 @@ export const createComment = async (req: Request, res: Response) => {
 
 export const likePost = async (req: Request, res: Response) => {
     const rawId = req.params.id as string;
-    const { userId } = req.body;
+    const userId = req.user!.userId;
     try {
         const id = await resolveInteractionTarget(rawId, 'like');
         const targetPostCheck = await prisma.post.findUnique({ where: { id }, select: { authorId: true } });
@@ -2348,7 +2361,7 @@ export const likePost = async (req: Request, res: Response) => {
 
 export const likeComment = async (req: Request, res: Response) => {
     const id = req.params.id as string;
-    const { userId } = req.body;
+    const userId = req.user!.userId;
     try {
         const existing = await prisma.commentLike.findUnique({ where: { userId_commentId: { userId, commentId: id } } });
         if (existing) {

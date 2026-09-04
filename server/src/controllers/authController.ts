@@ -9,7 +9,8 @@ import {
     ProfileValidationError,
     calculateAgeGroupFromDate,
     formatDateOnly,
-    parseAndValidateDateOfBirth
+    parseAndValidateDateOfBirth,
+    withDerivedAgeGroup
 } from '../utils/profileValidation';
 
 const GENERIC_LOGIN_ERROR = 'Invalid login credentials';
@@ -67,8 +68,10 @@ const SAFE_USER_SELECT = {
     verifiedBadge: true,
     followersCount: true,
     followingCount: true,
+    birthday: true,
     demographics: true,
-    createdAt: true
+    createdAt: true,
+    updatedAt: true
 };
 
 export const register = async (req: Request, res: Response) => {
@@ -142,9 +145,11 @@ export const login = async (req: Request, res: Response) => {
 
         const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '90d' });
 
+        res.setHeader('Cache-Control', 'private, no-store');
         res.json({
             ...serializedUser,
-            demographics: demographics || {},
+            birthday: formatDateOnly(user.birthday),
+            demographics: withDerivedAgeGroup(demographics, user.birthday),
             stats: {
                 followers: user.followersCount,
                 following: user.followingCount,
@@ -254,9 +259,17 @@ export const completeRegistration = async (req: Request, res: Response) => {
         });
 
         const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '90d' });
-        res.json({ user, token });
+        const serializedUser = serializeUserMediaRecord(user)!;
+        res.setHeader('Cache-Control', 'private, no-store');
+        res.json({
+            user: {
+                ...serializedUser,
+                birthday: formatDateOnly(user.birthday),
+                demographics: withDerivedAgeGroup(user.demographics, user.birthday)
+            },
+            token
+        });
     } catch (error: any) {
-        console.error('completeRegistration error:', error);
         if (error instanceof ProfileValidationError) {
             return res.status(error.statusCode).json({ error: error.message, code: error.code });
         }

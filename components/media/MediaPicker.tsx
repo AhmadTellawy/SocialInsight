@@ -21,6 +21,13 @@ import { GripVertical, ImagePlus, Pencil, RefreshCw, Trash2, X } from 'lucide-re
 import { useTranslation } from 'react-i18next';
 import { MediaCropSelection, MediaDraft, MediaPurpose } from '../../types';
 import { MediaUploadError, mediaApi } from '../../services/mediaApi';
+import {
+  DEFAULT_MEDIA_MAX_DECODED_PIXELS,
+  DEFAULT_MEDIA_MAX_INPUT_BYTES,
+  MediaFileValidationError,
+  PROFILE_COVER_MAX_INPUT_BYTES,
+  validateAndNormalizeImageFile
+} from '../../utils/mediaFileValidation';
 import { mediaUploadScheduler } from '../../utils/mediaUploadScheduler';
 import { mediaUploadRegistry } from '../../utils/mediaUploadRegistry';
 import { MediaCropEditor } from './MediaCropEditor';
@@ -54,10 +61,6 @@ type MediaPickerProps = {
   showAddButton?: boolean;
   renderContent?: (controls: MediaPickerControls) => React.ReactNode;
 };
-
-const DEFAULT_MAX_INPUT_BYTES = 15 * 1024 * 1024;
-const COVER_MAX_INPUT_BYTES = 10 * 1024 * 1024;
-const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 const fixedRatioForPurpose = (purpose: MediaPurpose): number | undefined => {
   if (purpose === 'PROFILE_COVER') return 3;
@@ -180,6 +183,7 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
 
   const releaseTransientDraft = (draft: MediaDraft): void => {
     mediaUploadRegistry.cancel(draft.clientId);
+    pendingReplacements.current.delete(draft.clientId);
     if (draft.assetId && !draft.persisted) void mediaApi.cancel(draft.assetId).catch(() => undefined);
     if (draft.previewUrl.startsWith('blob:')) {
       URL.revokeObjectURL(draft.previewUrl);
@@ -258,28 +262,20 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
     if (files.length > capacity) {
       setValidationError(t('media.tooMany', { max: maxFiles, defaultValue: `You can add up to ${maxFiles} images.` }));
     }
-    const accepted = files.slice(0, capacity).filter((file) => {
-      if (!ALLOWED_TYPES.has(file.type)) {
-        setValidationError(t('media.invalidType', { defaultValue: 'Use a JPEG, PNG, or WebP image.' }));
-        return false;
-      }
-      const maxInputBytes = purpose === 'PROFILE_COVER' ? COVER_MAX_INPUT_BYTES : DEFAULT_MAX_INPUT_BYTES;
-      if (file.size > maxInputBytes) {
-        setValidationError(t(
-          purpose === 'PROFILE_COVER' ? 'profile.cover.tooLarge' : 'media.tooLarge',
-          { max: purpose === 'PROFILE_COVER' ? 10 : 15, defaultValue: `Images must be ${purpose === 'PROFILE_COVER' ? 10 : 15} MB or smaller.` }
-        ));
-        return false;
-      }
-      return true;
-    });
-
     const drafts: MediaDraft[] = [];
     let establishedPostRatio = aspectRatio || valuesRef.current[0]?.aspectRatio;
-    for (const file of accepted) {
-      const previewUrl = URL.createObjectURL(file);
-      previewUrls.current.add(previewUrl);
+    for (const sourceFile of files.slice(0, capacity)) {
+      let previewUrl: string | undefined;
       try {
+        const validated = await validateAndNormalizeImageFile(sourceFile, {
+          maxInputBytes: purpose === 'PROFILE_COVER'
+            ? PROFILE_COVER_MAX_INPUT_BYTES
+            : DEFAULT_MEDIA_MAX_INPUT_BYTES,
+          maxDecodedPixels: DEFAULT_MEDIA_MAX_DECODED_PIXELS
+        });
+        const file = validated.file;
+        previewUrl = URL.createObjectURL(file);
+        previewUrls.current.add(previewUrl);
         const sourceRatio = await loadImageRatio(previewUrl);
         if (purpose === 'POST' && !establishedPostRatio) {
           establishedPostRatio = Math.min(1.91, Math.max(0.8, sourceRatio));
@@ -299,10 +295,29 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
           progress: 0,
           aspectRatio: established
         });
-      } catch {
-        URL.revokeObjectURL(previewUrl);
-        previewUrls.current.delete(previewUrl);
-        setValidationError(t('media.invalidImage', { defaultValue: 'This image could not be opened.' }));
+      } catch (error) {
+        if (previewUrl) {
+          URL.revokeObjectURL(previewUrl);
+          previewUrls.current.delete(previewUrl);
+        }
+        if (error instanceof MediaFileValidationError) {
+          if (error.code === 'FILE_TOO_LARGE') {
+            setValidationError(t(
+              purpose === 'PROFILE_COVER' ? 'profile.cover.tooLarge' : 'media.tooLarge',
+              { max: purpose === 'PROFILE_COVER' ? 10 : 15, defaultValue: `Images must be ${purpose === 'PROFILE_COVER' ? 10 : 15} MB or smaller.` }
+            ));
+          } else if (error.code === 'PIXEL_LIMIT_EXCEEDED') {
+            setValidationError(t('media.tooManyPixels', { defaultValue: 'This image is too large to process safely.' }));
+          } else if (error.code === 'MIME_MISMATCH') {
+            setValidationError(t('media.mimeMismatch', { defaultValue: 'The image content does not match its file type.' }));
+          } else if (error.code === 'INVALID_IMAGE' || error.code === 'EMPTY_FILE') {
+            setValidationError(t('media.invalidImage', { defaultValue: 'This image could not be opened.' }));
+          } else {
+            setValidationError(t('media.invalidType', { defaultValue: 'Use a JPEG, PNG, or WebP image.' }));
+          }
+        } else {
+          setValidationError(t('media.invalidImage', { defaultValue: 'This image could not be opened.' }));
+        }
       }
     }
     if (drafts.length === 0) return;
@@ -325,7 +340,12 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
         const persisted = valuesRef.current.filter((draft) => draft.persisted);
         replacedPersistedDrafts.current = persisted.length > 0 ? persisted : null;
       }
-      valuesRef.current.filter((draft) => !draft.persisted).forEach(releaseTransientDraft);
+      const previousDraft = valuesRef.current[0];
+      if (previousDraft) {
+        drafts[0].replacesClientId = previousDraft.clientId;
+        drafts[0].replacedDraft = previousDraft;
+        pendingReplacements.current.set(drafts[0].clientId, previousDraft);
+      }
       publish([drafts[0]]);
     }
     setActiveEditorId(drafts[0].clientId);
@@ -337,7 +357,7 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
     if (pendingReplacement) {
       pendingReplacements.current.delete(draft.clientId);
       publish(valuesRef.current.map((item) => item.clientId === draft.clientId
-        ? { ...pendingReplacement, replacesClientId: draft.clientId, replacedDraft: undefined }
+        ? pendingReplacement
         : item));
       if (activeEditorId === draft.clientId) continueEditing(draft.clientId);
       return;
@@ -456,7 +476,8 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
         ref={inputRef}
         type="file"
         className="hidden"
-        accept="image/jpeg,image/png,image/webp"
+        accept="image/*"
+        data-media-purpose={purpose}
         multiple={multiple}
         disabled={disabled}
         onChange={(event) => {

@@ -5,6 +5,7 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'profile-controller-test-secr
 
 const prisma = require('../prisma').default as typeof import('../prisma').default;
 const { getMe, getUser, updateUser } = require('./userController') as typeof import('./userController');
+const { calculateAgeGroupFromDate } = require('../utils/profileValidation') as typeof import('../utils/profileValidation');
 
 const createResponse = () => {
   const state: { statusCode: number; body: any; headers: Record<string, string> } = {
@@ -62,11 +63,12 @@ test('public profile DTO never exposes DOB/contact fields and hides private link
     linkFindMany: prisma.profileLink.findMany
   };
   let linkReads = 0;
+  let demographicReads = 0;
   try {
     (prisma.user as any).findUnique = async (args: any) => args.select?.profileMentions
       ? profileRecord(true)
       : { isPrivate: true, mediaPrivacyTarget: null };
-    (prisma.userDemographics as any).findUnique = async () => null;
+    (prisma.userDemographics as any).findUnique = async () => { demographicReads += 1; return { gender: 'Female', ageGroup: '55+' }; };
     (prisma.post as any).count = async () => 0;
     (prisma.response as any).count = async () => 0;
     (prisma.profileLink as any).findMany = async () => { linkReads += 1; return []; };
@@ -78,6 +80,8 @@ test('public profile DTO never exposes DOB/contact fields and hides private link
     assert.equal(linkReads, 0);
     assert.deepEqual(state.body.profileLinks, []);
     assert.equal(state.body.coverMedia, null);
+    assert.equal(demographicReads, 0);
+    assert.deepEqual(state.body.demographics, {});
     for (const key of ['birthday', 'email', 'phone', 'passwordHash', 'mediaPrivacyTarget']) {
       assert.equal(Object.prototype.hasOwnProperty.call(state.body, key), false, key);
     }
@@ -106,7 +110,7 @@ test('public accounts expose links but a blocked viewer receives a non-enumerati
       : { isPrivate: false, mediaPrivacyTarget: null };
     (prisma.userBlock as any).findFirst = async () => null;
     (prisma.follow as any).findUnique = async () => null;
-    (prisma.userDemographics as any).findUnique = async () => null;
+    (prisma.userDemographics as any).findUnique = async () => ({ gender: 'Female', ageGroup: '55+' });
     (prisma.post as any).count = async () => 0;
     (prisma.response as any).count = async () => 0;
     (prisma.profileLink as any).findMany = async () => [{
@@ -142,15 +146,26 @@ test('/me returns a date-only birthday privately with no-store caching', async (
     postCount: prisma.post.count,
     responseCount: prisma.response.count
   };
+  let privateProfileWhere: any;
   try {
-    (prisma.user as any).findUnique = async () => profileRecord(true);
-    (prisma.userDemographics as any).findUnique = async () => null;
+    (prisma.user as any).findUnique = async (args: any) => {
+      privateProfileWhere = args.where;
+      return profileRecord(true);
+    };
+    (prisma.userDemographics as any).findUnique = async () => ({ gender: 'Female', ageGroup: '55+' });
     (prisma.post as any).count = async () => 0;
     (prisma.response as any).count = async () => 0;
 
     const { response, state } = createResponse();
-    await getMe({ user: { userId: 'profile-1' } } as any, response);
+    await getMe({
+      user: { userId: 'profile-1' },
+      params: { id: 'victim-user' },
+      body: { userId: 'victim-user' },
+      query: { userId: 'victim-user' }
+    } as any, response);
+    assert.deepEqual(privateProfileWhere, { id: 'profile-1' });
     assert.equal(state.body.birthday, '2000-02-29');
+    assert.equal(state.body.demographics.ageGroup, calculateAgeGroupFromDate(profileRecord(true).birthday));
     assert.equal(state.headers['Cache-Control'], 'private, no-store');
     assert.equal(Object.prototype.hasOwnProperty.call(state.body, 'email'), false);
   } finally {
@@ -183,5 +198,95 @@ test('cover replacement requires the optimistic profile version before media is 
     assert.equal(state.body.code, 'PROFILE_VERSION_REQUIRED');
   } finally {
     (prisma.user as any).findUnique = originalUserFindUnique;
+  }
+});
+
+test('profile updates reject a different JWT owner before touching Prisma', async () => {
+  const originalUserFindUnique = prisma.user.findUnique;
+  let reads = 0;
+  try {
+    (prisma.user as any).findUnique = async () => { reads += 1; return null; };
+    const { response, state } = createResponse();
+    await updateUser({
+      params: { id: 'profile-1' },
+      user: { userId: 'attacker-1' },
+      body: { birthday: '1990-09-01' }
+    } as any, response);
+
+    assert.equal(state.statusCode, 403);
+    assert.equal(reads, 0);
+  } finally {
+    (prisma.user as any).findUnique = originalUserFindUnique;
+  }
+});
+
+test('DOB and editable demographics update atomically while client ageGroup is ignored', async () => {
+  const originals = {
+    userFindUnique: prisma.user.findUnique,
+    userFindUniqueOrThrow: prisma.user.findUniqueOrThrow,
+    transaction: prisma.$transaction,
+    globalDemographicsUpsert: prisma.userDemographics.upsert,
+    postCount: prisma.post.count,
+    responseCount: prisma.response.count
+  };
+  let transactionalUpsert: any;
+  let outsideTransactionUpserts = 0;
+
+  try {
+    (prisma.user as any).findUnique = async () => ({
+      avatar: null,
+      avatarMediaId: null,
+      coverMediaId: null,
+      birthday: new Date('2000-02-29T00:00:00.000Z'),
+      isPrivate: false,
+      mediaPrivacyTarget: null,
+      updatedAt: new Date('2026-08-31T00:00:00.000Z')
+    });
+    (prisma.userDemographics as any).upsert = async () => { outsideTransactionUpserts += 1; };
+    (prisma as any).$transaction = async (callback: (tx: any) => Promise<unknown>) => callback({
+      user: {
+        update: async () => ({}),
+        findUniqueOrThrow: async () => ({ bio: 'Bio' })
+      },
+      userDemographics: {
+        upsert: async (args: any) => { transactionalUpsert = args; return {}; }
+      },
+      mention: { findMany: async () => [] }
+    });
+    (prisma.post as any).count = async () => 0;
+    (prisma.response as any).count = async () => 0;
+    const finalBirthday = new Date('1990-09-01T00:00:00.000Z');
+    (prisma.user as any).findUniqueOrThrow = async () => ({
+      ...profileRecord(false),
+      birthday: finalBirthday,
+      demographics: { gender: 'Female', ageGroup: '18-24' }
+    });
+
+    const { response, state } = createResponse();
+    await updateUser({
+      params: { id: 'profile-1' },
+      user: { userId: 'profile-1' },
+      body: {
+        birthday: '1990-09-01',
+        demographics: { gender: 'Female', ageGroup: '18-24' }
+      }
+    } as any, response);
+
+    const authoritativeAgeGroup = calculateAgeGroupFromDate(finalBirthday);
+    assert.equal(state.statusCode, 200);
+    assert.equal(outsideTransactionUpserts, 0);
+    assert.equal(transactionalUpsert.create.ageGroup, authoritativeAgeGroup);
+    assert.equal(transactionalUpsert.update.ageGroup, authoritativeAgeGroup);
+    assert.equal(transactionalUpsert.update.gender, 'Female');
+    assert.equal(state.body.birthday, '1990-09-01');
+    assert.equal(state.body.demographics.ageGroup, authoritativeAgeGroup);
+    assert.notEqual(state.body.demographics.ageGroup, '18-24');
+  } finally {
+    (prisma.user as any).findUnique = originals.userFindUnique;
+    (prisma.user as any).findUniqueOrThrow = originals.userFindUniqueOrThrow;
+    (prisma as any).$transaction = originals.transaction;
+    (prisma.userDemographics as any).upsert = originals.globalDemographicsUpsert;
+    (prisma.post as any).count = originals.postCount;
+    (prisma.response as any).count = originals.responseCount;
   }
 });

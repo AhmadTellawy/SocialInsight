@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Cropper, { Area, MediaSize } from 'react-easy-crop';
 import { Check, RefreshCw, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -35,6 +36,7 @@ export const MediaCropEditor: React.FC<MediaCropEditorProps> = ({
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  const onCancelRef = useRef(onCancel);
   const fixedRatio = fixedRatioForPurpose(purpose) || lockedAspectRatio;
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
@@ -48,13 +50,15 @@ export const MediaCropEditor: React.FC<MediaCropEditorProps> = ({
     height: initialCrop.crop.height * 100
   } : null);
 
+  useEffect(() => { onCancelRef.current = onCancel; }, [onCancel]);
+
   useEffect(() => {
     previouslyFocusedRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     closeButtonRef.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        onCancel();
+        onCancelRef.current();
         return;
       }
       if (event.key !== 'Tab' || !dialogRef.current) return;
@@ -77,7 +81,21 @@ export const MediaCropEditor: React.FC<MediaCropEditorProps> = ({
       window.removeEventListener('keydown', onKeyDown);
       previouslyFocusedRef.current?.focus();
     };
-  }, [onCancel]);
+  }, []);
+
+  useEffect(() => {
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousBodyOverscroll = document.body.style.overscrollBehavior;
+    const previousRootOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.body.style.overscrollBehavior = 'none';
+    document.documentElement.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.body.style.overscrollBehavior = previousBodyOverscroll;
+      document.documentElement.style.overflow = previousRootOverflow;
+    };
+  }, []);
 
   const presets = useMemo(() => {
     if (fixedRatio) return [{
@@ -118,15 +136,28 @@ export const MediaCropEditor: React.FC<MediaCropEditorProps> = ({
     });
   };
 
-  return (
-    <div ref={dialogRef} className="fixed inset-0 z-[120] flex flex-col bg-black" role="dialog" aria-modal="true" aria-label={t(purpose === 'PROFILE_COVER' ? 'profile.cover.cropTitle' : 'media.crop.title', { defaultValue: purpose === 'PROFILE_COVER' ? 'Crop cover photo' : 'Crop image' })}>
-      <div className="safe-top flex h-16 shrink-0 items-center justify-between px-4">
-        <button ref={closeButtonRef} type="button" onClick={onCancel} className="flex h-11 w-11 items-center justify-center text-white hover:bg-white/10 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white" title={t('common.cancel', { defaultValue: 'Cancel' })} aria-label={t('common.cancel', { defaultValue: 'Cancel' })}>
-          <X size={24} />
+  const editor = (
+    <div
+      ref={dialogRef}
+      data-testid="media-crop-editor"
+      data-media-purpose={purpose}
+      className="fixed inset-0 z-[120] flex h-[100dvh] max-h-[100dvh] flex-col overflow-hidden overscroll-none bg-black"
+      role="dialog"
+      aria-modal="true"
+      aria-label={t(purpose === 'PROFILE_COVER' ? 'profile.cover.cropTitle' : 'media.crop.title', { defaultValue: purpose === 'PROFILE_COVER' ? 'Crop cover photo' : 'Crop image' })}
+    >
+      <div
+        className="grid min-h-16 shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-2 px-3 pb-2"
+        style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top))' }}
+      >
+        <button ref={closeButtonRef} type="button" onClick={onCancel} className="flex h-11 min-w-[6.5rem] items-center justify-start gap-2 rounded-full px-3 text-sm font-semibold text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white" title={t('common.cancel', { defaultValue: 'Cancel' })} aria-label={t('common.cancel', { defaultValue: 'Cancel' })}>
+          <X size={20} />
+          <span>{t('common.cancel', { defaultValue: 'Cancel' })}</span>
         </button>
-        <h2 className="text-base font-semibold text-white">{t(purpose === 'PROFILE_COVER' ? 'profile.cover.cropTitle' : 'media.crop.title', { defaultValue: purpose === 'PROFILE_COVER' ? 'Crop cover photo' : 'Crop image' })}</h2>
-        <button type="button" onClick={apply} disabled={!croppedArea} className="flex h-11 w-11 items-center justify-center text-white hover:bg-white/10 rounded-full disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white" title={t('common.apply', { defaultValue: 'Apply' })} aria-label={t('common.apply', { defaultValue: 'Apply' })}>
-          <Check size={24} />
+        <h2 className="text-center text-base font-semibold text-white">{t(purpose === 'PROFILE_COVER' ? 'profile.cover.cropTitle' : 'media.crop.title', { defaultValue: purpose === 'PROFILE_COVER' ? 'Crop cover photo' : 'Crop image' })}</h2>
+        <button type="button" onClick={apply} disabled={!croppedArea} className="flex h-11 min-w-[6.5rem] items-center justify-end gap-2 justify-self-end rounded-full px-3 text-sm font-semibold text-white hover:bg-white/10 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white" title={t('media.crop.done', { defaultValue: 'Done' })} aria-label={t('media.crop.done', { defaultValue: 'Done' })}>
+          <span>{t('media.crop.done', { defaultValue: 'Done' })}</span>
+          <Check size={20} />
         </button>
       </div>
 
@@ -161,7 +192,10 @@ export const MediaCropEditor: React.FC<MediaCropEditorProps> = ({
         />
       </div>
 
-      <div className="safe-bottom shrink-0 border-t border-white/10 bg-black px-4 py-4">
+      <div
+        className="shrink-0 border-t border-white/10 bg-black px-4 pt-4"
+        style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
+      >
         <div className="mx-auto flex max-w-lg items-center gap-3">
           <button type="button" onClick={reset} className="flex h-11 w-11 items-center justify-center text-gray-300 hover:text-white rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white" title={t('media.crop.reset', { defaultValue: 'Reset' })} aria-label={t('media.crop.reset', { defaultValue: 'Reset' })}>
             <RefreshCw size={20} />
@@ -206,4 +240,5 @@ export const MediaCropEditor: React.FC<MediaCropEditorProps> = ({
       </div>
     </div>
   );
+  return typeof document === 'undefined' ? editor : createPortal(editor, document.body);
 };

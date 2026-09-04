@@ -169,9 +169,11 @@ export const serializeDateOnly = ({ year, month, day }: DateOnlyParts): string =
 );
 
 export const todayAsDateOnly = (now = new Date()): DateOnlyParts => ({
-  year: now.getFullYear(),
-  month: now.getMonth() + 1,
-  day: now.getDate()
+  // Match the backend and cache refresh UTC boundary so validation and the
+  // server cannot disagree for several hours on a user's birthday.
+  year: now.getUTCFullYear(),
+  month: now.getUTCMonth() + 1,
+  day: now.getUTCDate()
 });
 
 export const compareDateOnly = (left: DateOnlyParts, right: DateOnlyParts): number => {
@@ -191,6 +193,20 @@ export const calculateAgeFromDateOnly = (
   let age = current.year - birth.year;
   if (current.month < birth.month || (current.month === birth.month && current.day < birth.day)) age -= 1;
   return age;
+};
+
+export const calculateAgeGroupFromDateOnly = (
+  dateOfBirth: string | DateOnlyParts,
+  today: string | DateOnlyParts = todayAsDateOnly()
+): string | null => {
+  const age = calculateAgeFromDateOnly(dateOfBirth, today);
+  if (age === null) return null;
+  if (age < 18) return 'Under 18';
+  if (age <= 24) return '18-24';
+  if (age <= 34) return '25-34';
+  if (age <= 44) return '35-44';
+  if (age <= 54) return '45-54';
+  return '55+';
 };
 
 export const validateDateOfBirth = (

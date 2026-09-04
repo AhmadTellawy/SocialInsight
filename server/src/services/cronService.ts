@@ -9,62 +9,52 @@ export function calculateAgeGroup(dob: Date | null | undefined): string | undefi
 }
 
 export const runAgeGroupComputation = async () => {
-    console.log('[Cron] Starting Age Group computation process');
     try {
-        const users = await prisma.user.findMany({
-            where: {
-                birthday: { not: null }
-            },
-            select: { id: true, birthday: true }
-        });
-
-        let updatedCount = 0;
-
-        for (const user of users) {
-            if (!user.birthday) continue;
-            
-            const newAgeGroup = calculateAgeGroup(user.birthday);
-            
-            // Get existing demographics
-            const demographics = await prisma.userDemographics.findUnique({
-                where: { userId: user.id }
-            });
-
-            if (!demographics) {
-                // Create if not exists
-                if (newAgeGroup) {
-                    await prisma.userDemographics.create({
-                        data: {
-                            userId: user.id,
-                            ageGroup: newAgeGroup
-                        }
-                    });
-                    updatedCount++;
-                }
-            } else if (demographics.ageGroup !== newAgeGroup && newAgeGroup !== undefined) {
-                // Update if changed
-                await prisma.userDemographics.update({
-                    where: { userId: user.id },
-                    data: { ageGroup: newAgeGroup }
-                });
-                updatedCount++;
-            }
-        }
-
+        // One atomic, set-based upsert avoids an N+1 scan and also creates a
+        // missing demographics row. Reads still derive from DOB, so this is a
+        // query-acceleration cache rather than a second source of truth.
+        const updatedCount = await prisma.$executeRaw`
+            WITH derived AS (
+                SELECT
+                    "id" AS "user_id",
+                    CASE
+                        WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, "birthday"::date)) < 18 THEN 'Under 18'
+                        WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, "birthday"::date)) <= 24 THEN '18-24'
+                        WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, "birthday"::date)) <= 34 THEN '25-34'
+                        WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, "birthday"::date)) <= 44 THEN '35-44'
+                        WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, "birthday"::date)) <= 54 THEN '45-54'
+                        ELSE '55+'
+                    END AS "age_group"
+                FROM "users"
+                WHERE "birthday" IS NOT NULL
+            )
+            INSERT INTO "user_demographics" ("user_id", "age_group", "updated_at")
+            SELECT "user_id", "age_group", CURRENT_TIMESTAMP
+            FROM derived
+            ON CONFLICT ("user_id") DO UPDATE
+            SET "age_group" = EXCLUDED."age_group",
+                "updated_at" = CURRENT_TIMESTAMP
+            WHERE "user_demographics"."age_group" IS DISTINCT FROM EXCLUDED."age_group"
+        `;
         console.log(`[Cron] Completed Age Group computation. Updated ${updatedCount} users.`);
         return updatedCount;
     } catch (error) {
-        console.error('[CronError] Failed to compute age groups:', error);
+        const errorCode = typeof error === 'object' && error !== null && 'code' in error
+            ? String((error as { code?: unknown }).code || 'UNKNOWN')
+            : 'UNKNOWN';
+        console.error(JSON.stringify({ event: 'age_group_cache_refresh_failed', errorCode }));
         throw error;
     }
 };
 
 export const initCronJobs = () => {
-    // Schedule to run monthly (e.g., midnight on the 1st of every month)
-    cron.schedule('0 0 1 * *', async () => {
-        console.log('[Cron] Running monthly Age Group computation job...');
-        await runAgeGroupComputation();
-    });
+    // Daily at midnight; birthdays can cross an age-band boundary on any day.
+    cron.schedule('0 0 * * *', () => {
+        void runAgeGroupComputation().catch(() => {
+            // The function emits a sanitized event; contain the rejection so
+            // the scheduler keeps running on the next day.
+        });
+    }, { timezone: 'UTC' });
 
     cron.schedule('*/15 * * * *', async () => {
         const cleaned = await cleanupExpiredMedia();

@@ -175,7 +175,6 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
   const [localDraftId, setLocalDraftId] = useState<string | null>(null);
 
   useEffect(() => {
-    console.log("CreateSurveyModal mounted. Draft prop:", draft);
     if (draft) {
       setLocalDraftId(draft.id);
       setTitle(draft.title || '');

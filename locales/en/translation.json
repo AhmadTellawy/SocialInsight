@@ -111,11 +111,14 @@
     "tooLarge": "Images must be 15 MB or smaller.",
     "tooMany": "You can add up to {{max}} images.",
     "invalidImage": "This image could not be opened.",
+    "tooManyPixels": "This image is too large to process safely.",
+    "mimeMismatch": "The image content does not match its file type.",
     "uploadFailed": "Image upload failed.",
     "processingFailed": "Image processing failed.",
     "crop": {
       "title": "Crop image",
       "original": "Original",
+      "done": "Done",
       "reset": "Reset crop",
       "zoom": "Zoom",
       "aspect": "Aspect ratio",
@@ -128,6 +131,9 @@
       "label": "Post images",
       "goTo": "Go to image {{index}}"
     }
+  },
+  "demographicFlow": {
+    "saveFailed": "Your information could not be saved. Please try again."
   },
   "rating": {
     "prompt": "Rate from 1 to 5",
@@ -519,7 +525,17 @@
       "update": "We couldn't update this link. Try again.",
       "delete": "We couldn't delete this link. It is still on your profile.",
       "limit": "You can add up to five links.",
-      "duplicate": "You have already added this URL."
+      "duplicate": "You have already added this URL.",
+      "invalidTitle": "Enter a plain-text title between 1 and 50 characters.",
+      "urlTooLong": "The URL must be 2048 characters or fewer.",
+      "notFound": "This link is no longer on your profile. Reload your links and try again.",
+      "sessionExpired": "Your session has expired. Sign in again to manage profile links.",
+      "forbidden": "You don't have permission to change these profile links.",
+      "rateLimited": "Too many profile changes were attempted. Wait a moment and try again.",
+      "timeout": "The request took too long. Check your connection and try again.",
+      "network": "The server couldn't be reached. Check your connection and try again.",
+      "unavailable": "Profile links are temporarily unavailable. Try again later.",
+      "server": "The server couldn't complete this profile-link operation. Try again."
     },
     "success": {
       "added": "Link added.",

@@ -4,7 +4,7 @@ import test, { after } from 'node:test';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'post-controller-runtime-test-secret';
 
 const prisma = require('../prisma').default as typeof import('../prisma').default;
-const { getComments } = require('./postController') as typeof import('./postController');
+const { getComments, likePost } = require('./postController') as typeof import('./postController');
 
 after(async () => {
     await prisma.$disconnect();
@@ -92,5 +92,54 @@ test('comments use a bounded cursor page and append a requested deep-link target
         (prisma.post as any).findFirst = originalPostFindFirst;
         (prisma.comment as any).findMany = originalCommentFindMany;
         (prisma.comment as any).findFirst = originalCommentFindFirst;
+    }
+});
+
+test('post likes use the authenticated user and ignore a client-supplied userId', async () => {
+    const originals = {
+        postFindUnique: prisma.post.findUnique,
+        postUpdate: prisma.post.update,
+        likeFindUnique: prisma.userLike.findUnique,
+        likeDelete: prisma.userLike.delete,
+        transaction: prisma.$transaction
+    };
+    let findWhere: any;
+    let deleteWhere: any;
+    let postReads = 0;
+    try {
+        (prisma.post as any).findUnique = async () => {
+            postReads += 1;
+            return postReads === 1
+                ? { id: 'post-1', sharedFromId: null, sharedCaption: null }
+                : { authorId: null };
+        };
+        (prisma.userLike as any).findUnique = async (args: any) => {
+            findWhere = args.where.userId_postId;
+            return { userId: 'trusted-user', postId: 'post-1' };
+        };
+        (prisma.userLike as any).delete = async (args: any) => {
+            deleteWhere = args.where.userId_postId;
+            return {};
+        };
+        (prisma.post as any).update = async () => ({ authorId: null });
+        (prisma as any).$transaction = async (operations: Promise<unknown>[]) => Promise.all(operations);
+
+        const { response, state } = responseState();
+        await likePost({
+            params: { id: 'post-1' },
+            user: { userId: 'trusted-user' },
+            body: { userId: 'attacker-user' }
+        } as any, response);
+
+        assert.equal(state.statusCode, 200);
+        assert.deepEqual(findWhere, { userId: 'trusted-user', postId: 'post-1' });
+        assert.deepEqual(deleteWhere, { userId: 'trusted-user', postId: 'post-1' });
+        assert.deepEqual(state.body, { isLiked: false });
+    } finally {
+        (prisma.post as any).findUnique = originals.postFindUnique;
+        (prisma.post as any).update = originals.postUpdate;
+        (prisma.userLike as any).findUnique = originals.likeFindUnique;
+        (prisma.userLike as any).delete = originals.likeDelete;
+        (prisma as any).$transaction = originals.transaction;
     }
 });

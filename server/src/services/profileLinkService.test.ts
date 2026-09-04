@@ -14,6 +14,38 @@ const profileLinkRow = (input: any, index: number) => ({
   updatedAt: new Date('2026-08-31T00:00:00.000Z')
 });
 
+test('creates the Facebook share link with the authenticated owner and canonical URL', async () => {
+  let createdData: any;
+  const client: any = {
+    profileLink: {},
+    $transaction: async (callback: (transaction: any) => Promise<any>) => callback({
+      $queryRaw: async () => [{ id: 'owner-1' }],
+      profileLink: {
+        findMany: async () => [],
+        create: async ({ data }: any) => {
+          createdData = data;
+          return profileLinkRow(data, 0);
+        }
+      }
+    })
+  };
+
+  const link = await createProfileLink('owner-1', {
+    title: 'Facebook',
+    url: 'https://www.facebook.com/share/19LFpJK7Y5'
+  }, client);
+
+  assert.deepEqual(createdData, {
+    userId: 'owner-1',
+    title: 'Facebook',
+    url: 'https://www.facebook.com/share/19LFpJK7Y5',
+    normalizedUrl: 'https://www.facebook.com/share/19LFpJK7Y5',
+    sortOrder: 0
+  });
+  assert.equal(link.url, 'https://www.facebook.com/share/19LFpJK7Y5');
+  assert.equal(link.normalizedUrl, 'https://www.facebook.com/share/19LFpJK7Y5');
+});
+
 test('serializes concurrent creates under the user row lock and never creates a sixth link', async () => {
   const rows: any[] = [];
   let lockCalls = 0;
