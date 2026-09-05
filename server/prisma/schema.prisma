@@ -1,3 +1,11 @@
+// A permanent Staging-only provider-attempt budget, never OTP/PII storage.
+model StagingOtpEmailReservation {
+  slot       Int      @id @default(1)
+  reservedAt DateTime @default(now()) @map("reserved_at")
+
+  @@map("staging_otp_email_reservation")
+}
+
 generator client {
   provider = "prisma-client-js"
 }

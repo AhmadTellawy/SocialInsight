@@ -11,6 +11,7 @@ const { consumeEmailOtp, issueEmailOtp, OtpError } = require('./otpService') as 
 const installOtpStore = () => {
   const rows: any[] = [];
   let sequence = 0;
+  let reserved = false;
   const originals = {
     findFirst: prisma.otpChallenge.findFirst,
     count: prisma.otpChallenge.count,
@@ -64,10 +65,17 @@ const installOtpStore = () => {
   prisma.otpChallenge.create = create;
   prisma.$transaction = async (callback: any) => {
     const snapshot = rows.map((row) => ({ ...row }));
+    const reservedSnapshot = reserved;
     try {
-      return await callback({ $executeRaw: async () => 1, otpChallenge: { findFirst, findUnique, count, updateMany, create } });
+      return await callback({ $executeRaw: async (query: any) => {
+        if (!query.sql.includes('INSERT INTO "staging_otp_email_reservation"')) return 1;
+        if (reserved) return 0;
+        reserved = true;
+        return 1;
+      }, otpChallenge: { findFirst, findUnique, count, updateMany, create } });
     } catch (error) {
       rows.splice(0, rows.length, ...snapshot);
+      reserved = reservedSnapshot;
       throw error;
     }
   };
@@ -311,11 +319,9 @@ test('staging allowlist normalizes addresses and enforces a persistent global se
   let deliveries = 0;
   const originalDeploymentEnv = process.env.DEPLOYMENT_ENV;
   const originalAllowlist = process.env.STAGING_OTP_ALLOWED_EMAILS;
-  const originalLimit = process.env.STAGING_OTP_REAL_EMAIL_LIMIT;
   try {
     process.env.DEPLOYMENT_ENV = 'staging';
     process.env.STAGING_OTP_ALLOWED_EMAILS = 'Owner@Example.Test ';
-    process.env.STAGING_OTP_REAL_EMAIL_LIMIT = '1';
     (emailService as any).sendAuthEmail = async () => ({ messageId: `staging-${++deliveries}` });
 
     await issueEmailOtp({ destination: ' owner@example.test', purpose: 'REGISTRATION', subject: 'staging-first' });
@@ -330,8 +336,40 @@ test('staging allowlist normalizes addresses and enforces a persistent global se
     else process.env.DEPLOYMENT_ENV = originalDeploymentEnv;
     if (originalAllowlist === undefined) delete process.env.STAGING_OTP_ALLOWED_EMAILS;
     else process.env.STAGING_OTP_ALLOWED_EMAILS = originalAllowlist;
-    if (originalLimit === undefined) delete process.env.STAGING_OTP_REAL_EMAIL_LIMIT;
-    else process.env.STAGING_OTP_REAL_EMAIL_LIMIT = originalLimit;
     store.restore();
   }
 });
+
+for (const failure of ['provider-rejection', 'provider-timeout-rejection', 'post-delivery-database-failure', 'none']) {
+  test(`staging lifetime reservation survives ${failure}, OTP retention and a fresh service instance`, async () => {
+    const store = installOtpStore();
+    const previousEnv = process.env.DEPLOYMENT_ENV;
+    const previousAllowed = process.env.STAGING_OTP_ALLOWED_EMAILS;
+    let calls = 0;
+    try {
+      process.env.DEPLOYMENT_ENV = 'staging';
+      process.env.STAGING_OTP_ALLOWED_EMAILS = 'owner@example.test';
+      (emailService as any).sendAuthEmail = async () => {
+        calls += 1;
+        if (failure.startsWith('provider-')) throw new Error('mock provider failure');
+        return { messageId: 'mock-only' };
+      };
+      const first = issueEmailOtp({ destination: 'owner@example.test', purpose: 'REGISTRATION', subject: 'reserved-first',
+        ...(failure === 'post-delivery-database-failure' ? { onSent: async () => { throw new Error('mock DB failure'); } } : {}) });
+      if (failure === 'none') await first;
+      else await assert.rejects(first, (error: any) => error.code === 'OTP_DELIVERY_FAILED');
+      // Simulate all OTP retention: the separate lifetime row must survive.
+      store.rows.splice(0);
+      delete require.cache[require.resolve('./otpService')];
+      const restarted = require('./otpService') as typeof import('./otpService');
+      await assert.rejects(restarted.issueEmailOtp({ destination: 'owner@example.test', purpose: 'EMAIL_VERIFICATION', subject: 'reserved-second' }),
+        (error: any) => error.code === 'OTP_RATE_LIMITED');
+      assert.equal(calls, 1);
+      assert.equal(store.rows.length, 0);
+    } finally {
+      if (previousEnv === undefined) delete process.env.DEPLOYMENT_ENV; else process.env.DEPLOYMENT_ENV = previousEnv;
+      if (previousAllowed === undefined) delete process.env.STAGING_OTP_ALLOWED_EMAILS; else process.env.STAGING_OTP_ALLOWED_EMAILS = previousAllowed;
+      store.restore();
+    }
+  });
+}

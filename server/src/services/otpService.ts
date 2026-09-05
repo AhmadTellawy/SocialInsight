@@ -133,12 +133,14 @@ const issueEmailOtpInternal = async (input: IssueOtpInput): Promise<{ cooldownUn
                 if (active) return { existing: true, cooldownUntil: active.cooldownUntil };
 
                 if (isStagingDeployment()) {
-                    await acquireDatabaseLock(tx, 'otp-staging-real-email-cap');
-                    const stagingLimit = boundedInt('STAGING_OTP_REAL_EMAIL_LIMIT', 1, 1, 3);
-                    const reservedDeliveries = await tx.otpChallenge.count({
-                        where: { deliveryStatus: { in: ['PENDING', 'SENT'] } }
-                    });
-                    if (reservedDeliveries >= stagingLimit) {
+                    // Commit a permanent, PII-free reservation before calling the
+                    // provider. Failure, timeout, restart and OTP retention must
+                    // never reopen the single authorized real-email attempt.
+                    const reserved = await tx.$executeRaw(Prisma.sql`
+                        INSERT INTO "staging_otp_email_reservation" ("slot")
+                        VALUES (1) ON CONFLICT ("slot") DO NOTHING
+                    `);
+                    if (reserved !== 1) {
                         throw new OtpError('OTP_RATE_LIMITED', 'Staging email delivery limit reached');
                     }
                 }

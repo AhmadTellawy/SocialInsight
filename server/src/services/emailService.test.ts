@@ -85,3 +85,26 @@ test('provider failure is normalized without returning provider detail', async (
     restoreEnv(snapshot);
   }
 });
+
+test('delivery timeout rejects a pending mocked provider request without sending over the network', async () => {
+  const snapshot = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+  const originalTimeout = process.env.EMAIL_DELIVERY_TIMEOUT_MS;
+  const originalPost = (Resend.prototype as any).post;
+  // Keep the test alive while the service's timeout timer is intentionally unref'd.
+  const keepAlive = setInterval(() => undefined, 100);
+  try {
+    process.env.RESEND_API_KEY = 're_test_non_secret_fixture';
+    process.env.EMAIL_FROM_ADDRESS = 'auth@example.test';
+    process.env.EMAIL_FROM_NAME = 'Social Insight';
+    process.env.EMAIL_DELIVERY_TIMEOUT_MS = '1000';
+    (Resend.prototype as any).post = () => new Promise(() => undefined);
+    await assert.rejects(sendAuthEmail({ to: 'private@example.test', code: '123456', purpose: 'REGISTRATION', idempotencyKey: 'mock-timeout', expiresInMinutes: 10 }),
+      (error: any) => error.code === 'EMAIL_DELIVERY_TIMEOUT');
+  } finally {
+    clearInterval(keepAlive);
+    (Resend.prototype as any).post = originalPost;
+    if (originalTimeout === undefined) delete process.env.EMAIL_DELIVERY_TIMEOUT_MS;
+    else process.env.EMAIL_DELIVERY_TIMEOUT_MS = originalTimeout;
+    restoreEnv(snapshot);
+  }
+});

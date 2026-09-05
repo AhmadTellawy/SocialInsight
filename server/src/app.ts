@@ -24,8 +24,10 @@ import { initSocket } from './services/socketService';
 import { isMediaStorageConfigured } from './services/mediaStorage';
 import prisma from './prisma';
 import { requestContext } from './middleware/requestContext';
+import { configureStaging } from './utils/stagingConfig';
 
 const app = express();
+configureStaging(app);
 const httpServer = createServer(app);
 initSocket(httpServer);
 

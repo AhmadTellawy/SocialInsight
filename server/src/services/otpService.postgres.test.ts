@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test, { after } from 'node:test';
 import bcrypt from 'bcryptjs';
 
-if (!process.env.DATABASE_URL?.includes('127.0.0.1')) {
+const fixtureUrl = new URL(process.env.DATABASE_URL || 'postgresql://invalid');
+if (fixtureUrl.hostname !== '127.0.0.1' || fixtureUrl.port !== '55432'
+  || fixtureUrl.pathname !== '/socialinsight_otp_rehearsal') {
   throw new Error('OTP PostgreSQL integration test requires an explicit local disposable DATABASE_URL');
 }
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'otp-postgres-rehearsal-secret';
@@ -111,5 +113,39 @@ test('PostgreSQL recipient lock enforces the rolling cap across concurrent subje
     else process.env.OTP_MAX_SENDS_PER_WINDOW = originalMax;
     if (originalWindow === undefined) delete process.env.OTP_RATE_LIMIT_WINDOW_SECONDS;
     else process.env.OTP_RATE_LIMIT_WINDOW_SECONDS = originalWindow;
+  }
+});
+
+test('PostgreSQL singleton reserves at most one provider attempt across independent instances and retention', async () => {
+  const originalEnv = process.env.DEPLOYMENT_ENV;
+  const originalAllowed = process.env.STAGING_OTP_ALLOWED_EMAILS;
+  let deliveries = 0;
+  try {
+    // This test's startup guard confines all fixture writes to a local database.
+    await prisma.$executeRaw`DELETE FROM staging_otp_email_reservation WHERE slot = 1`;
+    process.env.DEPLOYMENT_ENV = 'staging';
+    process.env.STAGING_OTP_ALLOWED_EMAILS = 'postgres-budget-a@example.test,postgres-budget-b@example.test';
+    (emailService as any).sendAuthEmail = async () => { deliveries += 1; throw new Error('mock provider timeout'); };
+    const servicePath = require.resolve('./otpService');
+    delete require.cache[servicePath];
+    const a = require('./otpService') as typeof import('./otpService');
+    delete require.cache[servicePath];
+    const b = require('./otpService') as typeof import('./otpService');
+    const results = await Promise.allSettled([
+      a.issueEmailOtp({ destination: 'postgres-budget-a@example.test', purpose: 'REGISTRATION', subject: 'postgres-rehearsal-budget-a' }),
+      b.issueEmailOtp({ destination: 'postgres-budget-b@example.test', purpose: 'REGISTRATION', subject: 'postgres-rehearsal-budget-b' })
+    ]);
+    assert.equal(results.filter(result => result.status === 'rejected' && result.reason.code === 'OTP_DELIVERY_FAILED').length, 1);
+    assert.equal(results.filter(result => result.status === 'rejected' && result.reason.code === 'OTP_RATE_LIMITED').length, 1);
+    assert.equal(deliveries, 1);
+    await prisma.otpChallenge.deleteMany({ where: { subject: { in: ['postgres-rehearsal-budget-a', 'postgres-rehearsal-budget-b'] } } });
+    delete require.cache[servicePath];
+    const restarted = require('./otpService') as typeof import('./otpService');
+    await assert.rejects(restarted.issueEmailOtp({ destination: 'postgres-budget-a@example.test', purpose: 'REGISTRATION', subject: 'postgres-rehearsal-budget-retry' }),
+      (error: any) => error.code === 'OTP_RATE_LIMITED');
+    assert.equal(deliveries, 1);
+  } finally {
+    if (originalEnv === undefined) delete process.env.DEPLOYMENT_ENV; else process.env.DEPLOYMENT_ENV = originalEnv;
+    if (originalAllowed === undefined) delete process.env.STAGING_OTP_ALLOWED_EMAILS; else process.env.STAGING_OTP_ALLOWED_EMAILS = originalAllowed;
   }
 });
