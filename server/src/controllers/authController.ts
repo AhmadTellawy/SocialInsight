@@ -12,6 +12,13 @@ import {
     parseAndValidateDateOfBirth,
     withDerivedAgeGroup
 } from '../utils/profileValidation';
+import { consumeEmailOtp, issueEmailOtp, OtpError } from '../services/otpService';
+import {
+    buildPendingRegistrationReference,
+    createRegistrationCapability,
+    parsePendingRegistrationReference,
+    verifyRegistrationSecret
+} from '../services/registrationCapability';
 
 const GENERIC_LOGIN_ERROR = 'Invalid login credentials';
 const LEGACY_REGISTER_DISABLED_ERROR = 'Use the multi-step registration flow';
@@ -174,6 +181,7 @@ export const initiateRegistration = async (req: Request, res: Response) => {
     const { fullName, email, dob } = req.body;
     const lowerEmail = email?.toLowerCase();
     try {
+        const capability = createRegistrationCapability();
         const parsedDob = parseAndValidateDateOfBirth(dob);
         const existing = await prisma.user.findFirst({ where: { email: { equals: lowerEmail } } });
         if (existing) {
@@ -182,10 +190,29 @@ export const initiateRegistration = async (req: Request, res: Response) => {
         }
         const pending = await prisma.pendingRegistration.upsert({
             where: { email: lowerEmail },
-            update: { fullName, dob: parsedDob, currentStep: 2 },
-            create: { email: lowerEmail, fullName, dob: parsedDob, currentStep: 2 }
+            update: {
+                fullName,
+                dob: parsedDob,
+                currentStep: 2,
+                password: null,
+                handle: null,
+                otpCode: null,
+                otpExpiresAt: null,
+                registrationSecretHash: capability.secretHash
+            },
+            create: {
+                email: lowerEmail,
+                fullName,
+                dob: parsedDob,
+                currentStep: 2,
+                registrationSecretHash: capability.secretHash
+            }
         });
-        res.json({ success: true, pendingId: pending.id });
+        res.setHeader('Cache-Control', 'private, no-store');
+        res.json({
+            success: true,
+            pendingId: buildPendingRegistrationReference(pending.id, capability.secret)
+        });
     } catch (error) {
         if (error instanceof ProfileValidationError) {
             return res.status(error.statusCode).json({ error: error.message, code: error.code });
@@ -195,12 +222,16 @@ export const initiateRegistration = async (req: Request, res: Response) => {
 };
 
 export const completeRegistration = async (req: Request, res: Response) => {
-    const { email, pendingId, otp } = req.body;
-    const lowerEmail = email?.toLowerCase();
+    const { pendingId } = req.body;
+    const otp = req.body.code ?? req.body.otp;
     try {
-        const where = pendingId ? { id: pendingId } : { email: lowerEmail };
+        const reference = parsePendingRegistrationReference(pendingId);
+        if (!reference) return res.status(404).json({ error: 'Session not found' });
+        const where = { id: reference.id };
         const pending = await prisma.pendingRegistration.findUnique({ where });
-        if (!pending) return res.status(404).json({ error: 'Session not found' });
+        if (!pending || !verifyRegistrationSecret(pending.registrationSecretHash, reference.secret)) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
 
         if (!pending.email || !pending.fullName || !pending.dob || !pending.password || !pending.handle || pending.currentStep < 5) {
             res.status(400).json({ error: 'Registration is incomplete' });
@@ -208,26 +239,12 @@ export const completeRegistration = async (req: Request, res: Response) => {
         }
         const validatedDob = parseAndValidateDateOfBirth(formatDateOnly(pending.dob));
 
-        // 1. Verify OTP code if not bypassed in development mode
-        const skipOtp = otp === 'SKIP_OTP' && process.env.NODE_ENV === 'development';
-        if (!skipOtp) {
-            if (!pending.otpCode || !pending.otpExpiresAt) {
-                res.status(400).json({ error: 'No OTP code generated' });
-                return;
-            }
-            if (new Date() > pending.otpExpiresAt) {
-                res.status(400).json({ error: 'OTP code has expired' });
-                return;
-            }
-            const isMatch = await bcrypt.compare(otp, pending.otpCode);
-            if (!isMatch) {
-                res.status(400).json({ error: 'Invalid OTP code' });
-                return;
-            }
-        }
-
-        // 2. Perform DB operations inside a single transaction (Prisma Transaction)
-        const user = await prisma.$transaction(async (tx) => {
+        const consumed = await consumeEmailOtp({
+            destination: pending.email,
+            purpose: 'REGISTRATION',
+            subject: pending.id,
+            code: typeof otp === 'string' ? otp : ''
+        }, async (tx) => {
             const newUser = await tx.user.create({
                 data: {
                     email: pending.email,
@@ -236,6 +253,7 @@ export const completeRegistration = async (req: Request, res: Response) => {
                     handle: pending.handle || 'user_' + Date.now(),
                     passwordHash: pending.password, // Store hashed password from pendingRegistration
                     authProvider: 'Email',
+                    emailVerifiedAt: new Date(),
                     avatar: null,
                     demographics: { create: { ageGroup: calculateAgeGroupFromDate(validatedDob) } }
                 },
@@ -257,6 +275,7 @@ export const completeRegistration = async (req: Request, res: Response) => {
 
             return newUser;
         });
+        const user = consumed.value!;
 
         const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '90d' });
         const serializedUser = serializeUserMediaRecord(user)!;
@@ -270,6 +289,9 @@ export const completeRegistration = async (req: Request, res: Response) => {
             token
         });
     } catch (error: any) {
+        if (error instanceof OtpError) {
+            return res.status(400).json({ error: 'Invalid or expired OTP code', code: error.code });
+        }
         if (error instanceof ProfileValidationError) {
             return res.status(error.statusCode).json({ error: error.message, code: error.code });
         }
@@ -283,7 +305,8 @@ export const completeRegistration = async (req: Request, res: Response) => {
                 if (target.includes('handle')) return res.status(400).json({ error: 'Handle is already taken' });
             }
         }
-        res.status(500).json({ error: 'Completion failed: ' + (error.message || 'Unknown error') });
+        console.error(JSON.stringify({ event: 'registration_completion_failed', errorCode: error?.code || 'UNKNOWN' }));
+        res.status(500).json({ error: 'Registration completion failed' });
     }
 };
 
@@ -295,10 +318,16 @@ export const setRegistrationPassword = async (req: Request, res: Response) => {
         return;
     }
 
-    const { email, pendingId, password } = req.body;
-    const lowerEmail = email?.toLowerCase();
+    const { pendingId, password } = req.body;
     try {
-        const where = pendingId ? { id: pendingId } : { email: lowerEmail };
+        const reference = parsePendingRegistrationReference(pendingId);
+        if (!reference) return res.status(404).json({ error: 'Session not found' });
+        const where = { id: reference.id };
+        const pending = await prisma.pendingRegistration.findUnique({ where });
+        if (!pending || !verifyRegistrationSecret(pending.registrationSecretHash, reference.secret)) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+        if (pending.currentStep >= 5) return res.status(409).json({ error: 'Registration details are locked after OTP issuance' });
         
         // Hash password before saving to pendingRegistration for security
         const salt = await bcrypt.genSalt(10);
@@ -308,7 +337,7 @@ export const setRegistrationPassword = async (req: Request, res: Response) => {
             where,
             data: {
                 password: hashedPassword, // Store hash directly
-                currentStep: 3
+                currentStep: Math.max(3, pending.currentStep)
             }
         });
         res.json({ success: true });
@@ -330,11 +359,19 @@ export const checkHandleAvailability = async (req: Request, res: Response) => {
 };
 
 export const reserveHandle = async (req: Request, res: Response) => {
-    const { email, pendingId, handle } = req.body;
-    const lowerEmail = email?.toLowerCase();
+    const { pendingId, handle } = req.body;
     const lowerHandle = handle?.toLowerCase();
     try {
-        const where = pendingId ? { id: pendingId } : { email: lowerEmail };
+        const reference = parsePendingRegistrationReference(pendingId);
+        if (!reference) return res.status(404).json({ error: 'Session not found' });
+        const where = { id: reference.id };
+        const pending = await prisma.pendingRegistration.findUnique({ where });
+        if (!pending || !verifyRegistrationSecret(pending.registrationSecretHash, reference.secret)) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+        if (pending.currentStep < 3 || pending.currentStep >= 5) {
+            return res.status(409).json({ error: 'Registration step is not available' });
+        }
         await prisma.pendingRegistration.update({
             where,
             data: {
@@ -352,45 +389,41 @@ export const reserveHandle = async (req: Request, res: Response) => {
 export const sendRegistrationOTP = async (req: Request, res: Response) => {
     const { pendingId } = req.body;
     try {
+        const reference = parsePendingRegistrationReference(pendingId);
+        if (!reference) return res.status(404).json({ error: 'Session not found' });
         const pending = await prisma.pendingRegistration.findUnique({
-            where: { id: pendingId }
+            where: { id: reference.id }
         });
-        if (!pending) {
+        if (!pending || !verifyRegistrationSecret(pending.registrationSecretHash, reference.secret)) {
             res.status(404).json({ error: 'Session not found' });
             return;
         }
+        if (pending.currentStep < 4) return res.status(409).json({ error: 'Registration is incomplete' });
 
-        // Generate a random 6-digit OTP code or fallback to '123456' if flag set
-        let otp = '123456';
-        if (process.env.NODE_ENV === 'production' || process.env.USE_RANDOM_OTP === 'true') {
-            otp = Math.floor(100000 + Math.random() * 900000).toString();
-        }
-
-        const otpHash = await bcrypt.hash(otp, 10);
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
-
-        await prisma.pendingRegistration.update({
-            where: { id: pendingId },
-            data: {
-                otpCode: otpHash,
-                otpExpiresAt: expiresAt,
-                currentStep: 5
+        const { cooldownUntil } = await issueEmailOtp({
+            destination: pending.email,
+            purpose: 'REGISTRATION',
+            subject: pending.id,
+            onSent: async (tx) => {
+                await tx.pendingRegistration.update({
+                    where: { id: reference.id },
+                    data: { currentStep: 5 }
+                });
             }
         });
-
-        // Mock delivery: log it to console
-        console.log(`\n🔐 REGISTRATION OTP CODE FOR ${pending.email}:`);
-        console.log(`📱 CODE: ${otp}`);
-        console.log(`⏰ Expires at: ${expiresAt.toLocaleString()}\n`);
 
         res.json({
             success: true,
             message: 'OTP sent successfully',
-            // Return code in development/test environment only if allowed
-            ...(process.env.NODE_ENV === 'development' ? { devCode: otp } : {})
+            cooldownUntil: cooldownUntil.toISOString()
         });
-    } catch (error) {
-        console.error('sendRegistrationOTP error:', error);
+    } catch (error: any) {
+        if (error instanceof OtpError) {
+            const status = error.code === 'OTP_COOLDOWN' || error.code === 'OTP_RATE_LIMITED' ? 429 : 503;
+            if (error.details?.retryAfterSeconds) res.setHeader('Retry-After', String(error.details.retryAfterSeconds));
+            return res.status(status).json({ error: error.message, code: error.code, ...(error.details || {}) });
+        }
+        console.error(JSON.stringify({ event: 'registration_otp_send_failed', errorCode: error?.code || 'UNKNOWN' }));
         res.status(500).json({ error: 'Failed to send OTP' });
     }
 };

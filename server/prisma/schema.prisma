@@ -725,6 +725,30 @@ model OTPCode {
   @@index([identifier])
 }
 
+model OtpChallenge {
+  id              String   @id @default(uuid())
+  destinationHash String   @map("destination_hash") @db.Char(64)
+  purpose         String   @db.VarChar(64)
+  subject         String   @db.VarChar(255)
+  codeHash        String   @map("code_hash") @db.VarChar(255)
+  deliveryStatus  String   @default("PENDING") @map("delivery_status") @db.VarChar(16)
+  attempts        Int      @default(0)
+  maxAttempts     Int      @default(5) @map("max_attempts")
+  expiresAt       DateTime @map("expires_at")
+  cooldownUntil   DateTime @map("cooldown_until")
+  version         Int      @default(1)
+  consumedAt      DateTime? @map("consumed_at")
+  invalidatedAt   DateTime? @map("invalidated_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([destinationHash, purpose, subject, version], map: "otp_challenges_destination_purpose_subject_version_key")
+  @@index([destinationHash, purpose, version(sort: Desc)], map: "otp_challenges_destination_purpose_version_idx")
+  @@index([subject, purpose, version(sort: Desc)], map: "otp_challenges_subject_purpose_version_idx")
+  @@index([expiresAt], map: "otp_challenges_expires_idx")
+  @@map("otp_challenges")
+}
+
 model PendingRegistration {
   id           String    @id @default(uuid())
   email        String    @unique
@@ -735,6 +759,7 @@ model PendingRegistration {
   currentStep  Int       @default(2)
   otpCode      String?
   otpExpiresAt DateTime?
+  registrationSecretHash String? @map("registration_secret_hash") @db.Char(64)
   updatedAt    DateTime  @updatedAt
   createdAt    DateTime  @default(now())
 }

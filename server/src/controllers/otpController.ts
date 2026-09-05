@@ -1,102 +1,92 @@
 import { Request, Response } from 'express';
 import prisma from '../prisma';
+import { consumeEmailOtp, issueEmailOtp, OtpError } from '../services/otpService';
 
-// Generate 6-digit OTP
-const generateOTP = (): string => {
-    return Math.floor(100000 + Math.random() * 900000).toString();
+const normalizeEmail = (value: string): string => value.trim().toLowerCase();
+const isEmail = (value: unknown): value is string => (
+    typeof value === 'string'
+    && value.length <= 320
+    && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
+);
+
+const unavailablePhoneChannel = (res: Response) => res.status(503).json({
+    error: 'Phone OTP delivery is unavailable',
+    code: 'OTP_CHANNEL_UNAVAILABLE'
+});
+
+const authenticatedEmailSubject = async (req: Request, identifier: string) => {
+    const userId = (req as any).user?.userId as string | undefined;
+    if (!userId) return null;
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, email: true } });
+    if (!user?.email || normalizeEmail(user.email) !== normalizeEmail(identifier)) return null;
+    return { userId: user.id, destination: normalizeEmail(user.email), storedEmail: user.email };
 };
 
-// Send OTP (mock implementation for demo)
 export const sendOTP = async (req: Request, res: Response) => {
-    const { identifier, type } = req.body; // identifier is email or phone, type is 'email' or 'phone'
+    const { identifier, type } = req.body || {};
+    if (type === 'phone') return unavailablePhoneChannel(res);
+    if (type !== 'email' || !isEmail(identifier)) {
+        return res.status(400).json({ error: 'Invalid OTP request', code: 'OTP_REQUEST_INVALID' });
+    }
 
     try {
-        // Delete any existing OTP for this identifier
-        await prisma.oTPCode.deleteMany({
-            where: { identifier }
+        const authenticated = await authenticatedEmailSubject(req, identifier);
+        if (!authenticated) {
+            return res.status(403).json({ error: 'OTP identifier does not match the authenticated account', code: 'OTP_IDENTIFIER_MISMATCH' });
+        }
+        const result = await issueEmailOtp({
+            destination: authenticated.destination,
+            purpose: 'EMAIL_VERIFICATION',
+            subject: authenticated.userId
         });
-
-        // Generate new OTP
-        const code = generateOTP();
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
-
-        // Save to database
-        await prisma.oTPCode.create({
-            data: {
-                identifier,
-                code,
-                expiresAt
-            }
-        });
-
-        // Mock delivery - log to console for demo
-        console.log(`\n🔐 OTP CODE FOR ${type.toUpperCase()}: ${identifier}`);
-        console.log(`📱 CODE: ${code}`);
-        console.log(`⏰ Expires at: ${expiresAt.toLocaleString()}\n`);
-
         res.json({
             message: `OTP sent to ${identifier}`,
-            // Return code in development only (remove in production)
-            devCode: process.env.NODE_ENV === 'development' ? code : undefined
+            cooldownUntil: result.cooldownUntil.toISOString()
         });
-    } catch (error) {
-        console.error("Send OTP Error:", error);
+    } catch (error: any) {
+        if (error instanceof OtpError) {
+            const status = error.code === 'OTP_COOLDOWN' || error.code === 'OTP_RATE_LIMITED' ? 429 : 503;
+            if (error.details?.retryAfterSeconds) res.setHeader('Retry-After', String(error.details.retryAfterSeconds));
+            return res.status(status).json({ error: error.message, code: error.code, ...(error.details || {}) });
+        }
+        console.error(JSON.stringify({ event: 'email_verification_otp_send_failed', errorCode: error?.code || 'UNKNOWN' }));
         res.status(500).json({ error: 'Failed to send OTP' });
     }
 };
 
-// Verify OTP
 export const verifyOTP = async (req: Request, res: Response) => {
-    const { identifier, code } = req.body;
+    const { identifier, code } = req.body || {};
+    if (typeof identifier === 'string' && !identifier.includes('@')) return unavailablePhoneChannel(res);
+    if (!isEmail(identifier) || typeof code !== 'string') {
+        return res.status(400).json({ error: 'Invalid OTP code', code: 'OTP_INVALID' });
+    }
 
     try {
-        // Find OTP
-        const otpRecord = await prisma.oTPCode.findFirst({
-            where: {
-                identifier,
-                code
-            },
-            orderBy: { createdAt: 'desc' }
-        });
-
-        if (!otpRecord) {
-            res.status(400).json({ error: 'Invalid OTP code' });
-            return;
+        const authenticated = await authenticatedEmailSubject(req, identifier);
+        if (!authenticated) {
+            return res.status(403).json({ error: 'OTP identifier does not match the authenticated account', code: 'OTP_IDENTIFIER_MISMATCH' });
         }
-
-        // Check expiry
-        if (new Date() > otpRecord.expiresAt) {
-            await prisma.oTPCode.delete({ where: { id: otpRecord.id } });
-            res.status(400).json({ error: 'OTP code has expired' });
-            return;
-        }
-
-        // Delete used OTP
-        await prisma.oTPCode.delete({ where: { id: otpRecord.id } });
-
-        // Mark user as verified
-        const user = await prisma.user.findFirst({
-            where: {
-                OR: [
-                    { email: identifier },
-                    { phone: identifier }
-                ]
+        await consumeEmailOtp({
+            destination: authenticated.destination,
+            purpose: 'EMAIL_VERIFICATION',
+            subject: authenticated.userId,
+            code
+        }, async (tx) => {
+            const updated = await tx.user.updateMany({
+                where: { id: authenticated.userId, email: authenticated.storedEmail },
+                data: { emailVerifiedAt: new Date() }
+            });
+            if (updated.count !== 1) {
+                throw Object.assign(new Error('Authenticated email changed during verification'), { code: 'OTP_ACCOUNT_CHANGED' });
             }
         });
 
-        if (user) {
-            await prisma.user.update({
-                where: { id: user.id },
-                data: { verifiedBadge: true }
-            });
+        res.json({ success: true, message: 'OTP verified successfully' });
+    } catch (error: any) {
+        if (error instanceof OtpError && error.code === 'OTP_INVALID') {
+            return res.status(400).json({ error: 'Invalid OTP code', code: error.code });
         }
-
-        res.json({
-            success: true,
-            message: 'OTP verified successfully'
-        });
-    } catch (error) {
-        console.error("Verify OTP Error:", error);
+        console.error(JSON.stringify({ event: 'email_verification_otp_verify_failed', errorCode: error?.code || 'UNKNOWN' }));
         res.status(500).json({ error: 'Failed to verify OTP' });
     }
 };

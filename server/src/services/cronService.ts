@@ -3,6 +3,7 @@ import prisma from '../prisma';
 import { cleanupExpiredMedia } from './mediaService';
 import { resumeMediaPrivacyTransitions } from './mediaPrivacyTransitionService';
 import { calculateAgeGroupFromDate } from '../utils/profileValidation';
+import { cleanupExpiredOtpChallenges } from './otpRetentionService';
 
 export function calculateAgeGroup(dob: Date | null | undefined): string | undefined {
     return calculateAgeGroupFromDate(dob);
@@ -62,5 +63,16 @@ export const initCronJobs = () => {
         if (cleaned > 0) console.log(`[Cron] Cleaned ${cleaned} expired media assets.`);
     });
 
-    console.log('[Cron] Age Group and media cleanup jobs initialized.');
+    cron.schedule('17 * * * *', () => {
+        void cleanupExpiredOtpChallenges().then((cleaned) => {
+            if (cleaned > 0) console.log(`[Cron] Cleaned ${cleaned} expired OTP challenges.`);
+        }).catch((error: unknown) => {
+            const errorCode = typeof error === 'object' && error !== null && 'code' in error
+                ? String((error as { code?: unknown }).code || 'UNKNOWN')
+                : 'UNKNOWN';
+            console.error(JSON.stringify({ event: 'otp_retention_failed', errorCode }));
+        });
+    }, { timezone: 'UTC' });
+
+    console.log('[Cron] Age Group, media, and OTP cleanup jobs initialized.');
 };

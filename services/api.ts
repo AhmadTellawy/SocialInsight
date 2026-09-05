@@ -794,12 +794,10 @@ export const api = {
         const response = await authFetch(`${API_BASE_URL}/auth/register/otp/send`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pendingId })
+            body: JSON.stringify({ pendingId }),
+            timeoutMs: 15_000
         });
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || 'Failed to send OTP');
-        }
+        if (!response.ok) await throwApiError(response, 'Failed to send OTP');
         return response.json();
     },
 

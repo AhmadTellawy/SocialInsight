@@ -7,6 +7,7 @@ interface StepProps {
     onBack?: () => void;
     isLoading?: boolean;
     data?: any;
+    onResend?: () => Promise<{ cooldownUntil?: string } | void>;
 }
 
 export const WelcomeStep: React.FC<StepProps> = ({ onNext, onBack }) => {
@@ -333,9 +334,34 @@ export const HandleStep: React.FC<StepProps> = ({ onNext, onBack, isLoading: isE
     );
 };
 
-export const OTPStep: React.FC<StepProps> = ({ onNext, data, isLoading }) => {
+export const OTPStep: React.FC<StepProps> = ({ onNext, onResend, data, isLoading }) => {
     const [otp, setOtp] = useState(['', '', '', '', '', '']);
-    const [timer, setTimer] = useState(60);
+    const [timer, setTimer] = useState(() => {
+        const cooldownUntil = data?.resendCooldownUntil ? new Date(data.resendCooldownUntil).getTime() : NaN;
+        return Number.isFinite(cooldownUntil) ? Math.max(0, Math.ceil((cooldownUntil - Date.now()) / 1000)) : 60;
+    });
+    const [isResending, setIsResending] = useState(false);
+    const [resendMessage, setResendMessage] = useState<string | null>(null);
+
+    const handleResend = async () => {
+        if (!onResend || isResending || timer > 0) return;
+        setIsResending(true);
+        setResendMessage(null);
+        try {
+            const result = await onResend();
+            const cooldownUntil = result?.cooldownUntil ? new Date(result.cooldownUntil).getTime() : Date.now() + 60_000;
+            setTimer(Math.max(1, Math.ceil((cooldownUntil - Date.now()) / 1000)));
+            setOtp(['', '', '', '', '', '']);
+            setResendMessage('A new code was sent.');
+        } catch (error: any) {
+            const retryAfter = Number(error?.details?.retryAfterSeconds);
+            if (Number.isFinite(retryAfter) && retryAfter > 0) setTimer(Math.ceil(retryAfter));
+            if (error?.code === 'OTP_DELIVERY_FAILED') setOtp(['', '', '', '', '', '']);
+            setResendMessage(error?.message || 'Unable to resend the code. Please try again.');
+        } finally {
+            setIsResending(false);
+        }
+    };
 
     useEffect(() => {
         if (timer > 0) {
@@ -395,10 +421,11 @@ export const OTPStep: React.FC<StepProps> = ({ onNext, data, isLoading }) => {
                 </div>
 
                 <div className="mt-10">
-                    <button disabled={timer > 0} onClick={() => setTimer(60)} className="flex items-center gap-2 text-sm font-bold text-blue-600 hover:text-blue-700 disabled:text-gray-400 transition-colors">
-                        <RefreshCw size={14} className={timer > 0 ? "animate-spin" : ""} />
-                        {timer > 0 ? `Resend code in ${timer}s` : "Resend Code"}
+                    <button disabled={timer > 0 || isResending || isLoading} onClick={handleResend} className="flex items-center gap-2 text-sm font-bold text-blue-600 hover:text-blue-700 disabled:text-gray-400 transition-colors">
+                        <RefreshCw size={14} className={isResending ? "animate-spin" : ""} />
+                        {isResending ? 'Sending…' : timer > 0 ? `Resend code in ${timer}s` : "Resend Code"}
                     </button>
+                    {resendMessage && <p role="status" className="mt-2 text-center text-xs text-gray-500">{resendMessage}</p>}
                 </div>
             </div>
 

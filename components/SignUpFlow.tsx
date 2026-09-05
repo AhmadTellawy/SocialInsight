@@ -40,7 +40,11 @@ export const SignUpFlow: React.FC<SignUpFlowProps> = ({ onComplete, onCancel }) 
                     setCollectedData({ ...collectedData, ...stepData });
 
                     // Securely request OTP and transition to OTP verification screen (Step 5)
-                    await api.sendRegistrationOTP(pendingId);
+                    const otpResponse = await api.sendRegistrationOTP(pendingId);
+                    setCollectedData((current: any) => ({
+                        ...current,
+                        resendCooldownUntil: otpResponse.cooldownUntil
+                    }));
                     setStep(5);
                 }
             } else if (step === 5) {
@@ -74,13 +78,18 @@ export const SignUpFlow: React.FC<SignUpFlowProps> = ({ onComplete, onCancel }) 
         }
     };
 
+    const handleResendRegistrationOTP = async () => {
+        if (!pendingId) throw new Error('Registration session is unavailable.');
+        return api.sendRegistrationOTP(pendingId);
+    };
+
     const renderStep = () => {
         switch (step) {
             case 1: return <WelcomeStep onNext={handleNext} onBack={onCancel} />;
             case 2: return <BasicInfoStep onNext={handleNext} onBack={handleBack} isLoading={loading} />;
             case 3: return <PasswordStep onNext={handleNext} onBack={handleBack} isLoading={loading} />;
             case 4: return <HandleStep onNext={handleNext} onBack={handleBack} isLoading={loading} />;
-            case 5: return <OTPStep onNext={handleNext} data={collectedData} isLoading={loading} />;
+            case 5: return <OTPStep onNext={handleNext} onResend={handleResendRegistrationOTP} data={collectedData} isLoading={loading} />;
             case 6: return <NotificationStep onNext={handleNext} isLoading={loading} />;
             default: return null;
         }
