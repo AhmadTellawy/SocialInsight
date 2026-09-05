@@ -248,3 +248,48 @@ test('actual filesystem errors are sanitized rather than leaking paths or conten
     assert.deepEqual(f.logs, ['STAGING_DB_PRECHECK_FAILED INTERNAL_FAILURE']);
     assert.equal(readFileSync(blockedRoot, 'utf8'), SECRET);
 });
+
+test('database failures expose only allowlisted classifications and validated client versions', () => {
+    const cases = [
+        ['FATAL: password authentication failed for user', 'AUTH_REJECTED'],
+        ['FATAL: Tenant or user not found', 'TENANT_NOT_FOUND'],
+        ['SSL error: certificate verify failed', 'TLS_CERTIFICATE'],
+        ['could not translate host name', 'NETWORK_DNS'],
+        ['connection to server failed: timeout expired', 'NETWORK_TIMEOUT'],
+        ['connection to server failed: Connection refused', 'CONNECTION_REFUSED'],
+        ['FATAL: unsupported startup parameter: options', 'STARTUP_OPTION_REJECTED'],
+        ['ERROR: permission denied for view', 'PERMISSION_DENIED'],
+        ['unrecognized provider failure', 'UNKNOWN'],
+    ];
+    for (const [diagnostic, reason] of cases) {
+        const sensitive = `postgresql://private-user:${SECRET}@private-host.invalid/private-db`;
+        const f = fixture({ mutateResult: ({ args }) => args.includes('-At')
+            ? { status: 2, stdout: sensitive, stderr: `${diagnostic}\n${sensitive}\n${SECRET}` } : undefined });
+        assert.equal(f.execute(), 1);
+        assert.equal(f.files.length, 0);
+        assert.deepEqual(f.logs, [`STAGING_DB_PRECHECK_FAILED DATABASE_PRECHECK_FAILED ${JSON.stringify({
+            reason, psql_version: '17.6', pg_dump_version: '17.6',
+        })}`]);
+        for (const hidden of [SECRET, sensitive, 'private-user', 'private-host', diagnostic]) {
+            assert.ok(!f.logs[0].includes(hidden));
+        }
+    }
+});
+
+test('database subprocess timeout is classified without forwarding error properties', () => {
+    const f = fixture({ mutateResult: ({ args }) => args.includes('-At')
+        ? { status: null, error: Object.assign(new Error(SECRET), { code: 'ETIMEDOUT', path: SECRET }),
+            signal: 'SIGKILL', stdout: SECRET, stderr: SECRET } : undefined });
+    assert.equal(f.execute(), 1);
+    assert.deepEqual(f.logs, ['STAGING_DB_PRECHECK_FAILED DATABASE_PRECHECK_FAILED {"reason":"NETWORK_TIMEOUT","psql_version":"17.6","pg_dump_version":"17.6"}']);
+    assert.equal(f.files.length, 0);
+});
+
+test('arbitrary database error properties cannot become a failure reason or log field', () => {
+    const f = fixture({ mutateResult: ({ args }) => args.includes('-At')
+        ? { status: null, error: Object.assign(new Error(SECRET), { code: SECRET, reason: SECRET }),
+            signal: SECRET, stdout: SECRET, stderr: { secret: SECRET } } : undefined });
+    assert.equal(f.execute(), 1);
+    assert.deepEqual(f.logs, ['STAGING_DB_PRECHECK_FAILED DATABASE_PRECHECK_FAILED {"reason":"UNKNOWN","psql_version":"17.6","pg_dump_version":"17.6"}']);
+    assert.equal(f.files.length, 0);
+});

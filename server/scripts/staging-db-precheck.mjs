@@ -30,9 +30,24 @@ COMMIT;
 `;
 
 class PrecheckError extends Error {
-    constructor(code) { super(code); this.code = code; }
+    constructor(code, reason) { super(code); this.code = code; this.reason = reason; }
 }
-const fail = code => { throw new PrecheckError(code); };
+const fail = (code, reason) => { throw new PrecheckError(code, reason); };
+
+function databaseFailureReason(result) {
+    // Classification only: never return matched text, error messages, hostnames,
+    // SQL, usernames or credentials. Unexpected wording remains UNKNOWN.
+    const stderr = typeof result?.stderr === 'string' ? result.stderr.slice(0, 65536) : '';
+    if (/tenant or user not found|tenant[^\r\n]*(?:not found|does not exist)/i.test(stderr)) return 'TENANT_NOT_FOUND';
+    if (/password authentication failed|authentication failed|no password supplied/i.test(stderr)) return 'AUTH_REJECTED';
+    if (/certificate verify failed|root certificate file|server certificate|self.signed certificate|unable to get local issuer certificate|certificate[^\r\n]*(?:does not match|expired|not yet valid)/i.test(stderr)) return 'TLS_CERTIFICATE';
+    if (/could not translate host name|name or service not known|temporary failure in name resolution/i.test(stderr)) return 'NETWORK_DNS';
+    if (result?.error?.code === 'ETIMEDOUT' || /timeout expired|timed out|connection timeout|connect timeout/i.test(stderr)) return 'NETWORK_TIMEOUT';
+    if (/connection refused/i.test(stderr)) return 'CONNECTION_REFUSED';
+    if (/unsupported startup parameter|unrecognized configuration parameter|invalid value for parameter/i.test(stderr)) return 'STARTUP_OPTION_REJECTED';
+    if (/permission denied/i.test(stderr)) return 'PERMISSION_DENIED';
+    return 'UNKNOWN';
+}
 
 function invoke(run, command, args, env, input, code) {
     let result;
@@ -41,10 +56,12 @@ function invoke(run, command, args, env, input, code) {
             cwd: ROOT, env, input, encoding: 'utf8', timeout: 20000,
             maxBuffer: 65536, killSignal: 'SIGKILL', stdio: ['pipe', 'pipe', 'pipe'],
         });
-    } catch { return fail(code); }
+    } catch (error) { return fail(code, code === 'DATABASE_PRECHECK_FAILED' ? databaseFailureReason({ error }) : undefined); }
     // Never emit a subprocess error or stderr: providers can echo credentials.
     if (!result || result.error || result.signal || result.status !== 0
-        || typeof result.stdout !== 'string' || result.stdout.length > 65536) fail(code);
+        || typeof result.stdout !== 'string' || result.stdout.length > 65536) {
+        fail(code, code === 'DATABASE_PRECHECK_FAILED' ? databaseFailureReason(result) : undefined);
+    }
     return result.stdout.trim();
 }
 
@@ -90,6 +107,7 @@ export function publishStatus(content, { root = ROOT } = {}) {
 
 // Dependencies are injectable so tests never need network access or real secrets.
 export function runPrecheck({ env = process.env, run = spawnSync, publish = publishStatus, log = console.log } = {}) {
+    let clientVersions;
     try {
         const sha = env.STAGING_RELEASE_SHA;
         if (!/^[a-f0-9]{40}$/.test(sha || '') || env.RENDER_GIT_COMMIT !== sha
@@ -102,6 +120,7 @@ export function runPrecheck({ env = process.env, run = spawnSync, publish = publ
         if (head !== sha) fail('GIT_IDENTITY_MISMATCH');
         const psqlVersion = clientVersion(run, '/usr/bin/psql', 'psql');
         const dumpVersion = clientVersion(run, '/usr/bin/pg_dump', 'pg_dump');
+        clientVersions = { psql_version: psqlVersion, pg_dump_version: dumpVersion };
         const databaseEnv = {
             ...BASE_ENV,
             PGHOST: 'aws-0-ap-southeast-1.pooler.supabase.com', PGPORT: '5432',
@@ -121,7 +140,9 @@ export function runPrecheck({ env = process.env, run = spawnSync, publish = publ
         })}`);
         return 0;
     } catch (error) {
-        log(`STAGING_DB_PRECHECK_FAILED ${error instanceof PrecheckError ? error.code : 'INTERNAL_FAILURE'}`);
+        const detail = error instanceof PrecheckError && error.code === 'DATABASE_PRECHECK_FAILED'
+            ? ` ${JSON.stringify({ reason: error.reason, ...clientVersions })}` : '';
+        log(`STAGING_DB_PRECHECK_FAILED ${error instanceof PrecheckError ? error.code : 'INTERNAL_FAILURE'}${detail}`);
         return 1;
     }
 }
