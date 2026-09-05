@@ -1,11 +1,17 @@
 import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { X509Certificate } from 'node:crypto';
+import { accessSync, constants, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 export const PROJECT_REF = 'mnfiixtgnlzmduunfryt';
 export const BRANCH = 'codex/otp-resend-production';
+export const STAGING_CA_PATH = join(ROOT, 'server/certs/supabase-staging-ca.crt');
+// Public platform CA downloaded from the approved Staging dashboard link:
+// https://supabase-downloads.s3-ap-southeast-1.amazonaws.com/prod/ssl/prod-ca-2021.crt
+// Pin DER fingerprint, not PEM line endings. No private key is included.
+export const STAGING_CA_FINGERPRINT = '80:70:25:AD:50:D4:ED:21:9D:2C:9C:7D:29:9C:00:4F:82:4E:B0:0C:F7:F6:5A:FE:F6:07:D0:7B:72:E6:CA:FA';
 export const PUBLIC_STATUS = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="robots" content="noindex,nofollow"><title>Staging precheck</title><p>Staging precheck complete.</p></html>\n';
 const FORBIDDEN_ENV = ['DATABASE_URL', 'DIRECT_URL', 'RESEND_API_KEY', 'JWT_SECRET',
     'OTP_HASH_SECRET', 'STAGING_OTP_ALLOWED_EMAILS', 'CLIENT_URL', 'STAGING_TRUST_PROXY_HOPS'];
@@ -33,6 +39,31 @@ class PrecheckError extends Error {
     constructor(code, reason) { super(code); this.code = code; this.reason = reason; }
 }
 const fail = (code, reason) => { throw new PrecheckError(code, reason); };
+
+export function validateStagingCa(pem, now = Date.now()) {
+    try {
+        if ((!Buffer.isBuffer(pem) && typeof pem !== 'string') || pem.length > 16384) return false;
+        const text = pem.toString();
+        if (!/^-----BEGIN CERTIFICATE-----\r?\n[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----\r?\n?$/.test(text)) return false;
+        const ca = new X509Certificate(text);
+        return ca.fingerprint256 === STAGING_CA_FINGERPRINT && ca.ca === true
+            && ca.subject === ca.issuer && ca.verify(ca.publicKey)
+            && Number.isFinite(now) && now >= Date.parse(ca.validFrom) && now <= Date.parse(ca.validTo);
+    } catch { return false; }
+}
+
+function isExecutable(path) {
+    try { accessSync(path, constants.X_OK); return statSync(path).isFile(); } catch { return false; }
+}
+
+function restoreToolAvailability(version, inspect, getUid) {
+    // Version is already numeric and validated; no environment-supplied paths.
+    const directory = `/usr/lib/postgresql/${Number(version.split('.')[0])}/bin`;
+    const available = name => { try { return inspect(`${directory}/${name}`) === true; } catch { return false; } };
+    let nonRoot = false;
+    try { const uid = getUid?.(); nonRoot = Number.isSafeInteger(uid) && uid > 0; } catch { /* No UID detail is emitted. */ }
+    return { initdb: available('initdb'), pg_ctl: available('pg_ctl'), postgres: available('postgres'), pg_restore: available('pg_restore'), non_root: nonRoot };
+}
 
 function databaseFailureReason(result) {
     // Classification only: never return matched text, error messages, hostnames,
@@ -106,7 +137,8 @@ export function publishStatus(content, { root = ROOT } = {}) {
 }
 
 // Dependencies are injectable so tests never need network access or real secrets.
-export function runPrecheck({ env = process.env, run = spawnSync, publish = publishStatus, log = console.log } = {}) {
+export function runPrecheck({ env = process.env, run = spawnSync, publish = publishStatus, log = console.log,
+    readCertificate = readFileSync, now = Date.now(), inspectRestoreTool = isExecutable, getUid = process.getuid?.bind(process) } = {}) {
     let clientVersions;
     try {
         const sha = env.STAGING_RELEASE_SHA;
@@ -116,16 +148,20 @@ export function runPrecheck({ env = process.env, run = spawnSync, publish = publ
         if (FORBIDDEN_ENV.some(key => env[key] !== undefined)) fail('RUNTIME_ENV_FORBIDDEN');
         const password = env.STAGING_DB_ADMIN_PASSWORD;
         if (typeof password !== 'string' || password.length === 0 || password.length > 1024 || /[\u0000\r\n]/.test(password)) fail('ADMIN_CREDENTIAL_MISSING_OR_INVALID');
+        let certificate;
+        try { certificate = readCertificate(STAGING_CA_PATH); } catch { fail('STAGING_CA_INVALID'); }
+        if (!validateStagingCa(certificate, now)) fail('STAGING_CA_INVALID');
         const head = invoke(run, '/usr/bin/git', ['rev-parse', '--verify', 'HEAD'], { ...BASE_ENV }, undefined, 'GIT_IDENTITY_FAILED');
         if (head !== sha) fail('GIT_IDENTITY_MISMATCH');
         const psqlVersion = clientVersion(run, '/usr/bin/psql', 'psql');
         const dumpVersion = clientVersion(run, '/usr/bin/pg_dump', 'pg_dump');
-        clientVersions = { psql_version: psqlVersion, pg_dump_version: dumpVersion };
+        clientVersions = { psql_version: psqlVersion, pg_dump_version: dumpVersion,
+            restore_tools: restoreToolAvailability(dumpVersion, inspectRestoreTool, getUid) };
         const databaseEnv = {
             ...BASE_ENV,
             PGHOST: 'aws-0-ap-southeast-1.pooler.supabase.com', PGPORT: '5432',
             PGDATABASE: 'postgres', PGUSER: `postgres.${PROJECT_REF}`, PGPASSWORD: password,
-            PGSSLMODE: 'verify-full', PGSSLROOTCERT: '/etc/ssl/certs/ca-certificates.crt',
+            PGSSLMODE: 'verify-full', PGSSLROOTCERT: STAGING_CA_PATH,
             PGCONNECT_TIMEOUT: '10', PGAPPNAME: 'otp-staging-precheck', PGCLIENTENCODING: 'UTF8',
             PSQL_HISTORY: '/dev/null',
             PGOPTIONS: '-c default_transaction_read_only=on -c statement_timeout=10000 -c lock_timeout=3000 -c idle_in_transaction_session_timeout=15000',
@@ -135,6 +171,7 @@ export function runPrecheck({ env = process.env, run = spawnSync, publish = publ
         publish(PUBLIC_STATUS);
         log(`STAGING_DB_PRECHECK_OK ${JSON.stringify({
             project_ref: PROJECT_REF, sha, psql_version: psqlVersion, pg_dump_version: dumpVersion,
+            restore_tools: clientVersions.restore_tools,
             pg_dump_compatible: Number(dumpVersion.split('.')[0]) >= Math.floor(evidence.server_version_num / 10000),
             ...evidence,
         })}`);

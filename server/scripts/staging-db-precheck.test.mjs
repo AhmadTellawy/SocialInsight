@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { X509Certificate } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { BRANCH, PROJECT_REF, PRECHECK_SQL, PUBLIC_STATUS, publishStatus, runPrecheck } from './staging-db-precheck.mjs';
+import { BRANCH, PROJECT_REF, PRECHECK_SQL, PUBLIC_STATUS, STAGING_CA_FINGERPRINT, STAGING_CA_PATH,
+    publishStatus, runPrecheck, validateStagingCa } from './staging-db-precheck.mjs';
 
 const SHA = 'a'.repeat(40);
 const SECRET = 'synthetic-test-password-ONLY';
@@ -22,7 +24,8 @@ function fixture({ extraEnv = {}, mutateResult, data = evidence(), head = SHA } 
             ? `${command.endsWith('/psql') ? 'psql' : 'pg_dump'} (PostgreSQL) 17.6 (Debian 17.6-1)` : JSON.stringify(data);
         return mutateResult?.({ command, args, options, stdout }) ?? { status: 0, stdout, stderr: '' };
     };
-    const execute = overrides => runPrecheck({ env, run, publish: content => files.push(content), log: line => logs.push(line), ...overrides });
+    const execute = overrides => runPrecheck({ env, run, publish: content => files.push(content), log: line => logs.push(line),
+        inspectRestoreTool: () => false, getUid: () => 0, ...overrides });
     return { calls, logs, files, env, execute };
 }
 
@@ -49,7 +52,7 @@ test('credentials only enter read-only psql child environment, never argv, git o
     assert.equal(query.options.env.PGDATABASE, 'postgres');
     assert.equal(query.options.env.PGPASSWORD, SECRET);
     assert.equal(query.options.env.PGSSLMODE, 'verify-full');
-    assert.equal(query.options.env.PGSSLROOTCERT, '/etc/ssl/certs/ca-certificates.crt');
+    assert.equal(query.options.env.PGSSLROOTCERT, STAGING_CA_PATH);
     assert.equal(query.options.env.PSQL_HISTORY, '/dev/null');
     assert.match(query.options.env.PGOPTIONS, /default_transaction_read_only=on/);
     assert.match(query.options.env.PGOPTIONS, /statement_timeout=10000/);
@@ -268,7 +271,7 @@ test('database failures expose only allowlisted classifications and validated cl
         assert.equal(f.execute(), 1);
         assert.equal(f.files.length, 0);
         assert.deepEqual(f.logs, [`STAGING_DB_PRECHECK_FAILED DATABASE_PRECHECK_FAILED ${JSON.stringify({
-            reason, psql_version: '17.6', pg_dump_version: '17.6',
+            reason, psql_version: '17.6', pg_dump_version: '17.6', restore_tools: { initdb: false, pg_ctl: false, postgres: false, pg_restore: false, non_root: false },
         })}`]);
         for (const hidden of [SECRET, sensitive, 'private-user', 'private-host', diagnostic]) {
             assert.ok(!f.logs[0].includes(hidden));
@@ -281,7 +284,7 @@ test('database subprocess timeout is classified without forwarding error propert
         ? { status: null, error: Object.assign(new Error(SECRET), { code: 'ETIMEDOUT', path: SECRET }),
             signal: 'SIGKILL', stdout: SECRET, stderr: SECRET } : undefined });
     assert.equal(f.execute(), 1);
-    assert.deepEqual(f.logs, ['STAGING_DB_PRECHECK_FAILED DATABASE_PRECHECK_FAILED {"reason":"NETWORK_TIMEOUT","psql_version":"17.6","pg_dump_version":"17.6"}']);
+    assert.deepEqual(f.logs, ['STAGING_DB_PRECHECK_FAILED DATABASE_PRECHECK_FAILED {"reason":"NETWORK_TIMEOUT","psql_version":"17.6","pg_dump_version":"17.6","restore_tools":{"initdb":false,"pg_ctl":false,"postgres":false,"pg_restore":false,"non_root":false}}']);
     assert.equal(f.files.length, 0);
 });
 
@@ -290,6 +293,51 @@ test('arbitrary database error properties cannot become a failure reason or log 
         ? { status: null, error: Object.assign(new Error(SECRET), { code: SECRET, reason: SECRET }),
             signal: SECRET, stdout: SECRET, stderr: { secret: SECRET } } : undefined });
     assert.equal(f.execute(), 1);
-    assert.deepEqual(f.logs, ['STAGING_DB_PRECHECK_FAILED DATABASE_PRECHECK_FAILED {"reason":"UNKNOWN","psql_version":"17.6","pg_dump_version":"17.6"}']);
+    assert.deepEqual(f.logs, ['STAGING_DB_PRECHECK_FAILED DATABASE_PRECHECK_FAILED {"reason":"UNKNOWN","psql_version":"17.6","pg_dump_version":"17.6","restore_tools":{"initdb":false,"pg_ctl":false,"postgres":false,"pg_restore":false,"non_root":false}}']);
     assert.equal(f.files.length, 0);
+});
+
+test('checked-in public Supabase CA has the pinned DER fingerprint, CA capability and validity', () => {
+    const pem = readFileSync(STAGING_CA_PATH);
+    const ca = new X509Certificate(pem);
+    assert.equal(ca.fingerprint256, STAGING_CA_FINGERPRINT);
+    assert.equal(ca.ca, true);
+    assert.equal(ca.verify(ca.publicKey), true);
+    assert.equal(ca.subject, ca.issuer);
+    assert.equal(new Date(ca.validFrom).toISOString(), '2021-04-28T10:56:53.000Z');
+    assert.equal(new Date(ca.validTo).toISOString(), '2031-04-26T10:56:53.000Z');
+    assert.equal(validateStagingCa(pem), true);
+    assert.equal(validateStagingCa(pem.toString().replace(/\r?\n/g, '\r\n')), true);
+    assert.equal(validateStagingCa(pem, Date.parse('2031-04-26T10:56:54Z')), false);
+    assert.equal(validateStagingCa(pem, Date.parse('2021-04-28T10:56:52Z')), false);
+    assert.equal(validateStagingCa(pem, NaN), false);
+});
+
+test('invalid, expanded or tampered CA bundles fail before any credential-bearing child', () => {
+    const pem = readFileSync(STAGING_CA_PATH, 'utf8');
+    for (const invalid of [SECRET, pem + pem, pem.replace('MIIDx', 'MIIDy'), `${pem}${SECRET}`, 'x'.repeat(16385)]) {
+        const f = fixture();
+        assert.equal(f.execute({ readCertificate: () => invalid }), 1);
+        assert.equal(f.calls.length, 0);
+        assert.deepEqual(f.logs, ['STAGING_DB_PRECHECK_FAILED STAGING_CA_INVALID']);
+    }
+    const f = fixture();
+    assert.equal(f.execute({ readCertificate: path => { assert.equal(path, STAGING_CA_PATH); throw new Error(SECRET); } }), 1);
+    assert.deepEqual(f.logs, ['STAGING_DB_PRECHECK_FAILED STAGING_CA_INVALID']);
+    assert.equal(f.calls.length, 0);
+});
+
+test('restore tool checks inspect only version-bound fixed paths and emit booleans without execution', () => {
+    const paths = [];
+    const f = fixture();
+    assert.equal(f.execute({ inspectRestoreTool: path => { paths.push(path); return path.endsWith('/initdb'); }, getUid: () => 1234 }), 0);
+    assert.deepEqual(paths, ['/usr/lib/postgresql/17/bin/initdb', '/usr/lib/postgresql/17/bin/pg_ctl', '/usr/lib/postgresql/17/bin/postgres', '/usr/lib/postgresql/17/bin/pg_restore']);
+    const output = JSON.parse(f.logs[0].slice('STAGING_DB_PRECHECK_OK '.length));
+    assert.deepEqual(output.restore_tools, { initdb: true, pg_ctl: false, postgres: false, pg_restore: false, non_root: true });
+    assert.equal(f.calls.length, 4);
+    assert.ok(!f.calls.some(call => /initdb|pg_ctl|pg_restore|\/postgres$/.test(call.command)));
+    const hostile = fixture();
+    assert.equal(hostile.execute({ inspectRestoreTool: () => SECRET, getUid: () => SECRET }), 0);
+    assert.ok(hostile.logs[0].includes('"restore_tools":{"initdb":false,"pg_ctl":false,"postgres":false,"pg_restore":false,"non_root":false}'));
+    assert.ok(!hostile.logs[0].includes(SECRET));
 });
