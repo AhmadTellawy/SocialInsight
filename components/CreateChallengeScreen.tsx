@@ -502,7 +502,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                   value={title}
                   onChange={(val) => { setTitle(val); if (errors.title) setErrors(prev => ({ ...prev, title: false })) }}
                   placeholder="Create a challenge..."
-                  className={`text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-amber-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] ${errors.title ? 'border-red-300 text-red-500' : 'text-gray-900'}`}
+                  className={`text-[16px] leading-6 text-start font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-amber-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] ${errors.title ? 'border-red-300 text-red-500' : 'text-gray-900'}`}
                   minRows={1}
                   autoFocus
                 />
@@ -627,7 +627,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
               {options.map((option, idx) => (
                 <div key={option.id} className="flex items-center gap-2 animate-in fade-in slide-in-from-bottom-1 duration-200">
                   <span className="text-xs font-black text-gray-300 w-4 text-center shrink-0">{idx + 1}</span>
-                  <div className="flex-1 flex flex-col gap-1.5">
+                  <div className="min-w-0 flex-1 flex flex-col gap-1.5">
                     <div className="flex items-center w-full bg-gray-55/5 border border-gray-200 rounded-xl px-2 py-0.5 focus-within:border-amber-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-amber-100 transition-all shadow-xs">
                         {optionPresentation === 'image' && <MediaPicker
                           purpose="OPTION_IMAGE"
@@ -666,7 +666,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                           }}
                         />}
 
-                        <input
+                        <input dir="auto"
                           type="text"
                           value={option.text}
                           maxLength={80}
@@ -682,7 +682,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                             if (focusedOptionId === option.id) setFocusedOptionId(null);
                           }}
                           placeholder={`Item ${idx + 1} Name`}
-                          className="flex-1 px-2.5 py-1.5 bg-transparent text-sm font-semibold focus:outline-none text-gray-900 placeholder-gray-400"
+                          className="min-w-0 flex-1 px-2.5 py-1.5 bg-transparent text-[16px] leading-6 text-start font-semibold focus:outline-none text-gray-900 placeholder-gray-400"
                         />
 
                         <span className="text-[9px] text-gray-450 mr-1.5 whitespace-nowrap">{option.text.length}/80</span>
@@ -723,15 +723,15 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
               {/* Interactive Placeholder / Auto-Add Option */}
                 <div className="flex items-center gap-2 opacity-50 hover:opacity-80 focus-within:opacity-100 transition-opacity duration-200">
                   <span className="text-xs font-black text-gray-300 w-4 text-center shrink-0">{options.length + 1}</span>
-                  <div className="flex-1 flex flex-col gap-2">
+                  <div className="min-w-0 flex-1 flex flex-col gap-2">
                     <div className="flex items-center w-full bg-gray-50/30 border border-dashed border-gray-200 rounded-xl px-2 py-0.5">
                       {optionPresentation === 'image' && <button disabled className="w-12 h-12 rounded-lg flex items-center justify-center shrink-0 border border-dashed border-gray-200 text-gray-300">
                         <Camera size={14} />
                       </button>}
-                      <input
+                      <input dir="auto"
                         type="text"
                         placeholder="Add item to compare..."
-                        className="flex-1 px-2.5 py-1.5 bg-transparent text-sm font-semibold focus:outline-none text-gray-500 placeholder-gray-500 cursor-pointer"
+                        className="min-w-0 flex-1 px-2.5 py-1.5 bg-transparent text-[16px] leading-6 text-start font-semibold focus:outline-none text-gray-500 placeholder-gray-500 cursor-pointer"
                         onFocus={handleAddOption}
                       />
                     </div>
@@ -1232,12 +1232,12 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
               {selectedOptionForSettings.withFollowUp && (
                 <div className="animate-in zoom-in-95">
                   <label className="block text-[10px] font-black text-amber-600 uppercase tracking-widest mb-1.5 px-1">Label Text</label>
-                  <input
+                  <input dir="auto"
                     type="text"
                     value={selectedOptionForSettings.followUpLabel}
                     onChange={(e) => setOptions(options.map(o => o.id === selectedOptionForSettings.id ? { ...o, followUpLabel: e.target.value } : o))}
                     placeholder="e.g. Why did you pick this?"
-                    className="w-full bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-sm focus:outline-none focus:bg-white focus:border-amber-500 transition-all font-bold shadow-inner"
+                    className="w-full bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-[16px] leading-6 text-start focus:outline-none focus:bg-white focus:border-amber-500 transition-all font-bold shadow-inner"
                     autoFocus
                   />
                 </div>

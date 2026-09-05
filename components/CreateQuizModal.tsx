@@ -615,7 +615,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                     value={title}
                     onChange={(val) => setTitle(val)}
                     placeholder="Quiz Title"
-                    className="text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-purple-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] text-gray-900"
+                    className="text-[16px] leading-6 text-start font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-purple-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] text-gray-900"
                     minRows={1}
                   />
                 )}
@@ -623,7 +623,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                   value={description}
                   onChange={(val) => setDescription(val)}
                   placeholder="Describe what this quiz is about (optional)..."
-                  className="mt-1.5 text-[11px] text-gray-500 bg-transparent border-b border-gray-100 focus:outline-none focus:border-purple-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[32px]"
+                  className="mt-1.5 text-[16px] leading-6 text-start text-gray-500 bg-transparent border-b border-gray-100 focus:outline-none focus:border-purple-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[32px]"
                   minRows={1}
                 />
               </div>
@@ -756,7 +756,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                   return (
                     <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-4 shadow-sm">
                       <div className="flex items-start gap-2">
-                        <div className="flex-1 flex flex-col gap-2">
+                        <div className="min-w-0 flex-1 flex flex-col gap-2">
                           {(q.image || q.mediaDrafts.length > 0) && (
                             <div className="relative w-24 h-24 rounded-xl overflow-hidden shadow-sm group animate-in zoom-in-95">
                               {q.mediaDrafts[0]?.previewUrl ? (
@@ -805,11 +805,11 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                                 );
                               }}
                             />
-                            <textarea
+                            <textarea dir="auto"
                               value={q.text}
                               onChange={(e) => updateQuestion(activeSection.id, q.id, { text: e.target.value })}
                               placeholder={totalQuestions <= 1 ? "Ask a question..." : "Question Text"}
-                              className="flex-1 text-sm font-semibold text-gray-900 border-b border-gray-100 focus:outline-none focus:border-purple-500 pt-0.5 pb-1.5 resize-none min-h-[44px] placeholder-gray-400 bg-transparent"
+                              className="min-w-0 flex-1 text-[16px] leading-6 text-start font-semibold text-gray-900 border-b border-gray-100 focus:outline-none focus:border-purple-500 pt-0.5 pb-1.5 resize-none min-h-[44px] placeholder-gray-400 bg-transparent"
                             />
                           </div>
                         </div>
@@ -871,7 +871,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                                   >
                                     <CheckCircle2 size={18} strokeWidth={3} />
                                   </button>
-                                  <div className={`flex-1 flex items-center bg-gray-50 rounded-xl px-1 py-1 border transition-all shadow-sm ${isCorrect ? 'border-green-200 ring-2 ring-green-50 bg-green-50/20' : 'border-transparent focus-within:border-purple-200 focus-within:bg-white'}`}>
+                                  <div className={`min-w-0 flex-1 flex items-center bg-gray-50 rounded-xl px-1 py-1 border transition-all shadow-sm ${isCorrect ? 'border-green-200 ring-2 ring-green-50 bg-green-50/20' : 'border-transparent focus-within:border-purple-200 focus-within:bg-white'}`}>
                                     {optionPresentation === 'image' && <MediaPicker
                                       purpose="OPTION_IMAGE"
                                       value={opt.mediaDrafts}
@@ -907,7 +907,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                                         );
                                       }}
                                     />}
-                                    <input
+                                    <input dir="auto"
                                       type="text"
                                       value={opt.text}
                                       maxLength={80}
@@ -923,7 +923,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                                         if (focusedOptionId === opt.id) setFocusedOptionId(null);
                                       }}
                                       placeholder={`Option ${oIdx + 1}`}
-                                      className="flex-1 text-xs font-semibold p-2 bg-transparent focus:outline-none placeholder-gray-400"
+                                      className="min-w-0 flex-1 text-[16px] leading-6 text-start font-semibold p-2 bg-transparent focus:outline-none placeholder-gray-400"
                                     />
                                     <span className="text-[9px] text-gray-500 mr-1.5 whitespace-nowrap">{opt.text.length}/80</span>
                                     {optionPresentation === 'image' && (opt.image || opt.mediaDrafts.length > 0) && (
@@ -950,14 +950,14 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                             <button disabled className="shrink-0 w-8 h-8 rounded-full border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-300">
                               <CheckCircle2 size={18} />
                             </button>
-                            <div className="flex-1 flex items-center bg-gray-50/50 border border-dashed border-gray-200 rounded-xl px-1 py-1">
+                            <div className="min-w-0 flex-1 flex items-center bg-gray-50/50 border border-dashed border-gray-200 rounded-xl px-1 py-1">
                               {optionPresentation === 'image' && <button disabled className="w-12 h-12 rounded-lg flex items-center justify-center shrink-0 border border-dashed border-gray-200 text-gray-300 mr-1">
                                 <Camera size={16} />
                               </button>}
-                              <input
+                              <input dir="auto"
                                 type="text"
                                 placeholder="Add option..."
-                                className="flex-1 text-xs font-semibold p-2 bg-transparent focus:outline-none text-gray-500 placeholder-gray-500 cursor-pointer"
+                                className="min-w-0 flex-1 text-[16px] leading-6 text-start font-semibold p-2 bg-transparent focus:outline-none text-gray-500 placeholder-gray-500 cursor-pointer"
                                 onFocus={() => handleAddQuizOption(activeSection.id, q.id)}
                               />
                               <button disabled className="p-3 text-gray-300 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]">

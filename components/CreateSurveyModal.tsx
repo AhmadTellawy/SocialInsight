@@ -736,7 +736,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                value={title}
                onChange={(val) => { setTitle(val); setErrors(prev => ({ ...prev, title: false })); }}
                placeholder="Survey Title"
-               className={`text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-500 min-h-[44px] ${errors.title ? 'text-red-500 border-red-300' : 'text-gray-900'}`}
+               className={`text-[16px] leading-6 text-start font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-500 min-h-[44px] ${errors.title ? 'text-red-500 border-red-300' : 'text-gray-900'}`}
                minRows={1}
                autoFocus
              />
@@ -744,7 +744,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                value={description}
                onChange={(val) => setDescription(val)}
                placeholder="Describe what this survey is about..."
-                className="mt-1.5 text-[11px] text-gray-500 bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[32px]"
+                className="mt-1.5 text-[16px] leading-6 text-start text-gray-500 bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[32px]"
                 minRows={1}
               />
              <div className="grid grid-cols-4 gap-1.5 pt-1">
@@ -798,12 +798,12 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                 {/* Section Title Input - only show if sections > 1 */}
                 {sections.length > 1 && (
                   <div className="px-1 flex items-start gap-2">
-                    <textarea
+                    <textarea dir="auto"
                       rows={1}
                       value={activeSection.title}
                       onChange={(e) => setSections(sections.map(s => s.id === activeSection.id ? { ...s, title: e.target.value } : s))}
                       placeholder={`Section ${activeSectionIndex + 1} Title`}
-                      className="flex-1 text-base font-bold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all p-0 pb-2 placeholder-gray-400 resize-none min-h-[40px]"
+                      className="flex-1 text-[16px] leading-6 text-start font-bold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all p-0 pb-2 placeholder-gray-400 resize-none min-h-[40px]"
                     />
                     <button
                       onClick={() => setIsSectionSettingsSheetOpen(true)}
@@ -929,11 +929,11 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                 );
                               }}
                             />
-                            <textarea
+                            <textarea dir="auto"
                               value={q.text}
                               onChange={(e) => updateQuestion(activeSection.id, q.id, { text: e.target.value })}
                               placeholder="Question Text"
-                              className="flex-1 text-sm font-semibold text-gray-900 border-b border-gray-100 focus:outline-none focus:border-blue-500 pt-0.5 pb-1.5 resize-none min-h-[44px] placeholder-gray-400 bg-transparent"
+                              className="flex-1 text-[16px] leading-6 text-start font-semibold text-gray-900 border-b border-gray-100 focus:outline-none focus:border-blue-500 pt-0.5 pb-1.5 resize-none min-h-[44px] placeholder-gray-400 bg-transparent"
                             />
                           </div>
                         </div>
@@ -1009,9 +1009,9 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                 {q.options?.map((opt, oIdx) => (
                                   <div key={opt.id} className="flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-1 duration-200">
                                     <div className="flex items-center gap-2">
-                                      <div className="flex min-h-[58px] flex-1 items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-2 py-1 transition-all focus-within:border-blue-300 focus-within:bg-white">
+                                      <div className="min-w-0 flex min-h-[58px] flex-1 items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-2 py-1 transition-all focus-within:border-blue-300 focus-within:bg-white">
                                         <OptionImageThumbnail optionId={opt.id} optionIndex={oIdx} draft={opt.mediaDrafts[0]} legacyImage={opt.image} controls={controls} />
-                                        <input
+                                        <input dir="auto"
                                           type="text"
                                           value={opt.text}
                                           maxLength={80}
@@ -1020,7 +1020,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                           onBlur={() => focusedOptionId === opt.id && setFocusedOptionId(null)}
                                           placeholder={t('answerType.optionName', { number: oIdx + 1 })}
                                           aria-label={t('answerType.optionName', { number: oIdx + 1 })}
-                                          className="min-w-0 flex-1 bg-transparent p-2 text-xs font-semibold placeholder-gray-500 focus:outline-none"
+                                          className="min-w-0 flex-1 bg-transparent p-2 text-[16px] leading-6 text-start font-semibold placeholder-gray-500 focus:outline-none"
                                         />
                                         <span className="whitespace-nowrap text-[9px] text-gray-500">{opt.text.length}/80</span>
                                         <button onClick={() => setSettingsOptionId({ secId: activeSection.id, qId: q.id, optId: opt.id })} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-gray-500" aria-label={`Option ${oIdx + 1} menu`}><MoreHorizontal size={18} /></button>
@@ -1058,7 +1058,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                               <div key={opt.id} className="flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-1 duration-200">
                                 <div className="flex items-center gap-2">
                                   <div className="flex flex-1 items-center rounded-xl border border-transparent bg-gray-50 px-1 py-1 shadow-sm transition-all focus-within:border-blue-200 focus-within:bg-white">
-                                    <input
+                                    <input dir="auto"
                                       type="text"
                                       value={opt.text}
                                       maxLength={80}
@@ -1072,7 +1072,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                       }}
                                       onBlur={() => focusedOptionId === opt.id && setFocusedOptionId(null)}
                                       placeholder={`Option ${oIdx + 1}`}
-                                      className="min-w-0 flex-1 bg-transparent p-2 text-xs font-semibold placeholder-gray-500 focus:outline-none"
+                                      className="min-w-0 flex-1 bg-transparent p-2 text-[16px] leading-6 text-start font-semibold placeholder-gray-500 focus:outline-none"
                                     />
                                     <span className="whitespace-nowrap text-[9px] text-gray-500">{opt.text.length}/80</span>
                                     <button onClick={() => setSettingsOptionId({ secId: activeSection.id, qId: q.id, optId: opt.id })} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-gray-500" aria-label={`Option ${oIdx + 1} menu`}><MoreHorizontal size={18} /></button>
@@ -1090,7 +1090,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                             ))}
                             <div className="flex items-center gap-2 opacity-60 transition-opacity hover:opacity-90 focus-within:opacity-100">
                               <div className="flex-1 rounded-xl border border-dashed border-gray-200 bg-gray-50/50 px-1 py-1">
-                                <input type="text" placeholder="Add option..." className="w-full cursor-pointer bg-transparent p-2 text-xs font-semibold text-gray-600 placeholder-gray-500 focus:outline-none" onFocus={() => handleAddSurveyOption(activeSection.id, q.id)} />
+                                <input dir="auto" type="text" placeholder="Add option..." className="w-full cursor-pointer bg-transparent p-2 text-[16px] leading-6 text-start font-semibold text-gray-600 placeholder-gray-500 focus:outline-none" onFocus={() => handleAddSurveyOption(activeSection.id, q.id)} />
                               </div>
                             </div>
                           </div>
@@ -1642,7 +1642,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
               {selectedOptionForSettings.withFollowUp && (
                 <div className="animate-in fade-in slide-in-from-top-1">
                   <label className="block text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1.5 px-1">Follow-up Question Text</label>
-                  <input
+                  <input dir="auto"
                     type="text"
                     value={selectedOptionForSettings.followUpLabel}
                     onChange={(e) => {
@@ -1661,7 +1661,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                       }));
                     }}
                     placeholder="e.g. Please explain your choice..."
-                    className="w-full bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-sm focus:outline-none focus:bg-white focus:border-blue-500 transition-all font-bold"
+                    className="w-full bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-[16px] leading-6 text-start focus:outline-none focus:bg-white focus:border-blue-500 transition-all font-bold"
                     autoFocus
                   />
                 </div>

@@ -66,8 +66,8 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
     return (
       <div className="mb-2">
         {isQuiz && (firstQuestion?.imageMediaId || firstQuestion?.imageMedia || firstQuestion?.image) && (
-          <div className="w-full rounded-xl overflow-hidden mb-3 bg-gray-100">
-            <MediaImage media={firstQuestion.imageMedia} mediaId={firstQuestion.imageMediaId} fallbackSrc={firstQuestion.image} className="w-full max-h-[500px] object-cover block" alt="Question context" />
+          <div className="-mx-4 w-[calc(100%+2rem)] rounded-none overflow-hidden mb-3 bg-gray-100">
+            <MediaImage media={firstQuestion.imageMedia} mediaId={firstQuestion.imageMediaId} fallbackSrc={firstQuestion.image} className="w-full h-auto rounded-none object-contain block" alt="Question context" />
           </div>
         )}
         <RatingScaleQuestion
@@ -85,7 +85,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
   }
 
   const renderHorizontal = () => (
-    <div className="flex overflow-x-auto snap-x snap-mandatory hide-scrollbar gap-3 pb-4 px-1" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+    <div className="flex overflow-x-auto overscroll-x-contain snap-x snap-mandatory hide-scrollbar gap-3 pb-4 px-1" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch' }}>
       {(options || []).map((option, optionIndex) => {
         const isSelected = selectedOptions.includes(option.id);
         const percentage = shouldShowResults ? getPercentage(option.votes || 0, totalVotes) : 0;
@@ -95,7 +95,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
         const isWrongSelection = isQuiz && isSelected && !isCorrect;
 
         return (
-          <div key={option.id} className={`flex-shrink-0 relative w-[65%] sm:w-[250px] rounded-xl border snap-center overflow-hidden flex flex-col transition-all duration-300 bg-white shadow-sm ${shouldShowResults && isCorrect ? 'border-green-500 ring-2 ring-green-500 bg-green-50' : shouldShowResults && isWrongSelection ? 'border-red-500 ring-2 ring-red-500 bg-red-50' : isSelected ? 'ring-2 ring-blue-500 border-blue-500' : 'border-gray-200'}`}>
+          <div key={option.id} className={`flex-shrink-0 relative w-[86%] sm:w-[82%] rounded-xl border snap-start overflow-hidden flex flex-col transition-all duration-300 bg-white shadow-sm ${shouldShowResults && isCorrect ? 'border-green-500 ring-2 ring-green-500 bg-green-50' : shouldShowResults && isWrongSelection ? 'border-red-500 ring-2 ring-red-500 bg-red-50' : isSelected ? 'ring-2 ring-blue-500 border-blue-500' : 'border-gray-200'}`}>
             <div className="w-full aspect-square bg-gray-100 relative group/opt-img">
               {hasOptionImage(option) ? (
                 <>
@@ -140,21 +140,19 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
                 </div>
               )}
             </div>
-            <div className="bg-gray-50 p-4 border-t border-gray-100 flex-1 flex flex-col justify-center min-h-[80px]">
-              <div className="flex justify-between items-center gap-4">
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-bold text-gray-900 truncate text-base leading-snug">
-                    {option.isRating ? (
-                      <div className="flex text-yellow-500">
-                        {Array.from({ length: option.ratingValue || 0 }).map((_, i) => (
-                          <Star key={i} size={14} fill="currentColor" />
-                        ))}
-                      </div>
-                    ) : showOptionNames ? option.text : null}
-                  </h3>
-                  {shouldShowResults && <div className="text-[10px] text-gray-500 mt-1">{option.votes.toLocaleString()} {t('votes')}</div>}
-                </div>
-                <div className="shrink-0">
+            <div className="bg-gray-50 p-4 border-t border-gray-100 flex-1 flex flex-col gap-3 min-h-[128px]">
+              <div dir="auto" className="w-full min-w-0 font-bold text-gray-900 text-[16px] leading-6 text-start whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                {option.isRating ? (
+                  <div className="flex text-yellow-500">
+                    {Array.from({ length: option.ratingValue || 0 }).map((_, i) => (
+                      <Star key={i} size={14} fill="currentColor" />
+                    ))}
+                  </div>
+                ) : showOptionNames ? option.text : null}
+              </div>
+              <div className="mt-auto flex flex-wrap justify-between items-center gap-2">
+                {shouldShowResults && <div className="text-xs text-gray-500">{(option.votes || 0).toLocaleString()} {t('votes')}</div>}
+                <div className="flex flex-wrap items-center gap-2">
                   {isCorrect && (hasVoted || isExpired) && (
                     <CheckCircle2 size={18} className="text-green-600 shrink-0" />
                   )}
@@ -165,14 +163,14 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
                     <button aria-label={showOptionNames ? option.text : t('answerType.imageOption', { number: optionIndex + 1 })} onClick={() => onOptionClick(option.id)} className={`text-sm font-bold px-6 py-2 rounded-lg transition-colors border shadow-sm active:scale-95 ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-100'}`}>{isSelected && isMultiple ? t('Selected') : t('Vote')}</button>
                   ) : (
                     isSelected ? (
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <div className="flex items-center gap-1 text-blue-600 font-bold text-[11px] bg-blue-50 px-2 py-1 rounded-full whitespace-nowrap">
                           <CheckCircle2 size={12} /> <span>{t('Voted')}</span>
                         </div>
                         {shouldShowResults && <span className="text-sm text-blue-700 font-extrabold">{percentage}%</span>}
                       </div>
                     ) : (
-                      <span className="text-sm text-gray-400 font-bold px-2">{percentage}%</span>
+                      shouldShowResults && <span className="text-sm text-gray-400 font-bold px-2">{percentage}%</span>
                     )
                   )}
                 </div>
@@ -183,12 +181,13 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
             {/* Horizontal Clarification Question */}
             {isSelected && !hasVoted && option.withFollowUp && (
               <div className="p-4 pt-0 animate-in fade-in slide-in-from-top-1">
-                <label className="text-[11px] font-black text-blue-600 uppercase tracking-widest mb-1.5 block">{option.followUpLabel || t('Please explain:')}</label>
+                <label dir="auto" className="text-[16px] leading-6 text-start font-medium text-blue-600 mb-1.5 block">{option.followUpLabel || t('Please explain:')}</label>
                 <textarea
+                  dir="auto"
                   value={followUpAnswers[option.id] || ''}
                   onChange={(e) => onFollowUpChange(option.id, e.target.value)}
                   placeholder={t('Your response...')}
-                  className="w-full p-3 text-sm bg-blue-50/50 border border-blue-100 rounded-xl focus:bg-white transition-all min-h-[60px] resize-none"
+                  className="w-full p-3 text-[16px] leading-6 text-start bg-blue-50/50 border border-blue-100 rounded-xl focus:bg-white transition-all min-h-[60px] resize-none"
                 />
               </div>
             )}
@@ -281,7 +280,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
                           ))}
                         </div>
                       ) : (
-                        <span className={`block text-[13px] font-medium leading-snug line-clamp-2 break-words ${textColor}`}>
+                        <span dir="auto" className={`block text-[16px] font-medium leading-6 text-start whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${textColor}`}>
                           {option.text}
                         </span>
                       )}
@@ -320,14 +319,15 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
               {isSelected && !hasVoted && option.withFollowUp && (
                 <div className="px-2 pb-3 pt-1 animate-in fade-in slide-in-from-top-1">
                   <div className="p-4 bg-blue-50/50 border border-blue-100 rounded-2xl">
-                    <label className="text-[11px] font-black text-blue-600 uppercase tracking-widest mb-2 block">
+                    <label dir="auto" className="text-[16px] leading-6 text-start font-medium text-blue-600 mb-2 block">
                       {option.followUpLabel || t('Please explain your choice:')}
                     </label>
                     <textarea
+                      dir="auto"
                       value={followUpAnswers[option.id] || ''}
                       onChange={(e) => onFollowUpChange(option.id, e.target.value)}
                       placeholder={t('Type your response...')}
-                      className="w-full p-3 text-sm bg-white border border-blue-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all min-h-[90px] resize-none shadow-sm"
+                      className="w-full p-3 text-[16px] leading-6 text-start bg-white border border-blue-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all min-h-[90px] resize-none shadow-sm"
                     />
                   </div>
                 </div>
@@ -341,7 +341,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
             <button aria-label={showOptionNames ? option.text : t('answerType.imageOption', { number: idx + 1 })} onClick={() => onOptionClick(option.id)} disabled={hasVoted || isExpired} className={`relative w-full text-left rounded-xl border transition-all duration-300 overflow-hidden group ${hasImages ? 'p-1 pr-3' : 'p-3'} ${hasVoted || isExpired ? (isCorrect ? 'border-green-500 bg-green-50' : isWrongSelection ? 'border-red-500 bg-red-50' : isSelected ? 'border-blue-500 bg-blue-50' : 'border-gray-100 bg-gray-50') : isSelected ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500/20' : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/30 active:scale-[0.99]'}`}>
               {shouldShowResults && <div className={`absolute top-0 left-0 bottom-0 transition-all duration-1000 ease-out ${isCorrect ? 'bg-green-200/50' : isWrongSelection ? 'bg-red-200/50' : isSelected ? 'bg-blue-100/50' : 'bg-gray-200/50'}`} style={{ width: `${percentage}%` }} />}
               <div className={`relative flex justify-between items-center z-10 ${hasImages ? 'min-h-[44px]' : ''}`}>
-                <div className={`flex items-center overflow-hidden ${hasImages ? 'gap-3' : 'gap-3'}`}>
+                <div className="flex flex-1 min-w-0 items-center gap-3">
                   {hasImages && (
                     <div
                       className="w-16 h-16 rounded-lg bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0 overflow-hidden relative group/opt-img"
@@ -383,7 +383,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
                       </div>
                     </div>
                   ) : (
-                    showOptionNames ? <span className={`font-medium text-sm truncate ${isSelected ? 'text-blue-700' : 'text-gray-700'} ${hasImages ? 'py-1' : ''}`}>{option.text}</span> : null
+                    showOptionNames ? <span dir="auto" className={`flex-1 min-w-0 font-medium text-[16px] leading-6 text-start whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${isSelected ? 'text-blue-700' : 'text-gray-700'} ${hasImages ? 'py-1' : ''}`}>{option.text}</span> : null
                   )}
                 </div>
                 <div className="flex items-center gap-2 pl-2 shrink-0">
@@ -396,14 +396,15 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
             {isSelected && !hasVoted && option.withFollowUp && (
               <div className="px-2 pb-3 pt-1 animate-in fade-in slide-in-from-top-1">
                 <div className="p-4 bg-blue-50/50 border border-blue-100 rounded-2xl">
-                  <label className="text-[11px] font-black text-blue-600 uppercase tracking-widest mb-2 block">
+                  <label dir="auto" className="text-[16px] leading-6 text-start font-medium text-blue-600 mb-2 block">
                     {option.followUpLabel || t('Please explain your choice:')}
                   </label>
                   <textarea
+                    dir="auto"
                     value={followUpAnswers[option.id] || ''}
                     onChange={(e) => onFollowUpChange(option.id, e.target.value)}
                     placeholder={t('Type your response...')}
-                    className="w-full p-3 text-sm bg-white border border-blue-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all min-h-[90px] resize-none shadow-sm"
+                    className="w-full p-3 text-[16px] leading-6 text-start bg-white border border-blue-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all min-h-[90px] resize-none shadow-sm"
                   />
                 </div>
               </div>
@@ -417,8 +418,8 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
   return (
     <div className={isTextOnlyPoll ? "mb-2" : "mb-4"}>
       {isQuiz && (firstQuestion?.imageMediaId || firstQuestion?.imageMedia || firstQuestion?.image) && (
-        <div className="w-full rounded-xl overflow-hidden mb-3 bg-gray-100">
-          <MediaImage media={firstQuestion.imageMedia} mediaId={firstQuestion.imageMediaId} fallbackSrc={firstQuestion.image} className="w-full max-h-[500px] object-cover block" alt="Question context" />
+        <div className="-mx-4 w-[calc(100%+2rem)] rounded-none overflow-hidden mb-3 bg-gray-100">
+          <MediaImage media={firstQuestion.imageMedia} mediaId={firstQuestion.imageMediaId} fallbackSrc={firstQuestion.image} className="w-full h-auto rounded-none object-contain block" alt="Question context" />
         </div>
       )}
       {isHorizontal ? renderHorizontal() : renderVertical()}

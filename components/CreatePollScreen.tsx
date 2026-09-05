@@ -620,7 +620,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   value={title}
                   onChange={(val) => { setTitle(val); if (errors.title) setErrors(prev => ({ ...prev, title: false })) }}
                   placeholder="Ask a question..."
-                  className={`text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] ${errors.title ? 'border-red-300 text-red-500' : 'text-gray-900'}`}
+                  className={`text-[16px] leading-6 text-start font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] ${errors.title ? 'border-red-300 text-red-500' : 'text-gray-900'}`}
                   minRows={1}
                   autoFocus
                 />
@@ -795,7 +795,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                     {options.map((option, idx) => (
                       <div key={option.id} className="flex items-center gap-2 animate-in fade-in slide-in-from-bottom-1 duration-200">
                         <span className="w-4 shrink-0 text-center text-xs font-black text-gray-400">{idx + 1}</span>
-                        <div className="flex-1 flex flex-col gap-1.5">
+                        <div className="min-w-0 flex-1 flex flex-col gap-1.5">
                           <div className="flex min-h-[58px] w-full items-center gap-2 rounded-xl border border-gray-200 bg-gray-55/5 px-2 py-1 focus-within:border-blue-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100 transition-all shadow-xs">
                             <OptionImageThumbnail
                               optionId={option.id}
@@ -804,7 +804,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                               legacyImage={option.image}
                               controls={controls}
                             />
-                            <input
+                            <input dir="auto"
                               type="text"
                               value={option.text}
                               maxLength={80}
@@ -813,7 +813,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                               onBlur={() => focusedOptionId === option.id && setFocusedOptionId(null)}
                               placeholder={t('answerType.optionName', { number: idx + 1 })}
                               aria-label={t('answerType.optionName', { number: idx + 1 })}
-                              className="min-w-0 flex-1 bg-transparent px-1 py-1.5 text-sm font-semibold text-gray-900 placeholder-gray-500 focus:outline-none"
+                              className="min-w-0 flex-1 bg-transparent px-1 py-1.5 text-[16px] leading-6 text-start font-semibold text-gray-900 placeholder-gray-500 focus:outline-none"
                             />
                             <span className="me-1 whitespace-nowrap text-[9px] text-gray-500">{option.text.length}/80</span>
                           </div>
@@ -869,7 +869,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                     <span className="w-4 shrink-0 text-center text-xs font-black text-gray-400">{idx + 1}</span>
                     <div className="flex-1 flex flex-col gap-1.5">
                       <div className="flex w-full items-center rounded-xl border border-gray-200 bg-gray-55/5 px-2 py-0.5 shadow-xs transition-all focus-within:border-blue-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100">
-                        <input
+                        <input dir="auto"
                           type="text"
                           value={option.text}
                           maxLength={80}
@@ -883,7 +883,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                           }}
                           onBlur={() => focusedOptionId === option.id && setFocusedOptionId(null)}
                           placeholder={`Option ${idx + 1}`}
-                          className="min-w-0 flex-1 bg-transparent px-2.5 py-1.5 text-sm font-semibold text-gray-900 placeholder-gray-500 focus:outline-none"
+                          className="min-w-0 flex-1 bg-transparent px-2.5 py-1.5 text-[16px] leading-6 text-start font-semibold text-gray-900 placeholder-gray-500 focus:outline-none"
                         />
                         <span className="me-1.5 whitespace-nowrap text-[9px] text-gray-500">{option.text.length}/80</span>
                       </div>
@@ -908,10 +908,10 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                 <div className="flex items-center gap-2 opacity-60 transition-opacity hover:opacity-90 focus-within:opacity-100">
                   <span className="w-4 shrink-0 text-center text-xs font-black text-gray-400">{options.length + 1}</span>
                   <div className="flex-1 rounded-xl border border-dashed border-gray-200 bg-gray-50/30 px-2 py-0.5">
-                    <input
+                    <input dir="auto"
                       type="text"
                       placeholder="Add option..."
-                      className="w-full cursor-pointer bg-transparent px-2.5 py-1.5 text-sm font-semibold text-gray-600 placeholder-gray-500 focus:outline-none"
+                      className="w-full cursor-pointer bg-transparent px-2.5 py-1.5 text-[16px] leading-6 text-start font-semibold text-gray-600 placeholder-gray-500 focus:outline-none"
                       onFocus={handleAddOption}
                     />
                   </div>
@@ -1482,12 +1482,12 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               {selectedOptionForSettings.withFollowUp && (
                 <div className="animate-in fade-in slide-in-from-top-1">
                   <label className="block text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1.5 px-1">Follow-up Question Text</label>
-                  <input
+                  <input dir="auto"
                     type="text"
                     value={selectedOptionForSettings.followUpLabel}
                     onChange={(e) => updateFollowUp(selectedOptionForSettings.id, { followUpLabel: e.target.value })}
                     placeholder="e.g. Please explain your choice..."
-                    className="w-full bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-sm focus:outline-none focus:bg-white focus:border-blue-500 transition-all font-bold"
+                    className="w-full bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-[16px] leading-6 text-start focus:outline-none focus:bg-white focus:border-blue-500 transition-all font-bold"
                     autoFocus
                   />
                 </div>

@@ -1329,7 +1329,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           <div className="bg-white p-4 rounded-xl border border-amber-200 shadow-sm flex items-center gap-4 text-left">
             {hasOptionImage(winner) && <MediaImage media={winner.imageMedia} mediaId={winner.imageMediaId} fallbackSrc={winner.image} className="w-16 h-16 rounded-lg object-cover" alt="" />}
             <div className="flex-1">
-              {displayOptionNames && <h4 className="font-bold text-gray-900 leading-tight">{winner.text}</h4>}
+              {displayOptionNames && <h4 dir="auto" className="text-base text-start font-bold text-gray-900 leading-relaxed break-words">{winner.text}</h4>}
               <div className="flex items-center gap-1.5 mt-1 text-green-600 font-bold text-[10px] uppercase">
                 <CheckCircle2 size={12} /> {t('Winner')}
               </div>
@@ -1401,7 +1401,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 </div>
                 {displayOptionNames && (
                   <div className="p-3 bg-white flex-1 flex flex-col justify-center border-t border-gray-50 min-h-[60px]">
-                    <span className="text-sm font-bold text-gray-800 leading-tight line-clamp-2">{opt.text}</span>
+                    <span dir="auto" className="text-base text-start font-bold text-gray-800 leading-relaxed break-words">{opt.text}</span>
                   </div>
                 )}
               </button>
@@ -1425,8 +1425,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         <div className="w-16 h-16 bg-purple-100 text-purple-600 rounded-[1.5rem] flex items-center justify-center mb-6 shadow-sm">
           <Play size={32} fill="currentColor" className="ml-1" />
         </div>
-        <h3 className="text-xl font-black text-gray-900 mb-2">{sourceSurvey.title}</h3>
-        <p className="text-sm text-gray-500 mb-8 max-w-xs">{sourceSurvey.description || t('Test your knowledge in this challenge.')}</p>
+        <h3 dir="auto" className="text-base text-start leading-relaxed font-black text-gray-900 mb-2 w-full">{sourceSurvey.title}</h3>
+        <p dir="auto" className="text-base text-start leading-relaxed text-gray-500 mb-8 w-full">{sourceSurvey.description || t('Test your knowledge in this challenge.')}</p>
         <div className="flex items-center gap-4 mb-8">
           <div className="flex flex-col items-center">
             <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{t('Challenges')}</span>
@@ -1461,7 +1461,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     const displayCurrentOptionNames = shouldShowOptionNames(currentQuestion.optionPresentation, currentQuestion.showOptionNames);
 
     return (
-      <div className="bg-white rounded-xl overflow-hidden border border-gray-100 shadow-sm mt-3">
+      <div className="bg-white rounded-none overflow-hidden border-y border-gray-100 shadow-sm mt-3 -mx-4">
         {survey.type === SurveyType.QUIZ && !survey.config?.timeLimit ? (
           <div className="bg-white px-4 py-4 border-b border-gray-100">
             {totalQuestions <= 7 ? (
@@ -1511,12 +1511,12 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           <div key={currentQuestion.id} className={`w-full flex flex-col ${slideDirection === 'next' ? 'animate-in slide-in-from-right-10 fade-in duration-500' : 'animate-in slide-in-from-left-10 fade-in duration-500'}`}>
             <div className="p-5 pb-8 no-scrollbar scroll-smooth">
               {(currentQuestion.imageMediaId || currentQuestion.imageMedia || currentQuestion.image) && (
-                <div className="w-full rounded-xl overflow-hidden mb-3 bg-gray-100">
-                  <MediaImage media={currentQuestion.imageMedia} mediaId={currentQuestion.imageMediaId} fallbackSrc={currentQuestion.image} className="w-full max-h-[500px] object-cover block" alt="Question context" />
+                <div className="w-[calc(100%+2.5rem)] -mx-5 rounded-none overflow-hidden mb-3 bg-gray-100">
+                  <MediaImage media={currentQuestion.imageMedia} mediaId={currentQuestion.imageMediaId} fallbackSrc={currentQuestion.image} className="w-full h-auto object-contain block" alt="Question context" />
                 </div>
               )}
               <div className="flex items-start justify-between gap-4 mb-3">
-                <h3 className="text-lg font-bold text-gray-900 leading-tight">{resolvedTitle}</h3>
+                <h3 dir="auto" className="text-base text-start font-bold text-gray-900 leading-relaxed flex-1 min-w-0 break-words">{resolvedTitle}</h3>
                 {survey.type === SurveyType.QUIZ && currentQuestion.weight && (
                   <span className="shrink-0 bg-purple-50 text-purple-600 text-[10px] font-black px-2 py-1 rounded-md border border-purple-100">
                     {currentQuestion.weight} {t('PTS')}
@@ -1534,7 +1534,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                       onSelect={(option) => handleSurveyAnswer(option.id)}
                     />
                   ) : (
-                  <div className={`${isTF ? 'grid grid-cols-2 gap-3' : isHorizontal ? 'flex gap-3 overflow-x-auto no-scrollbar snap-x pb-2' : 'grid grid-cols-1 space-y-2'}`}>
+                  <div className={`${isTF ? 'grid grid-cols-2 gap-3' : isHorizontal ? 'flex gap-3 overflow-x-auto overscroll-x-contain no-scrollbar snap-x snap-mandatory pb-2' : 'grid grid-cols-1 space-y-2'}`}>
                     {currentQuestion.options?.map((opt, idx) => {
                       const selectedIds = Array.isArray(answer) ? answer : (answer ? [answer] : []);
                       const isSelected = selectedIds.includes(opt.id);
@@ -1547,7 +1547,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                       const isPortrait = optionHasImage && portraitImages.has(imageKey);
 
                       return (
-                        <div key={opt.id} className={`group relative ${isHorizontal && !isTF ? 'min-w-[51%] snap-center' : ''}`}>
+                        <div key={opt.id} className={`group relative ${isHorizontal && !isTF ? 'w-[86%] sm:w-[82%] shrink-0 min-w-0 snap-start' : ''}`}>
                           <button aria-label={displayCurrentOptionNames ? opt.text : t('answerType.imageOption', { number: idx + 1 })} onClick={() => handleSurveyAnswer(opt.id)} disabled={(isMaxReached || (hasVotedCurrent && isQuiz)) as boolean} className={`w-full text-left p-3 rounded-xl border transition-all duration-200 flex items-center justify-between active:scale-[0.99] h-auto ${hasVotedCurrent && isQuiz ? (isCorrect ? 'border-green-500 bg-green-50 text-green-700 ring-1 ring-green-500/20 shadow-sm' : isWrongSelection ? 'border-red-500 bg-red-50 text-red-700 ring-1 ring-red-500/20 shadow-sm' : 'border-gray-100 bg-gray-50 opacity-50') : isSelected ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-sm' : isMaxReached ? 'opacity-50 border-gray-100 bg-gray-50' : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/30 active:scale-[0.99]'} ${isTF ? 'flex-col gap-2 items-center text-center justify-center py-6' : ''} ${isHorizontal && optionHasImage ? 'flex-col items-stretch p-1 pb-3' : ''}`}>
                             {optionHasImage && (
                               <div
@@ -1574,7 +1574,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                                 )}
                               </div>
                             )}
-                            <div className={`flex items-center ${isTF || (isHorizontal && optionHasImage) ? 'flex-col' : 'gap-3'} flex-1`}>
+                            <div className={`flex min-w-0 w-full items-center ${isTF || (isHorizontal && optionHasImage) ? 'flex-col' : 'gap-3'} flex-1`}>
                               {!isTF && !(isHorizontal && optionHasImage) && !opt.isRating && <span className={`w-6 h-6 rounded-md text-xs font-bold flex items-center justify-center shrink-0 transition-colors ${isSelected ? 'bg-blue-200 text-blue-700' : 'bg-gray-100 text-gray-500 group-hover:bg-white'}`}>{idx + 1}.</span>}
 
                               {hasVotedCurrent && isQuiz && isCorrect && <CheckCircle2 size={18} className="text-green-600 shrink-0" />}
@@ -1588,14 +1588,19 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                                   </div>
                                 </div>
                               ) : (
-                                displayCurrentOptionNames ? <span className={`font-bold ${isTF ? 'text-base' : 'text-sm'} leading-snug break-words uppercase tracking-wide flex-1 ${isHorizontal && optionHasImage ? 'text-center px-2' : ''}`}>{opt.text}</span> : null
+                                displayCurrentOptionNames ? <span dir="auto" className={`font-bold text-base text-start leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] min-w-0 flex-1 ${isHorizontal && optionHasImage ? 'w-full px-2' : ''}`}>{opt.text}</span> : null
                               )}
                             </div>
+                            {isHorizontal && optionHasImage && (
+                              <span className="mt-3 flex w-full flex-wrap justify-end px-2">
+                                <span className="rounded-lg border border-gray-300 bg-white px-5 py-2 text-sm font-bold">{isSelected ? t('Selected') : t('Vote')}</span>
+                              </span>
+                            )}
                           </button>
                           {isSelected && opt.withFollowUp && (
                             <div className="mt-2 pl-3 animate-in fade-in slide-in-from-top-1">
-                              <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">{opt.followUpLabel || t('Please provide more details:')}</label>
-                              <input type="text" value={followUpAnswers[opt.id] || ''} onChange={(e) => handleFollowUpChange(opt.id, e.target.value)} placeholder={t('Type here...')} className="w-full p-2.5 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-500 focus:bg-white transition-all" />
+                              <label dir="auto" className="text-base leading-6 text-start font-bold text-gray-500 ml-1 mb-1 block">{opt.followUpLabel || t('Please provide more details:')}</label>
+                              <input dir="auto" type="text" value={followUpAnswers[opt.id] || ''} onChange={(e) => handleFollowUpChange(opt.id, e.target.value)} placeholder={t('Type here...')} className="w-full p-2.5 text-base leading-6 text-start bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-500 focus:bg-white transition-all" />
                             </div>
                           )}
                         </div>
@@ -1818,17 +1823,17 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           <MediaCarousel
             media={sourceSurvey.media}
             onClick={onContentClick}
-            className={`mb-2 max-h-[500px] rounded-xl${onContentClick ? ' cursor-pointer hover:opacity-95 transition-opacity' : ''}`}
+            className={`mb-2 !w-[calc(100%+2rem)] -mx-4 rounded-none${onContentClick ? ' cursor-pointer hover:opacity-95 transition-opacity' : ''}`}
           />
         ) : (
           <div
             onClick={onContentClick}
-            className={`w-full rounded-xl overflow-hidden mb-2 bg-gray-100${onContentClick ? ' cursor-pointer hover:opacity-95 transition-opacity' : ''}`}
+            className={`w-[calc(100%+2rem)] -mx-4 rounded-none overflow-hidden mb-2 bg-gray-100${onContentClick ? ' cursor-pointer hover:opacity-95 transition-opacity' : ''}`}
           >
             <MediaImage
               fallbackSrc={sourceSurvey.coverImage}
               alt="Cover"
-              className="w-full max-h-[500px] object-cover block"
+              className="w-full h-auto object-contain block"
             />
           </div>
         )}
@@ -1861,7 +1866,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                       </div>
                       <span
                         dir="auto"
-                        className={`text-[12px] font-semibold leading-snug line-clamp-2 break-words${
+                        className={`text-base text-start font-semibold leading-relaxed whitespace-pre-wrap break-words min-w-0${
                           isSelected ? ' text-white' : ' text-gray-800'
                         }`}
                       >
@@ -1947,7 +1952,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                         )}
                         <span
                           dir="auto"
-                          className={`text-[12px] font-semibold leading-snug line-clamp-2 break-words${
+                          className={`text-base text-start font-semibold leading-relaxed whitespace-pre-wrap break-words min-w-0${
                             isSelected ? ' text-blue-700' : ' text-gray-700'
                           }`}
                         >
@@ -2116,7 +2121,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 <span>{survey.author?.name || t('Anonymous')} {t('reposted this')}</span>
               </div>
               {survey.sharedCaption && (
-                <p className="text-gray-900 text-[15px] mb-3 leading-relaxed whitespace-pre-wrap font-normal">
+                <p dir="auto" className="text-start text-gray-900 text-base mb-3 leading-relaxed whitespace-pre-wrap font-normal">
                   <RichTextRenderer text={survey.sharedCaption} mentions={survey.mentions} mentionSurface="REPOST_CAPTION" />
                 </p>
               )}
@@ -2219,8 +2224,9 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
               <div className="flex items-start gap-2 mb-2">
                 <div className="flex-1 min-w-0">
                   <h2
+                    dir="auto" style={{ textAlign: 'start' }}
                     onClick={onContentClick}
-                    className={`font-semibold text-[15px] text-gray-900 leading-snug whitespace-pre-wrap ${onContentClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''} ${!isDetailView ? 'line-clamp-2' : ''}`}
+                    className={`font-semibold text-base text-gray-900 leading-relaxed whitespace-pre-wrap ${onContentClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''} ${!isDetailView ? 'line-clamp-2' : ''}`}
                   >
                     <RichTextRenderer text={sourceSurvey.title} mentions={sourceSurvey.mentions} mentionSurface="POST_TITLE" inline />
                   </h2>
@@ -2237,15 +2243,16 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
               {isCoverImagePollCard
                 ? renderCoverImagePollCard()
                 : sourceSurvey.media?.length
-                  ? <MediaCarousel media={sourceSurvey.media} onClick={onContentClick} className={`mb-3 max-h-[500px] rounded-xl ${onContentClick ? 'cursor-pointer hover:opacity-95 transition-opacity' : ''}`} />
-                  : (sourceSurvey.coverImage && <div onClick={onContentClick} className={`w-full rounded-xl overflow-hidden mb-3 bg-gray-100 ${onContentClick ? 'cursor-pointer hover:opacity-95 transition-opacity' : ''}`}><MediaImage fallbackSrc={sourceSurvey.coverImage} alt="Cover" className="w-full max-h-[500px] object-cover block" /></div>)
+                  ? <MediaCarousel media={sourceSurvey.media} onClick={onContentClick} className={`mb-3 !w-[calc(100%+2rem)] -mx-4 rounded-none ${onContentClick ? 'cursor-pointer hover:opacity-95 transition-opacity' : ''}`} />
+                  : (sourceSurvey.coverImage && <div onClick={onContentClick} className={`w-[calc(100%+2rem)] -mx-4 rounded-none overflow-hidden mb-3 bg-gray-100 ${onContentClick ? 'cursor-pointer hover:opacity-95 transition-opacity' : ''}`}><MediaImage fallbackSrc={sourceSurvey.coverImage} alt="Cover" className="w-full h-auto object-contain block" /></div>)
               }
 
               {hasDescription && (
                 <div className="relative mb-3">
                   <p
+                    dir="auto" style={{ textAlign: 'start' }}
                     onClick={onContentClick}
-                    className={`text-gray-600 text-[13px] leading-relaxed whitespace-pre-wrap ${onContentClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''} ${!isDetailView ? 'line-clamp-3' : ''}`}
+                    className={`text-gray-600 text-base leading-relaxed whitespace-pre-wrap ${onContentClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''} ${!isDetailView ? 'line-clamp-3' : ''}`}
                   >
                     <RichTextRenderer text={sourceSurvey.description} mentions={sourceSurvey.mentions} mentionSurface="POST_DESCRIPTION" />
                   </p>
