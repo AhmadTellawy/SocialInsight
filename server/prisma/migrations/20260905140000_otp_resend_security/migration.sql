@@ -58,6 +58,10 @@ CREATE INDEX IF NOT EXISTS "otp_challenges_subject_purpose_version_idx"
   ON "otp_challenges"("subject", "purpose", "version" DESC);
 CREATE INDEX IF NOT EXISTS "otp_challenges_expires_idx" ON "otp_challenges"("expires_at");
 
+-- Remove inherited table access before permitting explicitly granted backend
+-- roles through RLS. Table ownership remains sufficient for migrations.
+REVOKE ALL PRIVILEGES ON TABLE "otp_challenges" FROM PUBLIC;
+
 -- Browser-facing roles remain denied. A dedicated NOBYPASSRLS backend role may
 -- use the policy below only after receiving explicit table privileges.
 ALTER TABLE "otp_challenges" ENABLE ROW LEVEL SECURITY;
