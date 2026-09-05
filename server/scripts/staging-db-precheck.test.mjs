@@ -120,12 +120,30 @@ test('child errors, exit failures, signals and invalid output never leak raw dia
 });
 
 test('strict evidence whitelist rejects unsafe identity, extra properties and non-read-only or non-TLS sessions', () => {
-    for (const delta of [{ role: SECRET }, { database: SECRET }, { tls: false }, { read_only: false },
-        { public_table_count: -1 }, { public_table_count: '0' }, { server_version_num: SECRET },
-        { bypass_rls: 'yes' }, { injected_secret: SECRET }]) {
+    for (const [delta, reason] of [[{ role: SECRET }, 'ROLE'], [{ database: SECRET }, 'DB_NAME'],
+        [{ tls: false }, 'SSL_NOT_CONFIRMED'], [{ read_only: false }, 'READONLY_NOT_CONFIRMED'],
+        [{ public_table_count: -1 }, 'COUNT'], [{ public_table_count: '0' }, 'COUNT'], [{ server_version_num: SECRET }, 'VERSION'],
+        [{ bypass_rls: 'yes' }, 'JSON_SHAPE'], [{ injected_secret: SECRET }, 'JSON_SHAPE'],
+        [{ tls: SECRET }, 'JSON_SHAPE'], [{ read_only: SECRET }, 'JSON_SHAPE']]) {
         const f = fixture({ data: { ...evidence(), ...delta } });
         assert.equal(f.execute(), 1); assert.equal(f.files.length, 0);
-        assert.deepEqual(f.logs, ['STAGING_DB_PRECHECK_FAILED DATABASE_EVIDENCE_INVALID']);
+        assert.deepEqual(f.logs, [`STAGING_DB_PRECHECK_FAILED DATABASE_EVIDENCE_INVALID ${JSON.stringify({
+            reason, psql_version: '17.6', pg_dump_version: '17.6',
+            restore_tools: { initdb: false, pg_ctl: false, postgres: false, pg_restore: false, non_root: false },
+        })}`]);
+        assert.ok(!f.logs[0].includes(SECRET));
+    }
+});
+
+test('malformed database output emits only a shape reason and safe client metadata', () => {
+    const sensitive = `postgresql://private-user:${SECRET}@private-host.invalid/private-db`;
+    for (const stdout of [sensitive, JSON.stringify(sensitive), 'null', '[]', '{}',
+        `BEGIN\n${JSON.stringify(evidence())}\nCOMMIT`, JSON.stringify({ ...evidence(), raw_uri: sensitive })]) {
+        const f = fixture({ mutateResult: ({ args }) => args.includes('-At')
+            ? { status: 0, stdout, stderr: sensitive } : undefined });
+        assert.equal(f.execute(), 1);
+        assert.equal(f.files.length, 0);
+        assert.deepEqual(f.logs, ['STAGING_DB_PRECHECK_FAILED DATABASE_EVIDENCE_INVALID {"reason":"JSON_SHAPE","psql_version":"17.6","pg_dump_version":"17.6","restore_tools":{"initdb":false,"pg_ctl":false,"postgres":false,"pg_restore":false,"non_root":false}}']);
     }
 });
 

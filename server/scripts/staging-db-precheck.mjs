@@ -104,17 +104,21 @@ function clientVersion(run, executable, label) {
 }
 
 function parseEvidence(output) {
+    const reject = reason => fail('DATABASE_EVIDENCE_INVALID', reason);
     let data;
-    try { data = JSON.parse(output); } catch { return fail('DATABASE_EVIDENCE_INVALID'); }
+    try { data = JSON.parse(output); } catch { return reject('JSON_SHAPE'); }
     const keys = ['server_version_num', 'database', 'role', 'superuser', 'bypass_rls',
         'create_database', 'create_role', 'public_table_count', 'tls', 'read_only'];
     if (!data || typeof data !== 'object' || Array.isArray(data)
         || Object.keys(data).length !== keys.length || keys.some(key => !Object.hasOwn(data, key))
-        || data.database !== 'postgres' || data.role !== 'postgres'
-        || !Number.isSafeInteger(data.server_version_num) || data.server_version_num < 100000 || data.server_version_num > 999999
-        || !Number.isSafeInteger(data.public_table_count) || data.public_table_count < 0 || data.public_table_count > 1000000000
-        || ['superuser', 'bypass_rls', 'create_database', 'create_role'].some(key => typeof data[key] !== 'boolean')
-        || data.tls !== true || data.read_only !== true) fail('DATABASE_EVIDENCE_INVALID');
+        || typeof data.database !== 'string' || typeof data.role !== 'string'
+        || ['superuser', 'bypass_rls', 'create_database', 'create_role', 'tls', 'read_only'].some(key => typeof data[key] !== 'boolean')) reject('JSON_SHAPE');
+    if (data.database !== 'postgres') reject('DB_NAME');
+    if (data.role !== 'postgres') reject('ROLE');
+    if (!Number.isSafeInteger(data.server_version_num) || data.server_version_num < 100000 || data.server_version_num > 999999) reject('VERSION');
+    if (!Number.isSafeInteger(data.public_table_count) || data.public_table_count < 0 || data.public_table_count > 1000000000) reject('COUNT');
+    if (data.tls !== true) reject('SSL_NOT_CONFIRMED');
+    if (data.read_only !== true) reject('READONLY_NOT_CONFIRMED');
     return data;
 }
 
@@ -177,7 +181,7 @@ export function runPrecheck({ env = process.env, run = spawnSync, publish = publ
         })}`);
         return 0;
     } catch (error) {
-        const detail = error instanceof PrecheckError && error.code === 'DATABASE_PRECHECK_FAILED'
+        const detail = error instanceof PrecheckError && ['DATABASE_PRECHECK_FAILED', 'DATABASE_EVIDENCE_INVALID'].includes(error.code)
             ? ` ${JSON.stringify({ reason: error.reason, ...clientVersions })}` : '';
         log(`STAGING_DB_PRECHECK_FAILED ${error instanceof PrecheckError ? error.code : 'INTERNAL_FAILURE'}${detail}`);
         return 1;
