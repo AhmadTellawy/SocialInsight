@@ -58,9 +58,32 @@ CREATE INDEX IF NOT EXISTS "otp_challenges_subject_purpose_version_idx"
   ON "otp_challenges"("subject", "purpose", "version" DESC);
 CREATE INDEX IF NOT EXISTS "otp_challenges_expires_idx" ON "otp_challenges"("expires_at");
 
--- No client policy is intentional. The backend owner/BYPASSRLS role retains
--- access; PostgREST-facing roles are explicitly denied when present.
+-- Browser-facing roles remain denied. A dedicated NOBYPASSRLS backend role may
+-- use the policy below only after receiving explicit table privileges.
 ALTER TABLE "otp_challenges" ENABLE ROW LEVEL SECURITY;
+
+-- RLS remains effective for a dedicated NOBYPASSRLS backend role. Access is
+-- still fail-closed at the PostgreSQL ACL layer: only roles explicitly granted
+-- table privileges can use this policy, while browser-facing roles are revoked
+-- below.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'otp_challenges'
+      AND policyname = 'otp_challenges_backend_acl'
+  ) THEN
+    CREATE POLICY "otp_challenges_backend_acl"
+      ON "otp_challenges"
+      FOR ALL
+      TO PUBLIC
+      USING (true)
+      WITH CHECK (true);
+  END IF;
+END
+$$;
 
 DO $$
 DECLARE target_role TEXT;

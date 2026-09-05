@@ -11,6 +11,30 @@ const makeImage = async (width: number, height: number, format: 'jpeg' | 'png' |
   return format === 'png' ? image.png().toBuffer() : format === 'webp' ? image.webp().toBuffer() : image.jpeg().toBuffer();
 };
 
+test('runs the patched sharp and libvips build required by the security release', () => {
+  assert.equal(sharp.versions.sharp, '0.35.4');
+  assert.ok(sharp.versions.vips, 'libvips version must be reported by the loaded native binary');
+});
+
+test('accepts and normalizes each declared image format supported by the application', async () => {
+  const cases = [
+    ['jpeg', 'image/jpeg'],
+    ['png', 'image/png'],
+    ['webp', 'image/webp']
+  ] as const;
+
+  for (const [format, mime] of cases) {
+    const result = await processMediaBuffer(await makeImage(320, 240, format), 'POST', mime, {});
+    const masterMetadata = await sharp(result.master.buffer).metadata();
+    assert.equal(result.sourceMime, mime);
+    assert.equal(result.master.mime, 'image/webp');
+    assert.ok(result.master.buffer.length > 0);
+    assert.equal(masterMetadata.format, 'webp');
+    assert.equal(masterMetadata.width, result.master.width);
+    assert.equal(masterMetadata.height, result.master.height);
+  }
+});
+
 test('normalizes a valid post image and preserves a supported original ratio', async () => {
   const source = await makeImage(1200, 800);
   const result = await processMediaBuffer(source, 'POST', 'image/jpeg', {});
@@ -92,9 +116,11 @@ test('applies EXIF orientation before deriving dimensions', async () => {
     create: { width: 40, height: 80, channels: 3, background: { r: 10, g: 20, b: 30 } }
   }).withMetadata({ orientation: 6 }).jpeg().toBuffer();
   const result = await processMediaBuffer(source, 'POST', 'image/jpeg', {});
+  const masterMetadata = await sharp(result.master.buffer).metadata();
 
   assert.equal(result.sourceWidth, 80);
   assert.equal(result.sourceHeight, 40);
+  assert.equal(masterMetadata.orientation, undefined);
 });
 
 test('rejects a declared MIME that does not match image bytes', async () => {
@@ -113,6 +139,11 @@ test('rejects unsupported and corrupt input before persistence', async () => {
   );
   await assert.rejects(
     () => processMediaBuffer(Buffer.from('not-an-image'), 'POST', 'image/jpeg', {}),
+    (error: unknown) => error instanceof MediaValidationError && error.code === 'INVALID_IMAGE'
+  );
+  const truncatedJpeg = (await makeImage(100, 100, 'jpeg')).subarray(0, 32);
+  await assert.rejects(
+    () => processMediaBuffer(truncatedJpeg, 'POST', 'image/jpeg', {}),
     (error: unknown) => error instanceof MediaValidationError && error.code === 'INVALID_IMAGE'
   );
   await assert.rejects(

@@ -46,6 +46,19 @@ const digest = (value: string): string => createHmac('sha256', secret()).update(
 const normalizeEmail = (value: string): string => value.trim().toLowerCase();
 const db = prisma as any;
 
+const isStagingDeployment = (): boolean => process.env.DEPLOYMENT_ENV?.trim().toLowerCase() === 'staging';
+
+const enforceStagingRecipientAllowlist = (destination: string): void => {
+    if (!isStagingDeployment()) return;
+    const allowed = new Set((process.env.STAGING_OTP_ALLOWED_EMAILS || '')
+        .split(',')
+        .map(normalizeEmail)
+        .filter(Boolean));
+    if (!allowed.has(destination)) {
+        throw new OtpError('OTP_DELIVERY_FAILED', 'Unable to send verification code');
+    }
+};
+
 const localLocks = new Map<string, Promise<void>>();
 const withLocalLock = async <T>(key: string, work: () => Promise<T>): Promise<T> => {
     const previous = localLocks.get(key) || Promise.resolve();
@@ -73,6 +86,7 @@ const cooldownDetails = (cooldownUntil: Date): OtpErrorDetails => ({
 
 const issueEmailOtpInternal = async (input: IssueOtpInput): Promise<{ cooldownUntil: Date }> => {
     const destination = normalizeEmail(input.destination);
+    enforceStagingRecipientAllowlist(destination);
     const destinationHash = digest(destination);
     const issuanceKey = `${destinationHash}:${input.purpose}`;
     const now = new Date();
@@ -117,6 +131,17 @@ const issueEmailOtpInternal = async (input: IssueOtpInput): Promise<{ cooldownUn
                     select: { cooldownUntil: true }
                 });
                 if (active) return { existing: true, cooldownUntil: active.cooldownUntil };
+
+                if (isStagingDeployment()) {
+                    await acquireDatabaseLock(tx, 'otp-staging-real-email-cap');
+                    const stagingLimit = boundedInt('STAGING_OTP_REAL_EMAIL_LIMIT', 1, 1, 3);
+                    const reservedDeliveries = await tx.otpChallenge.count({
+                        where: { deliveryStatus: { in: ['PENDING', 'SENT'] } }
+                    });
+                    if (reservedDeliveries >= stagingLimit) {
+                        throw new OtpError('OTP_RATE_LIMITED', 'Staging email delivery limit reached');
+                    }
+                }
 
                 const latest = await tx.otpChallenge.findFirst({
                     where: { destinationHash, purpose: input.purpose, subject: input.subject },

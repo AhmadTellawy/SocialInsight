@@ -67,10 +67,14 @@ export const authenticateSocketToken = async (
 
 interface SocketServerOptions {
     authenticate?: (token: unknown) => Promise<string>;
+    maxHttpBufferSize?: number;
 }
+
+export const DEFAULT_SOCKET_MAX_HTTP_BUFFER_BYTES = 1024 * 1024;
 
 export const initSocket = (server: HttpServer, options: SocketServerOptions = {}) => {
     io = new Server(server, {
+        maxHttpBufferSize: options.maxHttpBufferSize ?? DEFAULT_SOCKET_MAX_HTTP_BUFFER_BYTES,
         cors: {
             origin: process.env.CLIENT_URL || 'http://localhost:3000',
             methods: ['GET', 'POST'],

@@ -280,3 +280,58 @@ test('database-backed recipient rate limit serializes concurrent sends across su
     store.restore();
   }
 });
+
+test('staging delivery fails closed unless the normalized recipient is allowlisted', async () => {
+  const store = installOtpStore();
+  let deliveries = 0;
+  const originalDeploymentEnv = process.env.DEPLOYMENT_ENV;
+  const originalAllowlist = process.env.STAGING_OTP_ALLOWED_EMAILS;
+  try {
+    process.env.DEPLOYMENT_ENV = 'staging';
+    process.env.STAGING_OTP_ALLOWED_EMAILS = 'owner@example.test';
+    (emailService as any).sendAuthEmail = async () => { deliveries += 1; return { messageId: 'must-not-send' }; };
+
+    await assert.rejects(
+      issueEmailOtp({ destination: 'other@example.test', purpose: 'REGISTRATION', subject: 'staging-denied' }),
+      (error: any) => error instanceof OtpError && error.code === 'OTP_DELIVERY_FAILED'
+    );
+    assert.equal(deliveries, 0);
+    assert.equal(store.rows.length, 0);
+  } finally {
+    if (originalDeploymentEnv === undefined) delete process.env.DEPLOYMENT_ENV;
+    else process.env.DEPLOYMENT_ENV = originalDeploymentEnv;
+    if (originalAllowlist === undefined) delete process.env.STAGING_OTP_ALLOWED_EMAILS;
+    else process.env.STAGING_OTP_ALLOWED_EMAILS = originalAllowlist;
+    store.restore();
+  }
+});
+
+test('staging allowlist normalizes addresses and enforces a persistent global send cap', async () => {
+  const store = installOtpStore();
+  let deliveries = 0;
+  const originalDeploymentEnv = process.env.DEPLOYMENT_ENV;
+  const originalAllowlist = process.env.STAGING_OTP_ALLOWED_EMAILS;
+  const originalLimit = process.env.STAGING_OTP_REAL_EMAIL_LIMIT;
+  try {
+    process.env.DEPLOYMENT_ENV = 'staging';
+    process.env.STAGING_OTP_ALLOWED_EMAILS = 'Owner@Example.Test ';
+    process.env.STAGING_OTP_REAL_EMAIL_LIMIT = '1';
+    (emailService as any).sendAuthEmail = async () => ({ messageId: `staging-${++deliveries}` });
+
+    await issueEmailOtp({ destination: ' owner@example.test', purpose: 'REGISTRATION', subject: 'staging-first' });
+    await assert.rejects(
+      issueEmailOtp({ destination: 'owner@example.test', purpose: 'EMAIL_VERIFICATION', subject: 'staging-second' }),
+      (error: any) => error instanceof OtpError && error.code === 'OTP_RATE_LIMITED'
+    );
+    assert.equal(deliveries, 1);
+    assert.equal(store.rows.length, 1);
+  } finally {
+    if (originalDeploymentEnv === undefined) delete process.env.DEPLOYMENT_ENV;
+    else process.env.DEPLOYMENT_ENV = originalDeploymentEnv;
+    if (originalAllowlist === undefined) delete process.env.STAGING_OTP_ALLOWED_EMAILS;
+    else process.env.STAGING_OTP_ALLOWED_EMAILS = originalAllowlist;
+    if (originalLimit === undefined) delete process.env.STAGING_OTP_REAL_EMAIL_LIMIT;
+    else process.env.STAGING_OTP_REAL_EMAIL_LIMIT = originalLimit;
+    store.restore();
+  }
+});
