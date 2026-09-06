@@ -1,0 +1,8 @@
+{
+  "name": "socialinsight-staging-backup-tool",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Isolated build-only Staging backup SDK; never an application dependency",
+  "engines": { "node": ">=24 <25" },
+  "dependencies": { "@aws-sdk/client-s3": "3.1127.0" }
+}

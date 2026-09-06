@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "platform": "linux",
+  "architecture": "x64",
+  "debianVersion": "12",
+  "repository": "https://apt.postgresql.org/pub/repos/apt",
+  "suite": "bookworm-pgdg",
+  "signingFingerprint": "B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8",
+  "postgresVersion": "17.11",
+  "packages": [
+    {
+      "name": "postgresql-17",
+      "version": "17.11-1.pgdg12+2",
+      "filename": "postgresql-17_17.11-1.pgdg12+2_amd64.deb",
+      "bytes": 16646412,
+      "sha256": "cb33e6465c2b8b223ceabedfc2009bdaf7d678729b8466b43011b7914e5213c8"
+    },
+    {
+      "name": "postgresql-client-17",
+      "version": "17.11-1.pgdg12+2",
+      "filename": "postgresql-client-17_17.11-1.pgdg12+2_amd64.deb",
+      "bytes": 2067620,
+      "sha256": "1e286c060f8f9ab6485b1b02df6543ce38610bc828c63695528f0593658113ed"
+    }
+  ],
+  "dependencyPolicy": "Use existing native shared libraries only. No dynamic dependency acquisition. Fail closed before credentials if executable compatibility or local cluster bootstrap fails."
+}
