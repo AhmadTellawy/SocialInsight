@@ -136,10 +136,10 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
       const blob = await new Promise<Blob | null>((resolve) => outputCanvas.toBlob(resolve, 'image/png', 1.0));
 
       if (blob && navigator.share) {
-        const file = new File([blob], `SocialInsight_${shareCardModel.badge}.png`, { type: 'image/png' });
+        const file = new File([blob], `Opiniup_${shareCardModel.badge}.png`, { type: 'image/png' });
 
         const shareData: ShareData = {
-          title: `SocialInsight - ${survey.title}`,
+          title: `Opiniup - ${survey.title}`,
           text: shareText,
           url: postUrl
         };
@@ -156,7 +156,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
         } catch (shareError) {
           console.warn('Share error:', shareError);
           await navigator.share({
-            title: `SocialInsight - ${survey.title}`,
+            title: `Opiniup - ${survey.title}`,
             text: shareText,
             url: postUrl
           });
@@ -166,7 +166,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `socialinsight-post.png`;
+        a.download = `opiniup-post.png`;
         a.click();
         URL.revokeObjectURL(url);
         handleCopyLink();
@@ -175,7 +175,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
       console.error('Share failure:', err);
       if (navigator.share) {
         await navigator.share({
-          title: `SocialInsight`,
+          title: `Opiniup`,
           text: shareText,
           url: postUrl
         });

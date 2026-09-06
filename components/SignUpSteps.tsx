@@ -24,7 +24,7 @@ export const WelcomeStep: React.FC<StepProps> = ({ onNext, onBack }) => {
                     Discover More.
                 </h1>
                 <p className="text-gray-500 font-medium leading-relaxed max-w-[280px] text-sm relative z-10">
-                    Join Social Insight to participate in trending polls, debates, and connect with people who share your interests.
+                    Join Opiniup to participate in trending polls, debates, and connect with people who share your interests.
                 </p>
             </div>
 
