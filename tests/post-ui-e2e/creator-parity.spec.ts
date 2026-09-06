@@ -132,7 +132,7 @@ test('quiz image width and removal preserve the answer at 320', async ({ page })
   await expect(page.getByRole('button', { name: 'Mark option 1 as correct', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: 'Next', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Post visibility', exact: true })).toBeHidden();
-  await page.getByRole('button', { name: 'Text', exact: true }).click();
+  await page.getByRole('radio', { name: 'Text options', exact: true }).check();
   await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByRole('button', { name: 'Post', exact: true }).click();
   await expect(page.getByTestId('step-submit-count')).toHaveText('1');
