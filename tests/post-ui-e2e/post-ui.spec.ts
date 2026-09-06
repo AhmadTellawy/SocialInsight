@@ -46,7 +46,7 @@ for (const width of [390, 768, 1280]) for (const dir of ['ltr', 'rtl']) for (con
       const rowBox = await row.boundingBox();
       expect(first!.width).toBeLessThan(rowBox!.width);
       expect(first!.width / rowBox!.width).toBeGreaterThanOrEqual(0.8);
-      if (width === 390) expect(await section.getByText(names[0], { exact: true }).evaluate(el => el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight))).toBeGreaterThanOrEqual(2);
+      if (width === 390) expect(await section.getByText(names[1], { exact: true }).evaluate(el => el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight))).toBeGreaterThanOrEqual(2);
     }
     await section.screenshot({ path: testInfo.outputPath('before-vote.png') });
     await section.getByRole('button', { name: names[0], exact: true }).click();

@@ -20,6 +20,18 @@ const names = ['... 123 الخيار العربي الكامل يحتاج إلى
 const options = names.map((text, i) => ({ id: `option-${i}`, text, votes: i ? 4 : 6, image: params.get('layout') === 'text' ? undefined : picture(i ? '#0d9488' : '#2563eb') }));
 const survey: Survey = { id: 'post-ui-fixture', title: params.has('richTitle') ? '... 123 سؤال عربي مستقل #اختبار @fixture' : '... 123 سؤال عربي مستقل', description: '... 123 English post text stays aligned independently.', type: SurveyType.POLL, participants: 10, likes: 0, commentsCount: 0, isTrending: false, status: 'PUBLISHED', author: { id: 'fixture-author', name: 'Test Author', avatar: picture('#64748b') }, options, media, imageLayout: 'horizontal', resultsWho: 'Public', resultsTiming: 'Immediately', createdAt: '2026-09-01T00:00:00Z' };
 
+if (params.has('richTitle')) {
+  const rawText = '@fixture';
+  const startOffset = survey.title.indexOf(rawText);
+  survey.mentions = [{
+    id: 'fixture-mention',
+    targetUserId: 'fixture-user',
+    sourceType: 'POST',
+    targetUser: { id: 'fixture-user', name: 'Fixture User', handle: 'fixture' },
+    occurrences: [{ surface: 'POST_TITLE', startOffset, endOffset: startOffset + rawText.length, rawText }],
+  }];
+}
+
 function Harness() {
   const [voted, setVoted] = useState(false);
   const mode = params.get('create');
