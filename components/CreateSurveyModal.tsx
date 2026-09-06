@@ -747,7 +747,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                value={description}
                onChange={(val) => setDescription(val)}
                placeholder="Describe what this survey is about..."
-                className="mt-1.5 text-[16px] leading-6 text-start text-gray-500 bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[32px]"
+                className="mt-1.5 text-[12px] leading-relaxed text-start font-normal text-gray-500 bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[32px]"
                 minRows={1}
               />
            </section>
@@ -865,7 +865,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                     : resolveOptionPresentation(q.optionPresentation, q.options);
 
                   return (
-                    <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-4 shadow-sm">
+                    <div className="space-y-4">
                       <div className="flex items-start gap-2">
                         <div className="flex-1 flex flex-col gap-2">
                           {(q.image || q.mediaDrafts.length > 0) && (
@@ -985,7 +985,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                             createOption={createSurveyOption}
                           >
                             {(controls) => (
-                              <div className="space-y-3 border-t border-gray-50 pt-3">
+                              <div className="space-y-3">
                                 {!q.options?.some(draftOptionHasImage) && (
                                   <button type="button" onClick={controls.openBulk} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-blue-300 bg-blue-50/50 px-3 text-xs font-bold text-blue-700">
                                     <ImageIcon size={16} aria-hidden="true" /> {t('answerType.addImages')}
@@ -994,7 +994,8 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                 {q.options?.map((opt, oIdx) => (
                                   <div key={opt.id} className="flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-1 duration-200">
                                     <div className="flex items-center gap-2">
-                                      <div className="min-w-0 flex min-h-[58px] flex-1 items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-2 py-1 transition-all focus-within:border-blue-300 focus-within:bg-white">
+                                      <span className="w-4 shrink-0 text-center text-xs font-black text-gray-400">{oIdx + 1}</span>
+                                      <div className="min-w-0 flex min-h-[58px] flex-1 items-center gap-2 rounded-xl border border-gray-200 bg-gray-55/5 px-2 py-1 focus-within:border-blue-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100 transition-all shadow-xs">
                                         <OptionImageThumbnail optionId={opt.id} optionIndex={oIdx} draft={opt.mediaDrafts[0]} legacyImage={opt.image} controls={controls} />
                                         <input dir="auto"
                                           type="text"
@@ -1005,11 +1006,11 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                           onBlur={() => focusedOptionId === opt.id && setFocusedOptionId(null)}
                                           placeholder={t('answerType.optionName', { number: oIdx + 1 })}
                                           aria-label={t('answerType.optionName', { number: oIdx + 1 })}
-                                          className="min-w-0 flex-1 bg-transparent p-2 text-[12px] leading-relaxed text-start font-normal placeholder-gray-500 focus:outline-none"
+                                          className="min-w-0 flex-1 bg-transparent px-1 py-1.5 text-[12px] leading-relaxed text-start font-normal text-gray-900 placeholder-gray-500 focus:outline-none"
                                         />
-                                        <span className="whitespace-nowrap text-[9px] text-gray-500">{opt.text.length}/80</span>
-                                        <button onClick={() => setSettingsOptionId({ secId: activeSection.id, qId: q.id, optId: opt.id })} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-gray-500" aria-label={`Option ${oIdx + 1} menu`}><MoreHorizontal size={18} /></button>
+                                        <span className="me-1.5 whitespace-nowrap text-[9px] text-gray-500">{opt.text.length}/80</span>
                                       </div>
+                                        <button onClick={() => setSettingsOptionId({ secId: activeSection.id, qId: q.id, optId: opt.id })} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-gray-500 hover:text-gray-700" aria-label={`Option ${oIdx + 1} menu`}><MoreHorizontal size={18} /></button>
                                     </div>
                                     <div className="flex flex-wrap gap-2 ms-2">
                                       {opt.withFollowUp && <div className="flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-2 py-1 text-[9px]"><MessageSquare size={10} className="text-blue-500" /><span className="truncate font-bold text-blue-700">Follow-up: {opt.followUpLabel || "Please explain..."}</span></div>}
@@ -1022,9 +1023,11 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                   </div>
                                 ))}
                             <div className="flex items-center gap-2 opacity-60 transition-opacity hover:opacity-90 focus-within:opacity-100">
-                              <div className="flex-1 rounded-xl border border-dashed border-gray-200 bg-gray-50/50 px-1 py-1">
-                                <input dir="auto" type="text" placeholder="Add option..." className="w-full cursor-pointer bg-transparent p-2 text-[12px] leading-relaxed text-start font-normal text-gray-600 placeholder-gray-500 focus:outline-none" onFocus={() => handleAddSurveyOption(activeSection.id, q.id)} />
+                              <span className="w-4 shrink-0 text-center text-xs font-black text-gray-400">{(q.options?.length || 0) + 1}</span>
+                              <div className="flex-1 rounded-xl border border-dashed border-gray-200 bg-gray-50/30 px-2 py-0.5">
+                                <input dir="auto" type="text" placeholder="Add option..." className="w-full cursor-pointer bg-transparent px-2.5 py-1.5 text-[12px] leading-relaxed text-start font-normal text-gray-600 placeholder-gray-500 focus:outline-none" onFocus={() => handleAddSurveyOption(activeSection.id, q.id)} />
                               </div>
+                              <span className="h-10 w-10 shrink-0" />
                             </div>
 
                                 {q.options?.some(draftOptionHasImage) && (
@@ -1035,11 +1038,12 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                             )}
                           </OptionImagePicker>
                         ) : (
-                          <div className="space-y-3 border-t border-gray-50 pt-2">
+                          <div className="space-y-3">
                             {q.options?.map((opt, oIdx) => (
                               <div key={opt.id} className="flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-1 duration-200">
                                 <div className="flex items-center gap-2">
-                                  <div className="flex flex-1 items-center rounded-xl border border-transparent bg-gray-50 px-1 py-1 shadow-sm transition-all focus-within:border-blue-200 focus-within:bg-white">
+                                  <span className="w-4 shrink-0 text-center text-xs font-black text-gray-400">{oIdx + 1}</span>
+                                  <div className="min-w-0 flex flex-1 items-center rounded-xl border border-gray-200 bg-gray-55/5 px-2 py-0.5 shadow-xs transition-all focus-within:border-blue-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100">
                                     <input dir="auto"
                                       type="text"
                                       value={opt.text}
@@ -1054,11 +1058,11 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                       }}
                                       onBlur={() => focusedOptionId === opt.id && setFocusedOptionId(null)}
                                       placeholder={`Option ${oIdx + 1}`}
-                                      className="min-w-0 flex-1 bg-transparent p-2 text-[12px] leading-relaxed text-start font-normal placeholder-gray-500 focus:outline-none"
+                                      className="min-w-0 flex-1 bg-transparent px-2.5 py-1.5 text-[12px] leading-relaxed text-start font-normal text-gray-900 placeholder-gray-500 focus:outline-none"
                                     />
-                                    <span className="whitespace-nowrap text-[9px] text-gray-500">{opt.text.length}/80</span>
-                                    <button onClick={() => setSettingsOptionId({ secId: activeSection.id, qId: q.id, optId: opt.id })} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-gray-500" aria-label={`Option ${oIdx + 1} menu`}><MoreHorizontal size={18} /></button>
+                                    <span className="me-1.5 whitespace-nowrap text-[9px] text-gray-500">{opt.text.length}/80</span>
                                   </div>
+                                    <button onClick={() => setSettingsOptionId({ secId: activeSection.id, qId: q.id, optId: opt.id })} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-gray-500 hover:text-gray-700" aria-label={`Option ${oIdx + 1} menu`}><MoreHorizontal size={18} /></button>
                                 </div>
                                 <div className="flex flex-wrap gap-2 ms-2">
                                   {opt.withFollowUp && <div className="flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-2 py-1 text-[9px]"><MessageSquare size={10} className="text-blue-500" /><span className="truncate font-bold text-blue-700">Follow-up: {opt.followUpLabel || "Please explain..."}</span></div>}
@@ -1071,9 +1075,11 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                               </div>
                             ))}
                             <div className="flex items-center gap-2 opacity-60 transition-opacity hover:opacity-90 focus-within:opacity-100">
-                              <div className="flex-1 rounded-xl border border-dashed border-gray-200 bg-gray-50/50 px-1 py-1">
-                                <input dir="auto" type="text" placeholder="Add option..." className="w-full cursor-pointer bg-transparent p-2 text-[12px] leading-relaxed text-start font-normal text-gray-600 placeholder-gray-500 focus:outline-none" onFocus={() => handleAddSurveyOption(activeSection.id, q.id)} />
+                              <span className="w-4 shrink-0 text-center text-xs font-black text-gray-400">{(q.options?.length || 0) + 1}</span>
+                              <div className="flex-1 rounded-xl border border-dashed border-gray-200 bg-gray-50/30 px-2 py-0.5">
+                                <input dir="auto" type="text" placeholder="Add option..." className="w-full cursor-pointer bg-transparent px-2.5 py-1.5 text-[12px] leading-relaxed text-start font-normal text-gray-600 placeholder-gray-500 focus:outline-none" onFocus={() => handleAddSurveyOption(activeSection.id, q.id)} />
                               </div>
+                              <span className="h-10 w-10 shrink-0" />
                             </div>
                           </div>
                         )

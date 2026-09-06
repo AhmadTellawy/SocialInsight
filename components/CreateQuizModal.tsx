@@ -723,7 +723,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                   const optionPresentation = resolveOptionPresentation(q.optionPresentation, q.options);
 
                   return (
-                    <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-4 shadow-sm">
+                    <div className="space-y-4">
                       <div className="flex items-start gap-2">
                         <div className="min-w-0 flex-1 flex flex-col gap-2">
                           {(q.image || q.mediaDrafts.length > 0) && (
@@ -798,7 +798,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
 
                       {q.type === 'multiple_choice' && optionPresentation === 'image' && (<div className="flex items-center justify-between pt-2"><span className="text-xs font-bold text-gray-500">Options layout</span><div className="flex gap-2">{[{ id: 'vertical', label: 'List', icon: List }, { id: 'horizontal', label: 'Grid', icon: GalleryHorizontalEnd }].map(layout => <button type="button" key={layout.id} aria-label={`${layout.label} options layout`} aria-pressed={q.imageLayout === layout.id} onClick={() => updateQuestion(activeSection.id, q.id, { imageLayout: layout.id as 'vertical' | 'horizontal' })} className={`p-2 rounded-lg border ${q.imageLayout === layout.id ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-500 border-gray-200'}`}><layout.icon size={16} /></button>)}</div></div>)}
                       {q.type === 'multiple_choice' && (
-                        <div className="space-y-3 pt-2 border-t border-gray-50">
+                        <div className="space-y-3">
                           <div className="flex items-center justify-between px-1 mb-1">
                             <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Options (Select Correct)</span>
                             {!q.correctOptionId && <span className="text-[9px] font-bold text-red-500 animate-pulse">Required: Select correct answer</span>}
@@ -827,11 +827,13 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                                 <div className="flex items-center gap-2">
                                   <button
                                     onClick={() => updateQuestion(activeSection.id, q.id, { correctOptionId: opt.id })}
+                                    aria-label={`Mark option ${oIdx + 1} as correct`}
+                                    aria-pressed={isCorrect}
                                     className={`shrink-0 w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all ${isCorrect ? 'bg-green-500 border-green-500 text-white shadow-md shadow-green-100' : 'bg-white border-gray-200 text-gray-300 hover:border-green-200 hover:text-green-400'}`}
                                   >
                                     <CheckCircle2 size={18} strokeWidth={3} />
                                   </button>
-                                  <div className={`min-w-0 flex-1 flex items-center bg-gray-50 rounded-xl px-1 py-1 border transition-all shadow-sm ${isCorrect ? 'border-green-200 ring-2 ring-green-50 bg-green-50/20' : 'border-transparent focus-within:border-purple-200 focus-within:bg-white'}`}>
+                                  <div className={`min-w-0 flex-1 flex items-center rounded-xl border border-gray-200 bg-gray-55/5 px-2 shadow-xs transition-all focus-within:border-purple-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-purple-100 ${optionPresentation === 'image' ? 'min-h-[58px] gap-2 py-1' : 'py-0.5'}`}>
                                     {optionPresentation === 'image' && <MediaPicker
                                       purpose="OPTION_IMAGE"
                                       value={opt.mediaDrafts}
@@ -840,11 +842,11 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                                         image: mediaDrafts.some((media) => media.status === 'ready') ? undefined : opt.image,
                                         imageMediaId: readyMediaAssetIds(mediaDrafts)[0]
                                       })}
-                                      className="mr-1 shrink-0"
+                                      className="relative h-12 w-12 shrink-0"
                                       renderContent={({ open, replace, retry, busy }) => {
                                         const current = opt.mediaDrafts[0];
                                         const hasImage = Boolean(current || opt.image);
-                                        return (
+                                        return (<>
                                           <button
                                             type="button"
                                             onClick={() => current?.status === 'error' ? retry(current.clientId) : current ? replace(current.clientId) : open()}
@@ -864,7 +866,19 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                                             )}
                                             {busy && <span className="absolute inset-x-0 bottom-0 h-1 bg-purple-500" />}
                                           </button>
-                                        );
+                                          {hasImage && (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                void cancelTemporaryMediaDrafts(opt.mediaDrafts);
+                                                updateOption(activeSection.id, q.id, opt.id, { image: undefined, imageMediaId: undefined, mediaDrafts: [] });
+                                              }}
+                                              className="absolute -end-1 -top-1 flex h-6 w-6 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 shadow-sm hover:text-red-600"
+                                              aria-label={`Remove image from option ${oIdx + 1}`}
+                                              title="Remove option image"
+                                            ><X size={12} /></button>
+                                          )}
+                                        </>);
                                       }}
                                     />}
                                     <input dir="auto"
@@ -883,47 +897,30 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                                         if (focusedOptionId === opt.id) setFocusedOptionId(null);
                                       }}
                                       placeholder={`Option ${oIdx + 1}`}
-                                      className="min-w-0 flex-1 text-[12px] leading-relaxed text-start font-normal p-2 bg-transparent focus:outline-none placeholder-gray-400"
+                                      className={`min-w-0 flex-1 bg-transparent py-1.5 text-[12px] leading-relaxed text-start font-normal text-gray-900 placeholder-gray-500 focus:outline-none ${optionPresentation === 'image' ? 'px-1' : 'px-2.5'}`}
                                     />
-                                    <span className="text-[9px] text-gray-500 mr-1.5 whitespace-nowrap">{opt.text.length}/80</span>
-                                    {optionPresentation === 'image' && (opt.image || opt.mediaDrafts.length > 0) && (
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          void cancelTemporaryMediaDrafts(opt.mediaDrafts);
-                                          updateOption(activeSection.id, q.id, opt.id, { image: undefined, imageMediaId: undefined, mediaDrafts: [] });
-                                        }}
-                                        className="p-3 text-gray-300 hover:text-red-500 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]"
-                                        aria-label={`Remove image from option ${oIdx + 1}`}
-                                        title="Remove option image"
-                                      ><X size={12} /></button>
-                                    )}
-                                    <button onClick={() => setSettingsOptionId({ secId: activeSection.id, qId: q.id, optId: opt.id })} className="p-3 text-gray-400 hover:text-gray-600 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px] transition-colors"><MoreHorizontalIcon size={18} /></button>
+                                    <span className="me-1.5 whitespace-nowrap text-[9px] text-gray-500">{opt.text.length}/80</span>
                                   </div>
+                                    <button onClick={() => setSettingsOptionId({ secId: activeSection.id, qId: q.id, optId: opt.id })} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-gray-500 hover:text-gray-700" aria-label={`Option ${oIdx + 1} menu`}><MoreHorizontalIcon size={18} /></button>
                                 </div>
                               </div>
                             );
                           })}
 
                           {/* Interactive Placeholder / Auto-Add Option */}
-                          <div className="flex items-center gap-2 opacity-50 hover:opacity-80 focus-within:opacity-100 transition-opacity duration-200">
+                          <div className="flex items-center gap-2 opacity-60 transition-opacity hover:opacity-90 focus-within:opacity-100">
                             <button disabled className="shrink-0 w-8 h-8 rounded-full border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-300">
                               <CheckCircle2 size={18} />
                             </button>
-                            <div className="min-w-0 flex-1 flex items-center bg-gray-50/50 border border-dashed border-gray-200 rounded-xl px-1 py-1">
-                              {optionPresentation === 'image' && <button disabled className="w-12 h-12 rounded-lg flex items-center justify-center shrink-0 border border-dashed border-gray-200 text-gray-300 mr-1">
-                                <Camera size={16} />
-                              </button>}
+                            <div className="min-w-0 flex-1 rounded-xl border border-dashed border-gray-200 bg-gray-50/30 px-2 py-0.5">
                               <input dir="auto"
                                 type="text"
                                 placeholder="Add option..."
-                                className="min-w-0 flex-1 text-[12px] leading-relaxed text-start font-normal p-2 bg-transparent focus:outline-none text-gray-500 placeholder-gray-500 cursor-pointer"
+                                className="w-full cursor-pointer bg-transparent px-2.5 py-1.5 text-[12px] leading-relaxed text-start font-normal text-gray-600 placeholder-gray-500 focus:outline-none"
                                 onFocus={() => handleAddQuizOption(activeSection.id, q.id)}
                               />
-                              <button disabled className="p-3 text-gray-300 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]">
-                                <MoreHorizontalIcon size={18} />
-                              </button>
                             </div>
+                            <span className="h-10 w-10 shrink-0" />
                           </div>
                         </div>
                       )}
@@ -947,7 +944,29 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
             error={typeof errors.visibility === 'string' ? errors.visibility : false}
             accent="purple"
           />
-          {/* Demographics Settings Section (Unlock Deeper Analytics) */}
+          {/* Advanced Settings Row */}
+          <section className="pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                setAdvancedSheetView('main');
+                setIsAdvancedSheetOpen(true);
+              }}
+              className="w-full flex items-center justify-between py-2.5 px-1 text-left transition-all active:opacity-75 pt-3 border-t border-gray-100"
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-gray-55/30 rounded-xl text-gray-500 border border-gray-100">
+                  <Settings size={16} />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-gray-805">Advanced Settings</h4>
+                  <p className="text-[9px] text-gray-500 mt-0.5 leading-tight">Results, duration & comments</p>
+                </div>
+              </div>
+              <ChevronRight size={14} className="text-gray-400" />
+            </button>
+          </section>
+
           {/* Demographics Settings Section (Unlock Deeper Analytics) */}
           <section className="space-y-3 pt-3 border-t border-gray-100">
             <div className="flex items-center justify-between px-1">
@@ -1046,28 +1065,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
             )}
           </section>
 
-          {/* Advanced Settings Row */}
-          <section className="pt-2">
-            <button
-              type="button"
-              onClick={() => {
-                setAdvancedSheetView('main');
-                setIsAdvancedSheetOpen(true);
-              }}
-              className="w-full flex items-center justify-between py-2.5 px-1 text-left transition-all active:opacity-75 pt-3 border-t border-gray-100"
-            >
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-gray-55/30 rounded-xl text-gray-500 border border-gray-100">
-                  <Settings size={16} />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-gray-805">Advanced Settings</h4>
-                  <p className="text-[9px] text-gray-500 mt-0.5 leading-tight">Results, duration & comments</p>
-                </div>
-              </div>
-              <ChevronRight size={14} className="text-gray-400" />
-            </button>
-          </section>
+
 
           </div>
           {/* Unified Validation Error Display */}
