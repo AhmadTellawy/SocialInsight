@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
+import { spawnSync } from 'node:child_process';
 import { BASE_ENV, BUCKET, ENDPOINT, MAX_BYTES, PUBLIC_STATUS, SNAPSHOT_SQL, cleanupWorkspace, createStore,
     decryptArchive, encryptArchive, invoke, makeObjectKey, makeWorkspace, parseSnapshot, publishStatus,
     remoteEnvironment, runRehearsal, runSelfCheck, startLocalCluster, storeAndRetrieve, validateEnvironment, validateToc, verifyPackage } from './staging-backup-rehearsal.mjs';
@@ -17,16 +18,27 @@ const ENV = { STAGING_RELEASE_SHA: SHA, RENDER_GIT_COMMIT: SHA, RENDER_GIT_BRANC
     STAGING_DATABASE_PROJECT_REF: PROJECT_REF, STAGING_BACKUP_RUN_APPROVED: 'true',
     STAGING_DB_ADMIN_PASSWORD: SECRET, STAGING_BACKUP_S3_ACCESS_KEY_ID: 'TEST_ONLY_S3_ID',
     STAGING_BACKUP_S3_SECRET_ACCESS_KEY: 'TEST_ONLY_S3_SECRET', STAGING_BACKUP_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64') };
+const defaultFixture = () => ['postgres', 'supabase_admin'].flatMap(owner => [
+    ['f', ['EXECUTE']], ['S', ['SELECT', 'UPDATE', 'USAGE']],
+    ['r', ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN']],
+].map(([kind, privileges]) => ['public', owner, kind, ['anon', 'authenticated', 'postgres', 'service_role'].flatMap(grantee =>
+    privileges.map(privilege => [owner, grantee, privilege, false]))]));
 const FIXTURE = { version: 170006, database: 'postgres', role: 'postgres', tls: true, read_only: true,
+    default_acl: defaultFixture(), global_default_acl_count: 0,
     objects: 0, owner: 'pg_database_owner', acl: [['pg_database_owner', 'PUBLIC', 'USAGE', false], ['pg_database_owner', 'pg_database_owner', 'CREATE', false], ['pg_database_owner', 'pg_database_owner', 'USAGE', false]] };
-const localFixture = () => ({ ...structuredClone(FIXTURE), version: 170011, tls: false });
+const localFixture = (managed = false) => ({ ...structuredClone(FIXTURE), version: 170011, tls: false, default_acl: managed ? defaultFixture() : [] });
 const ARCHIVE = Buffer.from('PGDMPsynthetic-empty-archive');
 const TOC = '; Archive created at an untrusted date\n6; 2615 2200 SCHEMA - public pg_database_owner\n3370; 0 0 COMMENT - SCHEMA public pg_database_owner\n3371; 0 0 ACL - SCHEMA public pg_database_owner\n';
+// Native PG17.11 observed semantic entries; OIDs/IDs deliberately synthetic.
+const DEFAULT_TOC = ['postgres', 'supabase_admin'].flatMap((owner, index) => ['TABLES', 'SEQUENCES', 'FUNCTIONS'].map((kind, offset) =>
+    `${2039 + index * 3 + offset}; 826 ${16388 + index * 3 + offset} DEFAULT ACL public DEFAULT PRIVILEGES FOR ${kind} ${owner}\n`)).join('');
+const MANAGED_TOC = TOC + DEFAULT_TOC;
 const success = value => ({ status: 0, stdout: Buffer.from(value), stderr: Buffer.alloc(0) });
 
-function fixture(t) {
+function fixture(t, { canCleanup = () => true } = {}) {
     const parent = realpathSync(tmpdir()); const root = mkdtempSync(join(parent, 'si-backup-test-'));
     t.after(() => {
+        if (!canCleanup()) { t.diagnostic('Private synthetic fixture retained: native stop unconfirmed'); return; }
         assert.equal(dirname(root), parent); assert.match(root.slice(parent.length + 1), /^si-backup-test-[A-Za-z0-9]+$/);
         assert.equal(lstatSync(root).isSymbolicLink(), false); assert.equal(realpathSync(root), root);
         rmSync(root, { recursive: true, force: false });
@@ -64,9 +76,36 @@ test('strict zero-object snapshot refuses hostile fields, roles, ACL and uncerta
 });
 
 test('TOC accepts only reviewed empty public schema metadata and never executes CREATE schema', () => {
-    const filtered = validateToc(TOC);
+    const filtered = validateToc(TOC, { profile: 'empty' });
     assert.equal(filtered.split('\n').filter(Boolean).length, 2); assert.doesNotMatch(filtered, /\d+ SCHEMA - public/);
-    for (const input of ['', TOC + '44; 0 123 TABLE public User postgres\n', TOC + '45; 0 0 FUNCTION public malicious() postgres\n', TOC.replace('ACL - SCHEMA public', 'ACL - DATABASE postgres'), TOC.replace('pg_database_owner', SECRET), TOC + TOC, TOC + '\0']) assert.throws(() => validateToc(input), /TOC_INVALID/);
+    for (const input of ['', TOC + '44; 0 123 TABLE public User postgres\n', TOC + '45; 0 0 FUNCTION public malicious() postgres\n', TOC.replace('ACL - SCHEMA public', 'ACL - DATABASE postgres'), TOC.replace('pg_database_owner', SECRET), TOC + TOC, TOC + '\0', MANAGED_TOC]) assert.throws(() => validateToc(input, { profile: 'empty' }), /TOC_INVALID/);
+});
+
+test('managed TOC requires exact six native default ACL entries, no duplicates or globals', () => {
+    assert.equal(validateToc(MANAGED_TOC).split('\n').filter(Boolean).length, 8);
+    assert.throws(() => validateToc(MANAGED_TOC, { owner: 'postgres' }), /TOC_INVALID/);
+    for (const value of [TOC, MANAGED_TOC.replace('2039;', '2040;'), MANAGED_TOC.replace('FOR TABLES postgres', 'FOR TABLES supabase_admin'),
+        MANAGED_TOC.replace('DEFAULT ACL public', 'DEFAULT ACL -'), MANAGED_TOC.replace('FOR TABLES', 'FOR TYPES'),
+        MANAGED_TOC.replace('826 16388', '0 0'), MANAGED_TOC.replace('6; 2615 2200 SCHEMA - public pg_database_owner\n', ''),
+        MANAGED_TOC + '9999; 0 123 TABLE public User postgres\n', MANAGED_TOC.replace('COMMENT - SCHEMA public pg_database_owner', 'COMMENT - SCHEMA public postgres')]) {
+        assert.throws(() => validateToc(value), /^Error: TOC_INVALID$/);
+    }
+});
+
+test('default ACL profiles retain exact tuples and reject every unknown/missing/duplicate grant', () => {
+    assert.equal(FIXTURE.default_acl.length, 6);
+    assert.equal(FIXTURE.default_acl.reduce((sum, row) => sum + row[3].length, 0), 96);
+    const reordered = structuredClone(FIXTURE); reordered.default_acl.reverse(); reordered.default_acl.forEach(row => row[3].reverse());
+    assert.deepEqual(parseSnapshot(JSON.stringify(reordered)), parseSnapshot(JSON.stringify(FIXTURE)));
+    const mutate = change => { const d = structuredClone(FIXTURE); change(d); assert.throws(() => parseSnapshot(JSON.stringify(d)), /^Error: SNAPSHOT_INVALID$/); };
+    for (const value of [1, '0', null, undefined]) mutate(d => { d.global_default_acl_count = value; });
+    for (const value of [[], null, {}, defaultFixture().slice(1), [...defaultFixture(), defaultFixture()[0]]]) mutate(d => { d.default_acl = value; });
+    mutate(d => { d.default_acl[0][3].pop(); });
+    mutate(d => { d.default_acl[0][3][0] = d.default_acl[0][3][1]; });
+    for (const [index, value] of [[0, 'other'], [1, 'otp_staging_app'], [2, 'unknown']]) mutate(d => { d.default_acl[0][index] = value; });
+    for (const [index, value] of [[0, 'supabase_admin'], [1, 'PUBLIC'], [2, 'MAINTAIN'], [3, true], [3, 'false']]) mutate(d => { d.default_acl[0][3][0][index] = value; });
+    assert.throws(() => parseSnapshot(JSON.stringify(FIXTURE), { profile: 'empty' }), /SNAPSHOT_INVALID/);
+    assert.throws(() => parseSnapshot(JSON.stringify(localFixture()), { remote: false, profile: 'other' }), /SNAPSHOT_INVALID/);
 });
 
 test('fresh object identifier has 256-bit entropy and cannot come from an arbitrary SHA/path', () => {
@@ -226,23 +265,30 @@ test('local cluster command is Unix-socket only, host auth reject, resource capp
 
 function pipelineFixture(t, change = {}) {
     const root = fixture(t); const calls = []; const logs = []; const storeCalls = []; let ciphertext; let stopped = 0; let cleaned = 0; let published = 0;
+    let managed = false; let dumpManaged = false; let remoteSnapshots = 0;
     const run = (exe, args, options) => {
         calls.push({ exe, args, options });
         if (exe.endsWith('git')) return success(SHA);
-        if (exe.endsWith('pg_dump')) return success(ARCHIVE);
-        if (exe.endsWith('pg_restore')) return success(args.includes('--list') ? TOC : '');
+        if (exe.endsWith('pg_dump')) { dumpManaged = managed || Boolean(options.env.PGPASSWORD); return success(ARCHIVE); }
+        if (exe.endsWith('pg_restore')) {
+            if (args.includes('--list')) return success(change.toc ?? (dumpManaged ? MANAGED_TOC : TOC));
+            managed = dumpManaged; return success('');
+        }
         if (exe.endsWith('psql')) {
             if (options.input.startsWith('CREATE ROLE')) return success('');
+            if (options.input.startsWith('ALTER DEFAULT PRIVILEGES')) { managed = options.input.includes(' GRANT '); return success(''); }
             const remote = options.env.PGHOST === 'aws-0-ap-southeast-1.pooler.supabase.com';
             assert.equal(options.input, SNAPSHOT_SQL);
-            return success(JSON.stringify(remote ? (change.remote ?? FIXTURE) : localFixture()));
+            if (remote) remoteSnapshots++;
+            return success(JSON.stringify(remote ? (remoteSnapshots > 1 ? change.remoteAfter ?? change.remote ?? FIXTURE : change.remote ?? FIXTURE)
+                : (managed ? change.restored ?? localFixture(true) : localFixture())));
         }
         assert.fail('Unexpected executable');
     };
     return { calls, logs, storeCalls, counts: () => ({ stopped, cleaned, published }), options: {
         env: { ...ENV }, run, log: value => logs.push(value), getUid: () => 1000,
         workspaceFactory: () => ({ path: root }), prepare: () => ({ bin: '/fixed/bin', sdk: {} }),
-        start: () => ({ env: { ...BASE_ENV, PGHOST: '/private/socket' }, stop() { stopped++; } }),
+        start: () => ({ env: { ...BASE_ENV, PGHOST: join(root, 'socket'), PGUSER: 'postgres', PGDATABASE: 'postgres', PGSSLMODE: 'disable' }, stop() { stopped++; } }),
         cleanup: () => { cleaned++; }, publish: () => { published++; },
         storeFactory: () => ({ async exists(key) { storeCalls.push(['head', key]); return false; }, async put(key, body) { ciphertext = Buffer.from(body); storeCalls.push(['put', key]); }, async get(key) { storeCalls.push(['get', key]); return Buffer.from(ciphertext); }, close() {} }),
     } };
@@ -305,6 +351,23 @@ test('nonempty public objects abort before dump/S3, no success or publication', 
     assert.deepEqual(f.logs, ['STAGING_BACKUP_REHEARSAL_FAILED SNAPSHOT_INVALID']);
 });
 
+test('changed source metadata and missing default ACL TOC fail before any S3 call', async t => {
+    const changedAcl = structuredClone(FIXTURE); changedAcl.acl = changedAcl.acl.filter(row => row[1] !== 'PUBLIC');
+    for (const change of [{ remoteAfter: changedAcl }, { toc: TOC }, { remoteAfter: { ...FIXTURE, default_acl: [] } }]) {
+        const f = pipelineFixture(t, change);
+        assert.equal(await runRehearsal(f.options), 1); assert.equal(f.storeCalls.length, 0); assert.equal(f.counts().published, 0);
+    }
+});
+
+test('missing restored defaults or changed schema ACL cannot produce recovery success', async t => {
+    const changed = localFixture(true); changed.acl = changed.acl.filter(row => row[1] !== 'PUBLIC');
+    for (const restored of [localFixture(), changed]) {
+        const f = pipelineFixture(t, { restored });
+        assert.equal(await runRehearsal(f.options), 1); assert.equal(f.counts().published, 0);
+        assert.deepEqual(f.storeCalls.map(x => x[0]), ['head', 'put', 'get']);
+    }
+});
+
 test('failed tools/cluster and invalid CA abort before any secret-bearing DB child', async t => {
     for (const phase of ['prepare', 'start', 'ca']) {
         const f = pipelineFixture(t);
@@ -342,10 +405,64 @@ test('self-check uses only local tools/synthetic archive with every provider sec
     f.options.env = { STAGING_RELEASE_SHA: SHA, RENDER_GIT_COMMIT: SHA, RENDER_GIT_BRANCH: BRANCH };
     assert.equal(await runSelfCheck(f.options), 0); assert.equal(f.storeCalls.length, 0);
     assert.ok(f.calls.every(x => !x.options.env.PGPASSWORD));
+    const fixtureWrites = f.calls.filter(x => x.exe.endsWith('psql') && x.options.input.startsWith('ALTER DEFAULT PRIVILEGES'));
+    assert.equal(fixtureWrites.length, 2);
+    assert.match(fixtureWrites[0].options.input, / GRANT /); assert.match(fixtureWrites[1].options.input, / REVOKE /);
+    for (const call of fixtureWrites) assert.ok(call.options.env.PGHOST.endsWith('socket'));
     assert.match(f.logs[0], /^STAGING_BACKUP_SELF_CHECK_OK /);
     for (const key of ['STAGING_DB_ADMIN_PASSWORD', 'STAGING_BACKUP_ENCRYPTION_KEY', 'STAGING_BACKUP_S3_ACCESS_KEY_ID', 'STAGING_BACKUP_S3_SECRET_ACCESS_KEY', 'RESEND_API_KEY']) {
         const logs = [];
         assert.equal(await runSelfCheck({ env: { ...f.options.env, [key]: SECRET }, log: x => logs.push(x), run: () => assert.fail('Must reject before subprocess'), getUid: () => 1000 }), 1);
         assert.deepEqual(logs, ['STAGING_BACKUP_SELF_CHECK_FAILED SELF_CHECK_SECRETS_FORBIDDEN']);
     }
+});
+
+test('self-check rejects forged local provenance before synthetic defaults are seeded', async t => {
+    const f = pipelineFixture(t); f.options.env = { STAGING_RELEASE_SHA: SHA, RENDER_GIT_COMMIT: SHA, RENDER_GIT_BRANCH: BRANCH };
+    f.options.start = () => ({ env: { PGHOST: '/wrong/socket' }, stop() {} });
+    assert.equal(await runSelfCheck(f.options), 1);
+    assert.equal(f.calls.some(x => typeof x.options.input === 'string' && x.options.input.startsWith('ALTER DEFAULT PRIVILEGES')), false);
+    assert.equal(f.counts().published, 0); assert.equal(f.storeCalls.length, 0);
+});
+
+// Opt-in native proof: explicit pre-existing official PG17 client/server directory,
+// synthetic fresh local cluster only. No environment credentials are inherited.
+test('native PG17 synthetic default ACL archive roundtrip', { skip: !process.env.OTP_NATIVE_PG17_BIN }, t => {
+    const bin = process.env.OTP_NATIVE_PG17_BIN;
+    assert.equal(process.platform, 'win32');
+    let clusterStopped = true;
+    const root = fixture(t, { canCleanup: () => clusterStopped }); const data = join(root, 'data');
+    const nativeEnv = { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR,
+        COMSPEC: process.env.COMSPEC, TEMP: root, TMP: root, PATH: `${bin};${process.env.SystemRoot}/System32`, LANG: 'C', LC_ALL: 'C',
+        PGHOST: '127.0.0.1', PGPORT: '57893', PGUSER: 'postgres', PGDATABASE: 'postgres',
+        PGSSLMODE: 'disable', PSQL_HISTORY: 'nul', PGCONNECT_TIMEOUT: '5' };
+    const run = (name, args, input) => {
+        const result = spawnSync(join(bin, `${name}.exe`), args, { env: nativeEnv, cwd: root, input, encoding: null, timeout: 30000, windowsHide: true });
+        assert.equal(result.status, 0, `native ${name} failed: ${result.stderr?.toString()}`);
+        return result.stdout;
+    };
+    for (const name of ['postgres', 'pg_dump', 'pg_restore', 'psql']) assert.match(run(name, ['--version']).toString(), /\(PostgreSQL\) 17\.11/);
+    run('initdb', ['-D', data, '--username=postgres', '--auth=trust', '--locale=C', '--encoding=UTF8', '--no-instructions']);
+    clusterStopped = false;
+    try {
+        run('pg_ctl', ['-D', data, '-l', join(root, 'postgres.log'), '-w', '-t', '20', '-o', "-c listen_addresses=127.0.0.1 -c port=57893 -c shared_buffers=16MB -c max_connections=5", 'start']);
+        const sql = input => run('psql', ['-X', '-w', '-q', '-v', 'ON_ERROR_STOP=1', '-At'], input).toString().trim();
+        parseSnapshot(sql(SNAPSHOT_SQL), { remote: false });
+        sql(['anon', 'authenticated', 'supabase_admin', 'service_role'].map(n => `CREATE ROLE "${n}" NOLOGIN;`).join('\n'));
+        const statements = action => ['postgres', 'supabase_admin'].flatMap(owner => ['TABLES', 'SEQUENCES', 'FUNCTIONS'].map(kind =>
+            `ALTER DEFAULT PRIVILEGES FOR ROLE "${owner}" IN SCHEMA public ${action} ALL PRIVILEGES ON ${kind} ${action === 'GRANT' ? 'TO' : 'FROM'} anon,authenticated,postgres,service_role;`)).join('\n');
+        sql(statements('GRANT'));
+        const before = parseSnapshot(sql(SNAPSHOT_SQL), { remote: false, profile: 'managed' });
+        const archive = run('pg_dump', ['-w', '--format=custom', '--schema=public', '--no-owner']);
+        assert.deepEqual(parseSnapshot(sql(SNAPSHOT_SQL), { remote: false, profile: 'managed' }), before);
+        const toc = run('pg_restore', ['--list'], archive).toString();
+        // Public, synthetic metadata only; captured actual native grammar.
+        t.diagnostic(toc.split(/\r?\n/).filter(line => line && !line.startsWith(';')).join('\n'));
+        sql(statements('REVOKE'));
+        parseSnapshot(sql(SNAPSHOT_SQL), { remote: false });
+        const list = join(root, 'restore.list');
+        writeFileSync(list, validateToc(toc, { owner: before.owner }));
+        run('pg_restore', ['-w', '--exit-on-error', '--single-transaction', '--no-owner', '--use-list', list, '--dbname=postgres'], archive);
+        assert.deepEqual(parseSnapshot(sql(SNAPSHOT_SQL), { remote: false, profile: 'managed' }), before);
+    } finally { run('pg_ctl', ['-D', data, '-m', 'fast', '-w', '-t', '20', 'stop']); clusterStopped = true; }
 });

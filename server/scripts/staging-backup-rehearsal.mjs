@@ -24,6 +24,35 @@ const SHA = value => createHash('sha256').update(value).digest('hex');
 const require = createRequire(import.meta.url);
 class SafeError extends Error { constructor(code) { super(code); this.code = code; } }
 const fail = code => { throw new SafeError(code); };
+const DEFAULT_OWNERS = ['postgres', 'supabase_admin'];
+const DEFAULT_GRANTEES = ['anon', 'authenticated', 'postgres', 'service_role'];
+const DEFAULT_PRIVILEGES = Object.freeze({
+    f: ['EXECUTE'], S: ['SELECT', 'UPDATE', 'USAGE'],
+    r: ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN'],
+});
+const canonical = rows => rows.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b), 'en'));
+// Exact six-record Stage profile, not a configurable allowlist or count-only gate.
+// Each record retains empty ACLs in the SQL input so none can disappear in a join.
+function expectedDefaults() {
+    return canonical(DEFAULT_OWNERS.flatMap(owner => Object.entries(DEFAULT_PRIVILEGES).map(([kind, privileges]) =>
+        ['public', owner, kind, canonical(DEFAULT_GRANTEES.flatMap(grantee => privileges.map(privilege => [owner, grantee, privilege, false])))])));
+}
+
+function normalizeDefaults(rows, profile) {
+    if (!['empty', 'managed'].includes(profile) || !Array.isArray(rows)
+        || rows.length !== (profile === 'empty' ? 0 : 6)) fail('SNAPSHOT_INVALID');
+    for (const row of rows) {
+        if (!Array.isArray(row) || row.length !== 4 || row[0] !== 'public' || !DEFAULT_OWNERS.includes(row[1])
+            || !Object.hasOwn(DEFAULT_PRIVILEGES, row[2]) || !Array.isArray(row[3]) || row[3].length > 32) fail('SNAPSHOT_INVALID');
+        for (const grant of row[3]) {
+            if (!Array.isArray(grant) || grant.length !== 4 || grant[0] !== row[1]
+                || !DEFAULT_GRANTEES.includes(grant[1]) || !DEFAULT_PRIVILEGES[row[2]].includes(grant[2]) || grant[3] !== false) fail('SNAPSHOT_INVALID');
+        }
+        canonical(row[3]);
+    }
+    canonical(rows);
+    if (JSON.stringify(rows) !== JSON.stringify(profile === 'empty' ? [] : expectedDefaults())) fail('SNAPSHOT_INVALID');
+}
 
 // Identical read-only snapshot is taken before and after dump. No provider-owned
 // schema or global role/password data is dumped. Objects outside public remain out
@@ -46,22 +75,27 @@ SELECT json_build_object(
   +(SELECT count(*) FROM pg_ts_config c JOIN pg_namespace n ON n.oid=c.cfgnamespace WHERE n.nspname='public')
   +(SELECT count(*) FROM pg_ts_dict c JOIN pg_namespace n ON n.oid=c.dictnamespace WHERE n.nspname='public')
   +(SELECT count(*) FROM pg_ts_parser c JOIN pg_namespace n ON n.oid=c.prsnamespace WHERE n.nspname='public')
-  +(SELECT count(*) FROM pg_ts_template c JOIN pg_namespace n ON n.oid=c.tmplnamespace WHERE n.nspname='public')
-  +(SELECT count(*) FROM pg_default_acl c JOIN pg_namespace n ON n.oid=c.defaclnamespace WHERE n.nspname='public'),
+  +(SELECT count(*) FROM pg_ts_template c JOIN pg_namespace n ON n.oid=c.tmplnamespace WHERE n.nspname='public'),
+ 'global_default_acl_count',(SELECT count(*) FROM pg_default_acl WHERE defaclnamespace=0),
+ 'default_acl',coalesce((SELECT json_agg(json_build_array('public',pg_get_userbyid(d.defaclrole),d.defaclobjtype,
+   coalesce((SELECT json_agg(json_build_array(pg_get_userbyid(a.grantor),CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END,a.privilege_type,a.is_grantable)) FROM aclexplode(d.defaclacl) a),'[]'::json)))
+   FROM pg_default_acl d WHERE d.defaclnamespace=n.oid),'[]'::json),
  'owner',pg_get_userbyid(n.nspowner),
  'acl',coalesce((SELECT json_agg(json_build_array(pg_get_userbyid(a.grantor),CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END,a.privilege_type,a.is_grantable) ORDER BY a.grantor,a.grantee,a.privilege_type) FROM aclexplode(coalesce(n.nspacl,acldefault('n',n.nspowner))) a),'[]'::json)
 ) FROM pg_namespace n WHERE n.nspname='public';
 COMMIT;`;
 
-export function parseSnapshot(raw, { remote = true } = {}) {
+export function parseSnapshot(raw, { remote = true, profile = remote ? 'managed' : 'empty' } = {}) {
     let d;
     try { d = JSON.parse(raw); } catch { fail('SNAPSHOT_INVALID'); }
-    const keys = ['version', 'database', 'role', 'tls', 'read_only', 'objects', 'owner', 'acl'];
+    const keys = ['version', 'database', 'role', 'tls', 'read_only', 'objects', 'owner', 'acl', 'default_acl', 'global_default_acl_count'];
     if (!d || Array.isArray(d) || Object.keys(d).length !== keys.length || keys.some(k => !Object.hasOwn(d, k))
         || !Number.isSafeInteger(d.version) || d.version < 170000 || d.version >= 180000
         || d.database !== 'postgres' || d.role !== 'postgres' || d.read_only !== true
         || typeof d.tls !== 'boolean' || (remote && !d.tls) || (!remote && d.tls)
+        || (remote && profile !== 'managed') || d.global_default_acl_count !== 0
         || d.objects !== 0 || !['postgres', 'pg_database_owner', 'supabase_admin'].includes(d.owner) || !Array.isArray(d.acl) || d.acl.length > 40) fail('SNAPSHOT_INVALID');
+    normalizeDefaults(d.default_acl, profile);
     for (const row of d.acl) {
         if (!Array.isArray(row) || row.length !== 4 || !ROLE_NAMES.includes(row[0])
             || ![...ROLE_NAMES, 'PUBLIC'].includes(row[1]) || !['USAGE', 'CREATE'].includes(row[2])
@@ -103,16 +137,30 @@ export function invoke(run, executable, args, { env = BASE_ENV, cwd = ROOT, inpu
     return result.stdout;
 }
 
-export function validateToc(raw) {
+export function validateToc(raw, { profile = 'managed', owner } = {}) {
     if (typeof raw !== 'string' || raw.length > 65536 || raw.includes('\0')) fail('TOC_INVALID');
     const entries = raw.split(/\r?\n/).filter(line => line && !line.startsWith(';'));
-    const seen = new Set();
-    if (entries.length < 1 || entries.length > 3) fail('TOC_INVALID');
+    const seen = new Set(); const ids = new Set(); const defaults = new Set(); let schemaOwner;
+    if (!['empty', 'managed'].includes(profile) || entries.length < 1 || entries.length > (profile === 'empty' ? 3 : 9)
+        || (owner !== undefined && !['postgres', 'pg_database_owner', 'supabase_admin'].includes(owner))) fail('TOC_INVALID');
     for (const line of entries) {
-        const m = line.match(/^\d+; \d+ \d+ (SCHEMA - public|COMMENT - SCHEMA public|ACL - SCHEMA public) (postgres|pg_database_owner|supabase_admin)$/);
-        if (!m || seen.has(m[1])) fail('TOC_INVALID');
-        seen.add(m[1]);
+        const id = line.match(/^([1-9]\d*); /)?.[1];
+        if (!id || !Number.isSafeInteger(Number(id)) || ids.has(id)) fail('TOC_INVALID');
+        ids.add(id);
+        // Observed native PostgreSQL 17.11 custom archive grammar (synthetic
+        // roundtrip test below). Exact owner/kind pairs; no global defaults.
+        const d = line.match(/^[1-9]\d*; 826 [1-9]\d* DEFAULT ACL public DEFAULT PRIVILEGES FOR (TABLES|SEQUENCES|FUNCTIONS) (postgres|supabase_admin)$/);
+        if (d) {
+            const key = `${d[1]}:${d[2]}`;
+            if (profile !== 'managed' || defaults.has(key)) fail('TOC_INVALID');
+            defaults.add(key); continue;
+        }
+        const m = line.match(/^[1-9]\d*; (2615 [1-9]\d* SCHEMA - public|0 0 COMMENT - SCHEMA public|0 0 ACL - SCHEMA public) (postgres|pg_database_owner|supabase_admin)$/);
+        const kind = m?.[1].replace(/^(?:2615 \d+|0 0) /, '');
+        if (!m || seen.has(kind) || (schemaOwner && schemaOwner !== m[2]) || (owner && owner !== m[2])) fail('TOC_INVALID');
+        schemaOwner = m[2]; seen.add(kind);
     }
+    if (!seen.has('SCHEMA - public') || defaults.size !== (profile === 'empty' ? 0 : 6)) fail('TOC_INVALID');
     // public already exists in initdb. Apply only its comment/ACL, never CREATE,
     // DROP, or database/global entries. Schema owner is separately reconciled.
     return entries.filter(line => !/^\d+; \d+ \d+ SCHEMA - public /.test(line)).join('\n') + '\n';
@@ -286,6 +334,36 @@ export function publishStatus({ root = ROOT, selfCheck = false } = {}) {
     catch (e) { if (e.code !== 'EEXIST' || lstatSync(target).isSymbolicLink() || !lstatSync(target).isFile() || readFileSync(target, 'utf8') !== content) fail('PUBLISH_PATH_INVALID'); }
 }
 
+// Only the credential-free self-check can seed/revoke synthetic defaults. The
+// destination is the freshly started private Unix socket in its owned workspace,
+// never a supplied URL, remote environment, or the managed database.
+function proveLocalDefaults(workspace, tools, local, run) {
+    if (local.env.PGHOST !== join(workspace.path, 'socket') || local.env.PGSSLMODE !== 'disable'
+        || local.env.PGDATABASE !== 'postgres' || local.env.PGUSER !== 'postgres'
+        || local.env.PGPASSWORD !== undefined) fail('LOCAL_FIXTURE_TARGET_INVALID');
+    const sql = input => invoke(run, join(tools.bin, 'psql'), ['-X', '-w', '-q', '-v', 'ON_ERROR_STOP=1', '-At'],
+        { env: local.env, cwd: workspace.path, input }).toString();
+    const snapshot = profile => parseSnapshot(sql(SNAPSHOT_SQL), { remote: false, profile });
+    const empty = snapshot('empty');
+    sql(['anon', 'authenticated', 'supabase_admin', 'service_role'].map(n =>
+        `CREATE ROLE "${n}" NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;`).join('\n'));
+    const statements = action => DEFAULT_OWNERS.flatMap(owner => ['TABLES', 'SEQUENCES', 'FUNCTIONS'].map(kind =>
+        `ALTER DEFAULT PRIVILEGES FOR ROLE "${owner}" IN SCHEMA public ${action} ALL PRIVILEGES ON ${kind} ${action === 'GRANT' ? 'TO' : 'FROM'} anon,authenticated,postgres,service_role;`)).join('\n');
+    sql(statements('GRANT'));
+    const before = snapshot('managed');
+    const archive = invoke(run, join(tools.bin, 'pg_dump'), ['-w', '--format=custom', '--schema=public', '--no-owner'], { env: local.env, cwd: workspace.path, maxBytes: MAX_BYTES });
+    if (JSON.stringify(before) !== JSON.stringify(snapshot('managed'))) fail('SOURCE_CHANGED');
+    const toc = validateToc(invoke(run, join(tools.bin, 'pg_restore'), ['--list'], { cwd: workspace.path, input: archive }).toString(), { owner: before.owner });
+    // Remove exactly our six synthetic LOCAL defaults, making restore non-vacuous.
+    // Never wired into runRehearsal or a remote connection.
+    sql(statements('REVOKE'));
+    if (JSON.stringify(empty) !== JSON.stringify(snapshot('empty'))) fail('LOCAL_FIXTURE_RESET_FAILED');
+    const list = join(workspace.path, 'default-acl-self-check.list');
+    writeFileSync(list, toc, { flag: 'wx', mode: 0o600 });
+    invoke(run, join(tools.bin, 'pg_restore'), ['-w', '--exit-on-error', '--single-transaction', '--no-owner', '--use-list', list, '--dbname=postgres'], { env: local.env, cwd: workspace.path, input: archive });
+    if (JSON.stringify(before) !== JSON.stringify(snapshot('managed'))) fail('RESTORE_EVIDENCE_MISMATCH');
+}
+
 // Deploy this FIRST, with no credential environment group linked. It exercises
 // authenticated package retrieval, native libraries, initdb, dump, TOC and restore
 // against local synthetic/empty data only. It can never access Supabase or S3.
@@ -304,13 +382,14 @@ export async function runSelfCheck({ env = process.env, run = spawnSync, log = c
         const psql = () => parseSnapshot(invoke(run, join(tools.bin, 'psql'), ['-X', '-w', '-q', '-v', 'ON_ERROR_STOP=1', '-At'], { env: local.env, cwd: workspace.path, input: SNAPSHOT_SQL }).toString(), { remote: false });
         const before = psql(); if (before.version !== 170011) fail('LOCAL_VERSION_INVALID');
         const archive = invoke(run, join(tools.bin, 'pg_dump'), ['-w', '--format=custom', '--schema=public', '--no-owner'], { env: local.env, cwd: workspace.path, maxBytes: MAX_BYTES });
-        const toc = validateToc(invoke(run, join(tools.bin, 'pg_restore'), ['--list'], { cwd: workspace.path, input: archive }).toString());
+        const toc = validateToc(invoke(run, join(tools.bin, 'pg_restore'), ['--list'], { cwd: workspace.path, input: archive }).toString(), { profile: 'empty', owner: before.owner });
         const list = join(workspace.path, 'self-check.list'); writeFileSync(list, toc, { flag: 'wx', mode: 0o600 });
         invoke(run, join(tools.bin, 'pg_restore'), ['-w', '--exit-on-error', '--single-transaction', '--no-owner', '--use-list', list, '--dbname=postgres'], { env: local.env, cwd: workspace.path, input: archive });
         if (JSON.stringify(before) !== JSON.stringify(psql())) fail('RESTORE_EVIDENCE_MISMATCH');
+        proveLocalDefaults(workspace, tools, local, run);
         local.stop(); local = undefined; cleanup(workspace); workspace = undefined;
         publish({ selfCheck: true });
-        log(`STAGING_BACKUP_SELF_CHECK_OK ${JSON.stringify({ sha, toolchain_version: '17.11', non_root: true, unix_socket_only: true, local_restore: true, provider_calls: 0 })}`);
+        log(`STAGING_BACKUP_SELF_CHECK_OK ${JSON.stringify({ sha, toolchain_version: '17.11', non_root: true, unix_socket_only: true, local_restore: true, default_acl_records: 6, default_acl_grants: 96, default_acl_equal: true, provider_calls: 0 })}`);
         result = 0;
     } catch (error) {
         unsafeCleanup = error instanceof SafeError && error.code === 'LOCAL_STOP_FAILED';
@@ -342,7 +421,7 @@ export async function runRehearsal({ env = process.env, run = spawnSync, log = c
         archive = invoke(run, join(tools.bin, 'pg_dump'), ['-w', '--format=custom', '--schema=public', '--no-owner', '--lock-wait-timeout=3000'], { env: remoteEnv, cwd: workspace.path, maxBytes: MAX_BYTES - MAGIC.length - 28, code: 'DUMP_FAILED' });
         const after = parseSnapshot(psql(remoteEnv, SNAPSHOT_SQL));
         if (JSON.stringify(before) !== JSON.stringify(after)) fail('SOURCE_CHANGED');
-        const toc = validateToc(invoke(run, join(tools.bin, 'pg_restore'), ['--list'], { cwd: workspace.path, input: archive, code: 'TOC_FAILED' }).toString());
+        const toc = validateToc(invoke(run, join(tools.bin, 'pg_restore'), ['--list'], { cwd: workspace.path, input: archive, code: 'TOC_FAILED' }).toString(), { owner: before.owner });
         const objectKey = makeObjectKey(sha);
         encryptionKey = Buffer.from(env.STAGING_BACKUP_ENCRYPTION_KEY, 'base64');
         const envelope = encryptArchive(archive, encryptionKey, sha, objectKey);
@@ -352,18 +431,21 @@ export async function runRehearsal({ env = process.env, run = spawnSync, log = c
         });
         decrypted = decryptArchive(retrieved, encryptionKey, sha, objectKey);
         if (SHA(decrypted) !== SHA(archive)) fail('ARCHIVE_HASH_MISMATCH');
-        validateToc(invoke(run, join(tools.bin, 'pg_restore'), ['--list'], { cwd: workspace.path, input: decrypted, code: 'TOC_FAILED' }).toString());
+        const retrievedToc = validateToc(invoke(run, join(tools.bin, 'pg_restore'), ['--list'], { cwd: workspace.path, input: decrypted, code: 'TOC_FAILED' }).toString(), { owner: before.owner });
+        if (retrievedToc !== toc) fail('RESTORE_EVIDENCE_MISMATCH');
         // Fixed no-login local roles only; no credentials or remote operations.
         psql(local.env, ROLE_NAMES.filter(n => !['postgres', 'pg_database_owner'].includes(n)).map(n => `CREATE ROLE "${n}" NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;`).join('\n') + `\nALTER SCHEMA public OWNER TO "${before.owner}";`);
         const list = join(workspace.path, 'restore.list');
         writeFileSync(list, toc, { flag: 'wx', mode: 0o600 });
         invoke(run, join(tools.bin, 'pg_restore'), ['-w', '--exit-on-error', '--single-transaction', '--no-owner', '--use-list', list, '--dbname=postgres'], { env: local.env, cwd: workspace.path, input: decrypted, code: 'RESTORE_FAILED' });
-        const restored = parseSnapshot(psql(local.env, SNAPSHOT_SQL), { remote: false });
-        if (restored.owner !== before.owner || JSON.stringify(restored.acl) !== JSON.stringify(before.acl)) fail('RESTORE_EVIDENCE_MISMATCH');
+        const restored = parseSnapshot(psql(local.env, SNAPSHOT_SQL), { remote: false, profile: 'managed' });
+        if (restored.owner !== before.owner || JSON.stringify(restored.acl) !== JSON.stringify(before.acl)
+            || JSON.stringify(restored.default_acl) !== JSON.stringify(before.default_acl)
+            || restored.global_default_acl_count !== before.global_default_acl_count) fail('RESTORE_EVIDENCE_MISMATCH');
         local.stop(); local = undefined;
         cleanup(workspace); workspace = undefined;
         publish();
-        log(`STAGING_BACKUP_REHEARSAL_OK ${JSON.stringify({ sha, project_ref: PROJECT_REF, server_major: 17, toolchain_version: '17.11', public_objects: 0, acl_equal: true, retained_object: objectKey, ciphertext_sha256: SHA(envelope), ciphertext_bytes: envelope.length, retained_readback: true, put_ambiguous_recovered: ambiguous, local_restore: true })}`);
+        log(`STAGING_BACKUP_REHEARSAL_OK ${JSON.stringify({ sha, project_ref: PROJECT_REF, server_major: 17, toolchain_version: '17.11', public_objects: 0, acl_equal: true, default_acl_records: 6, default_acl_grants: 96, default_acl_equal: true, global_default_acl_count: 0, retained_object: objectKey, ciphertext_sha256: SHA(envelope), ciphertext_bytes: envelope.length, retained_readback: true, put_ambiguous_recovered: ambiguous, local_restore: true })}`);
         result = 0;
     } catch (error) {
         unsafeCleanup = error instanceof SafeError && error.code === 'LOCAL_STOP_FAILED';
