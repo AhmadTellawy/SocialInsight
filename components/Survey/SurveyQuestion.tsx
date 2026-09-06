@@ -141,7 +141,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
               )}
             </div>
             <div className="bg-gray-50 p-4 border-t border-gray-100 flex-1 flex flex-col gap-3 min-h-[128px]">
-              <div dir="auto" className="w-full min-w-0 font-bold text-gray-900 text-[16px] leading-6 text-start whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+              <div dir="auto" className="w-full min-w-0 font-normal text-gray-900 text-[12px] leading-relaxed text-start whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
                 {option.isRating ? (
                   <div className="flex text-yellow-500">
                     {Array.from({ length: option.ratingValue || 0 }).map((_, i) => (
@@ -181,7 +181,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
             {/* Horizontal Clarification Question */}
             {isSelected && !hasVoted && option.withFollowUp && (
               <div className="p-4 pt-0 animate-in fade-in slide-in-from-top-1">
-                <label dir="auto" className="text-[16px] leading-6 text-start font-medium text-blue-600 mb-1.5 block">{option.followUpLabel || t('Please explain:')}</label>
+                <label dir="auto" className="text-[12px] leading-relaxed text-start font-normal text-blue-600 mb-1.5 block">{option.followUpLabel || t('Please explain:')}</label>
                 <textarea
                   dir="auto"
                   value={followUpAnswers[option.id] || ''}
@@ -280,7 +280,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
                           ))}
                         </div>
                       ) : (
-                        <span dir="auto" className={`block text-[16px] font-medium leading-6 text-start whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${textColor}`}>
+                        <span dir="auto" className={`block text-[12px] font-normal leading-relaxed text-start whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${textColor}`}>
                           {option.text}
                         </span>
                       )}
@@ -319,7 +319,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
               {isSelected && !hasVoted && option.withFollowUp && (
                 <div className="px-2 pb-3 pt-1 animate-in fade-in slide-in-from-top-1">
                   <div className="p-4 bg-blue-50/50 border border-blue-100 rounded-2xl">
-                    <label dir="auto" className="text-[16px] leading-6 text-start font-medium text-blue-600 mb-2 block">
+                    <label dir="auto" className="text-[12px] leading-relaxed text-start font-normal text-blue-600 mb-2 block">
                       {option.followUpLabel || t('Please explain your choice:')}
                     </label>
                     <textarea
@@ -383,7 +383,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
                       </div>
                     </div>
                   ) : (
-                    showOptionNames ? <span dir="auto" className={`flex-1 min-w-0 font-medium text-[16px] leading-6 text-start whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${isSelected ? 'text-blue-700' : 'text-gray-700'} ${hasImages ? 'py-1' : ''}`}>{option.text}</span> : null
+                    showOptionNames ? <span dir="auto" className={`flex-1 min-w-0 font-normal text-[12px] leading-relaxed text-start whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${isSelected ? 'text-blue-700' : 'text-gray-700'} ${hasImages ? 'py-1' : ''}`}>{option.text}</span> : null
                   )}
                 </div>
                 <div className="flex items-center gap-2 pl-2 shrink-0">
@@ -396,7 +396,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
             {isSelected && !hasVoted && option.withFollowUp && (
               <div className="px-2 pb-3 pt-1 animate-in fade-in slide-in-from-top-1">
                 <div className="p-4 bg-blue-50/50 border border-blue-100 rounded-2xl">
-                  <label dir="auto" className="text-[16px] leading-6 text-start font-medium text-blue-600 mb-2 block">
+                  <label dir="auto" className="text-[12px] leading-relaxed text-start font-normal text-blue-600 mb-2 block">
                     {option.followUpLabel || t('Please explain your choice:')}
                   </label>
                   <textarea

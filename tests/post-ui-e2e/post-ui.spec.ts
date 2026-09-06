@@ -3,8 +3,9 @@ import { test, expect, type Locator } from '@playwright/test';
 test.beforeEach(async ({ page }) => { await page.route('**/api/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })); });
 
 const names = ['... 123 الخيار العربي الكامل يحتاج إلى سطرين دون اختصار', '... 123 English option name remains fully readable across multiple lines'];
-async function contentStyle(locator: Locator, direction: string) {
-  await expect(locator).toHaveCSS('font-size', '16px');
+async function contentStyle(locator: Locator, direction: string, fontSize = '12px') {
+  await expect(locator).toHaveCSS('font-size', fontSize);
+  await expect(locator).toHaveCSS('font-weight', '400');
   await expect(locator).toHaveCSS('text-align', 'start');
   await expect(locator).toHaveCSS('direction', direction);
   await expect(locator).toHaveAttribute('dir', 'auto');
@@ -17,7 +18,7 @@ for (const width of [390, 768, 1280]) for (const dir of ['ltr', 'rtl']) for (con
     await page.goto(`/tests/post-ui-e2e/index.html?dir=${dir}&layout=${layout}`);
     const post = page.getByTestId('post');
     await contentStyle(post.locator('h2[dir="auto"]'), 'rtl');
-    await contentStyle(post.locator('p[dir="auto"]').filter({ hasText: 'English post text' }), 'ltr');
+    await contentStyle(post.locator('p[dir="auto"]').filter({ hasText: 'English post text' }), 'ltr', '16px');
     const carousel = post.getByRole('region', { name: 'Post images' });
     await expect(carousel.getByRole('status')).toHaveText('1/3');
     await expect(carousel).toHaveCSS('border-radius', '0px');
@@ -45,7 +46,7 @@ for (const width of [390, 768, 1280]) for (const dir of ['ltr', 'rtl']) for (con
       const rowBox = await row.boundingBox();
       expect(first!.width).toBeLessThan(rowBox!.width);
       expect(first!.width / rowBox!.width).toBeGreaterThanOrEqual(0.8);
-      if (width === 390) expect(await section.getByText(names[0], { exact: true }).evaluate(el => el.getBoundingClientRect().height)).toBeGreaterThanOrEqual(48);
+      if (width === 390) expect(await section.getByText(names[0], { exact: true }).evaluate(el => el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight))).toBeGreaterThanOrEqual(2);
     }
     await section.screenshot({ path: testInfo.outputPath('before-vote.png') });
     await section.getByRole('button', { name: names[0], exact: true }).click();
@@ -54,7 +55,11 @@ for (const width of [390, 768, 1280]) for (const dir of ['ltr', 'rtl']) for (con
       await expect(section.getByText('Voted', { exact: true })).toBeVisible();
       await expect(section.getByText('6 votes', { exact: true })).toBeVisible();
     }
-    for (const name of names) expect(await section.getByText(name, { exact: true }).evaluate(el => el.scrollHeight <= el.clientHeight + 1)).toBe(true);
+    for (const [index, name] of names.entries()) {
+      const label = section.getByText(name, { exact: true });
+      await contentStyle(label, index ? 'ltr' : 'rtl');
+      expect(await label.evaluate(el => el.scrollHeight <= el.clientHeight + 1)).toBe(true);
+    }
     await section.screenshot({ path: testInfo.outputPath('after-vote.png') });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
@@ -104,7 +109,8 @@ for (const create of ['poll', 'survey', 'quiz', 'challenge']) test(`320px ${crea
     const field = fields.nth(i);
     if ((await field.getAttribute('placeholder'))?.startsWith('Add ')) continue;
     await field.fill(i % 2 ? names[1] : names[0]);
-    await contentStyle(field, i % 2 ? 'ltr' : 'rtl');
+    const isDescription = (await field.getAttribute('placeholder'))?.startsWith('Describe what');
+    await contentStyle(field, i % 2 ? 'ltr' : 'rtl', isDescription ? '16px' : '12px');
     const box = (await field.boundingBox())!;
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(321);
@@ -158,7 +164,7 @@ test('embedded repost media fills embedded post and caption has independent dire
   await page.setViewportSize({ width: 390, height: 900 });
   await page.goto('/tests/post-ui-e2e/index.html?repost&dir=ltr');
   const card = page.getByTestId('repost');
-  await contentStyle(card.getByText('... 123 تعليق عربي مستقل', { exact: true }).locator('xpath=ancestor::*[@dir="auto"][1]'), 'rtl');
+  await contentStyle(card.getByText('... 123 تعليق عربي مستقل', { exact: true }).locator('xpath=ancestor::*[@dir="auto"][1]'), 'rtl', '16px');
   const carousel = card.getByRole('region');
   await expect(carousel).toHaveCSS('border-radius', '0px');
   const edge = await carousel.evaluate(el => {
@@ -168,4 +174,17 @@ test('embedded repost media fills embedded post and caption has independent dire
   expect(edge).not.toBeNull();
   expect(Math.abs(edge!.width - edge!.mediaWidth)).toBeLessThanOrEqual(2);
   await card.screenshot({ path: testInfo.outputPath('embedded-repost.png') });
+});
+
+test('post title mention and hashtag retain 12px normal weight', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.goto('/tests/post-ui-e2e/index.html?richTitle&dir=rtl');
+  const title = page.getByTestId('post').locator('h2[dir="auto"]');
+  await contentStyle(title, 'rtl');
+  const links = title.locator('a');
+  await expect(links).toHaveCount(2);
+  for (const link of await links.all()) {
+    await expect(link).toHaveCSS('font-size', '12px');
+    await expect(link).toHaveCSS('font-weight', '400');
+  }
 });

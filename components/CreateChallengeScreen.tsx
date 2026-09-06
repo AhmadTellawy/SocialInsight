@@ -502,7 +502,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                   value={title}
                   onChange={(val) => { setTitle(val); if (errors.title) setErrors(prev => ({ ...prev, title: false })) }}
                   placeholder="Create a challenge..."
-                  className={`text-[16px] leading-6 text-start font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-amber-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] ${errors.title ? 'border-red-300 text-red-500' : 'text-gray-900'}`}
+                  className={`text-[12px] leading-relaxed text-start font-normal bg-transparent border-b border-gray-100 focus:outline-none focus:border-amber-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] ${errors.title ? 'border-red-300 text-red-500' : 'text-gray-900'}`}
                   minRows={1}
                   autoFocus
                 />
@@ -682,7 +682,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                             if (focusedOptionId === option.id) setFocusedOptionId(null);
                           }}
                           placeholder={`Item ${idx + 1} Name`}
-                          className="min-w-0 flex-1 px-2.5 py-1.5 bg-transparent text-[16px] leading-6 text-start font-semibold focus:outline-none text-gray-900 placeholder-gray-400"
+                          className="min-w-0 flex-1 px-2.5 py-1.5 bg-transparent text-[12px] leading-relaxed text-start font-normal focus:outline-none text-gray-900 placeholder-gray-400"
                         />
 
                         <span className="text-[9px] text-gray-450 mr-1.5 whitespace-nowrap">{option.text.length}/80</span>
@@ -731,7 +731,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                       <input dir="auto"
                         type="text"
                         placeholder="Add item to compare..."
-                        className="min-w-0 flex-1 px-2.5 py-1.5 bg-transparent text-[16px] leading-6 text-start font-semibold focus:outline-none text-gray-500 placeholder-gray-500 cursor-pointer"
+                        className="min-w-0 flex-1 px-2.5 py-1.5 bg-transparent text-[12px] leading-relaxed text-start font-normal focus:outline-none text-gray-500 placeholder-gray-500 cursor-pointer"
                         onFocus={handleAddOption}
                       />
                     </div>
@@ -1237,7 +1237,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                     value={selectedOptionForSettings.followUpLabel}
                     onChange={(e) => setOptions(options.map(o => o.id === selectedOptionForSettings.id ? { ...o, followUpLabel: e.target.value } : o))}
                     placeholder="e.g. Why did you pick this?"
-                    className="w-full bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-[16px] leading-6 text-start focus:outline-none focus:bg-white focus:border-amber-500 transition-all font-bold shadow-inner"
+                    className="w-full bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-[12px] leading-relaxed text-start focus:outline-none focus:bg-white focus:border-amber-500 transition-all font-normal shadow-inner"
                     autoFocus
                   />
                 </div>

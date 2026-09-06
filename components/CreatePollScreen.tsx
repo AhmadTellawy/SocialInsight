@@ -620,7 +620,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   value={title}
                   onChange={(val) => { setTitle(val); if (errors.title) setErrors(prev => ({ ...prev, title: false })) }}
                   placeholder="Ask a question..."
-                  className={`text-[16px] leading-6 text-start font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] ${errors.title ? 'border-red-300 text-red-500' : 'text-gray-900'}`}
+                  className={`text-[12px] leading-relaxed text-start font-normal bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] ${errors.title ? 'border-red-300 text-red-500' : 'text-gray-900'}`}
                   minRows={1}
                   autoFocus
                 />
@@ -813,7 +813,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                               onBlur={() => focusedOptionId === option.id && setFocusedOptionId(null)}
                               placeholder={t('answerType.optionName', { number: idx + 1 })}
                               aria-label={t('answerType.optionName', { number: idx + 1 })}
-                              className="min-w-0 flex-1 bg-transparent px-1 py-1.5 text-[16px] leading-6 text-start font-semibold text-gray-900 placeholder-gray-500 focus:outline-none"
+                              className="min-w-0 flex-1 bg-transparent px-1 py-1.5 text-[12px] leading-relaxed text-start font-normal text-gray-900 placeholder-gray-500 focus:outline-none"
                             />
                             <span className="me-1 whitespace-nowrap text-[9px] text-gray-500">{option.text.length}/80</span>
                           </div>
@@ -883,7 +883,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                           }}
                           onBlur={() => focusedOptionId === option.id && setFocusedOptionId(null)}
                           placeholder={`Option ${idx + 1}`}
-                          className="min-w-0 flex-1 bg-transparent px-2.5 py-1.5 text-[16px] leading-6 text-start font-semibold text-gray-900 placeholder-gray-500 focus:outline-none"
+                          className="min-w-0 flex-1 bg-transparent px-2.5 py-1.5 text-[12px] leading-relaxed text-start font-normal text-gray-900 placeholder-gray-500 focus:outline-none"
                         />
                         <span className="me-1.5 whitespace-nowrap text-[9px] text-gray-500">{option.text.length}/80</span>
                       </div>
@@ -911,7 +911,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                     <input dir="auto"
                       type="text"
                       placeholder="Add option..."
-                      className="w-full cursor-pointer bg-transparent px-2.5 py-1.5 text-[16px] leading-6 text-start font-semibold text-gray-600 placeholder-gray-500 focus:outline-none"
+                      className="w-full cursor-pointer bg-transparent px-2.5 py-1.5 text-[12px] leading-relaxed text-start font-normal text-gray-600 placeholder-gray-500 focus:outline-none"
                       onFocus={handleAddOption}
                     />
                   </div>
@@ -1487,7 +1487,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                     value={selectedOptionForSettings.followUpLabel}
                     onChange={(e) => updateFollowUp(selectedOptionForSettings.id, { followUpLabel: e.target.value })}
                     placeholder="e.g. Please explain your choice..."
-                    className="w-full bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-[16px] leading-6 text-start focus:outline-none focus:bg-white focus:border-blue-500 transition-all font-bold"
+                    className="w-full bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-[12px] leading-relaxed text-start focus:outline-none focus:bg-white focus:border-blue-500 transition-all font-normal"
                     autoFocus
                   />
                 </div>

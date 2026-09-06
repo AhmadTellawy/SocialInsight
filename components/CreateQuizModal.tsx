@@ -615,7 +615,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                     value={title}
                     onChange={(val) => setTitle(val)}
                     placeholder="Quiz Title"
-                    className="text-[16px] leading-6 text-start font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-purple-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] text-gray-900"
+                    className="text-[12px] leading-relaxed text-start font-normal bg-transparent border-b border-gray-100 focus:outline-none focus:border-purple-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] text-gray-900"
                     minRows={1}
                   />
                 )}
@@ -809,7 +809,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                               value={q.text}
                               onChange={(e) => updateQuestion(activeSection.id, q.id, { text: e.target.value })}
                               placeholder={totalQuestions <= 1 ? "Ask a question..." : "Question Text"}
-                              className="min-w-0 flex-1 text-[16px] leading-6 text-start font-semibold text-gray-900 border-b border-gray-100 focus:outline-none focus:border-purple-500 pt-0.5 pb-1.5 resize-none min-h-[44px] placeholder-gray-400 bg-transparent"
+                              className="min-w-0 flex-1 text-[12px] leading-relaxed text-start font-normal text-gray-900 border-b border-gray-100 focus:outline-none focus:border-purple-500 pt-0.5 pb-1.5 resize-none min-h-[44px] placeholder-gray-400 bg-transparent"
                             />
                           </div>
                         </div>
@@ -923,7 +923,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                                         if (focusedOptionId === opt.id) setFocusedOptionId(null);
                                       }}
                                       placeholder={`Option ${oIdx + 1}`}
-                                      className="min-w-0 flex-1 text-[16px] leading-6 text-start font-semibold p-2 bg-transparent focus:outline-none placeholder-gray-400"
+                                      className="min-w-0 flex-1 text-[12px] leading-relaxed text-start font-normal p-2 bg-transparent focus:outline-none placeholder-gray-400"
                                     />
                                     <span className="text-[9px] text-gray-500 mr-1.5 whitespace-nowrap">{opt.text.length}/80</span>
                                     {optionPresentation === 'image' && (opt.image || opt.mediaDrafts.length > 0) && (
@@ -957,7 +957,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                               <input dir="auto"
                                 type="text"
                                 placeholder="Add option..."
-                                className="min-w-0 flex-1 text-[16px] leading-6 text-start font-semibold p-2 bg-transparent focus:outline-none text-gray-500 placeholder-gray-500 cursor-pointer"
+                                className="min-w-0 flex-1 text-[12px] leading-relaxed text-start font-normal p-2 bg-transparent focus:outline-none text-gray-500 placeholder-gray-500 cursor-pointer"
                                 onFocus={() => handleAddQuizOption(activeSection.id, q.id)}
                               />
                               <button disabled className="p-3 text-gray-300 rounded-full flex items-center justify-center min-w-[44px] min-h-[44px]">

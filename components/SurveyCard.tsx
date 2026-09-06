@@ -1329,7 +1329,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           <div className="bg-white p-4 rounded-xl border border-amber-200 shadow-sm flex items-center gap-4 text-left">
             {hasOptionImage(winner) && <MediaImage media={winner.imageMedia} mediaId={winner.imageMediaId} fallbackSrc={winner.image} className="w-16 h-16 rounded-lg object-cover" alt="" />}
             <div className="flex-1">
-              {displayOptionNames && <h4 dir="auto" className="text-base text-start font-bold text-gray-900 leading-relaxed break-words">{winner.text}</h4>}
+              {displayOptionNames && <h4 dir="auto" className="text-[12px] text-start font-normal text-gray-900 leading-relaxed break-words">{winner.text}</h4>}
               <div className="flex items-center gap-1.5 mt-1 text-green-600 font-bold text-[10px] uppercase">
                 <CheckCircle2 size={12} /> {t('Winner')}
               </div>
@@ -1401,7 +1401,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 </div>
                 {displayOptionNames && (
                   <div className="p-3 bg-white flex-1 flex flex-col justify-center border-t border-gray-50 min-h-[60px]">
-                    <span dir="auto" className="text-base text-start font-bold text-gray-800 leading-relaxed break-words">{opt.text}</span>
+                    <span dir="auto" className="text-[12px] text-start font-normal text-gray-800 leading-relaxed break-words">{opt.text}</span>
                   </div>
                 )}
               </button>
@@ -1425,7 +1425,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         <div className="w-16 h-16 bg-purple-100 text-purple-600 rounded-[1.5rem] flex items-center justify-center mb-6 shadow-sm">
           <Play size={32} fill="currentColor" className="ml-1" />
         </div>
-        <h3 dir="auto" className="text-base text-start leading-relaxed font-black text-gray-900 mb-2 w-full">{sourceSurvey.title}</h3>
+        <h3 dir="auto" className="text-[12px] text-start leading-relaxed font-normal text-gray-900 mb-2 w-full">{sourceSurvey.title}</h3>
         <p dir="auto" className="text-base text-start leading-relaxed text-gray-500 mb-8 w-full">{sourceSurvey.description || t('Test your knowledge in this challenge.')}</p>
         <div className="flex items-center gap-4 mb-8">
           <div className="flex flex-col items-center">
@@ -1516,7 +1516,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 </div>
               )}
               <div className="flex items-start justify-between gap-4 mb-3">
-                <h3 dir="auto" className="text-base text-start font-bold text-gray-900 leading-relaxed flex-1 min-w-0 break-words">{resolvedTitle}</h3>
+                <h3 dir="auto" className="text-[12px] text-start font-normal text-gray-900 leading-relaxed flex-1 min-w-0 break-words">{resolvedTitle}</h3>
                 {survey.type === SurveyType.QUIZ && currentQuestion.weight && (
                   <span className="shrink-0 bg-purple-50 text-purple-600 text-[10px] font-black px-2 py-1 rounded-md border border-purple-100">
                     {currentQuestion.weight} {t('PTS')}
@@ -1588,7 +1588,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                                   </div>
                                 </div>
                               ) : (
-                                displayCurrentOptionNames ? <span dir="auto" className={`font-bold text-base text-start leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] min-w-0 flex-1 ${isHorizontal && optionHasImage ? 'w-full px-2' : ''}`}>{opt.text}</span> : null
+                                displayCurrentOptionNames ? <span dir="auto" className={`font-normal text-[12px] text-start leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] min-w-0 flex-1 ${isHorizontal && optionHasImage ? 'w-full px-2' : ''}`}>{opt.text}</span> : null
                               )}
                             </div>
                             {isHorizontal && optionHasImage && (
@@ -1599,7 +1599,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                           </button>
                           {isSelected && opt.withFollowUp && (
                             <div className="mt-2 pl-3 animate-in fade-in slide-in-from-top-1">
-                              <label dir="auto" className="text-base leading-6 text-start font-bold text-gray-500 ml-1 mb-1 block">{opt.followUpLabel || t('Please provide more details:')}</label>
+                              <label dir="auto" className="text-[12px] leading-relaxed text-start font-normal text-gray-500 ml-1 mb-1 block">{opt.followUpLabel || t('Please provide more details:')}</label>
                               <input dir="auto" type="text" value={followUpAnswers[opt.id] || ''} onChange={(e) => handleFollowUpChange(opt.id, e.target.value)} placeholder={t('Type here...')} className="w-full p-2.5 text-base leading-6 text-start bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-500 focus:bg-white transition-all" />
                             </div>
                           )}
@@ -1866,7 +1866,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                       </div>
                       <span
                         dir="auto"
-                        className={`text-base text-start font-semibold leading-relaxed whitespace-pre-wrap break-words min-w-0${
+                        className={`text-[12px] text-start font-normal leading-relaxed whitespace-pre-wrap break-words min-w-0${
                           isSelected ? ' text-white' : ' text-gray-800'
                         }`}
                       >
@@ -1952,7 +1952,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                         )}
                         <span
                           dir="auto"
-                          className={`text-base text-start font-semibold leading-relaxed whitespace-pre-wrap break-words min-w-0${
+                          className={`text-[12px] text-start font-normal leading-relaxed whitespace-pre-wrap break-words min-w-0${
                             isSelected ? ' text-blue-700' : ' text-gray-700'
                           }`}
                         >
@@ -2226,7 +2226,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                   <h2
                     dir="auto" style={{ textAlign: 'start' }}
                     onClick={onContentClick}
-                    className={`font-semibold text-base text-gray-900 leading-relaxed whitespace-pre-wrap ${onContentClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''} ${!isDetailView ? 'line-clamp-2' : ''}`}
+                    className={`font-normal [&_a]:font-normal text-[12px] text-gray-900 leading-relaxed whitespace-pre-wrap ${onContentClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''} ${!isDetailView ? 'line-clamp-2' : ''}`}
                   >
                     <RichTextRenderer text={sourceSurvey.title} mentions={sourceSurvey.mentions} mentionSurface="POST_TITLE" inline />
                   </h2>
