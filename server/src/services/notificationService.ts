@@ -64,7 +64,7 @@ const dispatchNotificationRecord = async (
     }
 
     void sendPushNotification(notification.userId, {
-        title: notification.actor ? notification.actor.name : 'SocialInsight',
+        title: notification.actor ? notification.actor.name : 'Opiniup',
         body: notification.message,
         type: notification.type,
         url: payload?.deepLink || '/'

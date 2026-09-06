@@ -418,8 +418,8 @@
     "responses": "{{formattedCount}} استجابة",
     "privatePost": "شارك {{author}} منشوراً خاصاً.",
     "restrictedGroupPost": "شارك {{author}} منشوراً ضمن مجموعة مقيّدة.",
-    "openToView": "افتح SocialInsight لعرض هذا المحتوى.",
-    "shareText": "شاهد هذا المحتوى من نوع {{type}} على SocialInsight:",
+    "openToView": "افتح Opiniup لعرض هذا المحتوى.",
+    "shareText": "شاهد هذا المحتوى من نوع {{type}} على Opiniup:",
     "preparing": "جارٍ تجهيز بطاقة المشاركة..."
   }
 }

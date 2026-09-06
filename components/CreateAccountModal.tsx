@@ -121,7 +121,7 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({ isOpen, 
       </div>
       <div className="text-center px-4">
         <h2 className="text-xl font-black text-gray-900 mb-2">Grow your Presence</h2>
-        <p className="text-sm text-gray-500">Choose the type of managed entity you want to create on SocialInsight.</p>
+        <p className="text-sm text-gray-500">Choose the type of managed entity you want to create on Opiniup.</p>
       </div>
 
       <div className="grid grid-cols-1 gap-4 px-2">

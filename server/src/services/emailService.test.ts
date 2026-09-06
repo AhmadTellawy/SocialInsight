@@ -15,6 +15,9 @@ test('email template uses configured TTL, bilingual safety copy, and escaped HTM
   assert.match(content.text, /تنتهي صلاحية هذا الرمز خلال 7 دقيقة/);
   assert.equal(content.html.includes('<12345>'), false);
   assert.match(content.html, /&lt;12345&gt;/);
+  assert.match(content.text, /^Opiniup\n/);
+  assert.match(content.html, /<h2>Opiniup<\/h2>/);
+  assert.doesNotMatch(content.text + content.html, /social\s*insight/i);
 });
 
 test('maskEmail limits log exposure', () => {
@@ -42,8 +45,8 @@ test('Resend request carries idempotency and configured sender without exposing 
   let captured: any;
   try {
     process.env.RESEND_API_KEY = 're_test_non_secret_fixture';
-    process.env.EMAIL_FROM_ADDRESS = 'auth@example.test';
-    process.env.EMAIL_FROM_NAME = 'Social Insight';
+    process.env.EMAIL_FROM_ADDRESS = 'no-reply@opiniup.com';
+    process.env.EMAIL_FROM_NAME = 'Opiniup';
     console.info = () => undefined;
     (Resend.prototype as any).post = async function (path: string, body: unknown, options: unknown) {
       captured = { path, body, options };
@@ -54,7 +57,9 @@ test('Resend request carries idempotency and configured sender without exposing 
     });
     assert.equal(result.messageId, 'email-fixture-id');
     assert.equal(captured.path, '/emails');
-    assert.equal(captured.body.from, 'Social Insight <auth@example.test>');
+    assert.equal(captured.body.from, 'Opiniup <no-reply@opiniup.com>');
+    assert.match(captured.body.subject, /Opiniup/);
+    assert.doesNotMatch(captured.body.subject, /social\s*insight/i);
     assert.deepEqual(captured.body.to, ['private@example.test']);
     assert.equal(captured.options.idempotencyKey, 'otp-fixture-v1');
     assert.equal(JSON.stringify(captured).includes('re_test_non_secret_fixture'), false);

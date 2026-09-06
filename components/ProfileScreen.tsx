@@ -461,7 +461,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       name: user!.name,
       avatar: user!.avatar,
       handle: suppliedUser?.handle || user!.name.replace(/\s+/g, '').toLowerCase(),
-      bio: suppliedUser?.bio || `Content creator on SocialInsight.`,
+      bio: suppliedUser?.bio || `Content creator on Opiniup.`,
       location: suppliedUser?.location || '',
       website: suppliedUser?.website || '',
       isPrivate: suppliedUser?.isPrivate ?? false,

@@ -552,8 +552,8 @@
     "responses": "{{formattedCount}} responses",
     "privatePost": "{{author}} shared a private post.",
     "restrictedGroupPost": "{{author}} shared a restricted group post.",
-    "openToView": "Open SocialInsight to view this content.",
-    "shareText": "Check out this {{type}} on SocialInsight:",
+    "openToView": "Open Opiniup to view this content.",
+    "shareText": "Check out this {{type}} on Opiniup:",
     "preparing": "Preparing share card..."
   }
 }

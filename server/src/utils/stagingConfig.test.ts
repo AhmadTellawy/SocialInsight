@@ -15,6 +15,8 @@ test('staging requires isolated DB identities, Preview origin and exact release 
     { DATABASE_URL: 'postgresql://postgres:synthetic@db.jlanmsxfggpnbwoowejy.supabase.co:5432/postgres' },
     { DIRECT_URL: 'postgresql://postgres:synthetic@db.other-project.supabase.co:5432/postgres' },
     { CLIENT_URL: 'https://socialinsightapp.com' },
+    { CLIENT_URL: 'https://opiniup.com' },
+    { CLIENT_URL: 'https://www.opiniup.com' },
     { CLIENT_URL: 'https://other-project.vercel.app' },
     { STAGING_DATABASE_PROJECT_REF: 'abcdefghijklmnopqrst' },
     { RENDER_GIT_COMMIT: 'b'.repeat(40) }, { RENDER_GIT_BRANCH: 'main' },

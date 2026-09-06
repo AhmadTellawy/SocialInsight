@@ -27,7 +27,7 @@ export const PrivacyPolicyScreen: React.FC = () => {
                     <section className="space-y-4">
                         <h2 className="text-xl font-bold text-gray-900">1. Introduction</h2>
                         <p>
-                            Welcome to SocialInsight. We respect your privacy and are committed to protecting your personal data. 
+                            Welcome to Opiniup. We respect your privacy and are committed to protecting your personal data.
                             This privacy policy will inform you about how we look after your personal data when you visit our 
                             application and tell you about your privacy rights and how the law protects you.
                         </p>
@@ -60,7 +60,7 @@ export const PrivacyPolicyScreen: React.FC = () => {
                     <section className="space-y-4">
                         <h2 className="text-xl font-bold text-gray-900">4. Anonymity and Public Data</h2>
                         <p>
-                            SocialInsight allows you to participate in surveys, polls, and challenges anonymously. When you choose to interact anonymously, your 
+                            Opiniup allows you to participate in surveys, polls, and challenges anonymously. When you choose to interact anonymously, your
                             identity is stripped from the interaction and the author of the post will only see your vote alongside your anonymized demographic data. 
                         </p>
                     </section>
@@ -82,7 +82,7 @@ export const PrivacyPolicyScreen: React.FC = () => {
                         <p className="text-blue-800">
                             If you have any questions about this privacy policy or our privacy practices, please contact us at:
                             <br /><br />
-                            <strong>Email:</strong> privacy@socialinsightapp.com<br />
+                            <strong>Email:</strong> privacy@opiniup.com<br />
                         </p>
                     </section>
                 </div>

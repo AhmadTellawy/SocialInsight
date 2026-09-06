@@ -11,8 +11,8 @@ interface AuthEmailInput {
 }
 
 const SUBJECTS: Record<AuthEmailPurpose, string> = {
-    REGISTRATION: 'Verify your Social Insight account | أكد حسابك',
-    EMAIL_VERIFICATION: 'Verify your email | تأكيد البريد الإلكتروني'
+    REGISTRATION: 'Verify your Opiniup account | أكد حسابك',
+    EMAIL_VERIFICATION: 'Verify your Opiniup email | تأكيد البريد الإلكتروني'
 };
 
 const COPY: Record<AuthEmailPurpose, { en: string; ar: string }> = {
@@ -53,8 +53,8 @@ export const buildAuthEmailContent = (input: Pick<AuthEmailInput, 'code' | 'purp
     const code = escapeHtml(input.code);
     const minutes = Math.max(1, Math.round(input.expiresInMinutes));
     return {
-        text: `${copy.en}\n\n${input.code}\n\nThis code expires in ${minutes} minute${minutes === 1 ? '' : 's'}. Do not share it. If you did not request this message, ignore it.\n\n${copy.ar}\n\nتنتهي صلاحية هذا الرمز خلال ${minutes} دقيقة. لا تشاركه. إذا لم تطلب هذه الرسالة، فتجاهلها.`,
-        html: `<div dir="ltr" style="font-family:Arial,sans-serif;line-height:1.6;max-width:560px"><h2>Social Insight</h2><p>${copy.en}</p><p style="font-size:30px;font-weight:700;letter-spacing:6px">${code}</p><p>This code expires in ${minutes} minute${minutes === 1 ? '' : 's'}. Do not share it.</p><p>If you did not request this message, ignore it.</p><hr><div dir="rtl"><p>${copy.ar}</p><p style="font-size:30px;font-weight:700;letter-spacing:6px">${code}</p><p>تنتهي صلاحية هذا الرمز خلال ${minutes} دقيقة. لا تشاركه.</p><p>إذا لم تطلب هذه الرسالة، فتجاهلها.</p></div></div>`
+        text: `Opiniup\n\n${copy.en}\n\n${input.code}\n\nThis code expires in ${minutes} minute${minutes === 1 ? '' : 's'}. Do not share it. If you did not request this message, ignore it.\n\n${copy.ar}\n\nتنتهي صلاحية هذا الرمز خلال ${minutes} دقيقة. لا تشاركه. إذا لم تطلب هذه الرسالة، فتجاهلها.`,
+        html: `<div dir="ltr" style="font-family:Arial,sans-serif;line-height:1.6;max-width:560px"><h2>Opiniup</h2><p>${copy.en}</p><p style="font-size:30px;font-weight:700;letter-spacing:6px">${code}</p><p>This code expires in ${minutes} minute${minutes === 1 ? '' : 's'}. Do not share it.</p><p>If you did not request this message, ignore it.</p><hr><div dir="rtl"><p>${copy.ar}</p><p style="font-size:30px;font-weight:700;letter-spacing:6px">${code}</p><p>تنتهي صلاحية هذا الرمز خلال ${minutes} دقيقة. لا تشاركه.</p><p>إذا لم تطلب هذه الرسالة، فتجاهلها.</p></div></div>`
     };
 };
 

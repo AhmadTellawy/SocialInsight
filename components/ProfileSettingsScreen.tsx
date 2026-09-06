@@ -78,7 +78,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   const setCurrentSubPage = (page: SubPage) => {
     if (page === 'main') {
       // A global history length cannot prove that the previous entry belongs
-      // to SocialInsight. Profile subpages always return to their known parent.
+      // to Opiniup. Profile subpages always return to their known parent.
       navigate('/settings/profile', { replace: true });
     } else {
       navigate(`/settings/profile/${page}`);
@@ -1151,10 +1151,10 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
             {privacySaveError && <p className="mb-4 text-sm font-semibold text-red-600" role="alert">{privacySaveError}</p>}
             
             <p className="text-sm text-gray-500 leading-relaxed mb-4">
-              {t("When your account is public, your profile and posts can be seen by anyone, on or off SocialInsight, even if they don't have a SocialInsight account.")}
+              {t("When your account is public, your profile and posts can be seen by anyone, on or off SocialInsight, even if they don't have a SocialInsight account.", "When your account is public, your profile and posts can be seen by anyone, on or off Opiniup, even if they don't have an Opiniup account.")}
             </p>
             <p className="text-sm text-gray-500 leading-relaxed">
-              {t("When your account is private, only the followers you approve can see what you share, including your polls and responses, and your followers and following lists. Certain info on your profile, like your profile picture and username, is visible to everyone on and off SocialInsight.")}
+              {t("When your account is private, only the followers you approve can see what you share, including your polls and responses, and your followers and following lists. Certain info on your profile, like your profile picture and username, is visible to everyone on and off SocialInsight.", "When your account is private, only the followers you approve can see what you share, including your polls and responses, and your followers and following lists. Certain info on your profile, like your profile picture and username, is visible to everyone on and off Opiniup.")}
             </p>
           </div>
 
