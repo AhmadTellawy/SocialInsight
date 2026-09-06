@@ -7,8 +7,9 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { ACL, LOGGING_CONTROLS, LOGGING_SQL, LOGGING_ASSERT_SQL, RUNTIME_PROBE_SQL, ROLE_SQL,
     aclCheckSql, checkAdvisoryLock, checkRuntime, connectionUrl, databaseEnvironment, grantSql, parseLogging,
-    main, migrationChecks, passwordCommands, prismaCommand, runNative, runProcessGroup, setPassword, validateEnvironment, validatePassword } from './staging-db-bootstrap.mjs';
+    importedPrerequisite, main, migrationChecks, passwordCommands, prismaCommand, runNative, runProcessGroup, setPassword, validateEnvironment, validatePassword } from './staging-db-bootstrap.mjs';
 import { BRANCH, PROJECT_REF, STAGING_CA_PATH } from './staging-db-precheck.mjs';
+import { parseSnapshot } from './staging-backup-rehearsal.mjs';
 
 const SHA = 'a'.repeat(40);
 const PASSWORD = 's'.repeat(64); // Synthetic fixture, not a credential.
@@ -208,6 +209,39 @@ function orchestration(overrides = {}) {
         prepare: () => ({ bin: '/pinned' }), start: () => ({ stop() { events.push('STOP'); } }),
         rehearse: async () => ({ names: [] }), cleanup: () => events.push('CLEANUP'), publishResult: () => events.push('PUBLISH'), ...overrides } };
 }
+
+test('imported snapshot rejection retains a fixed stage and reason without raw snapshot content', () => {
+    assert.throws(() => importedPrerequisite('REMOTE_SNAPSHOT', () => parseSnapshot(PASSWORD)),
+        error => error.message === 'REMOTE_SNAPSHOT_SNAPSHOT_INVALID' && error.code === error.message);
+    const marker = {};
+    assert.equal(importedPrerequisite('TOOLCHAIN', () => marker), marker);
+});
+
+test('imported toolchain failure reports only allowlisted constants and still cleans up', async () => {
+    const { events, options } = orchestration({ prepare() {
+        throw Object.assign(new Error(PASSWORD), { code: 'APT_METADATA_FAILED', stdout: PASSWORD, stderr: PASSWORD });
+    } });
+    assert.equal(await main(options), 1);
+    assert.deepEqual(events, ['STAGING_BOOTSTRAP_FAILED TOOLCHAIN_APT_METADATA_FAILED', 'CLEANUP']);
+});
+
+test('imported diagnostics reject unknown, inherited, accessor and hostile error codes without coercion', () => {
+    let touched = 0;
+    const hostile = { toString() { touched++; throw new Error(PASSWORD); } };
+    const accessor = Object.defineProperty({}, 'code', { get() { touched++; throw new Error(PASSWORD); } });
+    const errors = [null, undefined, PASSWORD, new Error(PASSWORD), { code: PASSWORD },
+        { code: 'SNAPSHOT_INVALID' }, { code: 'APT_METADATA_FAILED\n' + PASSWORD }, { code: hostile },
+        Object.create({ code: 'APT_METADATA_FAILED' }), accessor,
+        new Proxy({}, { getOwnPropertyDescriptor() { throw new Error(PASSWORD); } })];
+    for (const error of errors) {
+        assert.throws(() => importedPrerequisite('TOOLCHAIN', () => { throw error; }),
+            failure => failure.message === 'TOOLCHAIN_INTERNAL_FAILURE' && failure.code === failure.message);
+    }
+    assert.equal(touched, 0);
+    assert.throws(() => importedPrerequisite(hostile, () => assert.fail('must not execute')), /DIAGNOSTIC_STAGE_INVALID/);
+    assert.throws(() => importedPrerequisite(PASSWORD, () => assert.fail('must not execute')), /DIAGNOSTIC_STAGE_INVALID/);
+    assert.equal(touched, 0);
+});
 test('self-check completion is emitted only after stop cleanup and safe publish', async () => {
     const { events, options } = orchestration(); assert.equal(await main(options), 0);
     assert.deepEqual(events.slice(0, 3), ['STOP', 'CLEANUP', 'PUBLISH']);

@@ -28,6 +28,29 @@ class SafeError extends Error { constructor(code) { super(code); this.code = cod
 const fail = code => { throw new SafeError(code); };
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 
+// Imported helpers own a different SafeError class. Translate only their known
+// synchronous boundary failures; never serialize an error or invoke its getters.
+const IMPORTED_FAILURES = Object.freeze({
+    TOOLCHAIN: Object.freeze(['TOOLCHAIN_PLATFORM_INVALID', 'TOOL_FAILED', 'SIGNING_KEY_INVALID',
+        'APT_METADATA_FAILED', 'APT_DOWNLOAD_FAILED', 'PACKAGE_HASH_INVALID', 'PACKAGE_EXTRACT_FAILED',
+        'NATIVE_DEPENDENCY_MISSING', 'TOOL_VERSION_INVALID', 'SDK_INSTALL_FAILED']),
+    REMOTE_SNAPSHOT: Object.freeze(['SNAPSHOT_INVALID']),
+});
+export function importedPrerequisite(stage, operation) {
+    if (typeof stage !== 'string' || !Object.hasOwn(IMPORTED_FAILURES, stage)) fail('DIAGNOSTIC_STAGE_INVALID');
+    try { return operation(); }
+    catch (error) {
+        let candidate;
+        try {
+            const descriptor = Object.getOwnPropertyDescriptor(error, 'code');
+            if (descriptor && Object.hasOwn(descriptor, 'value') && typeof descriptor.value === 'string') candidate = descriptor.value;
+        } catch { /* Unknown values and hostile proxies remain unclassified. */ }
+        // find returns a source-owned constant, never the untrusted candidate.
+        const reason = IMPORTED_FAILURES[stage].find(value => value === candidate) || 'INTERNAL_FAILURE';
+        fail(`${stage}_${reason}`);
+    }
+}
+
 // Values never leave the child: only fixed-key boolean controls are returned.
 // Unknown hooks, pgAudit configurations and statement-statistics paths fail closed.
 export const LOGGING_CONTROLS = Object.freeze({
@@ -380,10 +403,11 @@ export async function main({ mode = process.argv[2], env = process.env, log = co
         const sha = validateEnvironment(env, head, mode);
         run('/usr/bin/git', ['diff', '--exit-code', 'HEAD', '--', 'server']);
         if (mode !== '--self-check' && !validateStagingCa(readFileSync(STAGING_CA_PATH))) fail('CA_INVALID');
-        workspace = workspaceFactory(); const tools = prepare(workspace);
+        workspace = workspaceFactory(); const tools = importedPrerequisite('TOOLCHAIN', () => prepare(workspace));
         if (mode === '--readiness') {
             const remote = databaseEnvironment(env.STAGING_DB_ADMIN_PASSWORD, { readOnly: true });
-            parseSnapshot(sql(tools.bin, remote, SNAPSHOT_SQL));
+            const snapshot = sql(tools.bin, remote, SNAPSHOT_SQL);
+            importedPrerequisite('REMOTE_SNAPSHOT', () => parseSnapshot(snapshot));
             const logging = parseLogging(sql(tools.bin, remote, LOGGING_SQL));
             log(`STAGING_BOOTSTRAP_READINESS ${JSON.stringify({ sha, project_ref: PROJECT_REF, logging, remote_writes: 0 })}`);
             if (logging.status !== 'VERIFIED') fail('LOGGING_PREFLIGHT_UNVERIFIED');
@@ -392,7 +416,8 @@ export async function main({ mode = process.argv[2], env = process.env, log = co
             const prepared = await rehearse(workspace, tools, local);
             if (mode === '--apply') {
                 const admin = databaseEnvironment(env.STAGING_DB_ADMIN_PASSWORD);
-                parseSnapshot(sql(tools.bin, { ...admin, PGOPTIONS: `${admin.PGOPTIONS} -c default_transaction_read_only=on` }, SNAPSHOT_SQL));
+                const snapshot = sql(tools.bin, { ...admin, PGOPTIONS: `${admin.PGOPTIONS} -c default_transaction_read_only=on` }, SNAPSHOT_SQL);
+                importedPrerequisite('REMOTE_SNAPSHOT', () => parseSnapshot(snapshot));
                 const logging = parseLogging(sql(tools.bin, admin, LOGGING_SQL));
                 if (logging.status !== 'VERIFIED') fail('LOGGING_PREFLIGHT_UNVERIFIED');
                 // Role must preexist, be unprivileged/unowned, and have no memberships.
