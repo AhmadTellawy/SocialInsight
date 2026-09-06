@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Tag, X, Plus, Trash2, Globe, Users, ChevronDown, Clock, Calendar, Type, ListChecks, ImageIcon, Settings, Info, ArrowRight, Camera, Lock, AlertCircle, ChevronRight, ChevronLeft, MoreVertical, Layout, Terminal, Navigation, Sparkles, GripVertical, Save, FileText, BarChart3, UserCircle, Heart, Fingerprint, MapPin, Briefcase, Check, GraduationCap, Home, Smile, Building2, User, MessageSquare, ShieldCheck, Link2, Target, MoreHorizontal, ArrowUp, ArrowDown, Star, List, LayoutGrid, CornerDownRight, PowerOff } from 'lucide-react';
+import { Tag, X, Plus, Trash2, Globe, Users, ChevronDown, Clock, Calendar, Type, ListChecks, ImageIcon, Settings, Info, ArrowRight, Camera, Lock, AlertCircle, ChevronRight, ChevronLeft, MoreVertical, Layout, Terminal, Navigation, Sparkles, GripVertical, Save, FileText, BarChart3, UserCircle, Heart, Fingerprint, MapPin, Briefcase, Check, GraduationCap, Home, Smile, Building2, User, MessageSquare, ShieldCheck, Link2, Target, MoreHorizontal, ArrowUp, ArrowDown, Star, List, GalleryHorizontalEnd, CornerDownRight, PowerOff } from 'lucide-react';
 import { Survey, SurveyType, UserProfile, Group, MediaDraft } from '../types';
 import { useTranslation } from 'react-i18next';
 import { BottomSheet } from './BottomSheet';
@@ -314,10 +314,6 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
       newErrors.title = true;
     }
 
-    if (!category) {
-      errorList.push("Survey Category is required.");
-      newErrors.category = true;
-    }
 
     if (mode === 'publish' && !visibility) {
       newErrors.visibility = 'Select at least one destination.';
@@ -954,7 +950,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                             <div className="flex gap-1.5">
                               {[
                                 { id: 'vertical', label: 'List', icon: List },
-                                { id: 'horizontal', label: 'Grid', icon: LayoutGrid }
+                                { id: 'horizontal', label: 'Grid', icon: GalleryHorizontalEnd }
                               ].map((layout) => (
                                 <button
                                   key={layout.id}
@@ -1025,6 +1021,12 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                     </div>
                                   </div>
                                 ))}
+                            <div className="flex items-center gap-2 opacity-60 transition-opacity hover:opacity-90 focus-within:opacity-100">
+                              <div className="flex-1 rounded-xl border border-dashed border-gray-200 bg-gray-50/50 px-1 py-1">
+                                <input dir="auto" type="text" placeholder="Add option..." className="w-full cursor-pointer bg-transparent p-2 text-[12px] leading-relaxed text-start font-normal text-gray-600 placeholder-gray-500 focus:outline-none" onFocus={() => handleAddSurveyOption(activeSection.id, q.id)} />
+                              </div>
+                            </div>
+
                                 {q.options?.some(draftOptionHasImage) && (
                                   <button type="button" onClick={controls.openBulk} className="flex min-h-11 items-center gap-2 px-1 text-xs font-bold text-blue-600"><Plus size={15} aria-hidden="true" />{t('answerType.addMoreImages')}</button>
                                 )}
@@ -1343,6 +1345,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
         title="Select Category"
       >
         <div className="flex flex-wrap gap-2 py-2">
+          <button type="button" onClick={() => { setCategory(''); setIsCategorySheetOpen(false); }} className="px-4 py-2 rounded-full text-xs font-bold border border-gray-200 bg-white text-gray-600">Clear category</button>
           {SURVEY_CATEGORIES.map(cat => (
             <button
               key={cat}

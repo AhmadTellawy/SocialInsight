@@ -1,12 +1,13 @@
-import React from 'react';
-import { Link2, Target, UserRound, Users } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { ChevronRight, Link2, Target, UserRound, Users } from 'lucide-react';
+import { GroupSelectionPage, PostableGroup } from './GroupSelectionPage';
 
 interface Props {
   value: string;
   onChange: (value: any) => void;
   selectedGroupIds: string[];
   onGroupsChange: (ids: string[]) => void;
-  groups: { id: string; name: string; image?: string; role?: string; postingPermissions?: string; memberCount?: number }[];
+  groups: PostableGroup[];
   allowCustomAudience: boolean;
   allowCustomDomain: boolean;
   error?: string | false;
@@ -14,13 +15,19 @@ interface Props {
 }
 
 export const PostVisibilitySection: React.FC<Props> = ({ value, onChange, selectedGroupIds, onGroupsChange, groups, allowCustomAudience, allowCustomDomain, error, accent = 'blue' }) => {
+  const [groupPageOpen, setGroupPageOpen] = useState(false);
+  useEffect(() => { if (!value) onChange('Public'); }, [value, onChange]);
   const profile = value === 'Public' || value === 'ProfileAndGroups';
   const selectedGroups = value === 'Groups' || value === 'ProfileAndGroups';
   const color = { blue: 'accent-blue-600', purple: 'accent-purple-600', amber: 'accent-amber-600' }[accent];
   const changeDestination = (id: string) => {
-    if (id === 'Public') onChange(profile ? (selectedGroups ? 'Groups' : '') : (selectedGroups ? 'ProfileAndGroups' : 'Public'));
-    else if (id === 'Groups') onChange(selectedGroups ? (profile ? 'Public' : '') : (profile ? 'ProfileAndGroups' : 'Groups'));
-    else onChange(value === id ? '' : id);
+    if (id === 'Public') {
+      if (profile && !selectedGroups) return;
+      onChange(profile ? 'Groups' : (selectedGroups ? 'ProfileAndGroups' : 'Public'));
+    } else if (id === 'Groups') {
+      if (!selectedGroups) setGroupPageOpen(true);
+      else if (profile) { onGroupsChange([]); onChange('Public'); }
+    } else if (value !== id) onChange(id);
   };
   const destinations = [
     { id: 'Public', label: 'My Profile', icon: UserRound, selected: profile, allowed: true },
@@ -31,22 +38,25 @@ export const PostVisibilitySection: React.FC<Props> = ({ value, onChange, select
   const postable = groups.filter(g => g.role === 'Owner' || g.role === 'Admin' || g.postingPermissions === 'AllMembers' || g.postingPermissions === 'ApprovalNeeded');
   return <section aria-labelledby="post-visibility-heading" className="border-y border-gray-100 py-4 space-y-3">
     <h2 id="post-visibility-heading" className="text-sm font-bold text-gray-900">Post visibility</h2>
-    <p className="text-xs text-gray-500">Choose where to post. You can select your profile and groups together.</p>
+    <p className="text-xs text-gray-500">Keep at least one destination selected. You can select your profile and groups together.</p>
     <div className="divide-y divide-gray-100">
-      {value === 'Followers' && <p className="text-xs text-gray-600 py-2">This draft is visible to followers. Select a destination below to change it.</p>}
-      {destinations.map(({ id, label, icon: Icon, selected, allowed }) => <label key={id} className={`flex items-center gap-3 py-3 min-h-[48px] ${allowed ? 'cursor-pointer' : 'opacity-40 cursor-not-allowed'}`}>
+      {value === 'Followers' && <label className="flex items-center gap-3 py-3 text-xs text-gray-600"><span className="flex-1">Followers (saved audience)</span><input type="checkbox" aria-label="Followers (saved audience)" checked disabled className="w-5 h-5" /></label>}
+      {destinations.map(({ id, label, icon: Icon, selected, allowed }) => id === 'Groups' ? <div key={id} className="flex items-center gap-3 min-h-[48px]">
+        <button type="button" onClick={() => setGroupPageOpen(true)} className="flex-1 min-w-0 flex items-center gap-3 py-3 text-start" aria-label="Choose selected groups" aria-haspopup="dialog">
+          <Icon size={20} className="text-gray-700 shrink-0" />
+          <span className="flex-1 text-[12px] font-bold text-gray-800">{label}{selected && <span className="block text-xs font-normal text-gray-500">{selectedGroupIds.length} selected</span>}</span>
+          <ChevronRight size={16} className="text-gray-400 rtl:rotate-180" />
+        </button>
+        <label className="min-w-11 min-h-11 flex items-center justify-center cursor-pointer">
+          <input type="checkbox" aria-label={label} checked={selected} onChange={() => changeDestination(id)} className={`w-5 h-5 shrink-0 ${color}`} />
+        </label>
+      </div> : <label key={id} className={`flex items-center gap-3 py-3 min-h-[48px] ${allowed ? 'cursor-pointer' : 'opacity-40 cursor-not-allowed'}`}>
         <Icon size={20} className="text-gray-700 shrink-0" />
         <span className="flex-1 text-[12px] font-bold text-gray-800">{label}</span>
         <input type="checkbox" aria-label={label} checked={selected} disabled={!allowed} onChange={() => changeDestination(id)} className={`w-5 h-5 shrink-0 ${color}`} />
       </label>)}
     </div>
-    {selectedGroups && <fieldset className="p-3 bg-gray-50 rounded-xl space-y-2">
-      <legend className="text-xs font-bold text-gray-700 px-1">Select target groups</legend>
-      {postable.length ? postable.map(group => <label key={group.id} className="flex items-center gap-3 min-h-[44px] py-2 cursor-pointer">
-        <span dir="auto" className="flex-1 min-w-0 text-start text-xs break-words">{group.name}</span>
-        <input type="checkbox" aria-label={group.name} checked={selectedGroupIds.includes(group.id)} onChange={() => onGroupsChange(selectedGroupIds.includes(group.id) ? selectedGroupIds.filter(id => id !== group.id) : [...selectedGroupIds, group.id])} className={`w-5 h-5 shrink-0 ${color}`} />
-      </label>) : <p className="text-xs text-gray-500 py-2">You don't have permission to post in any groups.</p>}
-    </fieldset>}
+    {groupPageOpen && <GroupSelectionPage groups={postable} selectedIds={selectedGroups ? selectedGroupIds : []} accent={accent} onClose={() => setGroupPageOpen(false)} onSave={ids => { onGroupsChange(ids); onChange(profile ? 'ProfileAndGroups' : 'Groups'); setGroupPageOpen(false); }} />}
     {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
   </section>;
 };

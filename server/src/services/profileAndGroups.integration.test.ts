@@ -212,3 +212,36 @@ test('eligible profile follower and group member persist actual votes and commen
   assert.equal(counters.responseCount, 2);
   assert.equal(counters.commentsCount, 2);
 });
+
+test('Quiz create/update preserves an empty title and optional category while other types retain fallback', async () => {
+  for (const title of [undefined, '', '   ']) {
+    const created = responseState();
+    await createPost(request(ids.pub, '', { type: 'Quiz', title, description: '', targetAudience: 'Public' }), created.response);
+    assert.equal(created.state.status, 200, JSON.stringify(created.state.body));
+    const postId = created.state.body.id;
+    const stored = await prisma.post.findUniqueOrThrow({ where: { id: postId } });
+    assert.equal(stored.type, 'Quiz');
+    assert.equal(stored.title, '');
+    assert.equal(stored.category, null);
+    assert.equal(stored.description, '');
+
+    const titled = responseState();
+    await updatePost(request(ids.pub, postId, { title: 'Explicit existing title', category: 'Science' }), titled.response);
+    assert.equal(titled.state.status, 200, JSON.stringify(titled.state.body));
+    assert.equal((await prisma.post.findUniqueOrThrow({ where: { id: postId } })).title, 'Explicit existing title');
+    const cleared = responseState();
+    await updatePost(request(ids.pub, postId, { title: '', category: '' }), cleared.response);
+    assert.equal(cleared.state.status, 200, JSON.stringify(cleared.state.body));
+    const updated = await prisma.post.findUniqueOrThrow({ where: { id: postId } });
+    assert.equal(updated.title, '');
+    assert.equal(updated.category, '');
+  }
+  const explicitQuiz = responseState();
+  await createPost(request(ids.pub, '', { type: 'Quiz', title: 'Explicit Quiz title', targetAudience: 'Public' }), explicitQuiz.response);
+  assert.equal(explicitQuiz.state.status, 200, JSON.stringify(explicitQuiz.state.body));
+  assert.equal((await prisma.post.findUniqueOrThrow({ where: { id: explicitQuiz.state.body.id } })).title, 'Explicit Quiz title');
+  const legacy = responseState();
+  await createPost(request(ids.pub, '', { type: 'Post', title: '', targetAudience: 'Public' }), legacy.response);
+  assert.equal(legacy.state.status, 200, JSON.stringify(legacy.state.body));
+  assert.equal((await prisma.post.findUniqueOrThrow({ where: { id: legacy.state.body.id } })).title, 'Untitled');
+});

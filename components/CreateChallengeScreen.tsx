@@ -356,11 +356,6 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
       newErrors.media = "Please finish or remove image uploads.";
       isValid = false;
     }
-    if (!category) {
-      newErrors.category = "Please select a category";
-      isValid = false;
-      setIsCategorySheetOpen(true);
-    }
     if (includeAudience && !visibility) {
       newErrors.visibility = 'Select at least one destination.';
       isValid = false;
@@ -1016,6 +1011,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
 
       <BottomSheet isOpen={isCategorySheetOpen} onClose={() => setIsCategorySheetOpen(false)} title="Select Category">
         <div className="flex flex-wrap gap-2 py-2">
+          <button type="button" onClick={() => { setCategory(''); setIsCategorySheetOpen(false); }} className="px-4 py-2 rounded-full text-xs font-bold border border-gray-200 bg-white text-gray-600">Clear category</button>
           {CHALLENGE_CATEGORIES.map(cat => (
             <button key={cat} onClick={() => { setCategory(cat); setErrors(previous => ({ ...previous, category: false })); setIsCategorySheetOpen(false); }} className={`px-4 py-2 rounded-full text-xs font-bold border transition-all ${category === cat ? 'bg-amber-600 text-white border-amber-600 shadow-md' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>{cat}</button>
           ))}

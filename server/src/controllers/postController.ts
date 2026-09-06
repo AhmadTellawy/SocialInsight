@@ -760,7 +760,9 @@ export const createPost = async (req: Request, res: Response) => {
 
         const targetGroupIds = Array.isArray(data.targetGroups) ? data.targetGroups : [];
         const postData: any = {
-            title: data.title || "Untitled",
+            title: normalizePostType(data.type) === 'Quiz'
+                ? (typeof data.title === 'string' ? data.title.trim() : '')
+                : (data.title || "Untitled"),
             description: data.description || "",
             type: normalizePostType(data.type) || "Post",
             authorId: authorId,

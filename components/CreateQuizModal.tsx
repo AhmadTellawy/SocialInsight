@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { X, Plus, Trash2, Globe, Users, ChevronDown, Clock, Calendar, Type, ListChecks, ImageIcon, Settings, Info, ArrowRight, Camera, Lock, AlertCircle, ChevronRight, ChevronLeft, MoreHorizontal, Layout, Terminal, Navigation, Sparkles, GripVertical, Save, FileText, BarChart3, UserCircle, Heart, Fingerprint, MapPin, Briefcase, Check, GraduationCap, Home, Smile, Building2, User, MessageSquare, ShieldCheck, Link2, Target, MoreHorizontal as MoreHorizontalIcon, ArrowUp, ArrowDown, Star, List, LayoutGrid, CornerDownRight, PowerOff, CheckCircle2, ArrowLeft, Tag } from 'lucide-react';
+import { X, Plus, Trash2, Globe, Users, ChevronDown, Clock, Calendar, Type, ListChecks, ImageIcon, Settings, Info, ArrowRight, Camera, Lock, AlertCircle, ChevronRight, ChevronLeft, MoreHorizontal, Layout, Terminal, Navigation, Sparkles, GripVertical, Save, FileText, BarChart3, UserCircle, Heart, Fingerprint, MapPin, Briefcase, Check, GraduationCap, Home, Smile, Building2, User, MessageSquare, ShieldCheck, Link2, Target, MoreHorizontal as MoreHorizontalIcon, ArrowUp, ArrowDown, Star, List, GalleryHorizontalEnd, CornerDownRight, PowerOff, CheckCircle2, ArrowLeft, Tag } from 'lucide-react';
 import { Survey, SurveyType, UserProfile, Group, MediaDraft } from '../types';
 import { useTranslation } from 'react-i18next';
 import { BottomSheet } from './BottomSheet';
@@ -292,10 +292,6 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
       newErrors.userProfile = "User profile not found. Please log in.";
     }
 
-    if (!category) {
-      errorList.push("Quiz Category is required.");
-      newErrors.category = true;
-    }
 
     if (includeAudience && !visibility) {
       newErrors.visibility = 'Select at least one destination.';
@@ -362,8 +358,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
       return;
     }
     if (onSaveDraft) {
-      const firstQuestion = sections[0]?.questions[0];
-      const computedTitle = title.trim() || firstQuestion?.text.trim() || 'Untitled Quiz';
+      const computedTitle = title.trim();
 
       const draftData: Partial<Survey> = {
         id: draft?.id,
@@ -426,8 +421,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
       return;
     }
 
-    const firstQuestion = sections[0]?.questions[0];
-    const computedTitle = title.trim() || firstQuestion?.text.trim() || 'Untitled Quiz';
+    const computedTitle = title.trim();
 
     try {
       setIsSubmitting(true);
@@ -633,7 +627,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                   value={description}
                   onChange={(val) => setDescription(val)}
                   placeholder="Describe what this quiz is about (optional)..."
-                  className="mt-1.5 text-[16px] leading-6 text-start text-gray-500 bg-transparent border-b border-gray-100 focus:outline-none focus:border-purple-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[32px]"
+                  className="mt-1.5 text-[12px] leading-relaxed text-start font-normal text-gray-900 bg-transparent border-b border-gray-100 focus:outline-none focus:border-purple-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[32px]"
                   minRows={1}
                 />
               </div>
@@ -802,7 +796,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                         />
                       </div>
 
-                      {q.type === 'multiple_choice' && optionPresentation === 'image' && (<div className="flex items-center justify-between pt-2"><span className="text-xs font-bold text-gray-500">Options layout</span><div className="flex gap-2">{[{ id: 'vertical', label: 'List', icon: List }, { id: 'horizontal', label: 'Grid', icon: LayoutGrid }].map(layout => <button type="button" key={layout.id} aria-label={`${layout.label} options layout`} aria-pressed={q.imageLayout === layout.id} onClick={() => updateQuestion(activeSection.id, q.id, { imageLayout: layout.id as 'vertical' | 'horizontal' })} className={`p-2 rounded-lg border ${q.imageLayout === layout.id ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-500 border-gray-200'}`}><layout.icon size={16} /></button>)}</div></div>)}
+                      {q.type === 'multiple_choice' && optionPresentation === 'image' && (<div className="flex items-center justify-between pt-2"><span className="text-xs font-bold text-gray-500">Options layout</span><div className="flex gap-2">{[{ id: 'vertical', label: 'List', icon: List }, { id: 'horizontal', label: 'Grid', icon: GalleryHorizontalEnd }].map(layout => <button type="button" key={layout.id} aria-label={`${layout.label} options layout`} aria-pressed={q.imageLayout === layout.id} onClick={() => updateQuestion(activeSection.id, q.id, { imageLayout: layout.id as 'vertical' | 'horizontal' })} className={`p-2 rounded-lg border ${q.imageLayout === layout.id ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-500 border-gray-200'}`}><layout.icon size={16} /></button>)}</div></div>)}
                       {q.type === 'multiple_choice' && (
                         <div className="space-y-3 pt-2 border-t border-gray-50">
                           <div className="flex items-center justify-between px-1 mb-1">
@@ -1284,6 +1278,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
       {/* Category Bottom Sheet */}
       <BottomSheet isOpen={isCategorySheetOpen} onClose={() => setIsCategorySheetOpen(false)} title="Select Category">
         <div className="flex flex-wrap gap-2 py-2">
+          <button type="button" onClick={() => { setCategory(''); setIsCategorySheetOpen(false); }} className="px-4 py-2 rounded-full text-xs font-bold border border-gray-200 bg-white text-gray-600">Clear category</button>
           {QUIZ_CATEGORIES.map(cat => (
             <button key={cat} onClick={() => { setCategory(cat); setErrors(previous => ({ ...previous, category: false })); setIsCategorySheetOpen(false); }} className={`px-4 py-2 rounded-full text-xs font-bold border transition-all ${category === cat ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-650 border-gray-200 hover:bg-gray-50'}`}>{cat}</button>
           ))}

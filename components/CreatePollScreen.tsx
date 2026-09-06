@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { X, Image as ImageIcon, Plus, Trash2, Globe, Users, AlertCircle, Clock, Calendar, ChevronDown, List, Info, Lock, Camera, Save, BarChart3, Check, ChevronRight, UserCircle, Target, Link2, LayoutGrid, Settings2, Star, MoreHorizontal, ArrowUp, ArrowDown, MessageSquare, ArrowLeft, Tag } from 'lucide-react';
+import { X, Image as ImageIcon, Plus, Trash2, Globe, Users, AlertCircle, Clock, Calendar, ChevronDown, List, Info, Lock, Camera, Save, BarChart3, Check, ChevronRight, UserCircle, Target, Link2, GalleryHorizontalEnd, Settings2, Star, MoreHorizontal, ArrowUp, ArrowDown, MessageSquare, ArrowLeft, Tag } from 'lucide-react';
 import { Survey, SurveyType, UserProfile, Option, Group, DraftOption, MediaDraft } from '../types';
 import { useTranslation } from 'react-i18next';
 import { BottomSheet } from './BottomSheet';
@@ -466,11 +466,6 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
       isValid = false;
     }
 
-    if (!category) {
-      newErrors.category = "Please select a category";
-      isValid = false;
-      setIsCategorySheetOpen(true);
-    }
     if (includeAudience && !visibility) {
       newErrors.visibility = 'Select at least one destination.';
       isValid = false;
@@ -479,10 +474,6 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
       newErrors.visibility = "Please select at least one group.";
       isValid = false;
 
-    }
-    if (category === 'Other' && !otherCategoryText.trim()) {
-      newErrors.otherCategoryText = true;
-      isValid = false;
     }
 
     setErrors(newErrors);
@@ -684,7 +675,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   <div className="flex gap-1">
                     {[
                       { id: 'vertical', label: 'List', icon: List },
-                      { id: 'horizontal', label: 'Grid', icon: LayoutGrid }
+                      { id: 'horizontal', label: 'Grid', icon: GalleryHorizontalEnd }
                     ].map((layout) => {
                       const Icon = layout.icon;
                       const isActive = imageLayout === layout.id;
@@ -785,6 +776,19 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                         </button>
                       </div>
                     ))}
+
+                <div className="flex items-center gap-2 opacity-60 transition-opacity hover:opacity-90 focus-within:opacity-100">
+                  <span className="w-4 shrink-0 text-center text-xs font-black text-gray-400">{options.length + 1}</span>
+                  <div className="flex-1 rounded-xl border border-dashed border-gray-200 bg-gray-50/30 px-2 py-0.5">
+                    <input dir="auto"
+                      type="text"
+                      placeholder="Add option..."
+                      className="w-full cursor-pointer bg-transparent px-2.5 py-1.5 text-[12px] leading-relaxed text-start font-normal text-gray-600 placeholder-gray-500 focus:outline-none"
+                      onFocus={handleAddOption}
+                    />
+                  </div>
+                  <span className="h-10 w-10 shrink-0" />
+                </div>
 
                     {options.some(draftOptionHasImage) && (
                       <button
@@ -1224,6 +1228,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
         title="Select Category"
       >
         <div className="flex flex-wrap gap-2 py-2 animate-in fade-in duration-200">
+          <button type="button" onClick={() => { setCategory(''); setOtherCategoryText(''); setIsCategorySheetOpen(false); }} className="px-4 py-2 rounded-full text-xs font-bold border border-gray-200 bg-white text-gray-600">Clear category</button>
           {POLL_CATEGORIES.map(cat => (
             <button
               key={cat}

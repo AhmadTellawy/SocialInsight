@@ -1425,8 +1425,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         <div className="w-16 h-16 bg-purple-100 text-purple-600 rounded-[1.5rem] flex items-center justify-center mb-6 shadow-sm">
           <Play size={32} fill="currentColor" className="ml-1" />
         </div>
-        <h3 dir="auto" className="text-[12px] text-start leading-relaxed font-normal text-gray-900 mb-2 w-full">{sourceSurvey.title}</h3>
-        <p dir="auto" className="text-base text-start leading-relaxed text-gray-500 mb-8 w-full">{sourceSurvey.description || t('Test your knowledge in this challenge.')}</p>
+        {sourceSurvey.title?.trim() && <h3 dir="auto" className="text-[12px] text-start leading-relaxed font-normal text-gray-900 mb-2 w-full">{sourceSurvey.title}</h3>}
+        {hasDescription && <p dir="auto" className="text-base text-start leading-relaxed text-gray-500 mb-8 w-full">{sourceSurvey.description}</p>}
         <div className="flex items-center gap-4 mb-8">
           <div className="flex flex-col items-center">
             <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{t('Challenges')}</span>
@@ -2009,7 +2009,13 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     if ((surveyCompleted || isExpired) && isSurveyMode) {
       return survey.type === SurveyType.QUIZ ? renderQuizCompletion() : renderSurveyCompletion();
     }
-    return renderPollStandard();
+    const singleQuizQuestion = isQuizNoTimeLimit && flatQuestions.length === 1 ? flatQuestions[0] : null;
+    return <>
+      {singleQuizQuestion?.text?.trim() && singleQuizQuestion.text.trim() !== sourceSurvey.title?.trim() && (
+        <h3 dir="auto" className="text-[12px] text-start font-normal text-gray-900 leading-relaxed mb-3 break-words">{resolveDynamicText(singleQuizQuestion.text)}</h3>
+      )}
+      {renderPollStandard()}
+    </>;
   };
 
   const renderDemographicStep = () => {
@@ -2220,9 +2226,9 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
               </button>
             </div>
 
-            <div className={isTextOnlyPoll ? "mb-2" : "mb-4"}>
-              <div className="flex items-start gap-2 mb-2">
-                <div className="flex-1 min-w-0">
+            <div className={sourceSurvey.title?.trim() || hasDescription || hasPostMedia ? (isTextOnlyPoll ? "mb-2" : "mb-4") : undefined}>
+              {(sourceSurvey.title?.trim() || sourceSurvey.isTrending) && <div className="flex items-start gap-2 mb-2">
+                {sourceSurvey.title?.trim() && <div className="flex-1 min-w-0">
                   <h2
                     dir="auto" style={{ textAlign: 'start' }}
                     onClick={onContentClick}
@@ -2235,9 +2241,9 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                       ... {t('See more')}
                     </button>
                   )}
-                </div>
+                </div>}
                 {sourceSurvey.isTrending && <span className="inline-flex items-center gap-1 bg-red-50 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 mt-1"><TrendingUp size={10} /> {t('Hot')}</span>}
-              </div>
+              </div>}
 
               {/* Cover image / chips block */}
               {isCoverImagePollCard

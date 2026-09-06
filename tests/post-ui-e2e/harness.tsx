@@ -40,7 +40,9 @@ function StepCreator({ Creator, mode }: { Creator: any; mode: string }) {
     const questionId = mode === 'quiz' ? 'q-quiz-init-1' : 'q-init-1';
     return {
       ...survey,
-      title: 'Steps fixture title',
+      title: params.has('blankQuiz') ? '' : 'Steps fixture title',
+      isTrending: params.has('blankQuiz'),
+      description: params.has('blankQuiz') ? '' : survey.description,
       category: params.has('missingCategory') ? '' : 'Sports',
       type: ({ poll: SurveyType.POLL, survey: SurveyType.SURVEY, quiz: SurveyType.QUIZ, challenge: SurveyType.CHALLENGE } as any)[mode],
       options: draftOptions,
@@ -49,7 +51,7 @@ function StepCreator({ Creator, mode }: { Creator: any; mode: string }) {
       targetAudience: params.has('initialBoth') ? 'ProfileAndGroups' : 'Public',
       targetGroups: params.has('initialBoth') ? ['fixture-group'] : [],
       demographics: [],
-      sections: [{ id: sectionId, title: 'Fixture section', questions: [0, 1].map(index => ({
+      sections: [{ id: sectionId, title: 'Fixture section', questions: (params.has('singleQuiz') ? [0] : [0, 1]).map(index => ({
         id: index ? 'step-question-2' : questionId, text: `Fixture question ${index + 1}`, type: 'multiple_choice',
         optionPresentation: imageMode ? 'image' : 'text', showOptionNames: !params.has('legacyHidden'),
         imageLayout: 'horizontal', isRequired: true, weight: 10, options: draftOptions,
@@ -60,16 +62,17 @@ function StepCreator({ Creator, mode }: { Creator: any; mode: string }) {
   const [submission, setSubmission] = useState({ count: 0, payload: null as any });
   const [savedDraft, setSavedDraft] = useState(null as any);
   return <MemoryRouter>
-    <Creator
+    {(!params.has('publishPreview') || !submission.payload) && <Creator
       draft={draft} isOpen onClose={() => {}}
       onSaveDraft={(payload: any) => setSavedDraft(payload)}
       onSubmit={async (payload: any) => {
         setSubmission(current => ({ count: current.count + 1, payload }));
         await new Promise(resolve => setTimeout(resolve, 150));
       }}
-      userGroups={[{ id: 'fixture-group', name: 'Fixture Group', role: 'Owner', memberCount: 3 }, { id: 'forbidden-group', name: 'Unavailable Group', role: 'Member', postingPermissions: 'AdminsOnly' }]}
+      userGroups={[{ id: 'fixture-group', name: 'Fixture Group', role: 'Owner', memberCount: 3 }, { id: 'second-group', name: 'Second Group', role: 'Admin', memberCount: 12 }, { id: 'forbidden-group', name: 'Unavailable Group', role: 'Member', postingPermissions: 'AdminsOnly' }]}
       userProfile={{ id: 'fixture-viewer', name: 'Test', handle: 'fixture', groups: [], interests: [], type: 'Personal', stats: { followers: params.has('verified') ? 2000 : 0 } }}
-    />
+    />}
+    {params.has('publishPreview') && submission.payload && <main data-testid="published-preview" className="max-w-[680px] mx-auto"><SurveyCard survey={{ ...survey, ...submission.payload, isTrending: draft.isTrending, id: 'created-preview', participants: 0 }} isDetailView /></main>}
     <output hidden data-testid="step-submit-count">{submission.count}</output>
     <output hidden data-testid="step-submit-payload">{JSON.stringify(submission.payload)}</output>
     <output hidden data-testid="step-saved-draft">{JSON.stringify(savedDraft)}</output>
@@ -80,6 +83,7 @@ function Harness() {
   const [voted, setVoted] = useState(false);
   const mode = params.get('create');
   const Creator = ({ poll: CreatePollScreen, survey: CreateSurveyModal, quiz: CreateQuizModal, challenge: CreateChallengeScreen } as any)[mode || ''];
+  if (params.has('blankTimedQuiz')) return <MemoryRouter><main data-testid="timed-preview" className="max-w-[680px] mx-auto"><SurveyCard survey={{ ...survey, title: '', description: '', isTrending: true, type: SurveyType.QUIZ, config: { timeLimit: 5 }, quizTimeLimit: 5, sections: [{ id: 'timed-section', title: '', questions: [{ id: 'timed-question', text: 'Timed fixture question', type: 'multiple_choice', options, correctOptionId: 'option-0' }] }] }} isDetailView /></main></MemoryRouter>;
   if (Creator && params.has('creatorSteps')) return <StepCreator Creator={Creator} mode={mode!} />;
   if (params.has('challenge')) return <MemoryRouter><main className="max-w-[680px] mx-auto bg-white" data-testid="challenge"><SurveyCard survey={{ ...survey, type: SurveyType.CHALLENGE }} isDetailView onVote={() => true} /></main></MemoryRouter>;
   if (params.has('repost')) return <MemoryRouter><main className="max-w-[680px] mx-auto bg-white" data-testid="repost"><SurveyCard survey={{ ...survey, id: 'reposted', sharedFrom: survey, sharedCaption: '... 123 تعليق عربي مستقل' }} isDetailView /></main></MemoryRouter>;
