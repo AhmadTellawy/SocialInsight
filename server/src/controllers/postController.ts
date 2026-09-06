@@ -4,6 +4,7 @@ import prisma from '../prisma';
 import { dispatchNotificationIds, notify } from '../services/notificationService';
 import { processBase64Image } from '../utils/imageProcessor';
 import { PrivacyService } from '../services/privacyService';
+import { isProfileAndGroups, validateProfileAndGroupsInput, canInteractWithProfileAndGroups } from '../services/postAudienceService';
 import { GroupPermissionService } from '../services/groupPermissionService';
 import { POST_STATUS, MEMBERSHIP_STATUS, GROUP_ROLES } from '../utils/constants';
 import {
@@ -219,6 +220,7 @@ const mapVisibleFeedGroupId = (post: any, viewerId?: string): string | null => {
     const groupId = typeof post?.groupId === 'string' ? post.groupId : null;
     if (!groupId || post?.authorId === viewerId) return groupId;
     const visibleTargetGroupIds = mapTargetGroups(post);
+    if (isProfileAndGroups(post?.targetAudience)) return visibleTargetGroupIds.includes(groupId) ? groupId : null;
     return visibleTargetGroupIds.length === 0 || visibleTargetGroupIds.includes(groupId)
         ? groupId
         : null;
@@ -682,6 +684,11 @@ export const createPost = async (req: Request, res: Response) => {
     try {
         const authorId = req.user!.userId;
         const postMediaAssetIds = getPostMediaAssetIds(data);
+        const audienceError = validateProfileAndGroupsInput(data.targetAudience, data.targetGroups, data.status === 'DRAFT');
+        if (audienceError) {
+            res.status(400).json({ error: audienceError, code: 'INVALID_POST_AUDIENCE' });
+            return;
+        }
 
         if (data.status !== 'DRAFT' && !validateMentionRecipientLimit(`${data.title || ''} ${data.description || ''}`, res, 'post')) {
             return;
@@ -718,8 +725,12 @@ export const createPost = async (req: Request, res: Response) => {
             for (const groupId of data.targetGroups) {
                 const group = await prisma.group.findUnique({
                     where: { id: groupId },
-                    select: { postingPermissions: true }
+                    select: { postingPermissions: true, isDeleted: true }
                 });
+                if (isProfileAndGroups(data.targetAudience) && (!group || group.isDeleted)) {
+                    res.status(403).json({ error: 'A selected group is unavailable.' });
+                    return;
+                }
                 if (group) {
                     const membership = await prisma.groupMember.findUnique({
                         where: { userId_groupId: { userId: authorId, groupId } }
@@ -778,7 +789,9 @@ export const createPost = async (req: Request, res: Response) => {
             demographics: normalizeDemographicFilters(data.demographics),
             allowAnonymous: parseBoolean(data.allowAnonymous),
             forceAnonymous: data.forceAnonymous !== undefined ? parseBoolean(data.forceAnonymous) : false,
-            status: needsApproval ? POST_STATUS.PENDING_APPROVAL : (data.status === 'DRAFT' ? POST_STATUS.DRAFT : POST_STATUS.PUBLISHED)
+            status: isProfileAndGroups(data.targetAudience) && data.status === 'DRAFT'
+                ? POST_STATUS.DRAFT
+                : needsApproval ? POST_STATUS.PENDING_APPROVAL : (data.status === 'DRAFT' ? POST_STATUS.DRAFT : POST_STATUS.PUBLISHED)
         };
 
         if (postData.status !== POST_STATUS.DRAFT) {
@@ -1106,15 +1119,25 @@ export const updatePost = async (req: Request, res: Response) => {
             ...existingPost.targetedGroups.map((group) => group.id)
         ].filter((groupId): groupId is string => typeof groupId === 'string' && groupId.length > 0)));
         const effectiveTargetGroups = submittedTargetGroups !== undefined ? submittedTargetGroups : existingTargetGroups;
-        const shouldValidateGroupPosting = submittedTargetGroups !== undefined || data.status === 'PUBLISHED' || existingPost.status === POST_STATUS.DRAFT || existingPost.status === POST_STATUS.REJECTED;
+        const effectiveAudience = data.targetAudience !== undefined ? data.targetAudience : existingPost.targetAudience;
+        const audienceError = validateProfileAndGroupsInput(effectiveAudience, data.targetGroups !== undefined ? data.targetGroups : effectiveTargetGroups, (data.status ?? existingPost.status) === 'DRAFT');
+        if (audienceError) {
+            res.status(400).json({ error: audienceError, code: 'INVALID_POST_AUDIENCE' });
+            return;
+        }
+        const shouldValidateGroupPosting = isProfileAndGroups(effectiveAudience) || submittedTargetGroups !== undefined || data.status === 'PUBLISHED' || existingPost.status === POST_STATUS.DRAFT || existingPost.status === POST_STATUS.REJECTED;
 
         let needsApproval = false;
         if (shouldValidateGroupPosting && effectiveTargetGroups.length > 0) {
             for (const groupId of effectiveTargetGroups) {
                 const group = await prisma.group.findUnique({
                     where: { id: groupId },
-                    select: { postingPermissions: true }
+                    select: { postingPermissions: true, isDeleted: true }
                 });
+                if (isProfileAndGroups(effectiveAudience) && (!group || group.isDeleted)) {
+                    res.status(403).json({ error: 'A selected group is unavailable.' });
+                    return;
+                }
                 if (!group) continue;
 
                 const membership = await prisma.groupMember.findUnique({
@@ -1194,6 +1217,15 @@ export const updatePost = async (req: Request, res: Response) => {
                 updateData.rejectedAt = null;
                 updateData.rejectionReason = null;
             }
+        }
+
+        if (isProfileAndGroups(effectiveAudience) && needsApproval && (data.status ?? existingPost.status) !== POST_STATUS.DRAFT) {
+            updateData.status = POST_STATUS.PENDING_APPROVAL;
+            updateData.approvedById = null;
+            updateData.approvedAt = null;
+            updateData.rejectedById = null;
+            updateData.rejectedAt = null;
+            updateData.rejectionReason = null;
         }
 
         const oldRequirements: MediaAttachmentRequirement[] = [
@@ -1685,7 +1717,11 @@ export const votePost = async (req: Request, res: Response) => {
 
         const isAuthor = !!actorUserId && post.authorId === actorUserId;
         const targetGroupIds = mapTargetGroups(post);
-        if (!isAuthor && (post.targetAudience === 'Groups' || targetGroupIds.length > 0)) {
+        if (isProfileAndGroups(post.targetAudience) && !(await canInteractWithProfileAndGroups(id, post.authorId, actorUserId, targetGroupIds))) {
+            res.status(403).json({ error: 'Forbidden' });
+            return;
+        }
+        if (!isProfileAndGroups(post.targetAudience) && !isAuthor && (post.targetAudience === 'Groups' || targetGroupIds.length > 0)) {
             if (!actorUserId) {
                 res.status(403).json({ error: 'Forbidden' });
                 return;
@@ -2218,7 +2254,11 @@ export const createComment = async (req: Request, res: Response) => {
 
         const isAuthor = commentTarget.authorId === userId;
         const targetGroupIds = mapTargetGroups(commentTarget);
-        if (!isAuthor && (commentTarget.targetAudience === 'Groups' || targetGroupIds.length > 0)) {
+        if (isProfileAndGroups(commentTarget.targetAudience) && !(await canInteractWithProfileAndGroups(id, commentTarget.authorId, userId, targetGroupIds))) {
+            res.status(403).json({ error: 'Forbidden' });
+            return;
+        }
+        if (!isProfileAndGroups(commentTarget.targetAudience) && !isAuthor && (commentTarget.targetAudience === 'Groups' || targetGroupIds.length > 0)) {
             const membership = await prisma.groupMember.findFirst({
                 where: { userId, groupId: { in: targetGroupIds }, status: 'JOINED' }
             });
@@ -2329,9 +2369,11 @@ export const likePost = async (req: Request, res: Response) => {
     const userId = req.user!.userId;
     try {
         const id = await resolveInteractionTarget(rawId, 'like');
-        const targetPostCheck = await prisma.post.findUnique({ where: { id }, select: { authorId: true } });
+        const targetPostCheck = await prisma.post.findUnique({ where: { id }, select: { authorId: true, targetAudience: true } });
         if (targetPostCheck && targetPostCheck.authorId) {
-            const canView = await PrivacyService.canViewUserContent(userId, targetPostCheck.authorId);
+            const canView = isProfileAndGroups(targetPostCheck.targetAudience)
+                ? await GroupPermissionService.canViewPost(id, userId)
+                : await PrivacyService.canViewUserContent(userId, targetPostCheck.authorId);
             if (!canView) {
                 res.status(403).json({ error: 'Forbidden' });
                 return;

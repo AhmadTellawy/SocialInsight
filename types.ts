@@ -333,7 +333,7 @@ export interface Survey {
   media?: MediaPresentation[];
   mediaAssetIds?: string[];
   mediaAspectRatio?: number;
-  targetAudience?: 'Public' | 'Followers' | 'Groups' | 'Custom Audience' | 'Custom Domain';
+  targetAudience?: 'Public' | 'Followers' | 'Groups' | 'ProfileAndGroups' | 'Custom Audience' | 'Custom Domain';
   targetGroups?: string[]; // IDs of groups if 'Groups' is selected
   visibility?: 'PUBLIC' | 'PRIVATE' | string;
 

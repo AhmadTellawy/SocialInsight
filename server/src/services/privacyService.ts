@@ -71,13 +71,19 @@ export class PrivacyService {
    *   }
    * })
    */
-  static getPostPrivacyWhereClause(viewerId?: string | null): any {
+  static getPostPrivacyWhereClause(viewerId?: string | null, includeUnsetMediaPrivacy = false): any {
+    // SQL NOT true excludes NULL. The additive profile destination follows
+    // canViewUserContent, where an unset transition flag is not private.
+    // Keep the legacy query shape unless the new destination opts in.
+    const mediaPrivacyWhere = includeUnsetMediaPrivacy
+      ? { OR: [{ mediaPrivacyTarget: false }, { mediaPrivacyTarget: null }] }
+      : { NOT: { mediaPrivacyTarget: true } };
     if (!viewerId) {
       // Guests only see public content
       return {
         author: {
           isPrivate: false,
-          NOT: { mediaPrivacyTarget: true }
+          ...mediaPrivacyWhere
         }
       };
     }
@@ -87,7 +93,7 @@ export class PrivacyService {
         {
           OR: [
             { authorId: viewerId },
-            { author: { isPrivate: false, NOT: { mediaPrivacyTarget: true } } },
+            { author: { isPrivate: false, ...mediaPrivacyWhere } },
             { author: { following: { some: { followerId: viewerId, status: 'ACTIVE' } } } }
           ]
         },

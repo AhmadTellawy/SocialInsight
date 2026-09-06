@@ -32,10 +32,55 @@ if (params.has('richTitle')) {
   }];
 }
 
+function StepCreator({ Creator, mode }: { Creator: any; mode: string }) {
+  const [draft] = useState(() => {
+    const imageMode = params.has('stepsImages');
+    const draftOptions = names.map((text, index) => ({ id: `step-option-${index}`, text, votes: 0, image: imageMode ? picture(index ? '#0d9488' : '#2563eb') : undefined }));
+    const sectionId = mode === 'quiz' ? 'sec-quiz-init' : 'sec-init';
+    const questionId = mode === 'quiz' ? 'q-quiz-init-1' : 'q-init-1';
+    return {
+      ...survey,
+      title: 'Steps fixture title',
+      category: params.has('missingCategory') ? '' : 'Sports',
+      type: ({ poll: SurveyType.POLL, survey: SurveyType.SURVEY, quiz: SurveyType.QUIZ, challenge: SurveyType.CHALLENGE } as any)[mode],
+      options: draftOptions,
+      optionPresentation: imageMode ? 'image' : 'text',
+      showOptionNames: !params.has('legacyHidden'),
+      targetAudience: params.has('initialBoth') ? 'ProfileAndGroups' : 'Public',
+      targetGroups: params.has('initialBoth') ? ['fixture-group'] : [],
+      demographics: [],
+      sections: [{ id: sectionId, title: 'Fixture section', questions: [0, 1].map(index => ({
+        id: index ? 'step-question-2' : questionId, text: `Fixture question ${index + 1}`, type: 'multiple_choice',
+        optionPresentation: imageMode ? 'image' : 'text', showOptionNames: !params.has('legacyHidden'),
+        imageLayout: 'horizontal', isRequired: true, weight: 10, options: draftOptions,
+        correctOptionId: 'step-option-0',
+      })) }],
+    };
+  });
+  const [submission, setSubmission] = useState({ count: 0, payload: null as any });
+  const [savedDraft, setSavedDraft] = useState(null as any);
+  return <MemoryRouter>
+    <Creator
+      draft={draft} isOpen onClose={() => {}}
+      onSaveDraft={(payload: any) => setSavedDraft(payload)}
+      onSubmit={async (payload: any) => {
+        setSubmission(current => ({ count: current.count + 1, payload }));
+        await new Promise(resolve => setTimeout(resolve, 150));
+      }}
+      userGroups={[{ id: 'fixture-group', name: 'Fixture Group', role: 'Owner', memberCount: 3 }, { id: 'forbidden-group', name: 'Unavailable Group', role: 'Member', postingPermissions: 'AdminsOnly' }]}
+      userProfile={{ id: 'fixture-viewer', name: 'Test', handle: 'fixture', groups: [], interests: [], type: 'Personal', stats: { followers: params.has('verified') ? 2000 : 0 } }}
+    />
+    <output hidden data-testid="step-submit-count">{submission.count}</output>
+    <output hidden data-testid="step-submit-payload">{JSON.stringify(submission.payload)}</output>
+    <output hidden data-testid="step-saved-draft">{JSON.stringify(savedDraft)}</output>
+  </MemoryRouter>;
+}
+
 function Harness() {
   const [voted, setVoted] = useState(false);
   const mode = params.get('create');
   const Creator = ({ poll: CreatePollScreen, survey: CreateSurveyModal, quiz: CreateQuizModal, challenge: CreateChallengeScreen } as any)[mode || ''];
+  if (Creator && params.has('creatorSteps')) return <StepCreator Creator={Creator} mode={mode!} />;
   if (params.has('challenge')) return <MemoryRouter><main className="max-w-[680px] mx-auto bg-white" data-testid="challenge"><SurveyCard survey={{ ...survey, type: SurveyType.CHALLENGE }} isDetailView onVote={() => true} /></main></MemoryRouter>;
   if (params.has('repost')) return <MemoryRouter><main className="max-w-[680px] mx-auto bg-white" data-testid="repost"><SurveyCard survey={{ ...survey, id: 'reposted', sharedFrom: survey, sharedCaption: '... 123 تعليق عربي مستقل' }} isDetailView /></main></MemoryRouter>;
   if (params.has('interactive')) return <MemoryRouter><main className="max-w-[680px] mx-auto bg-white" data-testid="interactive"><SurveyCard survey={{ ...survey, type: params.get('interactive') === 'quiz' ? SurveyType.QUIZ : SurveyType.SURVEY, sections: [{ id: 'section', title: 'Test section', questions: [{ id: 'question', text: '... 123 English independent question', type: 'multiple_choice', imageMedia: media[0], options, imageLayout: 'horizontal' }, { id: 'question-two', text: 'Second question', type: 'multiple_choice', options }] }] }} isDetailView /></main></MemoryRouter>;

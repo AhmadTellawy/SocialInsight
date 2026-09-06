@@ -1,9 +1,10 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { X, Plus, Trash2, Globe, Users, ChevronDown, Clock, Calendar, Type, ListChecks, ImageIcon, Settings, Info, ArrowRight, Camera, Lock, AlertCircle, ChevronRight, ChevronLeft, MoreHorizontal, Layout, Terminal, Navigation, Sparkles, GripVertical, Save, FileText, BarChart3, UserCircle, Heart, Fingerprint, MapPin, Briefcase, Check, GraduationCap, Home, Smile, Building2, User, MessageSquare, ShieldCheck, Link2, Target, MoreHorizontal as MoreHorizontalIcon, ArrowUp, ArrowDown, Star, List, GalleryHorizontalEnd, CornerDownRight, PowerOff, CheckCircle2, ArrowLeft, Tag } from 'lucide-react';
+import { X, Plus, Trash2, Globe, Users, ChevronDown, Clock, Calendar, Type, ListChecks, ImageIcon, Settings, Info, ArrowRight, Camera, Lock, AlertCircle, ChevronRight, ChevronLeft, MoreHorizontal, Layout, Terminal, Navigation, Sparkles, GripVertical, Save, FileText, BarChart3, UserCircle, Heart, Fingerprint, MapPin, Briefcase, Check, GraduationCap, Home, Smile, Building2, User, MessageSquare, ShieldCheck, Link2, Target, MoreHorizontal as MoreHorizontalIcon, ArrowUp, ArrowDown, Star, List, LayoutGrid, CornerDownRight, PowerOff, CheckCircle2, ArrowLeft, Tag } from 'lucide-react';
 import { Survey, SurveyType, UserProfile, Group, MediaDraft } from '../types';
 import { useTranslation } from 'react-i18next';
 import { BottomSheet } from './BottomSheet';
+import { PostVisibilitySection } from './PostVisibilitySection';
 import { RichMentionInput } from './RichMentionInput';
 import { api } from '../services/api';
 import { MediaPicker, MediaPickerHandle } from './media/MediaPicker';
@@ -70,7 +71,7 @@ const INITIAL_SECTIONS: SurveySectionDraft[] = [
   }
 ];
 
-type VisibilityType = 'Public' | 'Followers' | 'Groups' | 'Custom Audience' | 'Custom Domain';
+type VisibilityType = '' | 'Public' | 'Followers' | 'Groups' | 'Custom Audience' | 'Custom Domain' | 'ProfileAndGroups';
 
 const createQuizOption = (): SurveyOptionDraft => ({
   id: `o-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
@@ -82,11 +83,11 @@ const createQuizOption = (): SurveyOptionDraft => ({
 export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClose, onSubmit, onSaveDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
   const { t } = useTranslation();
   const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
-  const [isVisibilitySheetOpen, setIsVisibilitySheetOpen] = useState(false);
   const [isResultVisibilitySheetOpen, setIsResultVisibilitySheetOpen] = useState(false);
   const [isCategorySheetOpen, setIsCategorySheetOpen] = useState(false);
   const [isDurationSheetOpen, setIsDurationSheetOpen] = useState(false);
   const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
+  const [composerStep, setComposerStep] = useState<1 | 2>(1);
 
   // Results Visibility State
   const [resultsWho, setResultsWho] = useState<'Public' | 'Followers' | 'Participants' | 'OnlyMe'>('Public');
@@ -126,11 +127,11 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
   const [selectedInsightPreset, setSelectedInsightPreset] = useState<'basic' | 'professional' | 'social' | 'custom' | null>(null);
   const [showInsightInfo, setShowInsightInfo] = useState(false);
   const [isAdvancedSheetOpen, setIsAdvancedSheetOpen] = useState(false);
-  const [advancedSheetView, setAdvancedSheetView] = useState<'main' | 'visibility' | 'results'>('main');
+  const [advancedSheetView, setAdvancedSheetView] = useState<'main' | 'results'>('main');
 
   useEffect(() => {
     if (selectedDemographics.length === 0) {
-      setSelectedInsightPreset(null);
+      setSelectedInsightPreset(current => current === 'custom' ? 'custom' : null);
       return;
     }
     const isBasic = selectedDemographics.length === 3 && selectedDemographics.includes('gender') && selectedDemographics.includes('ageGroup') && selectedDemographics.includes('residence');
@@ -210,21 +211,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
 
   const isVerified = (userProfile?.stats?.followers || 0) > 1000;
 
-  const postableGroups = useMemo(() => {
-    return userGroups.filter(group => {
-      const isAdminOrOwner = group.role === 'Owner' || group.role === 'Admin';
-      const hasExplicitPermission = group.postingPermissions === 'AllMembers' || group.postingPermissions === 'ApprovalNeeded';
-      return isAdminOrOwner || hasExplicitPermission;
-    });
-  }, [userGroups]);
 
-  const visibilityOptions = [
-    { id: 'Public', label: 'Public', desc: 'Visible to all users on the platform.', icon: Globe, allowed: true },
-    { id: 'Followers', label: 'Followers', desc: 'Visible only to users who follow you.', icon: UserCircle, allowed: true },
-    { id: 'Groups', label: 'Selected groups', desc: 'Visible only within selected groups.', icon: Users, allowed: true },
-    { id: 'Custom Audience', label: 'Custom audience', desc: 'Specific targeted audience.', icon: Target, allowed: isVerified, premium: true },
-    { id: 'Custom Domain', label: 'Custom domain', desc: 'Private branded link.', icon: Link2, allowed: false, premium: true },
-  ];
 
   useEffect(() => {
     if (scrollContainerRef.current) {
@@ -296,7 +283,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
     onClose();
   };
 
-  const validateQuiz = () => {
+  const validateQuiz = (includeAudience = true) => {
     const newErrors: { [key: string]: boolean | string } = {};
     const errorList: string[] = [];
 
@@ -310,7 +297,11 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
       newErrors.category = true;
     }
 
-    if (visibility === 'Groups' && selectedGroups.length === 0) {
+    if (includeAudience && !visibility) {
+      newErrors.visibility = 'Select at least one destination.';
+      errorList.push('Select at least one destination.');
+    }
+    if (includeAudience && (visibility === 'Groups' || visibility === 'ProfileAndGroups') && selectedGroups.length === 0) {
       errorList.push("Please select at least one group for Group visibility.");
       newErrors.visibility = "Please select at least one group.";
     }
@@ -385,7 +376,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
         mediaAssetIds: readyMediaAssetIds(postMedia),
         mediaAspectRatio: postMedia.length > 0 ? mediaAspectRatio : undefined,
         targetAudience: visibility as any,
-        targetGroups: visibility === 'Groups' ? selectedGroups : undefined,
+        targetGroups: (visibility === 'Groups' || visibility === 'ProfileAndGroups') ? selectedGroups : [],
         taggedUserIds: taggedPeople.map((person) => person.id),
         resultsWho,
         resultsTiming,
@@ -450,7 +441,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
         mediaAssetIds: readyMediaAssetIds(postMedia),
         mediaAspectRatio: postMedia.length > 0 ? mediaAspectRatio : undefined,
         targetAudience: visibility as any,
-        targetGroups: visibility === 'Groups' ? selectedGroups : undefined,
+        targetGroups: (visibility === 'Groups' || visibility === 'ProfileAndGroups') ? selectedGroups : [],
         taggedUserIds: taggedPeople.map((person) => person.id),
         resultsWho,
         resultsTiming,
@@ -552,28 +543,34 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
     setSelectedDemographics(prev => prev.includes(id) ? prev.filter(d => d !== id) : [...prev, id]);
   };
 
-  const handleGroupToggle = (groupId: string) => {
-    setSelectedGroups(prev => prev.includes(groupId) ? prev.filter(id => id !== groupId) : [...prev, groupId]);
-  };
 
   const selectedOptionForSettings = useMemo(() => {
     if (!settingsOptionId) return null;
     return sections.find(s => s.id === settingsOptionId.secId)?.questions.find(q => q.id === settingsOptionId.qId)?.options?.find(o => o.id === settingsOptionId.optId);
   }, [settingsOptionId, sections]);
 
-  const errorInfo = validateQuiz();
+  const errorInfo = validateQuiz(composerStep === 2);
   const allMediaDrafts = [...postMedia, ...collectSectionMedia(sections)];
   const mediaReady = mediaDraftsAreReady(allMediaDrafts) && !mediaDraftsHaveErrors(allMediaDrafts);
-  const isPublishReady = errorInfo.isValid && mediaReady && !isSubmitting;
+
+  const handleNext = () => {
+    const validation = validateQuiz(false);
+    setHasAttemptedSubmit(true);
+    setErrors(validation.newErrors);
+    if (!validation.isValid || !mediaReady || isSubmitting) return;
+    setComposerStep(2);
+    setHasAttemptedSubmit(false);
+    scrollContainerRef.current?.scrollTo({ top: 0 });
+  };
 
   return (
     <div className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-bottom duration-300">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white/95 backdrop-blur-md sticky top-0 z-40 safe-top shrink-0">
-        <button onClick={handleClose} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">
+        <button aria-label={composerStep === 2 ? 'Back' : 'Close'} onClick={() => { if (composerStep === 2) { setComposerStep(1); setHasAttemptedSubmit(false); scrollContainerRef.current?.scrollTo({ top: 0 }); } else handleClose(); }} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">
           <ArrowLeft size={24} />
         </button>
-        <h1 className="text-sm font-black text-gray-800">New Quiz</h1>
+        <div className="text-center"><h1 className="text-[12px] font-bold text-gray-800">New Quiz</h1><p className="text-xs text-gray-500">Step {composerStep} of 2</p></div>
         <div className="flex items-center gap-2">
           <button
             onClick={handleSaveDraft}
@@ -583,16 +580,16 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
             Save Draft
           </button>
           <button
-            onClick={handlePost}
-            disabled={!isPublishReady}
-            aria-disabled={!isPublishReady}
-            className={`text-white font-black text-[9px] px-4 py-2 rounded-full transition-all uppercase tracking-widest ${
-              isPublishReady
+            onClick={() => composerStep === 1 ? handleNext() : handlePost()}
+            disabled={!mediaReady || isSubmitting}
+            aria-disabled={!mediaReady || isSubmitting}
+            className={`text-white font-bold text-[12px] px-4 py-2 rounded-full transition-all uppercase tracking-widest ${
+              mediaReady && !isSubmitting
                 ? 'bg-purple-600 hover:bg-purple-700 shadow-md active:scale-95 shadow-purple-200/50'
                 : 'bg-gray-300 shadow-none cursor-not-allowed'
             }`}
           >
-            Publish
+            {composerStep === 1 ? 'Next' : 'Post'}
           </button>
         </div>
       </div>
@@ -606,6 +603,19 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
             </div>
           )}
 
+          <div hidden={composerStep !== 1} className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2" aria-label="Post details">
+            <button
+              type="button"
+              onClick={() => setIsCategorySheetOpen(true)}
+              className={`min-h-10 inline-flex items-center gap-2 rounded-full border bg-white px-3 text-[12px] font-bold text-gray-700 ${errors.category ? 'border-red-300' : 'border-gray-200'}`}
+            >
+              <Tag size={14} />
+              <span>{category || 'Category'}</span>
+              <ChevronDown size={14} />
+            </button>
+            <PeopleTagPicker variant="chip" selectedPeople={taggedPeople} onChange={setTaggedPeople} accent="purple" />
+          </div>
           {/* Details Section */}
           <section className="space-y-4 pb-4 border-b border-gray-100 relative transition-all">
             <div className="flex items-start gap-3">
@@ -658,41 +668,6 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                 <button type="button" onClick={() => setLegacyCoverImage(null)} className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Remove image" title="Remove image"><X size={10} /></button>
               </div>
             )}
-
-            {/* Category and Poll Type Grid (To match Create Poll size, we use a 2-column grid and leave the right side empty) */}
-            <div className="grid grid-cols-2 gap-4 pt-3 mt-3 border-t border-gray-100">
-              {/* Category */}
-              <div className="space-y-1.5 text-left min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <div className="p-1.5 bg-gray-55/30 rounded-lg text-gray-500 border border-gray-100 shrink-0">
-                    <Tag size={12} />
-                  </div>
-                  <span className="text-xs font-bold text-gray-800">Category</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsCategorySheetOpen(true)}
-                  className={`w-full flex items-center justify-between border rounded-xl px-3 py-2 text-[8px] font-semibold transition-all active:scale-[0.98] min-w-0 ${
-                    category
-                      ? 'bg-purple-50 border-purple-200 text-purple-700 font-semibold'
-                      : errorInfo.newErrors.category && hasAttemptedSubmit
-                      ? 'bg-red-50 border-red-300 text-red-600'
-                      : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-55'
-                  }`}
-                >
-                  <div className="flex items-center min-w-0 mr-1">
-                    <span className="truncate">{category || 'Select category'}</span>
-                  </div>
-                  <ChevronDown size={14} className="text-gray-400 shrink-0" />
-                </button>
-                {errorInfo.newErrors.category && hasAttemptedSubmit && (
-                  <p className="text-[10px] font-semibold text-red-600 px-1 mt-1">Please select a category.</p>
-                )}
-              </div>
-              
-              {/* Right column empty to preserve size parity */}
-              <div></div>
-            </div>
 
           </section>
 
@@ -827,6 +802,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                         />
                       </div>
 
+                      {q.type === 'multiple_choice' && optionPresentation === 'image' && (<div className="flex items-center justify-between pt-2"><span className="text-xs font-bold text-gray-500">Options layout</span><div className="flex gap-2">{[{ id: 'vertical', label: 'List', icon: List }, { id: 'horizontal', label: 'Grid', icon: LayoutGrid }].map(layout => <button type="button" key={layout.id} aria-label={`${layout.label} options layout`} aria-pressed={q.imageLayout === layout.id} onClick={() => updateQuestion(activeSection.id, q.id, { imageLayout: layout.id as 'vertical' | 'horizontal' })} className={`p-2 rounded-lg border ${q.imageLayout === layout.id ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-500 border-gray-200'}`}><layout.icon size={16} /></button>)}</div></div>)}
                       {q.type === 'multiple_choice' && (
                         <div className="space-y-3 pt-2 border-t border-gray-50">
                           <div className="flex items-center justify-between px-1 mb-1">
@@ -841,21 +817,11 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                             >
                               {(controls) => (
                                 <div className="space-y-3">
-                                  <p className="px-1 text-[10px] font-medium leading-relaxed text-gray-600">{t('answerType.imageHelper')}</p>
                                   <button type="button" onClick={controls.openBulk} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-purple-300 bg-purple-50/50 px-3 text-xs font-bold text-purple-700">
                                     <ImageIcon size={16} aria-hidden="true" />
                                     {q.options?.some(draftOptionHasImage) ? t('answerType.addMoreImages') : t('answerType.addImages')}
                                   </button>
-                                  <button
-                                    type="button"
-                                    role="switch"
-                                    aria-checked={q.showOptionNames !== false}
-                                    onClick={() => updateQuestion(activeSection.id, q.id, { showOptionNames: q.showOptionNames === false })}
-                                    className="flex min-h-11 w-full items-center justify-between gap-3 px-1 text-left"
-                                  >
-                                    <span className="text-xs font-semibold text-gray-700">{t('answerType.showNames')}</span>
-                                    <span className={`relative h-6 w-11 shrink-0 rounded-full ${q.showOptionNames !== false ? 'bg-purple-600' : 'bg-gray-300'}`} aria-hidden="true"><span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm ${q.showOptionNames !== false ? 'start-6' : 'start-1'}`} /></span>
-                                  </button>
+
                                 </div>
                               )}
                             </OptionImagePicker>
@@ -974,6 +940,19 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
             )}
           </div>
 
+          </div>
+          <div hidden={composerStep !== 2} className="space-y-6">
+          <PostVisibilitySection
+            value={visibility}
+            onChange={value => { setVisibility(value); setErrors(previous => ({ ...previous, visibility: false })); }}
+            selectedGroupIds={selectedGroups}
+            onGroupsChange={ids => { setSelectedGroups(ids); setErrors(previous => ({ ...previous, visibility: false })); }}
+            groups={userGroups}
+            allowCustomAudience={isVerified}
+            allowCustomDomain={false}
+            error={typeof errors.visibility === 'string' ? errors.visibility : false}
+            accent="purple"
+          />
           {/* Demographics Settings Section (Unlock Deeper Analytics) */}
           {/* Demographics Settings Section (Unlock Deeper Analytics) */}
           <section className="space-y-3 pt-3 border-t border-gray-100">
@@ -1089,19 +1068,20 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                 </div>
                 <div>
                   <h4 className="text-xs font-bold text-gray-805">Advanced Settings</h4>
-                  <p className="text-[9px] text-gray-500 mt-0.5 leading-tight">Visibility, results, duration & comments</p>
+                  <p className="text-[9px] text-gray-500 mt-0.5 leading-tight">Results, duration & comments</p>
                 </div>
               </div>
               <ChevronRight size={14} className="text-gray-400" />
             </button>
           </section>
 
+          </div>
           {/* Unified Validation Error Display */}
           {hasAttemptedSubmit && !errorInfo.isValid && (
             <div className="p-4 bg-red-50 text-red-600 border border-red-200 rounded-2xl text-xs font-semibold flex flex-col gap-2 mt-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <div className="flex items-center gap-2 font-bold text-red-800">
                 <AlertCircle size={16} />
-                <span>Please correct the following errors to publish:</span>
+                <span>Please correct the following errors to {composerStep === 1 ? 'continue' : 'post'}:</span>
               </div>
               <ul className="list-disc pl-5 space-y-1">
                 {errorInfo.errors.map((err, idx) => (
@@ -1117,16 +1097,11 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
       <BottomSheet
         isOpen={isAdvancedSheetOpen}
         onClose={() => {
-          if (visibility === 'Groups' && selectedGroups.length === 0) {
-            setVisibility('Public');
-          }
           setAdvancedSheetView('main');
           setIsAdvancedSheetOpen(false);
         }}
         title={
-          advancedSheetView === 'visibility'
-            ? 'Post Visibility'
-            : advancedSheetView === 'results'
+          advancedSheetView === 'results'
             ? 'Result Visibility'
             : 'Advanced Settings'
         }
@@ -1135,24 +1110,11 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
           {advancedSheetView === 'main' && (
             <div className="space-y-5">
               <p className="text-[11px] text-gray-500 leading-relaxed px-1">
-                Control who can see, vote, and view results.
+                Control results, duration, and comments.
               </p>
 
               {/* Sub-routing rows */}
               <div className="space-y-1.5">
-                {/* Visibility Sub-trigger */}
-                <button
-                  type="button"
-                  onClick={() => setAdvancedSheetView('visibility')}
-                  className="w-full flex items-center justify-between p-3.5 bg-gray-50 hover:bg-gray-100/70 rounded-xl transition-all border border-gray-100"
-                >
-                  <span className="text-xs font-bold text-gray-805">Post Visibility</span>
-                  <div className="flex items-center gap-1 text-xs text-purple-600 font-black">
-                    <span>{visibility === 'Groups' && selectedGroups.length > 0 ? `${selectedGroups.length} Groups` : visibility}</span>
-                    <ChevronRight size={14} />
-                  </div>
-                </button>
-
                 {/* Results Visibility Sub-trigger */}
                 <button
                   type="button"
@@ -1165,7 +1127,6 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                     <ChevronRight size={14} />
                   </div>
                 </button>
-                <PeopleTagPicker selectedPeople={taggedPeople} onChange={setTaggedPeople} accent="purple" />
               </div>
 
               {/* Duration section inline inside settings sheet */}
@@ -1254,120 +1215,6 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
             </div>
           )}
 
-          {/* Visibility View Sub-screen */}
-          {advancedSheetView === 'visibility' && (
-            <div className="space-y-4">
-              <button
-                type="button"
-                onClick={() => {
-                  if (visibility === 'Groups' && selectedGroups.length === 0) {
-                    setErrors(prev => ({ ...prev, visibility: "Please select at least one group." }));
-                    return;
-                  }
-                  setErrors(prev => ({ ...prev, visibility: false }));
-                  setAdvancedSheetView('main');
-                }}
-                className="flex items-center gap-1.5 text-xs text-purple-600 font-bold hover:opacity-80 transition-opacity pb-2"
-              >
-                <span>&larr; Back to Advanced Settings</span>
-              </button>
-
-              <div className="space-y-2">
-                {visibilityOptions.map((option) => {
-                  const Icon = option.icon;
-                  const isSelected = visibility === option.id;
-                  return (
-                    <button
-                      key={option.id}
-                      onClick={() => {
-                        if (option.allowed) {
-                          setVisibility(option.id as VisibilityType);
-                          if (option.id !== 'Groups') {
-                            setErrors(prev => ({ ...prev, visibility: false }));
-                          }
-                        }
-                      }}
-                      className={`w-full flex items-center gap-4 p-4 rounded-2xl border transition-all text-left group ${!option.allowed ? 'opacity-40 cursor-not-allowed grayscale' : 'hover:bg-gray-50'
-                        } ${isSelected ? 'border-purple-500 bg-purple-50/50 ring-1 ring-purple-500/20' : 'border-transparent'}`}
-                    >
-                      <div className={`p-2.5 rounded-xl transition-colors ${isSelected ? 'bg-purple-600 text-white shadow-md' : 'bg-gray-100 text-gray-500 group-hover:bg-gray-200'}`}>
-                        <Icon size={20} />
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <h4 className={`font-bold text-sm ${isSelected ? 'text-purple-700' : 'text-gray-900'}`}>{option.label}</h4>
-                          {option.premium && (
-                            <span className="text-[8px] font-black bg-gradient-to-r from-amber-400 to-orange-505 text-white px-1.5 py-0.5 rounded-md uppercase tracking-wider">PRO</span>
-                          )}
-                        </div>
-                        <p className="text-[10px] text-gray-500 leading-tight mt-0.5">{option.desc}</p>
-                      </div>
-                      {isSelected && (
-                        <div className="w-6 h-6 bg-purple-600 text-white rounded-full flex items-center justify-center shadow-sm">
-                          <Check size={14} strokeWidth={3} />
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {visibility === 'Groups' && (
-                <div className="mt-4 p-4 bg-gray-50 rounded-2xl animate-in slide-in-from-top-2 border border-gray-100">
-                  <div className="flex items-center justify-between mb-3 px-1">
-                    <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Select target groups</h5>
-                    <span className="text-[9px] font-bold text-purple-600 bg-purple-100 px-1.5 py-0.5 rounded uppercase">Postable</span>
-                  </div>
-
-                  {postableGroups.length > 0 ? (
-                    <div className="space-y-2 max-h-[250px] overflow-y-auto no-scrollbar">
-                      {postableGroups.map(group => {
-                        const isGroupSelected = selectedGroups.includes(group.id);
-                        return (
-                          <button
-                            key={group.id}
-                            onClick={() => {
-                              handleGroupToggle(group.id);
-                              setErrors(prev => ({ ...prev, visibility: false }));
-                            }}
-                            className={`w-full flex items-center gap-3 p-2 rounded-xl transition-all border ${isGroupSelected
-                              ? 'bg-white border-purple-200 shadow-sm ring-1 ring-purple-500/5'
-                              : 'bg-transparent border-transparent hover:bg-white/50'
-                              }`}
-                          >
-                            <img src={group.image} className="w-10 h-10 rounded-lg object-cover border border-gray-200 shadow-xs" alt="" />
-                            <div className="flex-1 text-left min-w-0">
-                              <p className="text-xs font-bold text-gray-800 truncate">{group.name}</p>
-                              <p className="text-[10px] text-gray-400">{(group.memberCount || 0).toLocaleString()} members</p>
-                            </div>
-                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${isGroupSelected ? 'bg-purple-600 border-purple-600' : 'border-gray-200'
-                              }`}>
-                              {isGroupSelected && <Check size={12} className="text-white" strokeWidth={3} />}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="py-6 text-center">
-                      <Users size={32} className="mx-auto text-gray-300 mb-2 opacity-30" />
-                      <p className="text-xs text-gray-500 font-medium leading-relaxed px-4">
-                        You don't have permission to post in any groups.
-                      </p>
-                    </div>
-                  )}
-
-                  {errors.visibility && selectedGroups.length === 0 && (
-                    <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-[10px] text-red-600 font-bold flex items-center gap-1.5 mt-2 animate-in fade-in">
-                      <AlertCircle size={14} className="shrink-0" />
-                      <span>{errors.visibility}</span>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
           {/* Results View Sub-screen */}
           {advancedSheetView === 'results' && (
             <div className="space-y-4">
@@ -1438,7 +1285,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
       <BottomSheet isOpen={isCategorySheetOpen} onClose={() => setIsCategorySheetOpen(false)} title="Select Category">
         <div className="flex flex-wrap gap-2 py-2">
           {QUIZ_CATEGORIES.map(cat => (
-            <button key={cat} onClick={() => { setCategory(cat); setIsCategorySheetOpen(false); }} className={`px-4 py-2 rounded-full text-xs font-bold border transition-all ${category === cat ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-650 border-gray-200 hover:bg-gray-50'}`}>{cat}</button>
+            <button key={cat} onClick={() => { setCategory(cat); setErrors(previous => ({ ...previous, category: false })); setIsCategorySheetOpen(false); }} className={`px-4 py-2 rounded-full text-xs font-bold border transition-all ${category === cat ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-650 border-gray-200 hover:bg-gray-50'}`}>{cat}</button>
           ))}
         </div>
       </BottomSheet>

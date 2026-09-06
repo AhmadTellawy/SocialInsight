@@ -4,6 +4,7 @@ import { X, Image as ImageIcon, Plus, Trash2, Globe, Users, AlertCircle, Clock, 
 import { Survey, SurveyType, UserProfile, Option, Group, DraftOption, MediaDraft } from '../types';
 import { useTranslation } from 'react-i18next';
 import { BottomSheet } from './BottomSheet';
+import { PostVisibilitySection } from './PostVisibilitySection';
 import { RichMentionInput } from './RichMentionInput';
 import { api } from '../services/api';
 import { MediaPicker, MediaPickerHandle } from './media/MediaPicker';
@@ -55,7 +56,7 @@ const DURATION_OPTIONS = [
   { label: '1 Month', value: '1m' },
 ];
 
-type VisibilityType = 'Public' | 'Groups' | 'Custom Audience' | 'Custom Domain';
+type VisibilityType = '' | 'Public' | 'Groups' | 'Custom Audience' | 'Custom Domain' | 'ProfileAndGroups';
 type PollDraftOption = DraftOption & { mediaDrafts: MediaDraft[] };
 
 const createEmptyPollOption = (): PollDraftOption => ({
@@ -86,8 +87,9 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   const [isAdvancedSheetOpen, setIsAdvancedSheetOpen] = useState(false);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
+  const [composerStep, setComposerStep] = useState<1 | 2>(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [advancedSheetView, setAdvancedSheetView] = useState<'main' | 'visibility' | 'results'>('main');
+  const [advancedSheetView, setAdvancedSheetView] = useState<'main' | 'results'>('main');
 
   const handleExit = () => {
     // Check if there are any changes to prompt for save
@@ -145,7 +147,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
         mediaAspectRatio: postMedia.length > 0 ? mediaAspectRatio : undefined,
         imageLayout: imageLayout,
         targetAudience: visibility as any,
-        targetGroups: visibility === 'Groups' ? selectedGroups : undefined,
+        targetGroups: (visibility === 'Groups' || visibility === 'ProfileAndGroups') ? selectedGroups : [],
         taggedUserIds: taggedPeople.map((person) => person.id),
         resultsWho,
         resultsTiming,
@@ -219,8 +221,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   const setPollVisibility = (nextVisibility: VisibilityType) => {
     setVisibility(nextVisibility);
 
-    if (nextVisibility !== 'Groups') {
-      setSelectedGroups([]);
+    if (nextVisibility !== 'Groups' && nextVisibility !== 'ProfileAndGroups') {
       setErrors(prev => ({ ...prev, visibility: false }));
     }
   };
@@ -271,7 +272,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
       setShowOptionNames(draft.showOptionNames !== false);
       const draftVisibility = (draft.targetAudience as VisibilityType) || 'Public';
       setPollVisibility(draftVisibility);
-      setSelectedGroups(draftVisibility === 'Groups' ? (draft.targetGroups || []) : []);
+      setSelectedGroups((draftVisibility === 'Groups' || draftVisibility === 'ProfileAndGroups') ? (draft.targetGroups || []) : []);
       setResultsWho(draft.resultsWho || 'Public');
       setResultsTiming(draft.resultsTiming || 'AnyTime');
       setAllowUserOptions(draft.allowUserOptions || false);
@@ -341,7 +342,6 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   }, [duration]);
 
   const durationLabel = DURATION_OPTIONS.find(opt => opt.value === duration)?.label || (duration === 'custom' ? 'Custom' : 'None');
-  const audienceLabel = visibility === 'Groups' && selectedGroups.length > 0 ? `${selectedGroups.length} Groups` : visibility;
   const resultsLabel = resultsWho === 'OnlyMe' ? 'Only Me' : resultsWho;
   const advancedItems = [
     duration !== 'none' ? durationLabel : null,
@@ -360,20 +360,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   const isVerified = (userProfile?.stats?.followers || 0) > 1000;
   const isOrganization = false;
 
-  const postableGroups = useMemo(() => {
-    return userGroups.filter(group => {
-      const isAdminOrOwner = group.role === 'Owner' || group.role === 'Admin';
-      const hasExplicitPermission = group.postingPermissions === 'AllMembers' || group.postingPermissions === 'ApprovalNeeded';
-      return isAdminOrOwner || hasExplicitPermission;
-    });
-  }, [userGroups]);
 
-  const visibilityOptions = [
-    { id: 'Public', label: 'Public', desc: 'Visible in the general public feed.', icon: Globe, allowed: true },
-    { id: 'Groups', label: 'Selected groups', desc: 'Visible only within selected groups.', icon: Users, allowed: true },
-    { id: 'Custom Audience', label: 'Custom audience', desc: 'Specific targeted audience.', icon: Target, allowed: isVerified, premium: true },
-    { id: 'Custom Domain', label: 'Custom domain', desc: 'Private branded link.', icon: Link2, allowed: isOrganization, premium: true },
-  ];
 
   const handleAddOption = () => {
     const option = createEmptyPollOption();
@@ -432,11 +419,6 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
     );
   };
 
-  const handleGroupToggle = (groupId: string) => {
-    setSelectedGroups(prev =>
-      prev.includes(groupId) ? prev.filter(id => id !== groupId) : [...prev, groupId]
-    );
-  };
 
   const moveOption = (id: string, direction: 'up' | 'down') => {
     const index = options.findIndex(o => o.id === id);
@@ -454,7 +436,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
     setOptions(prev => prev.map(o => o.id === id ? { ...o, ...updates } : o));
   };
 
-  const validate = () => {
+  const validate = (includeAudience = true) => {
     const newErrors: { [key: string]: boolean | string } = {};
     let isValid = true;
     if (!userProfile?.id) {
@@ -489,11 +471,14 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
       isValid = false;
       setIsCategorySheetOpen(true);
     }
-    if (visibility === 'Groups' && selectedGroups.length === 0) {
+    if (includeAudience && !visibility) {
+      newErrors.visibility = 'Select at least one destination.';
+      isValid = false;
+    }
+    if (includeAudience && (visibility === 'Groups' || visibility === 'ProfileAndGroups') && selectedGroups.length === 0) {
       newErrors.visibility = "Please select at least one group.";
       isValid = false;
-      setIsAdvancedSheetOpen(true);
-      setAdvancedSheetView('visibility');
+
     }
     if (category === 'Other' && !otherCategoryText.trim()) {
       newErrors.otherCategoryText = true;
@@ -539,7 +524,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
         mediaAspectRatio: postMedia.length > 0 ? mediaAspectRatio : undefined,
         imageLayout: imageLayout,
         targetAudience: visibility as any,
-        targetGroups: visibility === 'Groups' ? selectedGroups : undefined,
+        targetGroups: (visibility === 'Groups' || visibility === 'ProfileAndGroups') ? selectedGroups : [],
         taggedUserIds: taggedPeople.map((person) => person.id),
         resultsWho,
         resultsTiming,
@@ -569,37 +554,34 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
 
   const selectedOptionForSettings = options.find(o => o.id === settingsOptionId);
   const allMediaDrafts = [...postMedia, ...activeOptionMediaDrafts];
-  const isPostReady = Boolean(
-    !isSubmitting &&
-    userProfile?.id &&
-    title.trim() &&
-    (pollChoiceType === 'rating' || (optionPresentation === 'image' ? imageOptionsAreValid : options.filter(o => o.text.trim() !== '').length >= 2)) &&
-    category &&
-    (category !== 'Other' || otherCategoryText.trim()) &&
-    (visibility !== 'Groups' || selectedGroups.length > 0) &&
-    mediaDraftsAreReady(allMediaDrafts) &&
-    !mediaDraftsHaveErrors(allMediaDrafts)
-  );
+
+  const handleNext = () => {
+    setHasAttemptedSubmit(true);
+    if (isSubmitting || !validate(false)) return;
+    setComposerStep(2);
+    setHasAttemptedSubmit(false);
+    scrollContainerRef.current?.scrollTo({ top: 0 });
+  };
 
   return (
     <div className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-right duration-350">
       {/* Simplified Clean Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white/95 backdrop-blur-md sticky top-0 z-40 safe-top shrink-0">
-        <button onClick={handleExit} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">
+        <button aria-label={composerStep === 2 ? 'Back' : 'Close'} onClick={() => { if (composerStep === 2) { setComposerStep(1); setHasAttemptedSubmit(false); scrollContainerRef.current?.scrollTo({ top: 0 }); } else handleExit(); }} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">
           <ArrowLeft size={24} />
         </button>
-        <h1 className="text-sm font-black text-gray-800">New Poll</h1>
+        <div className="text-center"><h1 className="text-[12px] font-bold text-gray-800">New Poll</h1><p className="text-xs text-gray-500">Step {composerStep} of 2</p></div>
         <button
-          onClick={handleSubmit}
-          disabled={!isPostReady}
-          aria-disabled={!isPostReady}
-          className={`text-white font-black text-[11px] px-5 py-2.5 rounded-full transition-all uppercase tracking-widest ${
-            isPostReady
+          onClick={() => composerStep === 1 ? handleNext() : handleSubmit()}
+          disabled={isSubmitting}
+          aria-disabled={isSubmitting}
+          className={`text-white font-bold text-[12px] px-5 py-2.5 rounded-full transition-all uppercase tracking-widest ${
+            !isSubmitting
               ? 'bg-blue-600 hover:bg-blue-700 shadow-md active:scale-95 shadow-blue-200/50'
               : 'bg-gray-300 text-white shadow-none cursor-not-allowed'
           }`}
         >
-          Post
+          {composerStep === 1 ? 'Next' : 'Post'}
         </button>
       </div>
 
@@ -612,6 +594,19 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
             </div>
           )}
 
+          <div hidden={composerStep !== 1} className="space-y-6">
+          <div className="flex flex-wrap items-center gap-2" aria-label="Post details">
+            <button
+              type="button"
+              onClick={() => setIsCategorySheetOpen(true)}
+              className={`min-h-10 inline-flex items-center gap-2 rounded-full border bg-white px-3 text-[12px] font-bold text-gray-700 ${errors.category ? 'border-red-300' : 'border-gray-200'}`}
+            >
+              <Tag size={14} />
+              <span>{category || 'Category'}</span>
+              <ChevronDown size={14} />
+            </button>
+            <PeopleTagPicker variant="chip" selectedPeople={taggedPeople} onChange={setTaggedPeople} accent="blue" />
+          </div>
           {/* 1. Question Section */}
           <section className="space-y-4 pb-4 border-b border-gray-100">
             <div className="flex items-start gap-3">
@@ -660,48 +655,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               </div>
             )}
 
-            {/* Answer Type and Category Grid */}
-            <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-3 pt-3 mt-3 border-t border-gray-55/50">
-              {/* Left Column: Answer Type */}
-              <div className="space-y-1.5 text-left font-sans">
-                <div className="flex items-center gap-2 mb-1">
-                  <div className="p-1.5 bg-gray-50 rounded-lg text-gray-500 border border-gray-100 shrink-0">
-                    <BarChart3 size={12} />
-                  </div>
-                  <span className="text-xs font-bold text-gray-800">{t('answerType.label')}</span>
-                </div>
-                <AnswerTypeSelector value={answerType} onChange={handleAnswerTypeChange} />
-              </div>
-
-              {/* Right Column: Category */}
-              <div className="space-y-1.5 text-left min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <div className="p-1.5 bg-gray-50 rounded-lg text-gray-500 border border-gray-100 shrink-0">
-                    <Tag size={12} />
-                  </div>
-                  <span className="text-xs font-bold text-gray-800">Category</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsCategorySheetOpen(true)}
-                  className={`w-full flex items-center justify-between border rounded-xl px-3 py-2 text-[8px] font-semibold transition-all active:scale-[0.98] min-w-0 ${
-                    category
-                      ? 'bg-blue-50 border-blue-200 text-blue-700 font-semibold'
-                      : hasAttemptedSubmit && !category
-                      ? 'bg-red-50 border-red-200 text-red-600 font-bold'
-                      : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-55'
-                  }`}
-                >
-                  <div className="flex items-center min-w-0 mr-1">
-                    <span className="truncate">{category || 'Select category'}</span>
-                  </div>
-                  <ChevronDown size={14} className="text-gray-400 shrink-0" />
-                </button>
-                {errors.category && !category && (
-                  <p className="text-[10px] font-semibold text-red-600 px-1 mt-1">Please select a category.</p>
-                )}
-              </div>
-            </div>
+            <div className="space-y-2 pt-3"><label className="text-xs font-bold text-gray-800">{t('answerType.label')}</label><AnswerTypeSelector value={answerType} onChange={handleAnswerTypeChange} /></div>
           </section>
 
           {/* 3. Options Section */}
@@ -717,7 +671,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                 {errors.options && <span className="text-[10px] font-bold text-red-600 truncate">{errors.options}</span>}
               </div>
 
-              {pollChoiceType === 'multiple' && (
+              {pollChoiceType === 'multiple' && optionPresentation === 'image' && (
                 <div className="flex items-center gap-1.5 shrink-0">
                   <span className="text-[10px] font-bold text-gray-500">Option Layout</span>
                   <button
@@ -756,7 +710,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               )}
             </div>
 
-            {pollChoiceType === 'multiple' && showLayoutInfo && (
+            {pollChoiceType === 'multiple' && optionPresentation === 'image' && showLayoutInfo && (
               <div className="p-3 bg-blue-50 border border-blue-100 text-blue-800 text-[10px] font-semibold rounded-xl leading-relaxed animate-in fade-in slide-in-from-top-1 duration-200">
                 Choose how image-based poll options are displayed, such as a vertical list or side-by-side layout.
               </div>
@@ -777,9 +731,6 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               >
                 {(controls) => (
                   <div className="space-y-3">
-                    <p className="px-1 text-[10px] font-medium leading-relaxed text-gray-600">
-                      {t('answerType.imageHelper')}
-                    </p>
                     {!options.some(draftOptionHasImage) && (
                       <button
                         type="button"
@@ -847,18 +798,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                       </button>
                     )}
 
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={showOptionNames}
-                      onClick={() => setShowOptionNames((current) => !current)}
-                      className="flex min-h-11 w-full items-center justify-between gap-3 border-t border-gray-100 px-1 pt-3 text-left"
-                    >
-                      <span className="text-xs font-semibold text-gray-700">{t('answerType.showNames')}</span>
-                      <span className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${showOptionNames ? 'bg-blue-600' : 'bg-gray-300'}`} aria-hidden="true">
-                        <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-[inset-inline-start] ${showOptionNames ? 'start-6' : 'start-1'}`} />
-                      </span>
-                    </button>
+
                   </div>
                 )}
               </OptionImagePicker>
@@ -923,6 +863,19 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
 
 
 
+          </div>
+          <div hidden={composerStep !== 2} className="space-y-6">
+          <PostVisibilitySection
+            value={visibility}
+            onChange={value => { setVisibility(value); setErrors(previous => ({ ...previous, visibility: false })); }}
+            selectedGroupIds={selectedGroups}
+            onGroupsChange={ids => { setSelectedGroups(ids); setErrors(previous => ({ ...previous, visibility: false })); }}
+            groups={userGroups}
+            allowCustomAudience={isVerified}
+            allowCustomDomain={false}
+            error={typeof errors.visibility === 'string' ? errors.visibility : false}
+            accent="blue"
+          />
           {/* 5. Advanced Settings Row */}
           <button
             type="button"
@@ -939,7 +892,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               </div>
               <div>
                 <h4 className="text-xs font-bold text-gray-805">Advanced Settings</h4>
-                <p className="text-[9px] text-gray-500 mt-0.5 leading-tight">Visibility, results, duration & comments</p>
+                <p className="text-[9px] text-gray-500 mt-0.5 leading-tight">Results, duration & comments</p>
               </div>
             </div>
             <ChevronRight size={14} className="text-gray-400" />
@@ -1043,6 +996,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
             )}
           </section>
 
+          </div>
+          {errors.media && <p role="alert" className="text-xs text-red-600">{errors.media}</p>}
         </div>
       </div>
 
@@ -1050,16 +1005,11 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
       <BottomSheet
         isOpen={isAdvancedSheetOpen}
         onClose={() => {
-          if (visibility === 'Groups' && selectedGroups.length === 0) {
-            setPollVisibility('Public');
-          }
           setAdvancedSheetView('main');
           setIsAdvancedSheetOpen(false);
         }}
         title={
-          advancedSheetView === 'visibility'
-            ? 'Post Visibility'
-            : advancedSheetView === 'results'
+          advancedSheetView === 'results'
             ? 'Result Visibility'
             : 'Advanced Settings'
         }
@@ -1068,26 +1018,13 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
           {advancedSheetView === 'main' && (
             <div className="space-y-5">
               <p className="text-[11px] text-gray-550 leading-relaxed px-1">
-                Control who can see, vote, and view results.
+                Control results, duration, and participation settings.
               </p>
 
               {/* Sub-routing rows */}
               <div className="space-y-1.5">
                 {/* Visibility Sub-trigger */}
-                <button
-                  type="button"
-                  data-testid="poll-visibility-summary"
-                  data-poll-visibility={visibility}
-                  aria-label={`Post visibility: ${audienceLabel}`}
-                  onClick={() => setAdvancedSheetView('visibility')}
-                  className="w-full flex items-center justify-between p-3.5 bg-gray-50 hover:bg-gray-100/70 rounded-xl transition-all border border-gray-100"
-                >
-                  <span className="text-xs font-bold text-gray-800">Post Visibility</span>
-                  <div className="flex items-center gap-1 text-xs text-blue-600 font-black">
-                    <span>{audienceLabel}</span>
-                    <ChevronRight size={14} />
-                  </div>
-                </button>
+
 
                 {/* Results Visibility Sub-trigger */}
                 <button
@@ -1101,7 +1038,6 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                     <ChevronRight size={14} />
                   </div>
                 </button>
-                <PeopleTagPicker selectedPeople={taggedPeople} onChange={setTaggedPeople} accent="blue" />
               </div>
 
               {/* Duration section inline inside settings sheet */}
@@ -1216,120 +1152,6 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
           )}
 
           {/* Visibility View Sub-screen */}
-          {advancedSheetView === 'visibility' && (
-            <div className="space-y-4">
-              <button
-                type="button"
-                onClick={() => {
-                  if (visibility === 'Groups' && selectedGroups.length === 0) {
-                    setErrors(prev => ({ ...prev, visibility: "Please select at least one group." }));
-                    return;
-                  }
-                  setErrors(prev => ({ ...prev, visibility: false }));
-                  setAdvancedSheetView('main');
-                }}
-                className="flex items-center gap-1.5 text-xs text-blue-600 font-bold hover:opacity-80 transition-opacity pb-2"
-              >
-                <span>&larr; Back to Advanced Settings</span>
-              </button>
-
-              <div className="space-y-2">
-                {visibilityOptions.map((option) => {
-                  const Icon = option.icon;
-                  const isSelected = visibility === option.id;
-                  return (
-                    <button
-                      key={option.id}
-                      type="button"
-                      data-testid={`poll-visibility-option-${option.id.toLowerCase().replace(/\s+/g, '-')}`}
-                      aria-pressed={isSelected}
-                      onClick={() => {
-                        if (option.allowed) {
-                          setPollVisibility(option.id as VisibilityType);
-                        }
-                      }}
-                      className={`w-full flex items-center gap-4 p-4 rounded-2xl border transition-all text-left group ${!option.allowed ? 'opacity-40 cursor-not-allowed grayscale' : 'hover:bg-gray-50'
-                        } ${isSelected ? 'border-blue-500 bg-blue-50/50 ring-1 ring-blue-500/20' : 'border-transparent'}`}
-                    >
-                      <div className={`p-2.5 rounded-xl transition-colors ${isSelected ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-100 text-gray-500 group-hover:bg-gray-200'}`}>
-                        <Icon size={20} />
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <h4 className={`font-bold text-sm ${isSelected ? 'text-blue-700' : 'text-gray-900'}`}>{option.label}</h4>
-                          {option.premium && (
-                            <span className="text-[8px] font-black bg-gradient-to-r from-amber-400 to-orange-500 text-white px-1.5 py-0.5 rounded-md uppercase tracking-wider">PRO</span>
-                          )}
-                        </div>
-                        <p className="text-[10px] text-gray-500 leading-tight mt-0.5">{option.desc}</p>
-                      </div>
-                      {isSelected && (
-                        <div className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-sm">
-                          <Check size={14} strokeWidth={3} />
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {visibility === 'Groups' && (
-                <div className="mt-4 p-4 bg-gray-50 rounded-2xl animate-in slide-in-from-top-2 border border-gray-100">
-                  <div className="flex items-center justify-between mb-3 px-1">
-                    <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Select target groups</h5>
-                    <span className="text-[9px] font-bold text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded uppercase">Postable</span>
-                  </div>
-
-                  {postableGroups.length > 0 ? (
-                    <div className="space-y-2 max-h-[250px] overflow-y-auto no-scrollbar">
-                      {postableGroups.map(group => {
-                        const isGroupSelected = selectedGroups.includes(group.id);
-                        return (
-                          <button
-                            key={group.id}
-                            onClick={() => {
-                              handleGroupToggle(group.id);
-                              setErrors(prev => ({ ...prev, visibility: false }));
-                            }}
-                            className={`w-full flex items-center gap-3 p-2 rounded-xl transition-all border ${isGroupSelected
-                              ? 'bg-white border-blue-200 shadow-sm ring-1 ring-blue-500/5'
-                              : 'bg-transparent border-transparent hover:bg-white/50'
-                              }`}
-                          >
-                            <img src={group.image} className="w-10 h-10 rounded-lg object-cover border border-gray-200 shadow-xs" alt="" />
-                            <div className="flex-1 text-left min-w-0">
-                              <p className="text-xs font-bold text-gray-800 truncate">{group.name}</p>
-                              <p className="text-[10px] text-gray-400">{(group.memberCount || 0).toLocaleString()} members</p>
-                            </div>
-                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${isGroupSelected ? 'bg-blue-600 border-blue-600' : 'border-gray-200'
-                              }`}>
-                              {isGroupSelected && <Check size={12} className="text-white" strokeWidth={3} />}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="py-6 text-center">
-                      <Users size={32} className="mx-auto text-gray-300 mb-2 opacity-30" />
-                      <p className="text-xs text-gray-500 font-medium leading-relaxed px-4">
-                        You don't have permission to post in any groups.
-                      </p>
-                    </div>
-                  )}
-
-                  {errors.visibility && selectedGroups.length === 0 && (
-                    <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-[10px] text-red-600 font-bold flex items-center gap-1.5 mt-2 animate-in fade-in">
-                      <AlertCircle size={14} className="shrink-0" />
-                      <span>{errors.visibility}</span>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Results View Sub-screen */}
           {advancedSheetView === 'results' && (
             <div className="space-y-4">
               <button
