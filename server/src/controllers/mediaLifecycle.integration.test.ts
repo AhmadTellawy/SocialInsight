@@ -129,6 +129,74 @@ test('owner can observe and cancel a pending public privacy transition without s
       assert.equal(objects.has(variant.storageBucket + ':' + variant.storageKey), false);
     }
   });
+  await t.test('retried public completion accepts eligible followers without a live HTTP session and only once', async () => {
+    const value = await attachedPrivateAvatar(true), follower = await fixture(), blocked = await fixture(), inactive = await fixture();
+    const eligible = await prisma.follow.create({ data: { followingId: value.id, followerId: follower.id, status: 'PENDING' } });
+    const blockedFollow = await prisma.follow.create({ data: { followingId: value.id, followerId: blocked.id, status: 'PENDING' } });
+    const inactiveFollow = await prisma.follow.create({ data: { followingId: value.id, followerId: inactive.id, status: 'PENDING' } });
+    await prisma.userBlock.create({ data: { blockerId: value.id, blockedId: blocked.id } });
+    await prisma.user.update({ where: { id: inactive.id }, data: { status: 'DEACTIVATED' } });
+    const before = await value.browser.request('/users/me');
+    const attempted = await value.browser.request('/users/' + value.id, 'PUT', { isPrivate: false, expectedUpdatedAt: before.body.updatedAt });
+    assert.equal(attempted.status, 409); assert.equal(attempted.body.code, 'MEDIA_BUSY');
+    const job = await prisma.mediaPrivacyTransition.findFirstOrThrow({ where: { userId: value.id, targetIsPrivate: false } });
+    await prisma.authSession.updateMany({ where: { userId: value.id }, data: { revokedAt: new Date() } });
+    await prisma.mediaAsset.update({ where: { id: value.asset.id }, data: { storageCleanupNotBefore: new Date(Date.now() - 1000) } });
+    await media.restrictMediaAsset(value.asset.id);
+    await transitions.processMediaPrivacyTransition(job.id);
+    await transitions.processMediaPrivacyTransition(job.id);
+    const helper = require('../services/publicFollowAcceptanceService') as typeof import('../services/publicFollowAcceptanceService');
+    assert.deepEqual(await Promise.all([helper.acceptPendingPublicFollowers(value.id), helper.acceptPendingPublicFollowers(value.id)]), [0, 0]);
+    assert.equal((await prisma.follow.findUniqueOrThrow({ where: { id: eligible.id } })).status, 'ACTIVE');
+    assert.equal((await prisma.follow.findUniqueOrThrow({ where: { id: blockedFollow.id } })).status, 'PENDING');
+    assert.equal((await prisma.follow.findUniqueOrThrow({ where: { id: inactiveFollow.id } })).status, 'PENDING');
+    assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: value.id } })).followersCount, 1);
+    assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: follower.id } })).followingCount, 1);
+    assert.equal((await prisma.mediaPrivacyTransition.findUniqueOrThrow({ where: { id: job.id } })).status, 'COMPLETE');
+  });
+  await t.test('public follower acceptance resumes its durable phase after an interrupted grant', async () => {
+    const value = await attachedPrivateAvatar(false), follower = await fixture();
+    const follow = await prisma.follow.create({ data: { followingId: value.id, followerId: follower.id, status: 'PENDING' } });
+    const helper = require('../services/publicFollowAcceptanceService') as typeof import('../services/publicFollowAcceptanceService');
+    const mocked = mock.method(helper, 'acceptPendingPublicFollowers', async () => { throw new Error('Synthetic interrupted follower grant'); });
+    const before = await value.browser.request('/users/me');
+    try { assert.ok((await value.browser.request('/users/' + value.id, 'PUT', { isPrivate: false, expectedUpdatedAt: before.body.updatedAt })).status >= 500); }
+    finally { mocked.mock.restore(); }
+    const job = await prisma.mediaPrivacyTransition.findFirstOrThrow({ where: { userId: value.id, targetIsPrivate: false } });
+    assert.equal(job.status, 'FAILED'); assert.equal(job.failureReason, 'FOLLOW_ACCEPTANCE_PENDING');
+    assert.equal((await prisma.follow.findUniqueOrThrow({ where: { id: follow.id } })).status, 'PENDING');
+    await transitions.processMediaPrivacyTransition(job.id);
+    assert.equal((await prisma.follow.findUniqueOrThrow({ where: { id: follow.id } })).status, 'ACTIVE');
+    const completed = await prisma.mediaPrivacyTransition.findUniqueOrThrow({ where: { id: job.id } });
+    assert.equal(completed.status, 'COMPLETE'); assert.equal(completed.failureReason, null);
+  });
+  await t.test('a real two-batch public transition accepts followers only after the final media batch', async () => {
+    const value = await fixture(), follower = await fixture();
+    const bytes: Buffer = await require('sharp')(value.source).webp().toBuffer();
+    const bucket = require('../config/media').MEDIA_CONFIG.buckets.private as string;
+    for (let index = 0; index < 21; index++) {
+      const id = randomUUID(), key = value.id + '/' + id + '/private/256.webp';
+      objects.set(bucket + ':' + key, bytes);
+      await prisma.post.create({ data: { authorId: value.id, title: 'Batched privacy fixture', description: '', expiresAt: new Date(Date.now() + 86400000), type: 'Survey', status: 'PUBLISHED', targetAudience: 'Public',
+        media: { create: { sortOrder: 0, mediaAsset: { create: { id, ownerId: value.id, purpose: 'POST', status: 'ATTACHED', accessScope: 'RESTRICTED', aspectRatio: 1,
+          variants: { create: { kind: 'SMALL', storageBucket: bucket, storageKey: key, width: 256, height: 256, mime: 'image/webp', byteSize: bytes.length, isPublic: false } }
+        } } } }
+      } });
+    }
+    const follow = await prisma.follow.create({ data: { followingId: value.id, followerId: follower.id, status: 'PENDING' } });
+    await prisma.user.update({ where: { id: value.id }, data: { isPrivate: true, mediaPrivacyTarget: false } });
+    const job = await prisma.mediaPrivacyTransition.create({ data: { userId: value.id, targetIsPrivate: false } });
+    assert.equal(await transitions.processMediaPrivacyTransition(job.id), false);
+    const first = await prisma.mediaPrivacyTransition.findUniqueOrThrow({ where: { id: job.id } });
+    assert.equal(first.status, 'PENDING'); assert.equal(first.processedCount, 20); assert.ok(first.cursorAssetId);
+    assert.equal((await prisma.follow.findUniqueOrThrow({ where: { id: follow.id } })).status, 'PENDING');
+    assert.equal(await transitions.processMediaPrivacyTransition(job.id), true);
+    await transitions.processMediaPrivacyTransition(job.id);
+    const completed = await prisma.mediaPrivacyTransition.findUniqueOrThrow({ where: { id: job.id } });
+    assert.equal(completed.status, 'COMPLETE'); assert.equal(completed.processedCount, 21);
+    assert.equal((await prisma.follow.findUniqueOrThrow({ where: { id: follow.id } })).status, 'ACTIVE');
+    assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: value.id } })).followersCount, 1);
+  });
 });
 after(async () => {
   await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); });

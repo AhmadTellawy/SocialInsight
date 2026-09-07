@@ -26,6 +26,7 @@ import {
 } from '../services/mediaService';
 import type { PreparedMediaAttachment } from '../services/mediaService';
 import { requestMediaPrivacyTransition } from '../services/mediaPrivacyTransitionService';
+import { acceptPendingPublicFollowers } from '../services/publicFollowAcceptanceService';
 import { MediaValidationError } from '../services/mediaProcessor';
 import { withNotificationDeepLink } from '../utils/notificationTarget';
 import { buildMentionSearchWhere, MENTION_SUGGESTION_LIMIT, MENTION_USER_SELECT } from '../utils/mentionSearch';
@@ -552,26 +553,7 @@ export const updateUser = async (req: Request, res: Response) => {
         // Preserve acceptance behavior while serializing against blocking and
         // concurrent request cancellation, so counters reflect actual transitions.
         if (data.isPrivate === false) {
-            const pendingRequests = await prisma.follow.findMany({ where: { followingId: id, status: 'PENDING' }, select: { id: true, followerId: true } });
-            for (const pending of pendingRequests) {
-                const accepted = await prisma.$transaction(async tx => {
-                    for (const accountId of [...new Set([id, pending.followerId])].sort()) await lockAccountSecurity(tx, accountId);
-                    await assertActiveAccountSession(tx, req, false);
-                    await tx.$queryRaw(Prisma.sql`SELECT id FROM users WHERE id IN (${id}, ${pending.followerId}) ORDER BY id FOR UPDATE`);
-                    const current = await tx.user.findUnique({ where: { id }, select: { status: true, isPrivate: true, mediaPrivacyTarget: true } });
-                    // A pending or cancelled expansion never grants follow access.
-                    if (current?.status !== 'ACTIVE' || current.isPrivate || current.mediaPrivacyTarget !== null) return false;
-                    const blocked = await tx.userBlock.findFirst({ where: { OR: [{ blockerId: id, blockedId: pending.followerId }, { blockerId: pending.followerId, blockedId: id }] } });
-                    const follower = await tx.user.findUnique({ where: { id: pending.followerId }, select: { status: true } });
-                    if (blocked || follower?.status !== 'ACTIVE') return false;
-                    const changed = await tx.follow.updateMany({ where: { id: pending.id, status: 'PENDING' }, data: { status: 'ACTIVE', approvedAt: new Date() } });
-                    if (changed.count !== 1) return false;
-                    await tx.user.update({ where: { id }, data: { followersCount: { increment: 1 } } });
-                    await tx.user.update({ where: { id: pending.followerId }, data: { followingCount: { increment: 1 } } });
-                    return true;
-                });
-                if (accepted) await notify(id, pending.followerId, 'follow_accept', 'Automatically accepted your follow request', 'profile', id);
-            }
+            await acceptPendingPublicFollowers(id, tx => assertActiveAccountSession(tx, req, false));
         }
 
         const [postsCount, responsesCount] = await Promise.all([

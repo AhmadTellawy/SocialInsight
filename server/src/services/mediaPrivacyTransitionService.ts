@@ -2,9 +2,11 @@ import { AccountSecurityError, lockAccountSecurity } from './mfaService';
 import prisma from '../prisma';
 import { promoteMediaAsset, restrictMediaAsset } from './mediaService';
 import { Prisma } from '@prisma/client';
+import { acceptPendingPublicFollowers } from './publicFollowAcceptanceService';
 
 const BATCH_SIZE = 20;
 const WORKER_LEASE_MS = 15 * 60_000;
+const FOLLOW_ACCEPTANCE_PHASE = 'FOLLOW_ACCEPTANCE_PENDING';
 class SupersededTransition extends Error {}
 const POST_SCOPE_SELECT = { status: true, isDeleted: true, targetAudience: true, groupId: true, targetedGroups: { select: { id: true } } } as const;
 
@@ -15,16 +17,43 @@ export const processMediaPrivacyTransition = async (transitionId: string): Promi
     await lockAccountSecurity(tx, identity.userId);
     const job = await tx.mediaPrivacyTransition.findUnique({ where: { id: transitionId } });
     if (!job || job.status === 'COMPLETE') return null;
-    const account = await tx.user.findUnique({ where: { id: job.userId }, select: { status: true, mediaPrivacyTarget: true } });
-    if (!account || account.mediaPrivacyTarget !== job.targetIsPrivate || (account.status !== 'ACTIVE' && !job.targetIsPrivate)) {
+    const account = await tx.user.findUnique({ where: { id: job.userId }, select: { status: true, isPrivate: true, mediaPrivacyTarget: true } });
+    const acceptFollowersOnly = job.failureReason === FOLLOW_ACCEPTANCE_PHASE;
+    const currentIntent = acceptFollowersOnly
+      ? account?.status === 'ACTIVE' && !account.isPrivate && account.mediaPrivacyTarget === null
+      : !!account && account.mediaPrivacyTarget === job.targetIsPrivate && (account.status === 'ACTIVE' || job.targetIsPrivate);
+    if (!currentIntent) {
       await tx.mediaPrivacyTransition.update({ where: { id: job.id }, data: { status: 'COMPLETE', completedAt: new Date(), failureReason: 'SUPERSEDED' } });
       return null;
     }
     // Cron and immediate continuation must not process the same batch together.
     if (job.status === 'RUNNING' && job.startedAt && job.startedAt.getTime() > Date.now() - WORKER_LEASE_MS) return null;
-    return tx.mediaPrivacyTransition.update({ where: { id: job.id }, data: { status: 'RUNNING', startedAt: new Date(), failureReason: null } });
+    const claimed = await tx.mediaPrivacyTransition.update({ where: { id: job.id }, data: { status: 'RUNNING', startedAt: new Date(), failureReason: acceptFollowersOnly ? FOLLOW_ACCEPTANCE_PHASE : null } });
+    return { ...claimed, acceptFollowersOnly };
   });
   if (!transition) return true;
+  if (transition.acceptFollowersOnly) {
+    try {
+      await acceptPendingPublicFollowers(transition.userId);
+      await prisma.$transaction(async tx => {
+        await lockAccountSecurity(tx, transition.userId);
+        await tx.mediaPrivacyTransition.updateMany({
+          where: { id: transition.id, status: 'RUNNING', startedAt: transition.startedAt, failureReason: FOLLOW_ACCEPTANCE_PHASE },
+          data: { status: 'COMPLETE', completedAt: new Date(), failureReason: null }
+        });
+      });
+      return true;
+    } catch (error) {
+      await prisma.$transaction(async tx => {
+        await lockAccountSecurity(tx, transition.userId);
+        await tx.mediaPrivacyTransition.updateMany({
+          where: { id: transition.id, status: 'RUNNING', startedAt: transition.startedAt, failureReason: FOLLOW_ACCEPTANCE_PHASE },
+          data: { status: 'FAILED' }
+        });
+      });
+      throw error;
+    }
+  }
   const targetIsPrivate = transition.targetIsPrivate;
   const assertCurrent = async (tx: Prisma.TransactionClient) => {
     const [job, account] = await Promise.all([
@@ -85,12 +114,18 @@ export const processMediaPrivacyTransition = async (transitionId: string): Promi
       await lockAccountSecurity(tx, transition.userId);
       await assertCurrent(tx);
       const currentAccount = await tx.user.findUnique({ where: { id: transition.userId }, select: { status: true } });
-      await tx.mediaPrivacyTransition.update({ where: { id: transition.id }, data: { status: 'COMPLETE', processedCount: { increment: assets.length }, completedAt: new Date(), failureReason: null } });
+      await tx.mediaPrivacyTransition.update({ where: { id: transition.id }, data: {
+        status: targetIsPrivate ? 'COMPLETE' : 'PENDING', processedCount: { increment: assets.length },
+        completedAt: targetIsPrivate ? new Date() : null, failureReason: targetIsPrivate ? null : FOLLOW_ACCEPTANCE_PHASE
+      } });
       await tx.user.update({ where: { id: transition.userId }, data: {
         ...(currentAccount?.status === 'ACTIVE' ? { isPrivate: transition.targetIsPrivate } : {}),
         mediaPrivacyTarget: null
       } });
     });
+    // This durable phase survives a crash between publishing the profile and
+    // accepting followers; retries use the same idempotent authorization path.
+    if (!targetIsPrivate) return processMediaPrivacyTransition(transition.id);
     return true;
   } catch (error) {
     const stillCurrent = await prisma.$transaction(async tx => {
@@ -131,6 +166,7 @@ export const requestMediaPrivacyTransition = async (userId: string, targetIsPriv
       return tx.mediaPrivacyTransition.create({ data: { userId, targetIsPrivate: true } });
     }
     if (user.isPrivate === targetIsPrivate) return null;
+    await tx.mediaPrivacyTransition.updateMany({ where: { userId, status: { in: ['PENDING', 'RUNNING', 'FAILED'] } }, data: { status: 'COMPLETE', completedAt: new Date(), failureReason: 'SUPERSEDED' } });
     await tx.user.update({ where: { id: userId }, data: { mediaPrivacyTarget: targetIsPrivate } });
     return tx.mediaPrivacyTransition.create({ data: { userId, targetIsPrivate } });
   });
