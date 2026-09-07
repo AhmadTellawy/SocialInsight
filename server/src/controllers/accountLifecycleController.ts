@@ -130,7 +130,8 @@ export async function deleteAccount(req: Request, res: Response) {
         email: null, phone: null, password: null, passwordHash: null, passwordUpdatedAt: null, emailVerifiedAt: null,
         avatar: null, avatarMediaId: null, coverMediaId: null, bio: null, location: null, website: null, birthday: null,
         language: null, country: null, authProvider: null, verifiedBadge: false, followersCount: 0, followingCount: 0,
-        searchVisibility: false, allowSharing: false, groupInvites: false, groupPrivacy: 'Off', mediaPrivacyTarget: true
+        searchVisibility: false, allowSharing: false, groupInvites: false, groupPrivacy: 'Off', mediaPrivacyTarget: true,
+        theme: 'system', isPrivate: true, peopleTagPermission: 'NO_ONE'
       } });
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 20_000 });
     notifyUserSessionsRevoked(req.user!.userId); clearSessionCookies(res);

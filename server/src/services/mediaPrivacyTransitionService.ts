@@ -1,23 +1,39 @@
 import { AccountSecurityError, lockAccountSecurity } from './mfaService';
 import prisma from '../prisma';
 import { promoteMediaAsset, restrictMediaAsset } from './mediaService';
+import { Prisma } from '@prisma/client';
 
 const BATCH_SIZE = 20;
+const WORKER_LEASE_MS = 15 * 60_000;
+class SupersededTransition extends Error {}
 const POST_SCOPE_SELECT = { status: true, isDeleted: true, targetAudience: true, groupId: true, targetedGroups: { select: { id: true } } } as const;
 
 export const processMediaPrivacyTransition = async (transitionId: string): Promise<boolean> => {
-  const transition = await prisma.mediaPrivacyTransition.findUnique({ where: { id: transitionId } });
-  if (!transition || transition.status === 'COMPLETE') return true;
-  const account = await prisma.user.findUnique({ where: { id: transition.userId }, select: { status: true, isPrivate: true } });
-  if (!account) return true;
-  // An account can deactivate while an older public transition is pending.
-  // Never promote its objects after that revocation.
-  const targetIsPrivate = transition.targetIsPrivate || account.status !== 'ACTIVE';
-
-  await prisma.mediaPrivacyTransition.update({
-    where: { id: transition.id },
-    data: { status: 'RUNNING', startedAt: transition.startedAt || new Date(), failureReason: null }
+  const identity = await prisma.mediaPrivacyTransition.findUnique({ where: { id: transitionId }, select: { userId: true } });
+  if (!identity) return true;
+  const transition = await prisma.$transaction(async tx => {
+    await lockAccountSecurity(tx, identity.userId);
+    const job = await tx.mediaPrivacyTransition.findUnique({ where: { id: transitionId } });
+    if (!job || job.status === 'COMPLETE') return null;
+    const account = await tx.user.findUnique({ where: { id: job.userId }, select: { status: true, mediaPrivacyTarget: true } });
+    if (!account || account.mediaPrivacyTarget !== job.targetIsPrivate || (account.status !== 'ACTIVE' && !job.targetIsPrivate)) {
+      await tx.mediaPrivacyTransition.update({ where: { id: job.id }, data: { status: 'COMPLETE', completedAt: new Date(), failureReason: 'SUPERSEDED' } });
+      return null;
+    }
+    // Cron and immediate continuation must not process the same batch together.
+    if (job.status === 'RUNNING' && job.startedAt && job.startedAt.getTime() > Date.now() - WORKER_LEASE_MS) return null;
+    return tx.mediaPrivacyTransition.update({ where: { id: job.id }, data: { status: 'RUNNING', startedAt: new Date(), failureReason: null } });
   });
+  if (!transition) return true;
+  const targetIsPrivate = transition.targetIsPrivate;
+  const assertCurrent = async (tx: Prisma.TransactionClient) => {
+    const [job, account] = await Promise.all([
+      tx.mediaPrivacyTransition.findUnique({ where: { id: transition.id }, select: { status: true, startedAt: true } }),
+      tx.user.findUnique({ where: { id: transition.userId }, select: { status: true, mediaPrivacyTarget: true } })
+    ]);
+    if (job?.status !== 'RUNNING' || job.startedAt?.getTime() !== transition.startedAt?.getTime()
+      || account?.mediaPrivacyTarget !== targetIsPrivate || (account.status !== 'ACTIVE' && !targetIsPrivate)) throw new SupersededTransition();
+  };
 
   try {
     const assets = await prisma.mediaAsset.findMany({
@@ -25,7 +41,9 @@ export const processMediaPrivacyTransition = async (transitionId: string): Promi
         ownerId: transition.userId,
         purpose: { in: ['POST', 'PROFILE_AVATAR', 'PROFILE_COVER', 'QUESTION_IMAGE', 'OPTION_IMAGE'] },
         status: 'ATTACHED',
-        accessScope: targetIsPrivate ? 'PUBLIC' : 'RESTRICTED',
+        ...(targetIsPrivate
+          ? { OR: [{ accessScope: 'PUBLIC' as const }, { variants: { some: { isPublic: true } } }] }
+          : { accessScope: 'RESTRICTED' as const }),
         ...(transition.cursorAssetId ? { id: { gt: transition.cursorAssetId } } : {})
       },
       orderBy: { id: 'asc' },
@@ -38,47 +56,50 @@ export const processMediaPrivacyTransition = async (transitionId: string): Promi
     });
 
     for (const asset of assets) {
-      if (targetIsPrivate) await restrictMediaAsset(asset.id, 'RESTRICTED');
+      if (targetIsPrivate) await restrictMediaAsset(asset.id, 'RESTRICTED', assertCurrent);
       else {
-        const current = await prisma.user.findUnique({ where: { id: transition.userId }, select: { status: true } });
-        if (current?.status !== 'ACTIVE') continue;
         const post = asset.postAttachment?.post || asset.questionFor?.post || asset.questionFor?.section?.post || asset.optionFor?.question.post || asset.optionFor?.question.section?.post;
         const isPublicProfileImage = asset.purpose === 'PROFILE_AVATAR' || asset.purpose === 'PROFILE_COVER';
         const isPublicPost = post && post.status === 'PUBLISHED' && !post.isDeleted && !post.groupId && post.targetedGroups.length === 0 && (!post.targetAudience || post.targetAudience.toLowerCase() === 'public');
-        if (isPublicProfileImage || isPublicPost) await promoteMediaAsset(asset.id);
+        if (isPublicProfileImage || isPublicPost) await promoteMediaAsset(asset.id, assertCurrent);
       }
     }
 
     if (assets.length === BATCH_SIZE) {
-      await prisma.mediaPrivacyTransition.update({
+      await prisma.$transaction(async tx => {
+        await lockAccountSecurity(tx, transition.userId);
+        await assertCurrent(tx);
+        await tx.mediaPrivacyTransition.update({
         where: { id: transition.id },
         data: {
           cursorAssetId: assets[assets.length - 1].id,
+          status: 'PENDING',
           processedCount: { increment: assets.length }
         }
+        });
       });
       return false;
     }
 
     await prisma.$transaction(async tx => {
       await lockAccountSecurity(tx, transition.userId);
+      await assertCurrent(tx);
       const currentAccount = await tx.user.findUnique({ where: { id: transition.userId }, select: { status: true } });
       await tx.mediaPrivacyTransition.update({ where: { id: transition.id }, data: { status: 'COMPLETE', processedCount: { increment: assets.length }, completedAt: new Date(), failureReason: null } });
-      const anotherTransition = await tx.mediaPrivacyTransition.findFirst({ where: { userId: transition.userId, id: { not: transition.id }, status: { in: ['PENDING', 'RUNNING', 'FAILED'] } }, select: { id: true } });
       await tx.user.update({ where: { id: transition.userId }, data: {
         ...(currentAccount?.status === 'ACTIVE' ? { isPrivate: transition.targetIsPrivate } : {}),
-        ...(!anotherTransition ? { mediaPrivacyTarget: null } : {})
+        mediaPrivacyTarget: null
       } });
     });
     return true;
   } catch (error) {
-    await prisma.mediaPrivacyTransition.update({
-      where: { id: transition.id },
-      data: {
-        status: 'FAILED',
-        failureReason: error instanceof Error ? error.message.slice(0, 500) : 'Unknown media transition error'
-      }
+    const stillCurrent = await prisma.$transaction(async tx => {
+      await lockAccountSecurity(tx, transition.userId);
+      try { await assertCurrent(tx); } catch (failure) { if (failure instanceof SupersededTransition) return false; throw failure; }
+      await tx.mediaPrivacyTransition.update({ where: { id: transition.id }, data: { status: 'FAILED', failureReason: error instanceof Error ? error.message.slice(0, 500) : 'Unknown media transition error' } });
+      return true;
     });
+    if (!stillCurrent || error instanceof SupersededTransition) return true;
     throw error;
   }
 };
@@ -102,7 +123,12 @@ export const requestMediaPrivacyTransition = async (userId: string, targetIsPriv
     if (!user || user.status !== 'ACTIVE') throw new AccountSecurityError('AUTH_REQUIRED', 401);
     if (user.mediaPrivacyTarget !== null) {
       if (user.mediaPrivacyTarget === targetIsPrivate) return null;
-      throw new Error('A privacy transition is already in progress.');
+      if (!targetIsPrivate) throw new Error('A privacy transition is already in progress.');
+      // A requested expansion can always be cancelled safely. Mark every old
+      // worker terminal before persisting the more restrictive replacement.
+      await tx.mediaPrivacyTransition.updateMany({ where: { userId, status: { in: ['PENDING', 'RUNNING', 'FAILED'] } }, data: { status: 'COMPLETE', completedAt: new Date(), failureReason: 'SUPERSEDED' } });
+      await tx.user.update({ where: { id: userId }, data: { isPrivate: true, mediaPrivacyTarget: true } });
+      return tx.mediaPrivacyTransition.create({ data: { userId, targetIsPrivate: true } });
     }
     if (user.isPrivate === targetIsPrivate) return null;
     await tx.user.update({ where: { id: userId }, data: { mediaPrivacyTarget: targetIsPrivate } });

@@ -9,6 +9,8 @@ import {
   getMediaReadPresentation
 } from '../services/mediaService';
 import { MediaValidationError } from '../services/mediaProcessor';
+import { assertActiveAccountSession } from '../services/accountSecurityPolicy';
+import { AccountSecurityError } from '../services/mfaService';
 
 const uploadSchema = z.object({
   purpose: z.nativeEnum(MediaPurpose),
@@ -33,6 +35,10 @@ const finalizeSchema = z.object({
 });
 
 const respondWithMediaError = (req: Request, res: Response, error: unknown): void => {
+  if (error instanceof AccountSecurityError) {
+    res.status(error.status).json({ code: error.code, error: 'Sign in again to continue.' });
+    return;
+  }
   if (error instanceof z.ZodError) {
     res.status(400).json({ error: 'Invalid media request.', code: 'INVALID_MEDIA_REQUEST' });
     return;
@@ -61,7 +67,7 @@ export const startMediaUpload = async (req: Request, res: Response): Promise<voi
   try {
     const ownerId = req.user!.userId;
     const input = uploadSchema.parse(req.body);
-    const upload = await createMediaUpload(ownerId, input.purpose, input.mime, input.size, input.altText);
+    const upload = await createMediaUpload(ownerId, input.purpose, input.mime, input.size, input.altText, tx => assertActiveAccountSession(tx, req, false));
     res.status(201).json(upload);
   } catch (error) {
     respondWithMediaError(req, res, error);
@@ -71,7 +77,7 @@ export const startMediaUpload = async (req: Request, res: Response): Promise<voi
 export const finalizeMedia = async (req: Request, res: Response): Promise<void> => {
   try {
     const input = finalizeSchema.parse(req.body);
-    const result = await finalizeMediaUpload(req.user!.userId, req.params.id as string, input);
+    const result = await finalizeMediaUpload(req.user!.userId, req.params.id as string, input, tx => assertActiveAccountSession(tx, req, false));
     res.json(result);
   } catch (error) {
     respondWithMediaError(req, res, error);

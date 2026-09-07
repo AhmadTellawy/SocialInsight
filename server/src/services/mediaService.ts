@@ -6,6 +6,8 @@ import {
   Prisma
 } from '@prisma/client';
 import prisma from '../prisma';
+import { randomUUID } from 'crypto';
+import { lockAccountSecurity, AccountSecurityError } from './mfaService';
 import { MEDIA_CONFIG, isAllowedMediaMime, maxInputBytesForPurpose } from '../config/media';
 import { GroupPermissionService } from './groupPermissionService';
 import { PrivacyService } from './privacyService';
@@ -24,6 +26,22 @@ const mimeExtension: Record<string, string> = {
 };
 
 const addHours = (date: Date, hours: number): Date => new Date(date.getTime() + hours * 60 * 60 * 1000);
+type AuthorizeMediaWrite = (tx: Prisma.TransactionClient) => Promise<unknown>;
+const MEDIA_OPERATION_TIMEOUT_MS = 60_000;
+const PROCESSING_LEASE_MS = 15 * 60_000;
+const SOURCE_UPLOAD_LIFETIME_MS = (7200 + 300) * 1000;
+const assertMediaWriter = async (tx: Prisma.TransactionClient, ownerId: string, authorize?: AuthorizeMediaWrite) => {
+  await lockAccountSecurity(tx, ownerId);
+  if (authorize) await authorize(tx);
+  const owner = await tx.user.findUnique({ where: { id: ownerId }, select: { status: true } });
+  if (owner?.status !== 'ACTIVE') throw new AccountSecurityError('AUTH_REQUIRED', 401);
+};
+const boundedMediaOperation = async <T>(operation: Promise<T>): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([operation, new Promise<T>((_, reject) => { timer = setTimeout(() => reject(new MediaValidationError('MEDIA_OPERATION_TIMEOUT', 'Image processing timed out. Please try again.', 503)), MEDIA_OPERATION_TIMEOUT_MS); })]);
+  } finally { if (timer) clearTimeout(timer); }
+};
 
 const variantKey = (asset: Pick<MediaAsset, 'id' | 'ownerId'>, visibility: 'private' | 'public', width: number): string =>
   `${asset.ownerId}/${asset.id}/${visibility}/${width}.webp`;
@@ -161,7 +179,8 @@ export const createMediaUpload = async (
   purpose: MediaPurpose,
   declaredMime: string,
   declaredSize: number,
-  altText?: string
+  altText?: string,
+  authorize?: AuthorizeMediaWrite
 ) => {
   if (!isAllowedMediaMime(declaredMime)) {
     throw new MediaValidationError('UNSUPPORTED_MEDIA_TYPE', 'Only JPEG, PNG, and WebP images are supported.');
@@ -171,22 +190,34 @@ export const createMediaUpload = async (
     throw new MediaValidationError('INVALID_FILE_SIZE', `Image must be no larger than ${Math.floor(maxInputBytes / 1024 / 1024)} MB.`);
   }
 
-  const asset = await prisma.mediaAsset.create({
+  const assetId = randomUUID();
+  const key = sourceKey(ownerId, assetId, declaredMime);
+  const asset = await prisma.$transaction(async tx => {
+    await assertMediaWriter(tx, ownerId, authorize);
+    return tx.mediaAsset.create({
     data: {
+      id: assetId,
       ownerId,
       purpose,
       sourceMime: declaredMime,
       sourceByteSize: declaredSize,
       altText: altText?.trim() || null,
       uploadBucket: MEDIA_CONFIG.buckets.originals,
+      uploadKey: key,
+      storageCleanupNotBefore: new Date(Date.now() + SOURCE_UPLOAD_LIFETIME_MS),
       expiresAt: addHours(new Date(), MEDIA_CONFIG.temporaryLifetimeHours)
     }
+    });
   });
-  const key = sourceKey(ownerId, asset.id, declaredMime);
 
   try {
-    const upload = await getMediaStorage().createSignedUpload(MEDIA_CONFIG.buckets.originals, key);
-    await prisma.mediaAsset.update({ where: { id: asset.id }, data: { uploadKey: key } });
+    const upload = await boundedMediaOperation(getMediaStorage().createSignedUpload(MEDIA_CONFIG.buckets.originals, key));
+    await prisma.$transaction(async tx => {
+      await assertMediaWriter(tx, ownerId, authorize);
+      const fresh = await tx.mediaAsset.findUnique({ where: { id: asset.id }, select: { status: true, deletedAt: true } });
+      if (fresh?.status !== 'TEMPORARY' || fresh.deletedAt) throw new MediaValidationError('MEDIA_NOT_FOUND', 'Media asset was removed.', 404);
+      await tx.mediaAsset.update({ where: { id: asset.id }, data: { storageCleanupNotBefore: new Date(Date.now() + SOURCE_UPLOAD_LIFETIME_MS) } });
+    });
     return {
       assetId: asset.id,
       bucket: MEDIA_CONFIG.buckets.originals,
@@ -196,19 +227,19 @@ export const createMediaUpload = async (
       expiresInSeconds: 7200
     };
   } catch (error) {
-    await prisma.mediaAsset.delete({ where: { id: asset.id } }).catch(() => undefined);
+    // Keep the exact source key until every issued capability has expired.
+    await scheduleMediaDeletion([asset.id]).catch(() => undefined);
     throw error;
   }
 };
 
-const uploadProcessedVariant = async (
+const processedVariantRecord = (
   asset: MediaAsset,
   variant: ProcessedMediaVariant,
   bucket: string,
   key: string,
   isPublic: boolean
 ) => {
-  await getMediaStorage().upload(bucket, key, variant.buffer, variant.mime, '31536000');
   return {
     mediaAssetId: asset.id,
     kind: variant.kind,
@@ -222,8 +253,11 @@ const uploadProcessedVariant = async (
   };
 };
 
-export const finalizeMediaUpload = async (ownerId: string, assetId: string, request: MediaCropRequest) => {
-  const asset = await prisma.mediaAsset.findUnique({ where: { id: assetId } });
+export const finalizeMediaUpload = async (ownerId: string, assetId: string, request: MediaCropRequest, authorize?: AuthorizeMediaWrite) => {
+  const processingDeadline = Date.now() + PROCESSING_LEASE_MS;
+  const asset = await prisma.$transaction(async tx => {
+  await assertMediaWriter(tx, ownerId, authorize);
+  const asset = await tx.mediaAsset.findUnique({ where: { id: assetId }, include: { variants: true } });
   if (!asset || asset.ownerId !== ownerId || asset.deletedAt) {
     throw new MediaValidationError('MEDIA_NOT_FOUND', 'Media asset was not found.', 404);
   }
@@ -234,36 +268,57 @@ export const finalizeMediaUpload = async (ownerId: string, assetId: string, requ
     throw new MediaValidationError('MEDIA_ALREADY_ATTACHED', 'Attached media cannot be finalized again.', 409);
   }
 
-  const claimed = await prisma.mediaAsset.updateMany({
+  const claimed = await tx.mediaAsset.updateMany({
     where: { id: asset.id, status: { in: ['TEMPORARY', 'FAILED', 'READY'] } },
-    data: { status: 'PROCESSING', errorCode: null }
+    data: { status: 'PROCESSING', errorCode: null, storageCleanupNotBefore: new Date(Math.max(asset.storageCleanupNotBefore?.getTime() || 0, processingDeadline)) }
   });
   if (claimed.count !== 1) {
     throw new MediaValidationError('MEDIA_BUSY', 'This image is already being processed.', 409);
   }
+  return asset;
+  });
 
   const uploadedObjects: Array<{ bucket: string; key: string }> = [];
   try {
-    const source = await getMediaStorage().download(asset.uploadBucket, asset.uploadKey);
-    const processed = await processMediaBuffer(source, asset.purpose, asset.sourceMime, request);
-    const records: Awaited<ReturnType<typeof uploadProcessedVariant>>[] = [];
-
-    const masterObject = { bucket: MEDIA_CONFIG.buckets.originals, key: masterKey(asset) };
-    records.push(await uploadProcessedVariant(asset, processed.master, masterObject.bucket, masterObject.key, false));
-    uploadedObjects.push(masterObject);
-
-    for (const variant of processed.variants) {
-      const object = {
-        bucket: MEDIA_CONFIG.buckets.private,
-        key: variantKey(asset, 'private', variant.width)
-      };
-      records.push(await uploadProcessedVariant(asset, variant, object.bucket, object.key, false));
-      uploadedObjects.push(object);
+    const source = await boundedMediaOperation(getMediaStorage().download(asset.uploadBucket!, asset.uploadKey!));
+    const processed = await boundedMediaOperation(processMediaBuffer(source, asset.purpose, asset.sourceMime!, request));
+    const plans = [
+      { variant: processed.master, bucket: MEDIA_CONFIG.buckets.originals, key: masterKey(asset) },
+      ...processed.variants.map(variant => ({ variant, bucket: MEDIA_CONFIG.buckets.private, key: variantKey(asset, 'private', variant.width) }))
+    ];
+    const records = plans.map(plan => processedVariantRecord(asset, plan.variant, plan.bucket, plan.key, false));
+    const assertProcessing = async (tx: Prisma.TransactionClient) => {
+      await assertMediaWriter(tx, ownerId, authorize);
+      const current = await tx.mediaAsset.findUnique({ where: { id: asset.id }, select: { status: true, deletedAt: true } });
+      if (current?.status !== 'PROCESSING' || current.deletedAt || Date.now() >= processingDeadline) throw new MediaValidationError('MEDIA_PROCESSING_CANCELLED', 'This image is no longer available for processing.', 409);
+    };
+    // Register every possible object before I/O. Deletion can then retry exact
+    // removals, including uploads that complete after cancellation or timeout.
+    await prisma.$transaction(async tx => {
+      await assertProcessing(tx);
+      for (const record of records) await tx.mediaVariant.upsert({
+        where: { mediaAssetId_kind_width_isPublic: { mediaAssetId: asset.id, kind: record.kind, width: record.width, isPublic: false } },
+        create: record, update: record
+      });
+    });
+    uploadedObjects.push(...plans.map(({ bucket, key }) => ({ bucket, key })));
+    for (const plan of plans) {
+      if (Date.now() >= processingDeadline) throw new MediaValidationError('MEDIA_OPERATION_TIMEOUT', 'Image processing timed out.', 503);
+      const upload = getMediaStorage().upload(plan.bucket, plan.key, plan.variant.buffer, plan.variant.mime, '31536000');
+      try { await boundedMediaOperation(upload); }
+      catch (error) {
+        // A provider may finish after its caller times out. Keep the ledger and
+        // attach explicit compensation instead of forgetting that late write.
+        void upload.then(() => getMediaStorage().remove(plan.bucket, [plan.key])).catch(() => undefined);
+        throw error;
+      }
     }
+    const keys = new Set(plans.map(plan => plan.key));
+    for (const previous of asset.variants) if (!keys.has(previous.storageKey)) await boundedMediaOperation(getMediaStorage().remove(previous.storageBucket, [previous.storageKey]));
 
     const updated = await prisma.$transaction(async (tx) => {
-      await tx.mediaVariant.deleteMany({ where: { mediaAssetId: asset.id } });
-      await tx.mediaVariant.createMany({ data: records });
+      await assertProcessing(tx);
+      await tx.mediaVariant.deleteMany({ where: { mediaAssetId: asset.id, storageKey: { notIn: [...keys] } } });
       return tx.mediaAsset.update({
         where: { id: asset.id },
         data: {
@@ -288,11 +343,9 @@ export const finalizeMediaUpload = async (ownerId: string, assetId: string, requ
     });
 
     try {
-      await getMediaStorage().remove(asset.uploadBucket, [asset.uploadKey]);
-      await prisma.mediaAsset.update({
-        where: { id: asset.id },
-        data: { uploadBucket: null, uploadKey: null }
-      });
+      await boundedMediaOperation(getMediaStorage().remove(asset.uploadBucket!, [asset.uploadKey!]));
+      // The signed source capability remains valid after a successful upload.
+      // Keep its exact key for deletion retries until that capability expires.
     } catch {
       // The cleanup job can remove this exact source object later.
     }
@@ -310,52 +363,55 @@ export const finalizeMediaUpload = async (ownerId: string, assetId: string, requ
       await getMediaStorage().remove(bucket, keys).catch(() => undefined);
     }
     const code = error instanceof MediaValidationError ? error.code : 'PROCESSING_FAILED';
-    await prisma.mediaAsset.update({ where: { id: asset.id }, data: { status: 'FAILED', errorCode: code } }).catch(() => undefined);
+    await prisma.mediaAsset.updateMany({ where: { id: asset.id, status: 'PROCESSING', deletedAt: null, owner: { status: 'ACTIVE' } }, data: { status: 'FAILED', errorCode: code } }).catch(() => undefined);
     throw error;
   }
 };
 
-export const promoteMediaAsset = async (assetId: string): Promise<void> => {
-  const asset = await prisma.mediaAsset.findUnique({ where: { id: assetId }, include: { variants: true } });
-  if (!asset || !['READY', 'ATTACHED'].includes(asset.status)) {
-    throw new MediaValidationError('MEDIA_NOT_READY', 'Media must finish processing before it can be attached.', 409);
-  }
-  if (asset.variants.some((variant) => variant.isPublic)) {
-    await prisma.mediaAsset.update({ where: { id: asset.id }, data: { accessScope: 'PUBLIC' } });
-    return;
-  }
-
-  const privateVariants = asset.variants.filter((variant) => variant.kind !== 'MASTER' && !variant.isPublic);
-  const copied: string[] = [];
+export const promoteMediaAsset = async (assetId: string, authorize?: AuthorizeMediaWrite): Promise<void> => {
+  const identity = await prisma.mediaAsset.findUnique({ where: { id: assetId }, select: { ownerId: true, purpose: true } });
+  if (!identity) throw new MediaValidationError('MEDIA_NOT_READY', 'Media asset is unavailable.', 409);
+  const assertPromotion = async (tx: Prisma.TransactionClient) => {
+    await assertMediaWriter(tx, identity.ownerId, authorize);
+    const owner = await tx.user.findUnique({ where: { id: identity.ownerId }, select: { isPrivate: true, mediaPrivacyTarget: true } });
+    // PC-003: group identity images remain public independently of the
+    // uploading account's privacy. Account lifecycle checks still apply above.
+    if (!owner || (identity.purpose !== 'GROUP_IMAGE' && (owner.mediaPrivacyTarget === true || (owner.isPrivate && owner.mediaPrivacyTarget !== false)))) throw new MediaValidationError('MEDIA_PRIVACY_CONFLICT', 'This account no longer permits public media.', 409);
+  };
+  const prepared = await prisma.$transaction(async tx => {
+    await assertPromotion(tx);
+    const asset = await tx.mediaAsset.findUnique({ where: { id: assetId }, include: { variants: true } });
+    if (!asset || asset.deletedAt || !['READY', 'ATTACHED'].includes(asset.status)) throw new MediaValidationError('MEDIA_NOT_READY', 'Media asset is unavailable.', 409);
+    if (asset.accessScope === 'PUBLIC' && asset.variants.some(variant => variant.isPublic)) return null;
+    if (asset.variants.some(variant => variant.isPublic)) throw new MediaValidationError('MEDIA_BUSY', 'Public image cleanup is still pending.', 409);
+    const variants = asset.variants.filter(variant => variant.kind !== 'MASTER' && !variant.isPublic);
+    const records = variants.map(variant => ({ mediaAssetId: asset.id, kind: variant.kind, storageBucket: MEDIA_CONFIG.buckets.public,
+      storageKey: variantKey(asset, 'public', variant.width), width: variant.width, height: variant.height, mime: variant.mime, byteSize: variant.byteSize, isPublic: true }));
+    await tx.mediaVariant.createMany({ data: records });
+    const claimed = await tx.mediaAsset.update({ where: { id: asset.id }, data: { storageCleanupNotBefore: new Date(Math.max(asset.storageCleanupNotBefore?.getTime() || 0, Date.now() + PROCESSING_LEASE_MS)) } });
+    return { asset, variants, records, version: claimed.updatedAt, deadline: Date.now() + PROCESSING_LEASE_MS };
+  });
+  if (!prepared) return;
   try {
-    const records: Prisma.MediaVariantCreateManyInput[] = [];
-    for (const variant of privateVariants) {
-      const key = variantKey(asset, 'public', variant.width);
-      const body = await getMediaStorage().download(variant.storageBucket, variant.storageKey);
-      await getMediaStorage().upload(MEDIA_CONFIG.buckets.public, key, body, variant.mime, '300');
-      copied.push(key);
-      records.push({
-        mediaAssetId: asset.id,
-        kind: variant.kind,
-        storageBucket: MEDIA_CONFIG.buckets.public,
-        storageKey: key,
-        width: variant.width,
-        height: variant.height,
-        mime: variant.mime,
-        byteSize: variant.byteSize,
-        isPublic: true
-      });
+    for (let index = 0; index < prepared.variants.length; index++) {
+      if (Date.now() >= prepared.deadline) throw new MediaValidationError('MEDIA_OPERATION_TIMEOUT', 'Image publication timed out.', 503);
+      const variant = prepared.variants[index], record = prepared.records[index];
+      const body = await boundedMediaOperation(getMediaStorage().download(variant.storageBucket, variant.storageKey));
+      const upload = getMediaStorage().upload(record.storageBucket, record.storageKey, body, variant.mime, '300');
+      try { await boundedMediaOperation(upload); }
+      catch (error) { void upload.then(() => getMediaStorage().remove(record.storageBucket, [record.storageKey])).catch(() => undefined); throw error; }
     }
-    await prisma.$transaction([
-      prisma.mediaVariant.createMany({ data: records, skipDuplicates: true }),
-      prisma.mediaAsset.update({ where: { id: asset.id }, data: { accessScope: 'PUBLIC' } })
-    ]);
+    await prisma.$transaction(async tx => {
+      await assertPromotion(tx);
+      const changed = await tx.mediaAsset.updateMany({ where: { id: assetId, updatedAt: prepared.version, deletedAt: null, status: { in: ['READY', 'ATTACHED'] } }, data: { accessScope: 'PUBLIC' } });
+      if (changed.count !== 1) throw new MediaValidationError('MEDIA_ATTACHMENT_CONFLICT', 'Image publication was cancelled.', 409);
+    });
   } catch (error) {
-    await getMediaStorage().remove(MEDIA_CONFIG.buckets.public, copied).catch(() => undefined);
+    await getMediaStorage().remove(MEDIA_CONFIG.buckets.public, prepared.records.map(record => record.storageKey)).catch(() => undefined);
+    // The planned public keys remain durable for cleanup retries/late writes.
     throw error;
   }
 };
-
 export const prepareMediaAttachments = async (
   ownerId: string,
   requirements: MediaAttachmentRequirement[],
@@ -542,18 +598,30 @@ export const validatePostMediaSet = async (
   return establishedRatio;
 };
 
-export const restrictMediaAsset = async (assetId: string, scope: MediaAccessScope = 'RESTRICTED'): Promise<void> => {
-  const asset = await prisma.mediaAsset.findUnique({ where: { id: assetId }, include: { variants: true } });
+export const restrictMediaAsset = async (assetId: string, scope: MediaAccessScope = 'RESTRICTED', authorize?: AuthorizeMediaWrite): Promise<void> => {
+  const identity = await prisma.mediaAsset.findUnique({ where: { id: assetId }, select: { ownerId: true } });
+  if (!identity) return;
+  const asset = await prisma.$transaction(async tx => {
+    await lockAccountSecurity(tx, identity.ownerId);
+    if (authorize) await authorize(tx);
+    const asset = await tx.mediaAsset.findUnique({ where: { id: assetId }, include: { variants: true } });
+    if (!asset || asset.deletedAt || ['PENDING_DELETE', 'DELETED'].includes(asset.status)) return null;
+    await tx.mediaAsset.update({ where: { id: asset.id }, data: { accessScope: scope } });
+    return asset;
+  });
   if (!asset) return;
   const publicVariants = asset.variants.filter((variant) => variant.isPublic);
-  await getMediaStorage().remove(
+  await boundedMediaOperation(getMediaStorage().remove(
     MEDIA_CONFIG.buckets.public,
     publicVariants.map((variant) => variant.storageKey)
-  );
-  await prisma.$transaction([
-    prisma.mediaVariant.deleteMany({ where: { mediaAssetId: asset.id, isPublic: true } }),
-    prisma.mediaAsset.update({ where: { id: asset.id }, data: { accessScope: scope } })
-  ]);
+  ));
+  await prisma.$transaction(async tx => {
+    await lockAccountSecurity(tx, asset.ownerId);
+    if (authorize) await authorize(tx);
+    const current = await tx.mediaAsset.findUnique({ where: { id: asset.id }, select: { status: true, storageCleanupNotBefore: true, accessScope: true } });
+    if (!current || ['PENDING_DELETE', 'DELETED'].includes(current.status) || current.accessScope === 'PUBLIC') return;
+    if (!current.storageCleanupNotBefore || current.storageCleanupNotBefore.getTime() <= Date.now()) await tx.mediaVariant.deleteMany({ where: { mediaAssetId: asset.id, isPublic: true } });
+  });
 };
 
 export const markMediaAttached = async (assetIds: string[], scope: MediaAccessScope): Promise<void> => {
@@ -801,23 +869,36 @@ export const deleteMediaAsset = async (ownerId: string, assetId: string): Promis
 };
 
 export const purgeMediaAsset = async (assetId: string): Promise<void> => {
-  const asset = await prisma.mediaAsset.findUnique({ where: { id: assetId }, include: { variants: true } });
+  const identity = await prisma.mediaAsset.findUnique({ where: { id: assetId }, select: { ownerId: true } });
+  if (!identity) return;
+  const asset = await prisma.$transaction(async tx => {
+    await lockAccountSecurity(tx, identity.ownerId);
+    const current = await tx.mediaAsset.findUnique({ where: { id: assetId }, include: { variants: true } });
+    if (!current) return null;
+    await tx.mediaAsset.update({ where: { id: assetId }, data: {
+      status: 'PENDING_DELETE', altText: null, checksum: null, moderationMetadata: Prisma.DbNull, errorCode: null
+    } });
+    return current;
+  });
   if (!asset) return;
   const objects = asset.variants.map((variant) => ({ bucket: variant.storageBucket, key: variant.storageKey }));
   if (asset.uploadBucket && asset.uploadKey) objects.push({ bucket: asset.uploadBucket, key: asset.uploadKey });
   for (const [bucket, keys] of groupStorageObjects(objects)) {
-    await getMediaStorage().remove(bucket, keys);
+    await boundedMediaOperation(getMediaStorage().remove(bucket, keys));
   }
-  await prisma.$transaction([
-    prisma.mediaVariant.deleteMany({ where: { mediaAssetId: asset.id } }),
-    prisma.mediaAsset.update({
+  await prisma.$transaction(async tx => {
+    await lockAccountSecurity(tx, asset.ownerId);
+    const current = await tx.mediaAsset.findUnique({ where: { id: asset.id }, select: { storageCleanupNotBefore: true } });
+    if (!current || (current.storageCleanupNotBefore && current.storageCleanupNotBefore.getTime() > Date.now())) return;
+    await tx.mediaVariant.deleteMany({ where: { mediaAssetId: asset.id } });
+    await tx.mediaAsset.update({
       where: { id: asset.id },
-      data: { status: 'DELETED', deletedAt: new Date(), uploadBucket: null, uploadKey: null,
+      data: { status: 'DELETED', deletedAt: new Date(), uploadBucket: null, uploadKey: null, storageCleanupNotBefore: null,
         altText: null, checksum: null, moderationMetadata: Prisma.DbNull, moderationStatus: 'NOT_REVIEWED', errorCode: null,
         sourceMime: null, sourceWidth: null, sourceHeight: null, sourceByteSize: null,
         aspectRatio: null, cropX: null, cropY: null, cropWidth: null, cropHeight: null, focalX: null, focalY: null }
-    })
-  ]);
+    });
+  });
 };
 
 export const cleanupExpiredMedia = async (limit = 100): Promise<number> => {
@@ -826,7 +907,8 @@ export const cleanupExpiredMedia = async (limit = 100): Promise<number> => {
     where: {
       status: { in: ['READY', 'ATTACHED'] },
       uploadBucket: { not: null },
-      uploadKey: { not: null }
+      uploadKey: { not: null },
+      OR: [{ storageCleanupNotBefore: null }, { storageCleanupNotBefore: { lte: new Date() } }]
     },
     take: Math.min(limit, 25),
     select: { id: true, uploadBucket: true, uploadKey: true }
@@ -876,3 +958,4 @@ export const cleanupExpiredMedia = async (limit = 100): Promise<number> => {
   }
   return completed;
 };
+

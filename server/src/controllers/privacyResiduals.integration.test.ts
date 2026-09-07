@@ -113,8 +113,10 @@ test('finding-resolution:SI-AS-E05-002', async () => {
 
 // Deletion removes private questionnaire and mention text, and minimizes media metadata.
 test('finding-resolution:SI-AS-E05-003', async () => {
-  const { user, browser } = await person(), other = await person();
+  const { user, browser } = await person({ theme: 'dark', isPrivate: false, peopleTagPermission: 'EVERYONE' }), other = await person();
   const published = await makePost(user.id), draft = await makePost(user.id, 'DRAFT');
+  const thirdPartyDraft = await makePost(other.user.id, 'DRAFT'), thirdPartyPublished = await makePost(other.user.id);
+  const thirdPartyQuestion = await prisma.question.create({ data: { postId: thirdPartyDraft.id, text: 'Other person private question', type: 'SingleChoice', options: { create: { text: 'Other person private option' } } } });
   const section = await prisma.section.create({ data: { postId: draft.id, title: 'private section' } });
   const question = await prisma.question.create({ data: { sectionId: section.id, text: 'private question', type: 'SingleChoice', options: { create: { text: 'private option' } } }, include: { options: true } });
   await prisma.response.create({ data: { postId: draft.id, userId: other.user.id, answers: { create: { questionId: question.id, optionId: question.options[0].id, textValue: 'private answer' } } } });
@@ -123,14 +125,46 @@ test('finding-resolution:SI-AS-E05-003', async () => {
     prisma.mention.create({ data: { actorUserId: user.id, targetUserId: other.user.id, postId: draft.id, sourceType: 'POST', occurrences: { create: { surface: 'POST_TITLE', startOffset: 0, endOffset: 8, rawText: '@private' } } } })
   ]);
   const media = await prisma.mediaAsset.create({ data: { ownerId: user.id, purpose: 'POST', status: 'READY', altText: 'private image', checksum: 'identifying-checksum', moderationMetadata: { description: 'private image review' } } });
+  const oldDeleted = await prisma.mediaAsset.create({ data: { ownerId: user.id, purpose: 'POST', status: 'DELETED', deletedAt: new Date(), altText: 'old private image', checksum: 'old-checksum', moderationMetadata: { sentinel: 'old private review' } } });
   const deleted = await browser.request('/account', 'DELETE'); assert.equal(deleted.status, 200, JSON.stringify(deleted.body));
   assert.equal(await prisma.post.count({ where: { id: draft.id } }), 0); assert.equal(await prisma.post.count({ where: { id: published.id } }), 1);
+  assert.equal(await prisma.post.count({ where: { id: { in: [thirdPartyDraft.id, thirdPartyPublished.id] } } }), 2);
+  assert.equal(await prisma.question.count({ where: { id: thirdPartyQuestion.id } }), 1); assert.equal(await prisma.option.count({ where: { questionId: thirdPartyQuestion.id } }), 1);
   assert.equal(await prisma.section.count({ where: { id: section.id } }), 0); assert.equal(await prisma.question.count({ where: { id: question.id } }), 0); assert.equal(await prisma.option.count({ where: { questionId: question.id } }), 0);
   assert.equal(await prisma.answer.count({ where: { questionId: question.id } }), 0); assert.equal(await prisma.mentionOccurrence.count({ where: { mentionId: { in: mentions.map(value => value.id) } } }), 0);
   const pending = await prisma.mediaAsset.findUniqueOrThrow({ where: { id: media.id } }); assert.equal(pending.altText, null); assert.equal(pending.checksum, null); assert.equal(pending.moderationMetadata, null);
+  const old = await prisma.mediaAsset.findUniqueOrThrow({ where: { id: oldDeleted.id } }); assert.equal(old.altText, null); assert.equal(old.checksum, null); assert.equal(old.moderationMetadata, null);
+  const tombstone = await prisma.user.findUniqueOrThrow({ where: { id: user.id } }); assert.equal(tombstone.theme, 'system'); assert.equal(tombstone.isPrivate, true); assert.equal(tombstone.peopleTagPermission, 'NO_ONE');
   // No storage objects are attached to this fixture; purge proves final database minimization without external I/O.
   await require('../services/mediaService').purgeMediaAsset(media.id);
   const purged = await prisma.mediaAsset.findUniqueOrThrow({ where: { id: media.id } }); assert.equal(purged.status, 'DELETED'); assert.equal(purged.altText, null); assert.equal(purged.checksum, null); assert.equal(purged.moderationMetadata, null);
+});
+
+test('finding-resolution:SI-AS-E03-012', async () => {
+  const { user, browser } = await person(), originalAuthor = await person();
+  const source = await makePost(originalAuthor.user.id);
+  const question = await prisma.question.create({ data: { postId: source.id, text: 'Vote fixture', type: 'SingleChoice', options: { create: { text: 'Choice' } } }, include: { options: true } });
+  const security = require('../services/mfaService') as typeof import('../services/mfaService'), originalLock = security.lockAccountSecurity;
+  let release!: () => void, ready!: () => void, waiting = 0;
+  const gate = new Promise<void>(resolve => { release = resolve; }), reached = new Promise<void>(resolve => { ready = resolve; });
+  const mocked = mock.method(security, 'lockAccountSecurity', async (tx: any, userId: string) => {
+    if (userId === user.id && waiting < 2) { waiting++; if (waiting === 2) ready(); await gate; }
+    await originalLock(tx, userId);
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const vote = browser.request('/posts/' + source.id + '/vote', 'POST', { optionId: question.options[0].id });
+    const share = browser.request('/posts/' + source.id + '/share', 'POST', { caption: 'Private queued caption' });
+    await Promise.race([reached, new Promise<void>((_, reject) => { timer = setTimeout(() => reject(new Error('Vote and share did not reach account lock')), 5000); })]);
+    clearTimeout(timer);
+    const deleted = await browser.request('/account', 'DELETE'); assert.equal(deleted.status, 200, JSON.stringify(deleted.body));
+    release();
+    const outcomes = await Promise.all([vote, share]); assert.deepEqual(outcomes.map(value => value.status), [401, 401]);
+    assert.equal(await prisma.response.count({ where: { postId: source.id } }), 0);
+    assert.equal(await prisma.response.count({ where: { userId: user.id, ipAddress: { not: null } } }), 0);
+    assert.equal(await prisma.post.count({ where: { authorId: user.id } }), 0);
+    assert.equal(await prisma.mention.count({ where: { actorUserId: user.id } }), 0);
+  } finally { release(); clearTimeout(timer); mocked.mock.restore(); }
 });
 
 test('post create and update queued before account deletion cannot recreate private content afterward', async () => {

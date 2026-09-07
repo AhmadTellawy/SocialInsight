@@ -31,8 +31,9 @@ type MockProfile = {
   updatedAt: string;
   country: string;
   isPrivate: boolean;
+  mediaPrivacyTarget?: boolean | null;
   groupPrivacy: 'Public';
-  peopleTagPermission: 'EVERYONE';
+  peopleTagPermission: 'EVERYONE' | 'FOLLOWING' | 'NO_ONE';
   demographics: {
     gender: string;
     ageGroup: string;
@@ -102,10 +103,12 @@ type MockApiState = {
   links: ProfileLink[];
   mediaPurposeById: Map<string, 'PROFILE_AVATAR' | 'PROFILE_COVER'>;
   mediaSequence: number;
+  lastMediaPayload?: Record<string, unknown>;
   linkCreateCalls: number;
   profileSaveCalls: number;
   failPrivateProfileLoads: boolean;
   failNextProfileSave: boolean;
+  commitThenFailProfileSave?: boolean;
   lastProfilePayload?: Record<string, unknown>;
   notificationSnapshot?: { settings: any; updatedAt: string | null };
   notificationSaveCalls?: number;
@@ -194,6 +197,7 @@ async function installAuthenticatedMockApi(page: Page, state: MockApiState): Pro
 
     if (method === 'POST' && pathname === '/api/media/uploads') {
       const input = request.postDataJSON() as { purpose: 'PROFILE_AVATAR' | 'PROFILE_COVER' };
+      state.lastMediaPayload = request.postDataJSON();
       const assetId = `asset-${++state.mediaSequence}`;
       state.mediaPurposeById.set(assetId, input.purpose);
       return json(route, {
@@ -229,6 +233,7 @@ async function installAuthenticatedMockApi(page: Page, state: MockApiState): Pro
         width: purpose === 'PROFILE_COVER' ? 1200 : 512,
         height: purpose === 'PROFILE_COVER' ? 400 : 512,
         src: '/pwa-192x192.png',
+        altText: assetId.startsWith('initial-') ? 'Existing accessible image description' : undefined,
       });
     }
     if (mediaMatch && method === 'DELETE') return route.fulfill({ status: 204, body: '' });
@@ -237,6 +242,9 @@ async function installAuthenticatedMockApi(page: Page, state: MockApiState): Pro
       state.profileSaveCalls += 1;
       const payload = request.postDataJSON() as Record<string, unknown>;
       state.lastProfilePayload = payload;
+      if (payload.expectedUpdatedAt !== undefined && payload.expectedUpdatedAt !== state.profile.updatedAt) {
+        return json(route, { error: 'Profile changed', code: 'PROFILE_UPDATE_CONFLICT' }, 409);
+      }
       if (state.failNextProfileSave) {
         state.failNextProfileSave = false;
         return json(route, { error: 'Temporary profile failure', code: 'PROFILE_UPDATE_FAILED' }, 503);
@@ -248,6 +256,8 @@ async function installAuthenticatedMockApi(page: Page, state: MockApiState): Pro
         state.profile.demographics.ageGroup = ageGroupFor(payload.birthday);
       }
       if (typeof payload.isPrivate === 'boolean') state.profile.isPrivate = payload.isPrivate;
+      if (payload.isPrivate === true && state.profile.mediaPrivacyTarget === false) state.profile.mediaPrivacyTarget = null;
+      if (['EVERYONE', 'FOLLOWING', 'NO_ONE'].includes(payload.peopleTagPermission as string)) state.profile.peopleTagPermission = payload.peopleTagPermission as MockProfile['peopleTagPermission'];
       if (payload.demographics && typeof payload.demographics === 'object') Object.assign(state.profile.demographics, payload.demographics);
       if (typeof payload.location === 'string') state.profile.location = payload.location;
       if (typeof payload.website === 'string') state.profile.website = payload.website;
@@ -274,6 +284,10 @@ async function installAuthenticatedMockApi(page: Page, state: MockApiState): Pro
         } : null;
       }
       state.profile.updatedAt = `2026-09-01T00:00:0${state.profileSaveCalls}.000Z`;
+      if (state.commitThenFailProfileSave) {
+        state.commitThenFailProfileSave = false;
+        return json(route, { error: 'Save response unavailable', code: 'PROFILE_UPDATE_FAILED' }, 503);
+      }
       return json(route, { ...state.profile, profileLinks: state.links });
     }
 
@@ -380,7 +394,7 @@ test.describe('settings critical acceptance', () => {
     await page.getByRole('button', { name: 'Gender Not specified', exact: true }).click();
     await page.getByRole('radio', { name: 'Male', exact: true }).click();
     await page.getByRole('button', { name: 'Save', exact: true }).click();
-    await expect(page.getByRole('alert')).toContainText('could not be saved');
+    await expect(page.getByRole('alert')).toContainText('latest saved information');
     await expect(page.getByRole('button', { name: 'Gender Male', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Back', exact: true }).click();
     await expect(page.getByRole('dialog', { name: 'Unsaved changes' })).toContainText('will not be saved');
@@ -394,6 +408,63 @@ test.describe('settings critical acceptance', () => {
     expect(state.profile.demographics.gender).toBe('');
     await page.goto('/settings/profile/demographics');
     await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+  });
+
+  test('finding-resolution:SI-AS-E03-011', async ({ page }) => {
+    const state = settingsState(); state.commitThenFailProfileSave = true;
+    await installAuthenticatedMockApi(page, state);
+    await page.goto('/settings/profile/demographics');
+    await page.getByRole('button', { name: 'Gender Not specified', exact: true }).click();
+    await page.getByRole('radio', { name: 'Female', exact: true }).click();
+    const save = page.getByRole('button', { name: 'Save', exact: true });
+    await save.click();
+    // A committed request whose response failed is reconciled, not retried.
+    await expect(page.getByRole('status')).toContainText('Changes saved');
+    await expect(save).toBeDisabled();
+    expect(state.profileSaveCalls).toBe(1);
+    expect(state.profile.demographics.gender).toBe('Female');
+
+    await page.getByRole('button', { name: 'Gender Female', exact: true }).click();
+    await page.getByRole('radio', { name: 'Male', exact: true }).click();
+    state.profile.demographics.maritalStatus = 'Single';
+    state.profile.updatedAt = '2026-09-01T00:00:01.001Z';
+    await save.click();
+    // A conflicting device version is read; local edits survive and no write
+    // is automatically replayed. Untouched fields come from that device.
+    await expect(page.getByRole('alert')).toContainText('latest saved information');
+    await expect(page.getByRole('button', { name: 'Gender Male', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Marital status Single', exact: true })).toBeVisible();
+    expect(state.profileSaveCalls).toBe(2);
+    expect(state.profile.demographics.gender).toBe('Female');
+    await save.click();
+    await expect(page.getByRole('status')).toContainText('Changes saved');
+    await expect(save).toBeDisabled();
+    expect(state.profileSaveCalls).toBe(3);
+    expect(state.lastProfilePayload?.expectedUpdatedAt).toBe('2026-09-01T00:00:01.001Z');
+    expect(state.profile.demographics).toMatchObject({ gender: 'Male', maritalStatus: 'Single' });
+  });
+
+  test('demographic unconfirmed save blocks writes until owner reload succeeds and keeps draft', async ({ page }) => {
+    const state = settingsState();
+    await installAuthenticatedMockApi(page, state);
+    await page.goto('/settings/profile/demographics');
+    await page.getByRole('button', { name: 'Gender Not specified', exact: true }).click();
+    await page.getByRole('radio', { name: 'Male', exact: true }).click();
+    state.failNextProfileSave = true;
+    state.failPrivateProfileLoads = true;
+    const save = page.getByRole('button', { name: 'Save', exact: true });
+    await save.click();
+    await expect(page.getByRole('alert')).toContainText('save could not be confirmed');
+    await expect(save).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Gender Male', exact: true })).toBeVisible();
+    state.failPrivateProfileLoads = false;
+    await page.getByRole('button', { name: 'Reload settings', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('latest saved information');
+    await expect(save).toBeEnabled();
+    expect(state.profileSaveCalls).toBe(1);
+    await save.click();
+    await expect(page.getByRole('status')).toContainText('Changes saved');
+    expect(state.profileSaveCalls).toBe(2);
   });
 
   test('Arabic demographics supports full bilingual country search and localized discard actions', async ({ page }) => {
@@ -418,7 +489,7 @@ test.describe('settings critical acceptance', () => {
     expect(state.profileSaveCalls).toBe(0);
   });
 
-  test('profile photo controls open current image cropping directly and save only that image', async ({ page }) => {
+  test('profile photo controls open current image cropping directly and preserve its description', async ({ page }) => {
     const state = settingsState();
     state.profile.avatarMediaId = 'initial-avatar';
     state.profile.coverMediaId = 'initial-cover';
@@ -431,28 +502,120 @@ test.describe('settings critical acceptance', () => {
     await page.getByRole('button', { name: 'Edit profile photo', exact: true }).click();
     await expect(page.getByTestId('media-crop-editor')).toHaveAttribute('data-media-purpose', 'PROFILE_AVATAR');
     await expect(page).toHaveURL(/\/profile$/);
+    await expect(page.getByLabel('Image description', { exact: true })).toHaveValue('Existing accessible image description');
     await page.getByRole('button', { name: 'Done', exact: true }).click();
     await expect.poll(() => state.profile.avatarMediaId).toBe('asset-1');
     expect(Object.keys(state.lastProfilePayload || {}).sort()).toEqual(['avatarMediaId', 'expectedUpdatedAt']);
+    expect(state.lastMediaPayload?.altText).toBe('Existing accessible image description');
     await page.getByRole('button', { name: 'Edit cover photo', exact: true }).click();
     await expect(page.getByTestId('media-crop-editor')).toHaveAttribute('data-media-purpose', 'PROFILE_COVER');
     await expect(page.getByRole('button', { name: '3:1' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByLabel('Image description', { exact: true })).toHaveValue('Existing accessible image description');
     await expect(page).toHaveURL(/\/profile$/);
     await page.getByRole('button', { name: 'Cancel', exact: true }).click();
     await page.getByRole('button', { name: 'Remove photo', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Remove photo', exact: true })).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('button', { name: 'Remove photo', exact: true })).toBeFocused();
+    await page.keyboard.press('Enter');
     await page.getByRole('button', { name: 'Remove photo', exact: true }).click();
     await expect.poll(() => state.profile.coverMediaId).toBe(null);
     expect(Object.keys(state.lastProfilePayload || {}).sort()).toEqual(['coverMediaId', 'expectedUpdatedAt']);
   });
 
-  test('privacy controls retain saved value on failure and group audience persists independently', async ({ page }) => {
+  test('finding-resolution:SI-AS-E03-002', async ({ page }) => {
+    const state = settingsState();
+    await installAuthenticatedMockApi(page, state);
+    const writes: { method: string; path: string }[] = [];
+    page.on('request', (request) => {
+      if (['PUT', 'PATCH'].includes(request.method())) writes.push({ method: request.method(), path: new URL(request.url()).pathname });
+    });
+    await page.goto('/settings/profile/account-privacy');
+    const privateAccount = page.getByRole('switch', { name: 'Private account', exact: true });
+    await expect(privateAccount).toBeEnabled({ timeout: 15_000 });
+    await privateAccount.click();
+    await expect(privateAccount).toHaveAttribute('aria-checked', 'true');
+    expect(state.lastProfilePayload).toEqual({ isPrivate: true, expectedUpdatedAt: '2026-09-01T00:00:00.000Z' });
+    const noTags = page.getByRole('radio', { name: 'No one', exact: true });
+    await noTags.click();
+    await expect(noTags).toHaveAttribute('aria-checked', 'true');
+    expect(state.lastProfilePayload).toEqual({ peopleTagPermission: 'NO_ONE', expectedUpdatedAt: '2026-09-01T00:00:01.000Z' });
+    expect(writes).toEqual(Array.from({ length: 2 }, () => ({ method: 'PUT', path: `/api/users/${state.profile.id}` })));
+    await page.reload();
+    await expect(privateAccount).toHaveAttribute('aria-checked', 'true');
+    await expect(noTags).toHaveAttribute('aria-checked', 'true');
+  });
+
+  test('pending public privacy intent is disclosed and can be cancelled without becoming public', async ({ page }) => {
+    const state = settingsState(); state.profile.isPrivate = true; state.profile.mediaPrivacyTarget = false; state.failNextProfileSave = true;
+    await installAuthenticatedMockApi(page, state);
+    await page.goto('/settings/profile/account-privacy');
+    await expect(page.getByRole('status').filter({ hasText: 'Making your account public is still pending' })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('switch', { name: 'Private account', exact: true })).toBeDisabled();
+    await expect(page.getByRole('switch', { name: 'Private account', exact: true })).toHaveAttribute('aria-checked', 'true');
+    await page.getByRole('button', { name: 'Cancel change and stay private', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('save could not be confirmed');
+    await expect(page.getByText('Changes saved', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Cancel change and stay private', exact: true })).toBeVisible();
+    expect(state.profile.mediaPrivacyTarget).toBe(false);
+    state.commitThenFailProfileSave = true;
+    await page.getByRole('button', { name: 'Cancel change and stay private', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Cancel change and stay private', exact: true })).toHaveCount(0);
+    expect(state.lastProfilePayload).toEqual({ isPrivate: true, expectedUpdatedAt: '2026-09-01T00:00:00.000Z' });
+    await page.reload();
+    await expect(page.getByRole('switch', { name: 'Private account', exact: true })).toHaveAttribute('aria-checked', 'true');
+  });
+
+  for (const language of ['en', 'ar']) test(`demographic keyboard selection and focus at 320px (${language})`, async ({ page }, testInfo) => {
+    const state = settingsState(); state.profile.language = language;
+    Object.assign(state.profile.demographics, { employment: 'Employed', industry: 'Government', sector: 'Services' });
+    await page.setViewportSize({ width: 320, height: 740 });
+    await installAuthenticatedMockApi(page, state);
+    await page.goto('/settings/profile/demographics');
+    const employment = page.locator('fieldset').getByRole('button').nth(3);
+    await expect(employment).toBeEnabled({ timeout: 15_000 });
+    await employment.click();
+    const employmentGroup = page.getByRole('radiogroup');
+    await employmentGroup.locator('[aria-checked="true"]').focus();
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('button', { name: language === 'ar' ? 'حفظ' : 'Save', exact: true })).toBeDisabled();
+    expect(state.profile.demographics).toMatchObject({ employment: 'Employed', industry: 'Government', sector: 'Services' });
+    const gender = page.getByRole('button', { name: language === 'ar' ? 'الجنس غير محدد' : 'Gender Not specified', exact: true });
+    await expect(gender).toBeEnabled({ timeout: 15_000 });
+    await gender.click();
+    const group = page.getByRole('radiogroup');
+    await expect(group.locator('[tabindex="0"]')).toHaveCount(1);
+    await group.getByRole('radio').first().focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(group.getByRole('radio').nth(1)).toBeFocused();
+    await expect(group.getByRole('radio').nth(1)).toHaveAttribute('aria-checked', 'true');
+    await page.keyboard.press('End');
+    await expect(group.getByRole('radio').last()).toHaveAttribute('aria-checked', 'true');
+    await page.screenshot({ path: testInfo.outputPath(`demographic-selector-${language}-320.png`) });
+    await page.keyboard.press('Enter');
+    await expect(group).toHaveCount(0);
+    const save = page.getByRole('button', { name: language === 'ar' ? 'حفظ' : 'Save', exact: true });
+    await expect(save).toBeEnabled();
+    await page.getByRole('button', { name: language === 'ar' ? 'رجوع' : 'Back', exact: true }).click();
+    await expect(page.getByRole('button', { name: language === 'ar' ? 'الاستمرار بالتعديل' : 'Continue editing', exact: true })).toBeFocused();
+    await page.screenshot({ path: testInfo.outputPath(`demographic-discard-${language}-320.png`) });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.getByRole('button', { name: language === 'ar' ? 'تجاهل التغييرات' : 'Discard changes', exact: true }).click();
+    expect(state.profileSaveCalls).toBe(0);
+  });
+
+  test('privacy controls reconcile saved value on failure and group audience persists independently', async ({ page }) => {
     const state = settingsState(); state.failNextProfileSave = true;
     await installAuthenticatedMockApi(page, state);
     await page.goto('/settings/profile/account-privacy');
     const search = page.getByRole('switch', { name: 'Show my profile in search', exact: true });
     await expect(search).toHaveAttribute('aria-checked', 'true');
     await search.click();
-    await expect(page.getByRole('alert')).toContainText('previous value');
+    await expect(page.getByRole('alert')).toContainText('save could not be confirmed');
     await expect(search).toHaveAttribute('aria-checked', 'true');
     await search.click();
     await expect(search).toHaveAttribute('aria-checked', 'false');

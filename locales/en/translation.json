@@ -757,7 +757,11 @@
         "NO_ONE": "No one"
       },
       "makePublic": "Make account public",
-      "makePublicHint": "People will be able to view your public profile and content. All pending follow requests will be accepted. Continue?"
+      "makePublicHint": "People will be able to view your public profile and content. All pending follow requests will be accepted. Continue?",
+      "pendingPublic": "Making your account public is still pending. Your account remains private until processing finishes. We retry automatically; you can cancel this change below.",
+      "pendingPrivate": "Your account is private. Removal of public image copies is still processing and retries automatically.",
+      "cancelPublic": "Cancel change and stay private",
+      "refreshStatus": "Check status"
     },
     "demographics": {
       "title": "Demographic information",
@@ -769,7 +773,8 @@
       "clear": "Clear optional information",
       "searchCountry": "Search countries in Arabic or English",
       "noCountries": "No matching countries. Try another spelling.",
-      "saveFailed": "Your changes could not be saved. They are still here; check your connection and try Save again.",
+      "saveFailed": "The save could not be confirmed. Your draft is still here. Reload the saved information before retrying.",
+      "saveConflict": "The latest saved information has been loaded. Your edits are still here. Review them and press Save to apply them, or discard your changes.",
       "fields": {
         "gender": "Gender",
         "ageGroup": "Age group",

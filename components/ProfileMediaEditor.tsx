@@ -9,7 +9,7 @@ import { validateAndNormalizeImageFile, PROFILE_COVER_MAX_INPUT_BYTES, DEFAULT_M
 import { BottomSheet } from './BottomSheet';
 import { MediaCropEditor } from './media/MediaCropEditor';
 
-type Source = { file: File; url: string };
+type Source = { file: File; url: string; altText?: string };
 
 // This editor creates a new owned asset, then attaches it with optimistic concurrency.
 // It never mutates the currently published image while the user is still cropping.
@@ -23,6 +23,8 @@ export const ProfileMediaEditor: React.FC<{
   const purpose = kind === 'avatar' ? 'PROFILE_AVATAR' : 'PROFILE_COVER';
   const ratio = kind === 'avatar' ? 1 : 3;
   const input = useRef<HTMLInputElement>(null);
+  const removeAction = useRef<HTMLButtonElement>(null);
+  const removeConfirmation = useRef<HTMLButtonElement>(null);
   const [loadedProfile, setLoadedProfile] = useState(profile);
   const [source, setSource] = useState<Source | null>(null);
   const sourceRef = useRef<Source | null>(null);
@@ -32,6 +34,7 @@ export const ProfileMediaEditor: React.FC<{
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  useEffect(() => { if (confirmRemove) removeConfirmation.current?.focus(); }, [confirmRemove]);
   const [retryKey, setRetryKey] = useState(0);
   const [pendingCrop, setPendingCrop] = useState<MediaCropSelection | null>(null);
   const saveLatch = useRef(false);
@@ -83,6 +86,7 @@ export const ProfileMediaEditor: React.FC<{
         if (!response.ok) throw new Error('IMAGE_READ_FAILED');
         const blob = await response.blob();
         const next = await prepare(new File([blob], `${kind}.image`, { type: blob.type }));
+        next.altText = presentation.altText || '';
         if (controller.signal.aborted) { URL.revokeObjectURL(next.url); return; }
         publishSource(next);
       } catch {
@@ -167,7 +171,7 @@ export const ProfileMediaEditor: React.FC<{
 
   return <>
     <input ref={input} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" aria-label={t('mediaEdit.choose', { defaultValue: 'Choose image' })} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; void chooseFile(file); }} />
-    {cropping && source && <MediaCropEditor imageSrc={source.url} purpose={purpose} lockedAspectRatio={ratio} onApply={(crop) => void saveCrop(crop)} onCancel={() => setCropping(false)} />}
+    {cropping && source && <MediaCropEditor imageSrc={source.url} purpose={purpose} lockedAspectRatio={ratio} initialAltText={source.altText} onApply={(crop) => void saveCrop(crop)} onCancel={() => setCropping(false)} />}
     {!cropping && <BottomSheet isOpen onClose={() => { if (!saving && !loading) onClose(); }} title={title}>
       <div className="space-y-3 pb-4" dir={i18n.dir()}>
         {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm leading-relaxed text-red-800">{error}</p>}
@@ -176,13 +180,13 @@ export const ProfileMediaEditor: React.FC<{
           {hasLegacyAvatar && !source && <p role="status" className="rounded-xl bg-blue-50 p-3 text-sm leading-relaxed text-blue-950">{t('mediaEdit.legacyUnavailable', { defaultValue: 'Your existing photo cannot be opened in the editor. You can replace it or remove it.' })}</p>}
           {confirmRemove ? <>
             <p className="text-sm leading-relaxed text-gray-700">{t('mediaEdit.removeConfirm', { defaultValue: 'Remove this photo? Your profile will use the default image.' })}</p>
-            <button type="button" onClick={() => void remove()} className="min-h-12 w-full rounded-xl bg-red-600 px-4 font-bold text-white">{t('mediaEdit.remove', { defaultValue: 'Remove photo' })}</button>
-            <button type="button" onClick={() => setConfirmRemove(false)} className="min-h-12 w-full rounded-xl border border-gray-200 px-4 font-bold">{t('Cancel', { defaultValue: 'Cancel' })}</button>
+            <button ref={removeConfirmation} type="button" onClick={() => void remove()} className="min-h-12 w-full rounded-xl bg-red-600 px-4 font-bold text-white">{t('mediaEdit.remove', { defaultValue: 'Remove photo' })}</button>
+            <button type="button" onClick={() => { setConfirmRemove(false); requestAnimationFrame(() => removeAction.current?.focus()); }} className="min-h-12 w-full rounded-xl border border-gray-200 px-4 font-bold">{t('Cancel', { defaultValue: 'Cancel' })}</button>
           </> : <>
             {pendingCrop && <button type="button" onClick={() => void saveCrop(pendingCrop)} className="flex min-h-12 w-full items-center gap-3 rounded-xl bg-blue-600 px-4 font-bold text-white"><RefreshCw size={20} />{t('mediaEdit.retrySave', { defaultValue: 'Retry saving photo' })}</button>}
             {source && <button type="button" onClick={() => setCropping(true)} className="flex min-h-12 w-full items-center gap-3 rounded-xl border border-gray-200 px-4 text-sm font-bold text-gray-800"><Crop size={20} />{t('mediaEdit.crop', { defaultValue: 'Adjust crop' })}</button>}
             <button type="button" onClick={() => input.current?.click()} className="flex min-h-12 w-full items-center gap-3 rounded-xl border border-gray-200 px-4 text-sm font-bold text-gray-800"><Camera size={20} />{hasLegacyAvatar ? t('mediaEdit.replace', { defaultValue: 'Replace photo' }) : t('mediaEdit.choose', { defaultValue: 'Choose image' })}</button>
-            {hasCurrentImage && <button type="button" onClick={() => setConfirmRemove(true)} className="flex min-h-12 w-full items-center gap-3 rounded-xl border border-gray-200 px-4 text-sm font-bold text-red-700"><Trash2 size={20} />{t('mediaEdit.remove', { defaultValue: 'Remove photo' })}</button>}
+            {hasCurrentImage && <button ref={removeAction} type="button" onClick={() => setConfirmRemove(true)} className="flex min-h-12 w-full items-center gap-3 rounded-xl border border-gray-200 px-4 text-sm font-bold text-red-700"><Trash2 size={20} />{t('mediaEdit.remove', { defaultValue: 'Remove photo' })}</button>}
             {error && !source && <button type="button" onClick={() => setRetryKey((value) => value + 1)} className="flex min-h-12 w-full items-center gap-3 rounded-xl border border-gray-200 px-4 text-sm font-bold"><RefreshCw size={20} />{t('common.retry', { defaultValue: 'Retry' })}</button>}
             <button type="button" onClick={onClose} className="min-h-12 w-full rounded-xl bg-gray-100 px-4 text-sm font-bold text-gray-700">{t('Cancel', { defaultValue: 'Cancel' })}</button>
           </>}

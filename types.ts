@@ -126,6 +126,7 @@ export interface UserProfile {
   updatedAt?: string;
   country?: string;
   isPrivate?: boolean;
+  mediaPrivacyTarget?: boolean | null;
   isFollowing?: boolean;
   groupPrivacy?: 'Public' | 'Followers' | 'Off';
   searchVisibility?: boolean;

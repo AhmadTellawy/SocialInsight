@@ -1797,6 +1797,10 @@ export const votePost = async (req: Request, res: Response) => {
         let notificationOptionId = optionsToProcess[0];
 
         await prisma.$transaction(async (tx) => {
+            if (actorUserId) {
+                await lockAccountSecurity(tx, actorUserId);
+                await assertActiveAccountSession(tx, req, false);
+            }
             if (proof) {
                 for (const key of [`guest-id:${id}:${guestId}`, `guest-proof:${id}:${proof.hash}`].sort()) await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
             }
@@ -1983,6 +1987,7 @@ export const votePost = async (req: Request, res: Response) => {
         res.json({ success: true, newOption: createdCustomOption });
     } catch (error: any) {
         console.error(error);
+        if (error instanceof AccountSecurityError) return void res.status(error.status).json({ code: error.code, error: 'Sign in again to respond.' });
         res.status(error?.statusCode || 500).json({ error: error?.statusCode ? error.message : 'Failed to vote', ...(error?.code === 'GUEST_PARTICIPATION_PROOF_REQUIRED' ? { code: error.code } : {}) });
     }
 };
@@ -2701,13 +2706,12 @@ export const sharePost = async (req: Request, res: Response) => {
 
             if (existingRepost) {
                 // Un-repost!
-                await prisma.$transaction([
-                    prisma.post.delete({ where: { id: existingRepost.id } }),
-                    prisma.post.update({
-                        where: { id: actualSharedFromId },
-                        data: { sharesCount: { decrement: 1 } }
-                    })
-                ]);
+                await prisma.$transaction(async tx => {
+                    await lockAccountSecurity(tx, userId);
+                    await assertActiveAccountSession(tx, req, false);
+                    const removed = await tx.post.deleteMany({ where: { id: existingRepost.id, authorId: userId } });
+                    if (removed.count) await tx.post.updateMany({ where: { id: actualSharedFromId, sharesCount: { gt: 0 } }, data: { sharesCount: { decrement: 1 } } });
+                });
                 res.json({ success: true, action: 'unshared' });
                 return;
             }
@@ -2716,7 +2720,10 @@ export const sharePost = async (req: Request, res: Response) => {
         const transactionResult = await prisma.$transaction(async (tx) => {
             const canonical = await tx.post.findUnique({ where: { id: actualSharedFromId }, select: { authorId: true } });
             if (!canonical) throw new Error('SHARING_UNAVAILABLE');
-            await tx.$queryRaw(Prisma.sql`SELECT id FROM users WHERE id = ${canonical.authorId} FOR UPDATE`);
+            const actorAndAuthor = Array.from(new Set([userId, canonical.authorId])).sort();
+            for (const userId of actorAndAuthor) await lockAccountSecurity(tx, userId);
+            await tx.$queryRaw(Prisma.sql`SELECT id FROM users WHERE id IN (${Prisma.join(actorAndAuthor)}) ORDER BY id FOR UPDATE`);
+            await assertActiveAccountSession(tx, req, false);
             const author = await tx.user.findUnique({ where: { id: canonical.authorId }, select: { status: true, allowSharing: true, isPrivate: true, mediaPrivacyTarget: true } });
             if (!author || author.status !== 'ACTIVE' || !author.allowSharing || author.isPrivate || author.mediaPrivacyTarget === true) throw new Error('SHARING_UNAVAILABLE');
             const newPost = await tx.post.create({
@@ -2853,6 +2860,7 @@ export const sharePost = async (req: Request, res: Response) => {
         res.json(mappedPost);
     } catch (error) {
         if (error instanceof Error && error.message === 'SHARING_UNAVAILABLE') return res.status(403).json({ error: 'Sharing is unavailable for this post.', code: 'SHARING_UNAVAILABLE' });
+        if (error instanceof AccountSecurityError) return res.status(error.status).json({ code: error.code, error: 'Sign in again to share.' });
         if (error instanceof MentionLimitError || error instanceof HashtagLimitError || error instanceof PeopleTagValidationError) {
             res.status(400).json({
                 error: error.message,

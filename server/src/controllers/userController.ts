@@ -335,6 +335,7 @@ export const getMe = async (req: Request, res: Response) => {
         res.json({
             ...serializedUser,
             hasLegacyAvatar: Boolean(user.avatar && !user.avatarMediaId),
+            mediaPrivacyTarget: user.mediaPrivacyTarget,
             birthday: formatDateOnly(user.birthday),
             coverMediaId: coverMedia?.id || null,
             coverMedia,
@@ -554,7 +555,12 @@ export const updateUser = async (req: Request, res: Response) => {
             const pendingRequests = await prisma.follow.findMany({ where: { followingId: id, status: 'PENDING' }, select: { id: true, followerId: true } });
             for (const pending of pendingRequests) {
                 const accepted = await prisma.$transaction(async tx => {
+                    for (const accountId of [...new Set([id, pending.followerId])].sort()) await lockAccountSecurity(tx, accountId);
+                    await assertActiveAccountSession(tx, req, false);
                     await tx.$queryRaw(Prisma.sql`SELECT id FROM users WHERE id IN (${id}, ${pending.followerId}) ORDER BY id FOR UPDATE`);
+                    const current = await tx.user.findUnique({ where: { id }, select: { status: true, isPrivate: true, mediaPrivacyTarget: true } });
+                    // A pending or cancelled expansion never grants follow access.
+                    if (current?.status !== 'ACTIVE' || current.isPrivate || current.mediaPrivacyTarget !== null) return false;
                     const blocked = await tx.userBlock.findFirst({ where: { OR: [{ blockerId: id, blockedId: pending.followerId }, { blockerId: pending.followerId, blockedId: id }] } });
                     const follower = await tx.user.findUnique({ where: { id: pending.followerId }, select: { status: true } });
                     if (blocked || follower?.status !== 'ACTIVE') return false;
@@ -595,6 +601,7 @@ export const updateUser = async (req: Request, res: Response) => {
         res.json({
             ...serializedUser,
             hasLegacyAvatar: Boolean(user.avatar && !user.avatarMediaId),
+            mediaPrivacyTarget: user.mediaPrivacyTarget,
             birthday: formatDateOnly(user.birthday),
             coverMediaId: coverMedia?.id || null,
             coverMedia,

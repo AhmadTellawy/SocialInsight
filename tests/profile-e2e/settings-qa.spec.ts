@@ -160,7 +160,8 @@ test('dirty demographics trigger a real native beforeunload dialog and dismiss p
   await expect(page).toHaveURL(/\/settings\/profile$/);
 });
 
-test('an expired cookie and failed guest feed never render persisted private feed content, even briefly', async ({ page, context, baseURL }) => {
+// Expired cookies and failed guest loading must never flash persisted private feed content.
+test('finding-resolution:SI-AS-E03-001', async ({ page, context, baseURL }) => {
   const state = await installFixture(page); state.sessionExpired = true; state.failFeed = true;
   const marker = 'PRIVATE_CACHED_SURVEY_MUST_NEVER_RENDER';
   await context.addCookies([{ name: 'si_session', value: 'synthetic-expired-cookie', url: baseURL!, httpOnly: true, sameSite: 'Lax' }]);

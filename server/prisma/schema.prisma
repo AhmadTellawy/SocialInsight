@@ -405,6 +405,7 @@ model MediaAsset {
   altText            String?
   uploadBucket       String?
   uploadKey          String?
+  storageCleanupNotBefore DateTime?
   errorCode          String?
   moderationStatus   String           @default("NOT_REVIEWED")
   moderationMetadata Json?

@@ -59,7 +59,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
     if (!isOpen || !isRendered || !sheetRef.current) return;
     previouslyFocusedRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const sheet = sheetRef.current;
-    const focusableSelector = 'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    const focusableSelector = 'button:not([disabled]):not([tabindex="-1"]), [href], input:not([disabled]):not([tabindex="-1"]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
     const focusable = Array.from(sheet.querySelectorAll<HTMLElement>(focusableSelector)) as HTMLElement[];
     (focusable[0] || sheet).focus();
 
@@ -78,7 +78,10 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
       }
       const first = currentFocusable[0];
       const last = currentFocusable[currentFocusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
+      if (!sheet.contains(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
         last.focus();
       } else if (!event.shiftKey && document.activeElement === last) {

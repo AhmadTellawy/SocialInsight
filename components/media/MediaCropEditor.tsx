@@ -11,6 +11,7 @@ type MediaCropEditorProps = {
   initialAspectRatio?: number;
   lockedAspectRatio?: number;
   initialCrop?: MediaCropSelection;
+  initialAltText?: string;
   onApply: (selection: MediaCropSelection) => void;
   onCancel: () => void;
 };
@@ -29,6 +30,7 @@ export const MediaCropEditor: React.FC<MediaCropEditorProps> = ({
   initialAspectRatio,
   lockedAspectRatio,
   initialCrop,
+  initialAltText,
   onApply,
   onCancel
 }) => {
@@ -42,7 +44,7 @@ export const MediaCropEditor: React.FC<MediaCropEditorProps> = ({
   const [zoom, setZoom] = useState(1);
   const [sourceRatio, setSourceRatio] = useState<number | null>(null);
   const [aspectRatio, setAspectRatio] = useState(fixedRatio || initialAspectRatio || 1);
-  const [altText, setAltText] = useState(initialCrop?.altText || '');
+  const [altText, setAltText] = useState(initialCrop?.altText ?? initialAltText ?? '');
   const [croppedArea, setCroppedArea] = useState<Area | null>(initialCrop ? {
     x: initialCrop.crop.x * 100,
     y: initialCrop.crop.y * 100,

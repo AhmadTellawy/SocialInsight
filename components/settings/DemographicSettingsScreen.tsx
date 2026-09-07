@@ -23,9 +23,14 @@ export const DemographicSettingsScreen: React.FC<{
   const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
+  const [needsReload, setNeedsReload] = useState(false);
+  const [saveConflict, setSaveConflict] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const [selector, setSelector] = useState<DemographicField | null>(null);
+  const [selectorChoice, setSelectorChoice] = useState<string | null>(null);
+  useEffect(() => { setSelectorChoice(null); }, [selector]);
+  const selectedOption = selectorChoice ?? (selector ? draft[selector] : '');
   const [search, setSearch] = useState('');
   const [localLeave, setLocalLeave] = useState(false);
   const savingRef = useRef(false);
@@ -79,15 +84,48 @@ export const DemographicSettingsScreen: React.FC<{
     setDraft((current) => changeDemographic(current, field, value));
     setSavedNotice(false);
     setSaveError(false);
-    setSelector(null);
-    setSearch('');
+    setSelector(null); setSearch('');
+  };
+  const reconcile = async (submitted: DemographicDraft, baseline: DemographicDraft) => {
+    setNeedsReload(true);
+    const next = { ...profile, ...await api.getMe({ timeoutMs: 15_000 }) } as UserProfile;
+    const snapshot = demographicSnapshot(next.demographics);
+    setProfile(next);
+    setSaved(snapshot);
+    updateRef.current(next);
+    setNeedsReload(false);
+    if (!demographicHasChanges(submitted, snapshot)) {
+      setDraft(snapshot);
+      setSaveError(false);
+      setSaveConflict(false);
+      setSavedNotice(true);
+    } else {
+      // Keep local edits, while refreshing fields that this form did not edit.
+      // A fresh version never causes an automatic overwrite of another device.
+      const retained = { ...snapshot };
+      for (const field of DEMOGRAPHIC_FIELDS) {
+        if (submitted[field] !== baseline[field]) retained[field] = submitted[field];
+      }
+      setDraft(retained);
+      setSaveError(false);
+      setSaveConflict(true);
+    }
+  };
+  const retryRead = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    try { await reconcile(draft, saved); }
+    catch { setSaveError(true); }
+    finally { savingRef.current = false; setSaving(false); }
   };
   const save = async () => {
-    if (!dirty || loading || loadError || savingRef.current || !profile.id) return;
+    if (!dirty || loading || loadError || needsReload || savingRef.current || !profile.id) return;
     savingRef.current = true;
     setSaving(true);
     setSaveError(false);
     setSavedNotice(false);
+    setSaveConflict(false);
     try {
       const updated = await api.updateUser(profile.id, { demographics: { ...draft }, expectedUpdatedAt: profile.updatedAt });
       const next = { ...profile, ...updated, demographics: updated.demographics || { ...draft, ageGroup: profile.demographics?.ageGroup } } as UserProfile;
@@ -99,6 +137,8 @@ export const DemographicSettingsScreen: React.FC<{
       setSavedNotice(true);
     } catch {
       setSaveError(true);
+      try { await reconcile(draft, saved); }
+      catch { /* Keep the draft and disable writes until its version is known. */ }
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -125,7 +165,7 @@ export const DemographicSettingsScreen: React.FC<{
       <header className="sticky top-0 z-20 flex min-h-16 items-center gap-2 border-b border-gray-100 bg-white px-3">
         <button type="button" onClick={() => dirty ? setLocalLeave(true) : onBack()} disabled={saving} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-gray-700 focus-visible:ring-2 focus-visible:ring-blue-600 disabled:opacity-50" aria-label={t('common.back', { defaultValue: 'Back' })}><ArrowLeft className="rtl:rotate-180" size={23} /></button>
         <h1 className="min-w-0 flex-1 text-base font-bold text-gray-900">{t('settingsV2.demographics.title', { defaultValue: 'Demographic information' })}</h1>
-        <button type="button" onClick={() => void save()} disabled={!dirty || loading || loadError || saving} className="flex min-h-11 min-w-20 items-center justify-center gap-2 rounded-full bg-blue-600 px-4 text-sm font-bold text-white disabled:bg-gray-100 disabled:text-gray-500 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2">{saving && <Loader2 size={16} className="animate-spin" />}{t(saving ? 'profile.edit.saving' : 'profile.edit.save', { defaultValue: saving ? 'Saving...' : 'Save' })}</button>
+        <button type="button" onClick={() => void save()} disabled={!dirty || loading || loadError || needsReload || saving} className="flex min-h-11 min-w-20 items-center justify-center gap-2 rounded-full bg-blue-600 px-4 text-sm font-bold text-white disabled:bg-gray-100 disabled:text-gray-500 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2">{saving && <Loader2 size={16} className="animate-spin" />}{t(saving ? 'profile.edit.saving' : 'profile.edit.save', { defaultValue: saving ? 'Saving...' : 'Save' })}</button>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-24 pt-5">
         <div className="mx-auto max-w-lg space-y-5">
@@ -136,9 +176,10 @@ export const DemographicSettingsScreen: React.FC<{
           </div>
           {loading && <p role="status" className="flex items-center gap-2 text-sm text-gray-600"><Loader2 size={18} className="animate-spin" />{t('settingsV2.loading', { defaultValue: 'Loading your settings...' })}</p>}
           {loadError && <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800"><p>{t('settingsV2.loadFailed', { defaultValue: 'Your settings could not be loaded. Try again before making changes.' })}</p><button type="button" onClick={() => setRetryKey((value) => value + 1)} className="mt-2 flex min-h-11 items-center gap-2 font-bold"><RefreshCw size={17} />{t('common.retry', { defaultValue: 'Retry' })}</button></div>}
-          {saveError && <p role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{t('settingsV2.demographics.saveFailed', { defaultValue: 'Your changes could not be saved. They are still here; check your connection and try Save again.' })}</p>}
+          {saveError && <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800"><p>{t('settingsV2.demographics.saveFailed')}</p><button type="button" disabled={saving} onClick={() => void retryRead()} className="mt-2 flex min-h-11 items-center gap-2 font-bold disabled:opacity-50"><RefreshCw size={17} />{t('settingsV2.reload', { defaultValue: 'Reload settings' })}</button></div>}
+          {saveConflict && <p role="alert" className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-950">{t('settingsV2.demographics.saveConflict')}</p>}
           {savedNotice && <p role="status" className="rounded-2xl bg-green-50 p-4 text-sm font-semibold text-green-800">{t('settingsV2.saved', { defaultValue: 'Changes saved' })}</p>}
-          <fieldset disabled={loading || loadError || saving} className="overflow-hidden rounded-2xl border border-gray-200 bg-white disabled:opacity-60">
+          <fieldset disabled={loading || loadError || needsReload || saving} className="overflow-hidden rounded-2xl border border-gray-200 bg-white disabled:opacity-60">
             <legend className="sr-only">{t('settingsV2.demographics.title', { defaultValue: 'Demographic information' })}</legend>
             {DEMOGRAPHIC_FIELDS.filter((field) => !['industry', 'sector'].includes(field) || !['Unemployed', 'Homemaker'].includes(draft.employment)).map((field) => (
               <button key={field} type="button" onClick={() => { setSelector(field); setSearch(''); }} className="flex min-h-[76px] w-full items-center gap-3 border-b border-gray-100 px-4 py-3 text-start last:border-0 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-600">
@@ -147,15 +188,27 @@ export const DemographicSettingsScreen: React.FC<{
             ))}
           </fieldset>
           <div className="flex items-start gap-3 rounded-2xl border border-gray-200 bg-white p-4 text-sm text-gray-700"><Lock size={18} className="mt-0.5 shrink-0" /><div><p className="font-bold">{fieldLabel('ageGroup')}: <bdi>{profile.demographics?.ageGroup || optionLabel('')}</bdi></p><p className="mt-1 leading-relaxed">{t('settingsV2.demographics.ageHint', { defaultValue: 'Calculated from your date of birth. You can manage your date of birth in Edit profile; it is not visible to others.' })}</p></div></div>
-          <button type="button" disabled={loading || loadError || saving || !DEMOGRAPHIC_FIELDS.some((field) => draft[field])} onClick={() => { setDraft(demographicSnapshot()); setSavedNotice(false); }} className="min-h-11 rounded-xl px-2 text-sm font-semibold text-red-700 underline underline-offset-4 disabled:text-gray-400">{t('settingsV2.demographics.clear', { defaultValue: 'Clear optional information' })}</button>
+          <button type="button" disabled={loading || loadError || needsReload || saving || !DEMOGRAPHIC_FIELDS.some((field) => draft[field])} onClick={() => { setDraft(demographicSnapshot()); setSavedNotice(false); }} className="min-h-11 rounded-xl px-2 text-sm font-semibold text-red-700 underline underline-offset-4 disabled:text-gray-400">{t('settingsV2.demographics.clear', { defaultValue: 'Clear optional information' })}</button>
         </div>
       </div>
       <BottomSheet isOpen={Boolean(selector)} onClose={() => setSelector(null)} title={selector ? fieldLabel(selector) : ''}>
         <div dir={i18n.dir()} className="space-y-3 pb-4">
           {selector === 'nationality' && <label className="flex items-center gap-2 rounded-xl border border-gray-300 px-3"><Search size={18} className="text-gray-500" /><input value={search} onChange={(event) => setSearch(event.target.value)} type="search" className="min-h-12 w-full min-w-0 bg-transparent text-sm outline-none" placeholder={t('settingsV2.demographics.searchCountry', { defaultValue: 'Search countries in Arabic or English' })} aria-label={t('settingsV2.demographics.searchCountry', { defaultValue: 'Search countries in Arabic or English' })} /></label>}
-          <div role="radiogroup" aria-label={selector ? fieldLabel(selector) : undefined} className="max-h-[55dvh] space-y-2 overflow-y-auto">
+          <div role="radiogroup" aria-label={selector ? fieldLabel(selector) : undefined} className="max-h-[55dvh] space-y-2 overflow-y-auto" onKeyDown={(event) => {
+            const keys = ['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'Home', 'End'];
+            if (!selector || !keys.includes(event.key)) return;
+            const radios = Array.from((event.currentTarget as HTMLDivElement).querySelectorAll<HTMLButtonElement>('[role="radio"]'));
+            const index = radios.indexOf(document.activeElement as HTMLButtonElement);
+            if (index < 0 || !radios.length) return;
+            event.preventDefault();
+            const forward = event.key === 'ArrowDown' || event.key === (i18n.dir() === 'rtl' ? 'ArrowLeft' : 'ArrowRight');
+            const next = event.key === 'Home' ? 0 : event.key === 'End' ? radios.length - 1 : (index + (forward ? 1 : -1) + radios.length) % radios.length;
+            radios[next].focus();
+            // Arrow keys preview a choice; activate it to commit dependent-field changes.
+            setSelectorChoice(radios[next].dataset.value || '');
+          }}>
             {selector && [{ value: '', label: optionLabel('') }, ...(selector === 'nationality' ? filteredCountries : DEMOGRAPHIC_OPTIONS[selector].map((value) => ({ value, label: optionLabel(value) })))].map(({ value, label }) => (
-              <button type="button" role="radio" aria-checked={draft[selector!] === value} key={value || 'empty'} onClick={() => change(selector!, value)} className={`flex min-h-12 w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 text-start text-sm focus-visible:ring-2 focus-visible:ring-blue-600 ${draft[selector!] === value ? 'border-blue-600 bg-blue-50 font-bold text-blue-800' : 'border-gray-200 text-gray-800'}`}><span>{label}</span>{draft[selector!] === value && <Check size={18} className="shrink-0" />}</button>
+              <button type="button" role="radio" data-value={value} aria-checked={selectedOption === value} tabIndex={selectedOption === value || (value === '' && selector === 'nationality' && !filteredCountries.some((country) => country.value === selectedOption)) ? 0 : -1} key={value || 'empty'} onClick={() => change(selector!, value)} className={`flex min-h-12 w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 text-start text-sm focus-visible:ring-2 focus-visible:ring-blue-600 ${selectedOption === value ? 'border-blue-600 bg-blue-50 font-bold text-blue-800' : 'border-gray-200 text-gray-800'}`}><span>{label}</span>{selectedOption === value && <Check size={18} className="shrink-0" />}</button>
             ))}
             {selector === 'nationality' && filteredCountries.length === 0 && <p role="status" className="p-4 text-sm text-gray-600">{t('settingsV2.demographics.noCountries', { defaultValue: 'No matching countries. Try another spelling.' })}</p>}
           </div>

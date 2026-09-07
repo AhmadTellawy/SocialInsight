@@ -37,7 +37,12 @@ export class SupabaseMediaStorage implements MediaStorage {
       requireEnvironment('SUPABASE_URL'),
       requireEnvironment('SUPABASE_SERVICE_ROLE_KEY'),
       {
-        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+        global: {
+          fetch: (input, init) => fetch(input, { ...init,
+            signal: AbortSignal.any([AbortSignal.timeout(60_000), ...(init?.signal ? [init.signal] : [])])
+          })
+        }
       }
     );
   }

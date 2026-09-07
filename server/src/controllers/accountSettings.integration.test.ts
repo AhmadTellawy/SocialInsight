@@ -59,7 +59,8 @@ test('real HTTP session cookies enforce CSRF, owner-only access and atomic setti
   for(const key of ['email','phone','birthday','demographics','searchVisibility','theme','passwordHash'])assert.equal(key in visitor.body,false);
   assert.equal((await client.request('/users/me/settings','PATCH',{changes:{status:'DELETED'},expectedUpdatedAt:fresh.body.updatedAt})).status,400);
 });
-test('full demographic editor payload persists all fields without erasing prior canonical values or changing public country',async()=>{
+// The full editor payload preserves canonical fields and keeps nationality separate from public country.
+test('finding-resolution:SI-AS-E03-003',async()=>{
   const client=new Browser(); await client.login('owner');
   await prisma.userDemographics.upsert({where:{userId:ids.owner},create:{userId:ids.owner,educationLevel:'Diploma',employmentType:'Employed',industry:'Government',employmentSector:'Services'},update:{educationLevel:'Diploma',employmentType:'Employed',industry:'Government',employmentSector:'Services'}});
   await prisma.user.update({where:{id:ids.owner},data:{country:'Canada'}});
