@@ -1,3 +1,4 @@
+import { canCreateNotification } from './notificationPolicy';
 import {
   MentionSourceType,
   MentionState,
@@ -311,6 +312,7 @@ const createMentionNotification = async (
   targetUserId: string
 ): Promise<string | null> => {
   if (!source.notify || !source.postId) return null;
+  if (!await canCreateNotification(tx, targetUserId, source.actorUserId, 'mention')) return null;
   const target = createMentionNotificationTarget({
     postId: source.postId,
     ...(source.commentId && source.sourceType === MentionSourceType.COMMENT

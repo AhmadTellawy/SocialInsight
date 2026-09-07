@@ -109,6 +109,7 @@ export interface UserProfile {
   handle: string;
   avatar: string;
   avatarMediaId?: string;
+  hasLegacyAvatar?: boolean;
   avatarMedia?: MediaPresentation;
   coverMediaId?: string | null;
   coverMedia?: MediaPresentation | null;
@@ -116,7 +117,8 @@ export interface UserProfile {
   bio: string;
   location: string;
   website: string;
-  email: string;
+  email: string | null;
+  emailVerifiedAt?: string | null;
   phone: string;
   language: string;
   birthday?: string | null;
@@ -126,6 +128,10 @@ export interface UserProfile {
   isPrivate?: boolean;
   isFollowing?: boolean;
   groupPrivacy?: 'Public' | 'Followers' | 'Off';
+  searchVisibility?: boolean;
+  allowSharing?: boolean;
+  groupInvites?: boolean;
+  theme?: 'system' | 'light' | 'dark';
   peopleTagPermission?: 'EVERYONE' | 'FOLLOWING' | 'NO_ONE';
   bioMentions?: MentionReference[];
   followStatus?: 'ACTIVE' | 'PENDING' | 'REJECTED' | 'NONE';

@@ -107,6 +107,9 @@ type MockApiState = {
   failPrivateProfileLoads: boolean;
   failNextProfileSave: boolean;
   lastProfilePayload?: Record<string, unknown>;
+  notificationSnapshot?: { settings: any; updatedAt: string | null };
+  notificationSaveCalls?: number;
+  failNotificationSave?: boolean;
 };
 
 const json = (route: Route, body: unknown, status = 200, headers: Record<string, string> = {}) =>
@@ -124,6 +127,35 @@ async function installAuthenticatedMockApi(page: Page, state: MockApiState): Pro
     const method = request.method().toUpperCase();
     const url = new URL(request.url());
     const pathname = url.pathname;
+
+    if (pathname === '/api/notification-settings') {
+      state.notificationSnapshot ||= { settings: { myPosts: { likes: 'everyone', comments: 'everyone', shares: 'following' }, toggles: { newFollowers: true, invitations: true, commentInteractions: true, mentions: true, peopleTags: true, pushNotifications: false }, quietHours: { enabled: false, start: '22:00', end: '08:00', timeZone: 'UTC' } }, updatedAt: null };
+      if (method === 'GET') return json(route, state.notificationSnapshot);
+      if (method === 'PUT') {
+        state.notificationSaveCalls = (state.notificationSaveCalls || 0) + 1;
+        const payload = request.postDataJSON();
+        if (state.failNotificationSave) { state.failNotificationSave = false; return json(route, { error: 'Temporary failure' }, 503); }
+        if (payload.expectedUpdatedAt !== state.notificationSnapshot.updatedAt) return json(route, { error: 'Conflict' }, 409);
+        state.notificationSnapshot = { settings: payload.settings, updatedAt: `2026-09-01T00:00:0${state.notificationSaveCalls}.000Z` };
+        return json(route, state.notificationSnapshot);
+      }
+    }
+
+    if (method === 'GET' && pathname === '/api/auth/session') {
+      return json(route, { user: { ...state.profile, profileLinks: state.links }, csrfToken: 'mock-csrf-token' });
+    }
+
+    if (method === 'PATCH' && pathname === '/api/users/me/settings') {
+      state.profileSaveCalls += 1;
+      const payload = request.postDataJSON() as { changes: Partial<MockProfile>; expectedUpdatedAt: string };
+      state.lastProfilePayload = payload;
+      if (state.failNextProfileSave) {
+        state.failNextProfileSave = false;
+        return json(route, { error: 'Temporary settings failure', code: 'PROFILE_UPDATE_FAILED' }, 503);
+      }
+      Object.assign(state.profile, payload.changes, { updatedAt: `2026-09-01T00:00:0${state.profileSaveCalls}.000Z` });
+      return json(route, state.profile);
+    }
 
     if (method === 'GET' && pathname === '/api/users/me') {
       if (state.failPrivateProfileLoads) {
@@ -216,6 +248,9 @@ async function installAuthenticatedMockApi(page: Page, state: MockApiState): Pro
         state.profile.demographics.ageGroup = ageGroupFor(payload.birthday);
       }
       if (typeof payload.isPrivate === 'boolean') state.profile.isPrivate = payload.isPrivate;
+      if (payload.demographics && typeof payload.demographics === 'object') Object.assign(state.profile.demographics, payload.demographics);
+      if (typeof payload.location === 'string') state.profile.location = payload.location;
+      if (typeof payload.website === 'string') state.profile.website = payload.website;
       if (Object.prototype.hasOwnProperty.call(payload, 'avatarMediaId')) {
         state.profile.avatarMediaId = payload.avatarMediaId as string | null;
         state.profile.avatarMedia = state.profile.avatarMediaId ? {
@@ -251,6 +286,185 @@ const openEditProfile = async (page: Page): Promise<void> => {
   await page.goto('/settings/profile/edit-profile');
   await expect(page.getByRole('heading', { name: 'Edit Profile' })).toBeVisible({ timeout: 15_000 });
 };
+
+const settingsState = (): MockApiState => ({ profile: makeProfile(), links: [], mediaPurposeById: new Map(), mediaSequence: 0, linkCreateCalls: 0, profileSaveCalls: 0, failPrivateProfileLoads: false, failNextProfileSave: false });
+
+test.describe('settings critical acceptance', () => {
+  test('notifications save explicitly, ignore stale local cache and preserve failed draft', async ({ page }) => {
+    const state = settingsState(); state.failNotificationSave = true;
+    await installAuthenticatedMockApi(page, state);
+    await page.addInitScript(() => {
+      localStorage.setItem('notif_settings_v1_profile-e2e-user', JSON.stringify({ myPosts: { likes: 'off' } }));
+      localStorage.setItem('notif_settings_meta_v1_profile-e2e-user', JSON.stringify({ updatedAt: '2099-01-01T00:00:00Z' }));
+    });
+    await page.goto('/settings/profile/notifications-detailed');
+    await expect(page.getByRole('heading', { name: 'Notifications', exact: true })).toBeVisible({ timeout: 15_000 });
+    const likes = page.getByRole('radiogroup', { name: 'Likes on my posts', exact: true });
+    const save = page.getByRole('button', { name: 'Save', exact: true });
+    await expect(likes.getByRole('radio', { name: 'Everyone', exact: true })).toHaveAttribute('aria-checked', 'true');
+    await expect(save).toBeDisabled();
+    await likes.getByRole('radio', { name: 'Off', exact: true }).click();
+    await expect(save).toBeEnabled();
+    expect(state.notificationSaveCalls || 0).toBe(0);
+    await page.getByRole('button', { name: 'Back', exact: true }).click();
+    await page.getByRole('button', { name: 'Continue editing', exact: true }).click();
+    await save.click();
+    await expect(page.getByRole('alert')).toContainText('draft is still here');
+    await expect(likes.getByRole('radio', { name: 'Off', exact: true })).toHaveAttribute('aria-checked', 'true');
+    await save.click();
+    await expect(page.getByRole('status')).toContainText('Changes saved');
+    expect(state.notificationSnapshot?.settings.myPosts.likes).toBe('off');
+    expect(state.notificationSnapshot?.settings.toggles.pushNotifications).toBe(false);
+    await expect(save).toBeDisabled();
+    await page.reload();
+    await expect(likes.getByRole('radio', { name: 'Off', exact: true })).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByText('Activity of people I follow', { exact: true })).toHaveCount(0);
+    await page.getByRole('switch', { name: 'Quiet hours', exact: true }).click();
+    await page.getByLabel('From', { exact: true }).fill('08:00');
+    await expect(save).toBeDisabled();
+    await expect(page.getByRole('alert')).toContainText('different start and end');
+    await page.getByLabel('Until', { exact: true }).fill('22:00');
+    await page.getByLabel('Time zone', { exact: true }).fill('Asia/Amman');
+    await save.click();
+    await expect(page.getByRole('status')).toContainText('Changes saved');
+    expect(state.notificationSnapshot?.settings.quietHours).toEqual({ enabled: true, start: '08:00', end: '22:00', timeZone: 'Asia/Amman' });
+  });
+
+  test('denied device notification permission stays off and displays failure', async ({ page }) => {
+    const state = settingsState();
+    await installAuthenticatedMockApi(page, state);
+    await page.addInitScript(() => {
+      Object.defineProperty(Notification, 'permission', { get: () => 'denied', configurable: true });
+      Notification.requestPermission = async () => 'denied';
+    });
+    await page.goto('/settings/profile/notifications-detailed');
+    const enable = page.getByRole('button', { name: 'Enable on this browser', exact: true });
+    await expect(enable).toBeEnabled({ timeout: 15_000 });
+    await enable.click();
+    await expect(page.getByRole('alert')).toContainText('browser notification setting could not be changed');
+    await expect(enable).toBeVisible();
+    await expect(page.getByRole('switch', { name: 'Deliver device notifications', exact: true })).toHaveAttribute('aria-checked', 'false');
+    expect(state.notificationSaveCalls || 0).toBe(0);
+  });
+  test('demographics save only net editable changes and stay saved after reload', async ({ page }) => {
+    const state = settingsState();
+    await installAuthenticatedMockApi(page, state);
+    await page.goto('/settings/profile/demographics');
+    await expect(page.getByRole('heading', { name: 'Demographic information' })).toBeVisible({ timeout: 15_000 });
+    const save = page.getByRole('button', { name: 'Save', exact: true });
+    await expect(save).toBeDisabled();
+    await page.getByRole('button', { name: 'Gender Not specified', exact: true }).click();
+    await page.getByRole('radio', { name: 'Male', exact: true }).click();
+    await expect(save).toBeEnabled();
+    await page.getByRole('button', { name: 'Gender Male', exact: true }).click();
+    await page.getByRole('radio', { name: 'Not specified', exact: true }).click();
+    await expect(save).toBeDisabled();
+    expect(state.profileSaveCalls).toBe(0);
+    await page.getByRole('button', { name: 'Gender Not specified', exact: true }).click();
+    await page.getByRole('radio', { name: 'Female', exact: true }).click();
+    await save.click();
+    await expect(page.getByRole('status')).toContainText('Changes saved');
+    await expect(save).toBeDisabled();
+    expect(Object.keys(state.lastProfilePayload || {}).sort()).toEqual(['demographics', 'expectedUpdatedAt']);
+    expect(state.lastProfilePayload?.demographics).not.toHaveProperty('ageGroup');
+    expect(state.profile.demographics.gender).toBe('Female');
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Gender Female', exact: true })).toBeVisible();
+    await expect(save).toBeDisabled();
+  });
+
+  test('demographics keeps failed draft and offers Continue editing or Discard changes on leave', async ({ page }) => {
+    const state = settingsState(); state.failNextProfileSave = true;
+    await installAuthenticatedMockApi(page, state);
+    await page.goto('/settings/profile/demographics');
+    await page.getByRole('button', { name: 'Gender Not specified', exact: true }).click();
+    await page.getByRole('radio', { name: 'Male', exact: true }).click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('could not be saved');
+    await expect(page.getByRole('button', { name: 'Gender Male', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Back', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: 'Unsaved changes' })).toContainText('will not be saved');
+    await page.getByRole('button', { name: 'Continue editing', exact: true }).click();
+    await expect(page).toHaveURL(/\/demographics$/);
+    await expect(page.getByRole('button', { name: 'Gender Male', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Privacy Policy', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: 'Unsaved changes' })).toBeVisible();
+    await page.getByRole('button', { name: 'Discard changes', exact: true }).click();
+    await expect(page).toHaveURL(/\/privacy$/);
+    expect(state.profile.demographics.gender).toBe('');
+    await page.goto('/settings/profile/demographics');
+    await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+  });
+
+  test('Arabic demographics supports full bilingual country search and localized discard actions', async ({ page }) => {
+    const state = settingsState(); state.profile.language = 'ar';
+    await installAuthenticatedMockApi(page, state);
+    await page.addInitScript(() => localStorage.setItem('i18nextLng', 'ar'));
+    await page.goto('/settings/profile/demographics');
+    await expect(page.getByRole('heading', { name: 'المعلومات الديموغرافية' })).toBeVisible();
+    await page.getByRole('button', { name: 'الجنسية غير محدد', exact: true }).click();
+    const search = page.getByRole('searchbox');
+    await search.fill('Jordan');
+    await page.getByRole('radio', { name: 'الأردن', exact: true }).click();
+    await page.getByRole('button', { name: 'الجنسية الأردن', exact: true }).click();
+    await search.fill('zzzzzz');
+    await expect(page.getByRole('status')).toContainText('لا توجد دول مطابقة');
+    await search.fill('الأردن');
+    await page.getByRole('radio', { name: 'الأردن', exact: true }).click();
+    await page.getByRole('button', { name: 'رجوع', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'الاستمرار بالتعديل', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'تجاهل التغييرات', exact: true }).click();
+    await expect(page).toHaveURL(/\/settings\/profile$/);
+    expect(state.profileSaveCalls).toBe(0);
+  });
+
+  test('profile photo controls open current image cropping directly and save only that image', async ({ page }) => {
+    const state = settingsState();
+    state.profile.avatarMediaId = 'initial-avatar';
+    state.profile.coverMediaId = 'initial-cover';
+    state.profile.avatarMedia = { id: 'initial-avatar', access: 'PUBLIC', aspectRatio: 1, width: 192, height: 192, src: '/pwa-192x192.png' };
+    state.profile.coverMedia = { id: 'initial-cover', access: 'PUBLIC', aspectRatio: 3, width: 192, height: 64, src: '/pwa-192x192.png' };
+    state.mediaPurposeById.set('initial-avatar', 'PROFILE_AVATAR');
+    state.mediaPurposeById.set('initial-cover', 'PROFILE_COVER');
+    await installAuthenticatedMockApi(page, state);
+    await page.goto('/profile');
+    await page.getByRole('button', { name: 'Edit profile photo', exact: true }).click();
+    await expect(page.getByTestId('media-crop-editor')).toHaveAttribute('data-media-purpose', 'PROFILE_AVATAR');
+    await expect(page).toHaveURL(/\/profile$/);
+    await page.getByRole('button', { name: 'Done', exact: true }).click();
+    await expect.poll(() => state.profile.avatarMediaId).toBe('asset-1');
+    expect(Object.keys(state.lastProfilePayload || {}).sort()).toEqual(['avatarMediaId', 'expectedUpdatedAt']);
+    await page.getByRole('button', { name: 'Edit cover photo', exact: true }).click();
+    await expect(page.getByTestId('media-crop-editor')).toHaveAttribute('data-media-purpose', 'PROFILE_COVER');
+    await expect(page.getByRole('button', { name: '3:1' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page).toHaveURL(/\/profile$/);
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.getByRole('button', { name: 'Remove photo', exact: true }).click();
+    await page.getByRole('button', { name: 'Remove photo', exact: true }).click();
+    await expect.poll(() => state.profile.coverMediaId).toBe(null);
+    expect(Object.keys(state.lastProfilePayload || {}).sort()).toEqual(['coverMediaId', 'expectedUpdatedAt']);
+  });
+
+  test('privacy controls retain saved value on failure and group audience persists independently', async ({ page }) => {
+    const state = settingsState(); state.failNextProfileSave = true;
+    await installAuthenticatedMockApi(page, state);
+    await page.goto('/settings/profile/account-privacy');
+    const search = page.getByRole('switch', { name: 'Show my profile in search', exact: true });
+    await expect(search).toHaveAttribute('aria-checked', 'true');
+    await search.click();
+    await expect(page.getByRole('alert')).toContainText('previous value');
+    await expect(search).toHaveAttribute('aria-checked', 'true');
+    await search.click();
+    await expect(search).toHaveAttribute('aria-checked', 'false');
+    expect((state.lastProfilePayload as any).changes).toEqual({ searchVisibility: false });
+    await page.goto('/settings/profile/group-privacy');
+    await page.getByRole('radio', { name: 'Only me', exact: true }).click();
+    await expect(page.getByRole('radio', { name: 'Only me', exact: true })).toHaveAttribute('aria-checked', 'true');
+    expect((state.lastProfilePayload as any).changes).toEqual({ groupPrivacy: 'Off' });
+    await page.reload();
+    await expect(page.getByRole('radio', { name: 'Only me', exact: true })).toHaveAttribute('aria-checked', 'true');
+  });
+});
 
 test.describe('local mocked mobile profile editing', () => {
   test('stages avatar/cover crops, hides app navigation, and makes media-only changes saveable', async ({ page }) => {

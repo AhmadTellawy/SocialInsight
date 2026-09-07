@@ -49,7 +49,7 @@ function post(overrides: any = {}) {
     id: 'post-1', authorId: 'author-1', targetAudience: 'ProfileAndGroups',
     status: 'PUBLISHED', isDeleted: false, hiddenBy: [], sharedFromId: null,
     groupId: group.id, group, targetedGroups: [group],
-    author: { isPrivate: false, mediaPrivacyTarget: false, following: [], blockedBy: [], blocking: [] },
+    author: { status: 'ACTIVE', isPrivate: false, mediaPrivacyTarget: false, following: [], blockedBy: [], blocking: [] },
     ...overrides,
   };
 }
@@ -82,14 +82,14 @@ test('union media stays restricted instead of being promoted to public storage',
 
 const scenarios: Array<{ name: string; viewer?: string; value: any; allowed: boolean }> = [
   { name: 'public profile grants a guest access despite a private group', value: post(), allowed: true },
-  { name: 'private profile denies guest with private group', value: post({ author: { isPrivate: true, mediaPrivacyTarget: false, following: [], blockedBy: [], blocking: [] } }), allowed: false },
-  { name: 'private profile allows ACTIVE follower outside selected groups', viewer: 'viewer', value: post({ author: { isPrivate: true, mediaPrivacyTarget: false, following: [{ followerId: 'viewer', status: 'ACTIVE' }], blockedBy: [], blocking: [] } }), allowed: true },
-  { name: 'private profile rejects pending follower outside selected groups', viewer: 'viewer', value: post({ author: { isPrivate: true, mediaPrivacyTarget: false, following: [{ followerId: 'viewer', status: 'PENDING' }], blockedBy: [], blocking: [] } }), allowed: false },
-  { name: 'media privacy restriction also protects the profile branch', value: post({ author: { isPrivate: false, mediaPrivacyTarget: true, following: [], blockedBy: [], blocking: [] } }), allowed: false },
-  { name: 'joined group member can read private author union', viewer: 'viewer', value: post({ author: { isPrivate: true, mediaPrivacyTarget: false, following: [], blockedBy: [], blocking: [] }, targetedGroups: [privateGroup([{ userId: 'viewer', status: 'JOINED' }])] }), allowed: true },
-  { name: 'public group remains readable independent of private author', value: post({ author: { isPrivate: true, mediaPrivacyTarget: false, following: [], blockedBy: [], blocking: [] }, targetedGroups: [{ ...privateGroup(), isPublic: true }] }), allowed: true },
-  { name: 'outgoing block excludes both profile and group branches', viewer: 'viewer', value: post({ author: { isPrivate: false, mediaPrivacyTarget: false, following: [], blockedBy: [{ blockerId: 'viewer' }], blocking: [] }, targetedGroups: [{ ...privateGroup(), isPublic: true }] }), allowed: false },
-  { name: 'incoming block excludes both profile and group branches', viewer: 'viewer', value: post({ author: { isPrivate: false, mediaPrivacyTarget: false, following: [], blockedBy: [], blocking: [{ blockedId: 'viewer' }] }, targetedGroups: [{ ...privateGroup(), isPublic: true }] }), allowed: false },
+  { name: 'private profile denies guest with private group', value: post({ author: { status: 'ACTIVE', isPrivate: true, mediaPrivacyTarget: false, following: [], blockedBy: [], blocking: [] } }), allowed: false },
+  { name: 'private profile allows ACTIVE follower outside selected groups', viewer: 'viewer', value: post({ author: { status: 'ACTIVE', isPrivate: true, mediaPrivacyTarget: false, following: [{ followerId: 'viewer', status: 'ACTIVE' }], blockedBy: [], blocking: [] } }), allowed: true },
+  { name: 'private profile rejects pending follower outside selected groups', viewer: 'viewer', value: post({ author: { status: 'ACTIVE', isPrivate: true, mediaPrivacyTarget: false, following: [{ followerId: 'viewer', status: 'PENDING' }], blockedBy: [], blocking: [] } }), allowed: false },
+  { name: 'media privacy restriction also protects the profile branch', value: post({ author: { status: 'ACTIVE', isPrivate: false, mediaPrivacyTarget: true, following: [], blockedBy: [], blocking: [] } }), allowed: false },
+  { name: 'joined group member can read private author union', viewer: 'viewer', value: post({ author: { status: 'ACTIVE', isPrivate: true, mediaPrivacyTarget: false, following: [], blockedBy: [], blocking: [] }, targetedGroups: [privateGroup([{ userId: 'viewer', status: 'JOINED' }])] }), allowed: true },
+  { name: 'public group remains readable independent of private author', value: post({ author: { status: 'ACTIVE', isPrivate: true, mediaPrivacyTarget: false, following: [], blockedBy: [], blocking: [] }, targetedGroups: [{ ...privateGroup(), isPublic: true }] }), allowed: true },
+  { name: 'outgoing block excludes both profile and group branches', viewer: 'viewer', value: post({ author: { status: 'ACTIVE', isPrivate: false, mediaPrivacyTarget: false, following: [], blockedBy: [{ blockerId: 'viewer' }], blocking: [] }, targetedGroups: [{ ...privateGroup(), isPublic: true }] }), allowed: false },
+  { name: 'incoming block excludes both profile and group branches', viewer: 'viewer', value: post({ author: { status: 'ACTIVE', isPrivate: false, mediaPrivacyTarget: false, following: [], blockedBy: [], blocking: [{ blockedId: 'viewer' }] }, targetedGroups: [{ ...privateGroup(), isPublic: true }] }), allowed: false },
   { name: 'deleted group does not eliminate an allowed profile audience', value: post({ group: { ...privateGroup(), isDeleted: true }, targetedGroups: [{ ...privateGroup(), isDeleted: true }] }), allowed: true },
   { name: 'pending group approval does not publish the profile branch', value: post({ status: 'PENDING_APPROVAL' }), allowed: false },
   { name: 'draft profile union is excluded from discovery', value: post({ status: 'DRAFT' }), allowed: false },
@@ -216,14 +216,14 @@ test('published post switched to approval-needed union is held pending at the tr
   stubMethod(prisma.group, 'findUnique', async () => ({ postingPermissions: 'ApprovalNeeded', isDeleted: false }));
   stubMethod(prisma.groupMember, 'findUnique', async () => ({ status: 'JOINED', role: 'Member' }));
   let captured: any;
-  stubMethod(prisma, '$transaction', async (callback: any) => callback({ post: { update: async ({ data }: any) => {
+  stubMethod(prisma, '$transaction', async (callback: any) => callback({ $executeRaw: async () => 1, authSession: { findFirst: async () => ({ id: 'fixture-session' }) }, post: { update: async ({ data }: any) => {
     captured = data;
     // Stop at the persistence boundary: this test never commits or calls a database.
     throw new Error('TEST_TRANSACTION_BOUNDARY');
   } } }));
   mock.method(console, 'error', () => {});
   const { response } = responseState();
-  await controllers().updatePost({ params: { id: 'post-1' }, body: { targetAudience: 'ProfileAndGroups', targetGroups: ['group-1'] }, user: { userId: 'author-1' } } as any, response);
+  await controllers().updatePost({ params: { id: 'post-1' }, body: { targetAudience: 'ProfileAndGroups', targetGroups: ['group-1'] }, user: { userId: 'author-1', authMode: 'session' }, authSession: { id: 'fixture-session', userId: 'author-1' } } as any, response);
   assert.ok(captured, 'Controller must reach the mocked persistence boundary');
   assert.equal(captured.status, 'PENDING_APPROVAL');
   assert.equal(captured.approvedAt, null);
@@ -234,13 +234,13 @@ test('saving a union draft for an approval-needed group remains DRAFT at the tra
   stubMethod(prisma.group, 'findUnique', async () => ({ postingPermissions: 'ApprovalNeeded', isDeleted: false }));
   stubMethod(prisma.groupMember, 'findUnique', async () => ({ status: 'JOINED', role: 'Member' }));
   let captured: any;
-  stubMethod(prisma, '$transaction', async (callback: any) => callback({ post: { create: async ({ data }: any) => {
+  stubMethod(prisma, '$transaction', async (callback: any) => callback({ $executeRaw: async () => 1, authSession: { findFirst: async () => ({ id: 'fixture-session' }) }, post: { create: async ({ data }: any) => {
     captured = data;
     throw new Error('TEST_TRANSACTION_BOUNDARY');
   } } }));
   mock.method(console, 'error', () => {});
   const { response } = responseState();
-  await controllers().createPost({ body: { title: 'Draft', status: 'DRAFT', targetAudience: 'ProfileAndGroups', targetGroups: ['group-1'] }, user: { userId: 'author-1' } } as any, response);
+  await controllers().createPost({ body: { title: 'Draft', status: 'DRAFT', targetAudience: 'ProfileAndGroups', targetGroups: ['group-1'] }, user: { userId: 'author-1', authMode: 'session' }, authSession: { id: 'fixture-session', userId: 'author-1' } } as any, response);
   assert.ok(captured, 'Controller must reach the mocked persistence boundary');
   assert.equal(captured.status, 'DRAFT');
 });

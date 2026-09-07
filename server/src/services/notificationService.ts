@@ -1,5 +1,6 @@
+import { canCreateNotification } from './notificationPolicy';
 import prisma from '../prisma';
-import { getIO, getUserNotificationRoom } from './socketService';
+import { emitToAuthorizedUserNotifications } from './socketService';
 import { sendPushNotification } from './pushService';
 import { PUBLIC_AVATAR_MEDIA_SELECT, serializeUserMediaRecord } from './mediaService';
 import {
@@ -55,10 +56,7 @@ const dispatchNotificationRecord = async (
     };
 
     try {
-        const socketServer = getIO();
-        if (socketServer) {
-            socketServer.to(getUserNotificationRoom(notification.userId)).emit('newNotification', realtimeNotification);
-        }
+        await emitToAuthorizedUserNotifications(notification.userId, 'newNotification', realtimeNotification);
     } catch (error) {
         console.error(JSON.stringify({ event: 'notification_socket_failed', type: notification.type, error: errorName(error) }));
     }
@@ -131,47 +129,7 @@ export const notify = async (
             if (existing) return existing;
         }
 
-        const settingsRecord = await prisma.notificationSettings.findUnique({ where: { userId } });
-        let shouldNotify = true;
-
-        if (settingsRecord && actorId) {
-            try {
-                const settings = JSON.parse(settingsRecord.settings);
-                const checkFollowing = async () => {
-                    const follow = await prisma.follow.findUnique({
-                        where: {
-                            followerId_followingId: {
-                                followerId: userId,
-                                followingId: actorId
-                            }
-                        }
-                    });
-                    return !!follow;
-                };
-                const evaluateTriOption = async (option: string | undefined, defaultOption = 'everyone') => {
-                    const value = option || defaultOption;
-                    if (value === 'off') return false;
-                    if (value === 'following') return checkFollowing();
-                    return true;
-                };
-
-                if (type === 'like') {
-                    shouldNotify = await evaluateTriOption(settings.myPosts?.likes);
-                } else if (type === 'comment' || type === 'response') {
-                    shouldNotify = await evaluateTriOption(settings.myPosts?.comments);
-                } else if (type === 'vote') {
-                    shouldNotify = await evaluateTriOption(settings.myPosts?.comments);
-                } else if (type === 'follow' && settings.toggles?.newFollowers === false) {
-                    shouldNotify = false;
-                }
-
-                if (settings.toggles?.pushNotifications === false) shouldNotify = false;
-            } catch (error) {
-                console.error(JSON.stringify({ event: 'notification_settings_parse_failed', error: errorName(error) }));
-            }
-        }
-
-        if (!shouldNotify) return;
+        if (!await canCreateNotification(prisma, userId, actorId, type, normalizedPayload)) return;
 
         const newNotification = await prisma.notification.create({
             data: {

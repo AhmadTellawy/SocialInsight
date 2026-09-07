@@ -58,8 +58,8 @@ export const GroupSelectionPage: React.FC<Props> = ({ groups, selectedIds, onSav
         closeRef.current();
       }
       if (event.key !== 'Tab') return;
-      const scope = page.querySelector('[role="alertdialog"]') || page;
-      const focusable = Array.from(scope.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [tabindex="0"]'));
+      const scope: HTMLElement = page.querySelector<HTMLElement>('[role="alertdialog"]') || page;
+      const focusable: HTMLElement[] = Array.from(scope.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [tabindex="0"]'));
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }

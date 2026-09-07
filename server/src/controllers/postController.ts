@@ -1,4 +1,8 @@
+import { prepareGuestParticipationProof, readGuestParticipationHash, guestProofMatches, writeGuestParticipationCookie } from '../services/guestParticipationService';
+import { AggregateResults } from '../services/aggregateResults';
 import { Request, Response } from 'express';
+import { lockAccountSecurity, AccountSecurityError } from '../services/mfaService';
+import { assertActiveAccountSession } from '../services/accountSecurityPolicy';
 import { MentionState, MentionSurface, PeopleTagStatus, Prisma } from '@prisma/client';
 import prisma from '../prisma';
 import { dispatchNotificationIds, notify } from '../services/notificationService';
@@ -354,6 +358,7 @@ const resolveInteractionTarget = async (postId: string, type: 'like' | 'comment'
 export const getPosts = async (req: Request, res: Response) => {
     const userId = req.user?.userId;
     const guestId = typeof req.query.guestId === 'string' ? req.query.guestId : undefined;
+    const guestProofHash = readGuestParticipationHash(req);
     const authorId = typeof req.query.authorId === 'string' ? req.query.authorId : undefined;
     const authorHandle = typeof req.query.authorHandle === 'string' ? req.query.authorHandle : undefined;
     const groupId = typeof req.query.groupId === 'string' ? req.query.groupId : undefined;
@@ -441,7 +446,8 @@ export const getPosts = async (req: Request, res: Response) => {
                 tx,
                 relationPostIds,
                 userId,
-                guestId
+                guestId,
+                guestProofHash
             );
             for (const post of posts) {
                 post.sharedFrom = post.sharedFromId
@@ -464,7 +470,7 @@ export const getPosts = async (req: Request, res: Response) => {
 
         attachFeedContentRelations(posts, relationBundle);
         attachFeedViewerState(posts, {
-            hasResponseIdentity: Boolean(userId || guestId),
+            hasResponseIdentity: Boolean(userId || guestProofHash),
             userId,
             responses: relationBundle.responses,
             answers: relationBundle.answers,
@@ -474,7 +480,7 @@ export const getPosts = async (req: Request, res: Response) => {
             follows: relationBundle.follows
         });
 
-        const mappedPosts = posts.map((post) => mapPostForClient(post, userId, guestId));
+        const mappedPosts = posts.map((post) => mapPostForClient(post, userId, guestProofHash || undefined));
 
         const lastPageRef = visiblePageRefs[visiblePageRefs.length - 1];
         const nextCursor = hasMore && lastPageRef
@@ -615,6 +621,7 @@ export const getPostById = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const userId = req.user?.userId;
     const guestId = typeof req.query.guestId === 'string' ? req.query.guestId : undefined;
+    const guestProofHash = readGuestParticipationHash(req);
     try {
         const detail = await prisma.$transaction(async (tx) => {
             const post = await tx.post.findFirst({
@@ -636,7 +643,8 @@ export const getPostById = async (req: Request, res: Response) => {
                 tx,
                 [post.id, ...(sharedFrom ? [sharedFrom.id] : [])],
                 userId,
-                guestId
+                guestId,
+                guestProofHash
             );
             return { post, relationBundle };
         }, {
@@ -652,7 +660,7 @@ export const getPostById = async (req: Request, res: Response) => {
 
         attachFeedContentRelations([detail.post], detail.relationBundle);
         attachFeedViewerState([detail.post], {
-            hasResponseIdentity: Boolean(userId || guestId),
+            hasResponseIdentity: Boolean(userId || guestProofHash),
             userId,
             responses: detail.relationBundle.responses,
             answers: detail.relationBundle.answers,
@@ -661,7 +669,7 @@ export const getPostById = async (req: Request, res: Response) => {
             savedPosts: detail.relationBundle.savedPosts,
             follows: detail.relationBundle.follows
         });
-        res.json(mapPostForClient(detail.post, userId, guestId));
+        res.json(mapPostForClient(detail.post, userId, guestProofHash || undefined));
     } catch (error) {
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2028') {
             res.status(503).json({ error: 'Post is temporarily unavailable', code: 'POST_READ_TIMEOUT' });
@@ -816,6 +824,8 @@ export const createPost = async (req: Request, res: Response) => {
                 postData.image = (await getStoredMediaPresentation(postMediaAssetIds[0]))?.src || null;
             }
             transactionResult = await prisma.$transaction(async (tx) => {
+            await lockAccountSecurity(tx, req.user!.userId);
+            await assertActiveAccountSession(tx, req, false);
             const newPost = await tx.post.create({
                 data: postData,
                 include: {
@@ -993,6 +1003,7 @@ export const createPost = async (req: Request, res: Response) => {
         res.json(mappedPost);
     } catch (error) {
         logPostRequestFailure(req, 'post_create_failed', error);
+        if (error instanceof AccountSecurityError) return void res.status(error.status).json({ code: error.code, error: 'Sign in again to create a post.' });
         if (error instanceof MediaValidationError) {
             res.status(error.statusCode).json({ error: error.message, code: error.code });
             return;
@@ -1301,6 +1312,8 @@ export const updatePost = async (req: Request, res: Response) => {
         let transactionResult;
         try {
             transactionResult = await prisma.$transaction(async (tx) => {
+                await lockAccountSecurity(tx, req.user!.userId);
+                await assertActiveAccountSession(tx, req, false);
                 const post = await tx.post.update({
                     where: { id },
                     data: updateData,
@@ -1507,6 +1520,7 @@ export const updatePost = async (req: Request, res: Response) => {
         res.json(mappedPost);
     } catch (error) {
         logPostRequestFailure(req, 'post_update_failed', error);
+        if (error instanceof AccountSecurityError) return void res.status(error.status).json({ code: error.code, error: 'Sign in again to update this post.' });
         if (error instanceof MediaValidationError) {
             res.status(error.statusCode).json({ error: error.message, code: error.code });
             return;
@@ -1685,7 +1699,8 @@ export const votePost = async (req: Request, res: Response) => {
         const id = await resolveInteractionTarget(rawId, 'vote');
         const guestIp = req.ip || req.socket?.remoteAddress;
         const actorUserId = req.user?.userId || null;
-        if (!actorUserId && !guestId) {
+        const proof = actorUserId ? null : prepareGuestParticipationProof(req);
+        if (!actorUserId && (typeof guestId !== 'string' || guestId.length < 8 || guestId.length > 128)) {
             res.status(400).json({ error: 'Authentication or Guest ID is required' });
             return;
         }
@@ -1711,6 +1726,8 @@ export const votePost = async (req: Request, res: Response) => {
             res.status(404).json({ error: 'Post not found' });
             return;
         }
+
+        if (!(await prisma.post.count({ where: { id, ...buildVisiblePublishedPostWhere(actorUserId) } }))) return res.status(403).json({ error: 'Forbidden' });
 
         if (post.expiresAt && post.expiresAt.getTime() <= Date.now()) {
             res.status(400).json({ error: 'This post has ended' });
@@ -1745,7 +1762,7 @@ export const votePost = async (req: Request, res: Response) => {
             const follow = await prisma.follow.findUnique({
                 where: { followerId_followingId: { followerId: actorUserId, followingId: post.authorId } }
             });
-            if (!follow) {
+            if (follow?.status !== 'ACTIVE') {
                 res.status(403).json({ error: 'Forbidden' });
                 return;
             }
@@ -1780,6 +1797,9 @@ export const votePost = async (req: Request, res: Response) => {
         let notificationOptionId = optionsToProcess[0];
 
         await prisma.$transaction(async (tx) => {
+            if (proof) {
+                for (const key of [`guest-id:${id}:${guestId}`, `guest-proof:${id}:${proof.hash}`].sort()) await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
+            }
             const customClientId = typeof newOption?.id === 'string' ? newOption.id : undefined;
             const customText = typeof newOption?.text === 'string' ? newOption.text.trim() : '';
             let resolvedOptionIds = [...optionsToProcess];
@@ -1825,15 +1845,19 @@ export const votePost = async (req: Request, res: Response) => {
 
             const whereClause: any = { postId: id };
             if (actorUserId) whereClause.userId = actorUserId;
-            else if (guestId) whereClause.guestId = guestId;
+            else whereClause.OR = [{ guestId }, { guestProofHash: proof!.hash, guestProofExpiresAt: { gt: new Date() } }];
 
             const existingResponse = await tx.response.findFirst({ where: whereClause });
+            if (existingResponse && proof && !guestProofMatches(existingResponse, readGuestParticipationHash(req))) {
+                throw Object.assign(new Error('This guest response belongs to another or expired browser session. Sign in to continue with a new response.'), { statusCode: 403, code: 'GUEST_PARTICIPATION_PROOF_REQUIRED' });
+            }
 
             const response = existingResponse || await tx.response.create({
                 data: {
                     postId: id,
                     userId: actorUserId || null,
-                    guestId: guestId || null,
+                    guestId: actorUserId ? null : guestId,
+                    ...(proof ? { guestProofHash: proof.hash, guestProofExpiresAt: proof.expiresAt } : {}),
                     ipAddress: guestIp || null,
                     isAnonymous: finalIsAnonymous
                 }
@@ -1955,10 +1979,11 @@ export const votePost = async (req: Request, res: Response) => {
             await notify(actorUserId, post.authorId as string, 'vote', 'voted on your post', 'survey', id, { optionId: notificationOptionId });
         }
 
+        if (proof) writeGuestParticipationCookie(res, proof);
         res.json({ success: true, newOption: createdCustomOption });
     } catch (error: any) {
         console.error(error);
-        res.status(error?.statusCode || 500).json({ error: error?.statusCode ? error.message : 'Failed to vote' });
+        res.status(error?.statusCode || 500).json({ error: error?.statusCode ? error.message : 'Failed to vote', ...(error?.code === 'GUEST_PARTICIPATION_PROOF_REQUIRED' ? { code: error.code } : {}) });
     }
 };
 
@@ -2036,7 +2061,7 @@ export const getPostResults = async (req: Request, res: Response) => {
     try {
         const id = await resolveInteractionTarget(rawId, 'vote');
         const currentUserId = req.user?.userId;
-        const guestId = req.query.guestId as string | undefined;
+        const guestProofHash = readGuestParticipationHash(req);
         const post = await prisma.post.findFirst({
             where: { id, ...buildVisiblePublishedPostWhere(currentUserId) },
             select: {
@@ -2053,7 +2078,7 @@ export const getPostResults = async (req: Request, res: Response) => {
         }
 
         const isAuthor = !!currentUserId && post.authorId === currentUserId;
-        const responseIdentity = currentUserId ? { userId: currentUserId } : guestId ? { guestId } : null;
+        const responseIdentity = currentUserId ? { userId: currentUserId } : guestProofHash ? { guestProofHash, guestProofExpiresAt: { gt: new Date() } } : null;
         const [follow, viewerResponse] = await Promise.all([
             !isAuthor && post.resultsWho === 'Followers' && currentUserId
                 ? prisma.follow.findUnique({
@@ -2095,42 +2120,23 @@ export const getPostResults = async (req: Request, res: Response) => {
             return;
         }
 
-        const responses = await prisma.response.findMany({
-            where: { postId: id },
-            include: {
-                answers: true,
-                user: {
-                    // Used only to derive the age band below. The DOB itself is
-                    // never copied into the results DTO.
-                    select: {
-                        birthday: true,
-                        country: true,
-                        demographics: true
-                    }
-                }
-            }
+        const questions = await prisma.question.findMany({
+            where: { OR: [{ postId: id }, { section: { postId: id } }] },
+            select: { id: true, options: { where: { isCorrect: true }, select: { id: true } } }
         });
-
-        const results = responses.map(r => ({
-            id: r.id,
-            isAnonymous: r.isAnonymous,
-            answers: r.answers.map(a => ({
-                questionId: a.questionId,
-                optionId: a.optionId,
-                textValue: a.textValue
-            })),
-            demographics: {
-                age: calculateAgeGroupFromDate(r.user?.birthday) || 'Unknown',
-                gender: r.user?.demographics?.gender || 'Unknown',
-                country: r.user?.country || 'Unknown',
-                education: r.user?.demographics?.educationLevel || 'Unknown',
-                employment: r.user?.demographics?.employmentType || 'Unknown',
-                industry: r.user?.demographics?.industry || 'Unknown',
-                sector: r.user?.demographics?.employmentSector || 'Unknown'
-            }
-        }));
-
-        res.json(results);
+        const correct = new Map(questions.filter(question => question.options.length > 0).map(question => [question.id, new Set(question.options.map(option => option.id))]));
+        const aggregate = new AggregateResults(correct);
+        let cursor: string | undefined;
+        do {
+            const page = await prisma.response.findMany({ where: { postId: id }, take: 500, orderBy: { id: 'asc' },
+                ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+                select: { id: true, answers: { select: { questionId: true, optionId: true, textValue: true } },
+                    user: { select: { birthday: true, country: true, demographics: true } } } });
+            page.forEach(response => aggregate.add(response));
+            cursor = page.length === 500 ? page[page.length - 1].id : undefined;
+        } while (cursor);
+        res.setHeader('Cache-Control', 'private, no-store');
+        res.json(aggregate.toJSON());
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Failed to fetch post results' });
@@ -2708,6 +2714,11 @@ export const sharePost = async (req: Request, res: Response) => {
         }
 
         const transactionResult = await prisma.$transaction(async (tx) => {
+            const canonical = await tx.post.findUnique({ where: { id: actualSharedFromId }, select: { authorId: true } });
+            if (!canonical) throw new Error('SHARING_UNAVAILABLE');
+            await tx.$queryRaw(Prisma.sql`SELECT id FROM users WHERE id = ${canonical.authorId} FOR UPDATE`);
+            const author = await tx.user.findUnique({ where: { id: canonical.authorId }, select: { status: true, allowSharing: true, isPrivate: true, mediaPrivacyTarget: true } });
+            if (!author || author.status !== 'ACTIVE' || !author.allowSharing || author.isPrivate || author.mediaPrivacyTarget === true) throw new Error('SHARING_UNAVAILABLE');
             const newPost = await tx.post.create({
                 data: {
                     title: originalPost.title,
@@ -2755,6 +2766,8 @@ export const sharePost = async (req: Request, res: Response) => {
         });
         await dispatchNotificationIds(transactionResult.notificationIds);
         const newPost = transactionResult.newPost;
+        const originalAuthor = await prisma.post.findUnique({ where: { id: actualSharedFromId }, select: { authorId: true } });
+        if (originalAuthor) await notify(userId, originalAuthor.authorId, 'share', 'Shared your post', 'post', actualSharedFromId);
 
         const createdPost = await prisma.post.findUnique({
             where: { id: newPost.id },
@@ -2839,6 +2852,7 @@ export const sharePost = async (req: Request, res: Response) => {
 
         res.json(mappedPost);
     } catch (error) {
+        if (error instanceof Error && error.message === 'SHARING_UNAVAILABLE') return res.status(403).json({ error: 'Sharing is unavailable for this post.', code: 'SHARING_UNAVAILABLE' });
         if (error instanceof MentionLimitError || error instanceof HashtagLimitError || error instanceof PeopleTagValidationError) {
             res.status(400).json({
                 error: error.message,

@@ -1,4 +1,7 @@
 import { Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
+import { AccountSecurityError, lockAccountSecurity } from '../services/mfaService';
+import { assertActiveAccountSession } from '../services/accountSecurityPolicy';
 import { ProfileValidationError } from '../utils/profileValidation';
 import {
   createProfileLink,
@@ -7,7 +10,16 @@ import {
   updateProfileLink
 } from '../services/profileLinkService';
 
+const authorizeMutation = (req: Request) => async (tx: Prisma.TransactionClient) => {
+  await lockAccountSecurity(tx, req.user!.userId);
+  await assertActiveAccountSession(tx, req, false);
+};
+
 const respondWithProfileLinkError = (req: Request, res: Response, error: unknown): void => {
+  if (error instanceof AccountSecurityError) {
+    res.status(error.status).json({ error: 'Sign in again to continue.', code: error.code });
+    return;
+  }
   if (error instanceof ProfileValidationError) {
     res.status(error.statusCode).json({ error: error.message, code: error.code });
     return;
@@ -40,7 +52,7 @@ export const getMyProfileLinks = async (req: Request, res: Response): Promise<vo
 
 export const addMyProfileLink = async (req: Request, res: Response): Promise<void> => {
   try {
-    res.status(201).json(await createProfileLink(req.user!.userId, req.body || {}));
+    res.status(201).json(await createProfileLink(req.user!.userId, req.body || {}, undefined, authorizeMutation(req)));
   } catch (error) {
     respondWithProfileLinkError(req, res, error);
   }
@@ -48,7 +60,7 @@ export const addMyProfileLink = async (req: Request, res: Response): Promise<voi
 
 export const editMyProfileLink = async (req: Request, res: Response): Promise<void> => {
   try {
-    res.json(await updateProfileLink(req.user!.userId, req.params.linkId as string, req.body || {}));
+    res.json(await updateProfileLink(req.user!.userId, req.params.linkId as string, req.body || {}, undefined, authorizeMutation(req)));
   } catch (error) {
     respondWithProfileLinkError(req, res, error);
   }
@@ -56,7 +68,7 @@ export const editMyProfileLink = async (req: Request, res: Response): Promise<vo
 
 export const removeMyProfileLink = async (req: Request, res: Response): Promise<void> => {
   try {
-    await deleteProfileLink(req.user!.userId, req.params.linkId as string);
+    await deleteProfileLink(req.user!.userId, req.params.linkId as string, undefined, authorizeMutation(req));
     res.status(204).send();
   } catch (error) {
     respondWithProfileLinkError(req, res, error);

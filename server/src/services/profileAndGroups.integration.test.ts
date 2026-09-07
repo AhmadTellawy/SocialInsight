@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { before, after, mock } from 'node:test';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomBytes } from 'node:crypto';
 
 // This explicit-only suite must never connect to a shared or production target.
 for (const name of ['DATABASE_URL', 'DIRECT_URL']) {
@@ -9,8 +9,8 @@ for (const name of ['DATABASE_URL', 'DIRECT_URL']) {
   const url = new URL(value);
   assert.ok(['postgres:', 'postgresql:'].includes(url.protocol));
   assert.ok(['127.0.0.1', 'localhost'].includes(url.hostname));
-  assert.equal(url.port, '55439');
-  assert.equal(url.pathname, '/creator_test');
+  assert.ok((url.port === '55439' && url.pathname === '/creator_test')
+    || (url.port === '55447' && url.pathname === '/settings_test'), 'Only explicitly isolated creator/settings fixture targets are allowed');
 }
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'local-creator-integration-secret';
 
@@ -39,7 +39,7 @@ function responseState() {
   return { state, response };
 }
 function request(userId: string | undefined, postId = '', body: any = {}) {
-  return { user: userId ? { userId } : undefined, params: { id: postId }, body, query: {}, headers: {}, method: 'TEST', path: '/local-integration' } as any;
+  return { user: userId ? { userId, authMode: 'session' } : undefined, authSession: userId ? { id: id('session_' + userId), userId } : undefined, params: { id: postId }, body, query: {}, headers: {}, method: 'TEST', path: '/local-integration' } as any;
 }
 async function seedPost(suffix: string, authorId: string, targetAudience = 'ProfileAndGroups', status = 'PUBLISHED', groupId = ids.group) {
   const result = await prisma.post.create({ data: {
@@ -62,6 +62,7 @@ before(async () => {
     getPublicUrl: () => { throw new Error('Union media must not use public URLs'); },
   });
   await prisma.user.createMany({ data: users.map((userId, index) => ({ id: userId, handle: userId, name: 'Synthetic local user', isPrivate: index === 1 })) });
+  await prisma.authSession.createMany({ data: users.map(userId => ({ id: id('session_' + userId), userId, tokenHash: randomBytes(32).toString('hex'), csrfHash: randomBytes(32).toString('hex'), expiresAt: new Date(Date.now() + 3600000) })) });
   await prisma.group.createMany({ data: groups.map((groupId, index) => ({ id: groupId, name: 'Synthetic local group', description: '', category: 'Test', isPublic: index === 1, postingPermissions: index === 2 ? 'ApprovalNeeded' : 'AllMembers' })) });
   await prisma.groupMember.createMany({ data: [
     ...groups.map(groupId => ({ userId: ids.pub, groupId, role: 'Member', status: 'JOINED' })),

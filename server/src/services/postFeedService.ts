@@ -156,7 +156,8 @@ export const loadFeedRelationBundle = async (
   client: any,
   postIds: string[],
   viewerId?: string,
-  guestId?: string
+  guestId?: string,
+  guestProofHash?: string | null
 ): Promise<FeedRelationBundle> => {
   if (postIds.length === 0) return emptyBundle();
 
@@ -172,8 +173,8 @@ export const loadFeedRelationBundle = async (
     : Prisma.sql`pt."status" = 'ACCEPTED'::"PeopleTagStatus"`;
   const responseIdentity = viewerId
     ? Prisma.sql`r."userId" = ${viewerId}`
-    : guestId
-      ? Prisma.sql`r."guestId" = ${guestId}`
+    : guestProofHash
+      ? Prisma.sql`r."guest_proof_hash" = ${guestProofHash} AND r."guest_proof_expires_at" > CURRENT_TIMESTAMP`
       : Prisma.sql`FALSE`;
   const authenticatedLike = viewerId
     ? Prisma.sql`ul."userId" = ${viewerId}`
@@ -298,7 +299,7 @@ export const loadFeedRelationBundle = async (
         AND ${targetGroupVisibility}
     ),
     feed_responses AS (
-      SELECT DISTINCT ON (r."postId") r.*
+      SELECT DISTINCT ON (r."postId") r."id", r."postId", r."isAnonymous", r."timestamp"
       FROM "Response" r
       WHERE r."postId" IN (SELECT "id" FROM requested_ids)
         AND ${responseIdentity}

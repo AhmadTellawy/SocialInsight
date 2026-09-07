@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { resolvePostMediaScopeFromState, serializeMediaAsset, serializePostMediaRecord } from './mediaService';
+import { resolvePostMediaScopeFromState, serializeMediaAsset, serializePostMediaRecord, serializeUserMediaRecord } from './mediaService';
 import { processBase64Image } from '../utils/imageProcessor';
 
 test('resolves draft, group, audience, and account media scopes conservatively', () => {
@@ -113,4 +113,26 @@ test('serializes the focal point relative to the creator crop', () => {
   assert.ok(presentation);
   assert.equal(presentation.focalX, 0.9);
   assert.equal(presentation.focalY, 0.2);
+});
+
+test('legacy avatars require proven public active ownership and restricted avatars never retain public URLs', () => {
+  const avatar = 'https://legacy.example/private.webp';
+  for (const user of [{ avatar }, { avatar, status: 'DEACTIVATED', isPrivate: false }, { avatar, status: 'ACTIVE', isPrivate: true }, { avatar, status: 'ACTIVE', isPrivate: false, mediaPrivacyTarget: true }]) {
+    assert.equal(serializeUserMediaRecord(user)!.avatar, '');
+  }
+  assert.equal(serializeUserMediaRecord({ avatar, status: 'ACTIVE', isPrivate: false, mediaPrivacyTarget: null })!.avatar, avatar);
+  const serialized = serializeUserMediaRecord({ avatar, avatarMediaId: 'avatar-id', avatarMedia: { id: 'avatar-id', accessScope: 'RESTRICTED', aspectRatio: 1, altText: null, owner: { status: 'ACTIVE', isPrivate: true }, variants: [{ kind: 'SMALL', isPublic: false, width: 100, height: 100 }] } });
+  assert.equal(serialized!.avatar, '');
+  assert.equal((serialized!.avatarMedia as any).access, 'RESTRICTED');
+  assert.equal(JSON.stringify(serialized).includes(avatar), false);
+});
+
+test('post author cards omit private biography and location while retaining follow state', () => {
+  const post = serializePostMediaRecord({ author: { id: 'private-person', name: 'Private Person', handle: 'private_person', status: 'ACTIVE', isPrivate: true,
+    bio: 'Private biography', location: 'Private location', website: 'https://private.example', country: 'Jordan', following: [{ followerId: 'viewer' }],
+    avatarMediaId: 'private-photo', avatarMedia: { id: 'private-photo', accessScope: 'RESTRICTED', aspectRatio: 1, altText: 'Private photo description', owner: { status: 'ACTIVE', isPrivate: true }, variants: [{ kind: 'SMALL', isPublic: false, width: 100, height: 100 }] } } });
+  for (const key of ['bio', 'location', 'website', 'country', 'status']) assert.equal(key in post.author, false);
+  assert.equal(post.author.avatarMedia.altText, null);
+  assert.equal(post.author.following.length, 1);
+  assert.equal(JSON.stringify(post).includes('followerId'), false);
 });

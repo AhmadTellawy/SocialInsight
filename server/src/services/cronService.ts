@@ -1,8 +1,11 @@
 import cron from 'node-cron';
+import { Prisma } from '@prisma/client';
 import prisma from '../prisma';
 import { cleanupExpiredMedia } from './mediaService';
 import { resumeMediaPrivacyTransitions } from './mediaPrivacyTransitionService';
 import { calculateAgeGroupFromDate } from '../utils/profileValidation';
+import { cleanupExpiredAuthArtifacts } from './authRetentionService';
+import { resumeAccountCleanupJobs } from './accountCleanupService';
 
 export function calculateAgeGroup(dob: Date | null | undefined): string | undefined {
     return calculateAgeGroupFromDate(dob);
@@ -10,10 +13,20 @@ export function calculateAgeGroup(dob: Date | null | undefined): string | undefi
 
 export const runAgeGroupComputation = async () => {
     try {
-        // One atomic, set-based upsert avoids an N+1 scan and also creates a
-        // missing demographics row. Reads still derive from DOB, so this is a
-        // query-acceleration cache rather than a second source of truth.
-        const updatedCount = await prisma.$executeRaw`
+        // Lock each bounded batch before deriving the cache. Deletion locks
+        // the same user row, so an earlier DOB snapshot cannot recreate data
+        // after the account has been tombstoned. Busy rows retry next run.
+        let cursor = '';
+        let updatedCount = 0;
+        while (true) {
+            const batch = await prisma.$transaction(async (tx) => {
+                const users = await tx.$queryRaw<Array<{ id: string }>>`
+                    SELECT "id" FROM "users"
+                    WHERE "birthday" IS NOT NULL AND "status" = 'ACTIVE' AND "id" > ${cursor}
+                    ORDER BY "id" LIMIT 500 FOR UPDATE SKIP LOCKED
+                `;
+                if (users.length === 0) return null;
+                const count = await tx.$executeRaw`
             WITH derived AS (
                 SELECT
                     "id" AS "user_id",
@@ -26,7 +39,8 @@ export const runAgeGroupComputation = async () => {
                         ELSE '55+'
                     END AS "age_group"
                 FROM "users"
-                WHERE "birthday" IS NOT NULL
+                WHERE "birthday" IS NOT NULL AND "status" = 'ACTIVE'
+                  AND "id" IN (${Prisma.join(users.map((user) => user.id))})
             )
             INSERT INTO "user_demographics" ("user_id", "age_group", "updated_at")
             SELECT "user_id", "age_group", CURRENT_TIMESTAMP
@@ -35,7 +49,13 @@ export const runAgeGroupComputation = async () => {
             SET "age_group" = EXCLUDED."age_group",
                 "updated_at" = CURRENT_TIMESTAMP
             WHERE "user_demographics"."age_group" IS DISTINCT FROM EXCLUDED."age_group"
-        `;
+                `;
+                return { count, lastId: users[users.length - 1].id };
+            });
+            if (!batch) break;
+            updatedCount += batch.count;
+            cursor = batch.lastId;
+        }
         console.log(`[Cron] Completed Age Group computation. Updated ${updatedCount} users.`);
         return updatedCount;
     } catch (error) {
@@ -57,9 +77,20 @@ export const initCronJobs = () => {
     }, { timezone: 'UTC' });
 
     cron.schedule('*/15 * * * *', async () => {
-        const cleaned = await cleanupExpiredMedia();
-        await resumeMediaPrivacyTransitions();
-        if (cleaned > 0) console.log(`[Cron] Cleaned ${cleaned} expired media assets.`);
+        // A storage outage must not prevent expired access proofs or account
+        // artifacts from being removed. Each job keeps its own retry state.
+        const jobs = [
+            ['media', cleanupExpiredMedia],
+            ['media_privacy', resumeMediaPrivacyTransitions],
+            ['account_cleanup', resumeAccountCleanupJobs],
+            ['auth_retention', cleanupExpiredAuthArtifacts]
+        ] as const;
+        const results = await Promise.allSettled(jobs.map(([, run]) => run()));
+        results.forEach((result, index) => {
+            if (result.status === 'rejected') {
+                console.error(JSON.stringify({ event: 'scheduled_cleanup_failed', job: jobs[index][0] }));
+            }
+        });
     });
 
     console.log('[Cron] Age Group and media cleanup jobs initialized.');

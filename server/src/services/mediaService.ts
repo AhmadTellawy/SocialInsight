@@ -96,8 +96,18 @@ export type PreparedMediaScopeChange = {
 };
 
 export const PUBLIC_AVATAR_MEDIA_SELECT = {
+  isPrivate: true,
+  mediaPrivacyTarget: true,
+  status: true,
   avatarMediaId: true,
-  avatarMedia: { include: { variants: true } }
+  avatarMedia: { include: { variants: true, owner: { select: { isPrivate: true, mediaPrivacyTarget: true, status: true } } } }
+} as const;
+
+// Compact identity cards never include profile biography or contact/location
+// details. Those fields require the dedicated profile visibility decision.
+export const PUBLIC_USER_CARD_SELECT = {
+  id: true, name: true, handle: true, avatar: true, ...PUBLIC_AVATAR_MEDIA_SELECT,
+  verifiedBadge: true, followersCount: true, followingCount: true
 } as const;
 
 export const PROFILE_COVER_MEDIA_SELECT = {
@@ -567,7 +577,7 @@ const resolveAssetPost = (asset: any): { id: string; authorId: string; groupId: 
 
 const canReadRestrictedAsset = async (asset: any, viewerId?: string): Promise<boolean> => {
   if (viewerId === asset.ownerId) return true;
-  if (asset.coverFor) return PrivacyService.canViewUserContent(viewerId, asset.ownerId);
+  if (asset.coverFor || asset.avatarFor) return PrivacyService.canViewUserContent(viewerId, asset.ownerId);
   const post = resolveAssetPost(asset);
   if (!post) return false;
   const canViewPost = await GroupPermissionService.canViewPost(post.id, viewerId);
@@ -582,6 +592,8 @@ const assetWithAccessContext = (assetId: string) => prisma.mediaAsset.findUnique
   include: {
     variants: true,
     coverFor: { select: { id: true } },
+    avatarFor: { select: { id: true } },
+    owner: { select: { status: true } },
     postAttachment: { include: { post: { select: POST_ACCESS_SELECT } } },
     questionFor: {
       include: {
@@ -607,7 +619,10 @@ export const getMediaReadPresentation = async (assetId: string, viewerId?: strin
   if (!asset || asset.status !== 'ATTACHED' || !asset.aspectRatio) {
     throw new MediaValidationError('MEDIA_NOT_FOUND', 'Media asset was not found.', 404);
   }
-  if (asset.coverFor && !(await PrivacyService.canViewUserContent(viewerId, asset.ownerId))) {
+  if (asset.owner?.status !== 'ACTIVE' || ((asset.coverFor || asset.avatarFor) && !(await PrivacyService.canViewUserContent(viewerId, asset.ownerId)))) {
+    throw new MediaValidationError('MEDIA_NOT_FOUND', 'Media asset was not found.', 404);
+  }
+  if (resolveAssetPost(asset) && !(await canReadRestrictedAsset(asset, viewerId))) {
     throw new MediaValidationError('MEDIA_NOT_FOUND', 'Media asset was not found.', 404);
   }
   if (asset.accessScope === 'PUBLIC') {
@@ -680,18 +695,32 @@ export const serializeMediaAsset = (
 
 export const serializeUserMediaRecord = <T extends Record<string, any>>(user?: T | null): T | null | undefined => {
   if (!user) return user;
-  const { avatarMedia, coverMedia, ...rest } = user;
-  const presentation = serializeMediaAsset(avatarMedia);
+  const { avatarMedia, coverMedia, mediaPrivacyTarget: _mediaPrivacyTarget, ...rest } = user;
+  const rawPresentation = serializeMediaAsset(avatarMedia);
+  const accountRestrictsAvatar = !avatarMedia?.owner || avatarMedia.owner.status !== 'ACTIVE' || avatarMedia.owner.isPrivate || avatarMedia.owner.mediaPrivacyTarget === true;
+  const presentation: MediaPresentation | null = rawPresentation && accountRestrictsAvatar
+    ? { id: rawPresentation.id, access: 'RESTRICTED', aspectRatio: rawPresentation.aspectRatio, width: rawPresentation.width, height: rawPresentation.height, focalX: rawPresentation.focalX, focalY: rawPresentation.focalY, altText: null }
+    : rawPresentation;
   const coverPresentation = serializeMediaAsset(coverMedia);
   const legacyAvatar = typeof user.avatar === 'string' && /(?:ui-avatars\.com|api\.dicebear\.com|picsum\.photos|randomuser\.me)/i.test(user.avatar)
     ? null
-    : user.avatar;
+    : user.status === 'ACTIVE' && user.isPrivate === false && user.mediaPrivacyTarget !== true ? user.avatar : null;
   return {
     ...rest,
     avatar: presentation?.src || (!user.avatarMediaId && legacyAvatar ? legacyAvatar : ''),
     avatarMedia: presentation,
     ...(Object.prototype.hasOwnProperty.call(user, 'coverMedia') ? { coverMedia: coverPresentation } : {})
   } as unknown as T;
+};
+
+export const serializePublicUserCard = (user: Record<string, any>) => {
+  const media = serializeUserMediaRecord(user)!;
+  return {
+    id: media.id, name: media.name, handle: media.handle,
+    avatar: media.avatar, avatarMediaId: media.avatarMediaId, avatarMedia: media.avatarMedia,
+    isPrivate: Boolean(user.isPrivate || user.mediaPrivacyTarget === true),
+    verifiedBadge: media.verifiedBadge, followersCount: media.followersCount, followingCount: media.followingCount
+  };
 };
 
 export const serializeGroupMediaRecord = <T extends Record<string, any>>(group?: T | null): T | null | undefined => {
@@ -742,7 +771,11 @@ export const serializePostMediaRecord = (post: any, viewerId?: string | null): a
   };
   return {
     ...post,
-    author: serializeUserMediaRecord(post.author),
+    author: post.author ? {
+      ...serializePublicUserCard(post.author),
+      // Existing feed mappers consume only relation presence, not row identities.
+      ...(Array.isArray(post.author.following) ? { following: post.author.following.length ? [{}] : [] } : {})
+    } : post.author,
     image: media.length > 0 ? undefined : post.image,
     media,
     coverImage: media.length > 0 ? media[0]?.src : post.image,
@@ -779,7 +812,10 @@ export const purgeMediaAsset = async (assetId: string): Promise<void> => {
     prisma.mediaVariant.deleteMany({ where: { mediaAssetId: asset.id } }),
     prisma.mediaAsset.update({
       where: { id: asset.id },
-      data: { status: 'DELETED', deletedAt: new Date(), uploadBucket: null, uploadKey: null }
+      data: { status: 'DELETED', deletedAt: new Date(), uploadBucket: null, uploadKey: null,
+        altText: null, checksum: null, moderationMetadata: Prisma.DbNull, moderationStatus: 'NOT_REVIEWED', errorCode: null,
+        sourceMime: null, sourceWidth: null, sourceHeight: null, sourceByteSize: null,
+        aspectRatio: null, cropX: null, cropY: null, cropWidth: null, cropHeight: null, focalX: null, focalY: null }
     })
   ]);
 };

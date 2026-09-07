@@ -18,6 +18,7 @@ import { MediaImage } from './media/MediaImage';
 import { calculateAverageRating } from '../utils/ratingScale';
 import { shouldShowOptionNames } from '../utils/optionPresentation';
 import { getPostOptionCapabilities } from '../utils/postOptions';
+import { demographicSnapshot } from '../utils/demographicSettings';
 
 const CommentsSheet = React.lazy(() => import('./CommentsSheet').then(({ CommentsSheet }) => ({ default: CommentsSheet })));
 const ShareSheet = React.lazy(() => import('./ShareSheet').then(({ ShareSheet }) => ({ default: ShareSheet })));
@@ -548,6 +549,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   // Handle completion and demographic check
   const startDemographicFlow = () => {
     if (!sourceSurvey.demographics || !userProfile) return;
+    const savedDemographics = demographicSnapshot(userProfile.demographics);
 
     // Filter to only demographics requested by creator that are MISSING from user profile
     const pending = sourceSurvey.demographics.filter(d => {
@@ -557,7 +559,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       if (d === 'age_group') return false;
       const config = DEM_CONFIG[d];
       if (!config) return false;
-      return !userProfile.demographics?.[config.profileKey];
+      return !savedDemographics[config.profileKey as keyof typeof savedDemographics];
     });
 
     if (pending.length > 0) {

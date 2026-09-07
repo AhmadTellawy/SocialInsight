@@ -90,8 +90,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode, user?: any }>
     const [lastNotification, setLastNotification] = useState<any>(null);
 
     useEffect(() => {
-        const token = localStorage.getItem('si_token');
-        if (!user || user.isGuest || !token) {
+        if (!user || user.isGuest) {
             setSocket(null);
             setIsConnected(false);
             return;
@@ -101,7 +100,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode, user?: any }>
             ? API_BASE_URL.replace(/\/api\/?$/, '')
             : window.location.origin;
         const socketInstance = io(socketUrl, {
-            auth: { token },
+            withCredentials: true,
             transports: ['websocket'],
             reconnectionAttempts: 5,
         });
@@ -135,7 +134,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode, user?: any }>
             setSocket(null);
             setIsConnected(false);
         };
-    }, [user?.id, user?.isGuest]);
+    }, [user?.id, user?.isGuest, user?.email]);
 
     const openLastNotification = () => {
         if (!lastNotification) return;

@@ -35,16 +35,20 @@ const createHarness = () => {
   };
 
   const tx: any = {
+    notificationSettings: { findUnique: async () => null },
     post: { findUnique: async () => ({ ...post }) },
     user: {
+      findUnique: async ({ where }: any) => users.find(user => user.id === where.id),
       findMany: async ({ where }: any) => users.filter((user) =>
         where.id.in.includes(user.id) && user.status === where.status
       )
     },
     userBlock: {
+      findFirst: async () => blocked ? { id: 'block-fixture' } : null,
       findMany: async () => blocked ? [{ blockerId: 'actor', blockedId: 'target' }] : []
     },
     follow: {
+      findUnique: async ({ where }: any) => followsActor.has(where.followerId_followingId.followerId) ? { status: 'ACTIVE' } : null,
       findMany: async ({ where }: any) => Array.from(followsActor)
         .filter((id) => where.followerId.in.includes(id))
         .map((followerId) => ({ followerId }))

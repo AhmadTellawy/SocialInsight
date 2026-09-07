@@ -6,7 +6,7 @@ import {
     PUBLIC_GROUP_MEDIA_INCLUDE,
     serializeGroupMediaRecord,
     serializePostMediaRecord,
-    serializeUserMediaRecord
+    serializePublicUserCard
 } from '../services/mediaService';
 import { buildVisiblePublishedPostWhere } from '../services/postVisibilityService';
 import { normalizeHashtag } from '../utils/textEntities';
@@ -61,6 +61,7 @@ export const searchAll = async (req: Request, res: Response) => {
             prisma.user.findMany({
                 where: {
                     status: 'ACTIVE',
+                    searchVisibility: true,
                     OR: [
                         { name: { contains: query, mode: 'insensitive' } },
                         { handle: { contains: query, mode: 'insensitive' } }
@@ -115,7 +116,7 @@ export const searchAll = async (req: Request, res: Response) => {
                 .filter((topic) => topic.postCount > 0)
                 .sort((left, right) => right.postCount - left.postCount),
             surveys: posts.map((post) => serializePostMediaRecord(post, viewerId)),
-            people: users.map((user) => serializeUserMediaRecord(user)),
+            people: users.map(serializePublicUserCard),
             groups: groups.map((group) => serializeGroupMediaRecord(group)),
             categories: Array.from(categoriesSet)
         });

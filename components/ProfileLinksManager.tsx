@@ -23,10 +23,12 @@ import {
 import type { ProfileLinkTitleError, ProfileLinkUrlError } from '../utils/profileValidation';
 import { profileLinkApiErrorKey, shouldReconcileProfileLinkMutation } from '../utils/profileLinkErrors';
 import { BottomSheet } from './BottomSheet';
+import { UnsavedChangesDialog } from './settings/UnsavedChangesDialog';
 
 export type ProfileLinksManagerProps = {
   onBack: () => void;
   onLinksChange?: (links: ProfileLink[]) => void;
+  onDirtyChange?: (dirty: boolean) => void;
 };
 
 type FormView = { kind: 'form'; link: ProfileLink | null };
@@ -92,7 +94,7 @@ const ScreenHeader: React.FC<{
   </header>
 );
 
-export const ProfileLinksManager: React.FC<ProfileLinksManagerProps> = ({ onBack, onLinksChange }) => {
+export const ProfileLinksManager: React.FC<ProfileLinksManagerProps> = ({ onBack, onLinksChange, onDirtyChange }) => {
   const { t, i18n } = useTranslation();
   const [view, setView] = useState<ManagerView>({ kind: 'manage' });
   const [links, setLinks] = useState<ProfileLink[]>([]);
@@ -211,6 +213,7 @@ export const ProfileLinksManager: React.FC<ProfileLinksManagerProps> = ({ onBack
   if (view.kind === 'form') {
     return (
       <ProfileLinkForm
+        onDirtyChange={onDirtyChange}
         link={view.link}
         links={links}
         onReconcile={reconcileLinks}
@@ -389,7 +392,8 @@ const ProfileLinkForm: React.FC<{
   onReconcile: () => Promise<ProfileLink[]>;
   onBack: () => void;
   onSaved: (link: ProfileLink) => void;
-}> = ({ link, links, onReconcile, onBack, onSaved }) => {
+  onDirtyChange?: (dirty: boolean) => void;
+}> = ({ link, links, onReconcile, onBack, onSaved, onDirtyChange }) => {
   const { t, i18n } = useTranslation();
   const [title, setTitle] = useState(link?.title || '');
   const [url, setUrl] = useState(link?.url || '');
@@ -398,6 +402,7 @@ const ProfileLinkForm: React.FC<{
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const submitInFlightRef = useRef(false);
+  const [showDiscard, setShowDiscard] = useState(false);
 
   const titleValidation = useMemo(() => validateProfileLinkTitle(title), [title]);
   const urlValidation = useMemo(() => normalizeProfileLinkUrl(url), [url]);
@@ -420,6 +425,16 @@ const ProfileLinkForm: React.FC<{
         !== (originalUrl?.valid ? originalUrl.value.normalizedUrl : link.url)
     );
   const canSubmit = titleValidation.valid && urlValidation.valid && !isDuplicate && hasChanges && !isSubmitting;
+  useEffect(() => {
+    onDirtyChange?.(hasChanges);
+    return () => onDirtyChange?.(false);
+  }, [hasChanges, onDirtyChange]);
+  useEffect(() => {
+    if (!hasChanges) return;
+    const beforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', beforeUnload);
+    return () => window.removeEventListener('beforeunload', beforeUnload);
+  }, [hasChanges]);
   const titleCount = Array.from(title).length;
 
   const submit = async (event: React.FormEvent) => {
@@ -477,7 +492,7 @@ const ProfileLinkForm: React.FC<{
       <ScreenHeader
         title={t(link ? 'profileLinks.editTitle' : 'profileLinks.addTitle')}
         backLabel={t('profileLinks.actions.back')}
-        onBack={onBack}
+        onBack={() => { if (!isSubmitting) { if (hasChanges) setShowDiscard(true); else onBack(); } }}
       />
       <form onSubmit={submit} noValidate className="min-h-0 flex-1 overflow-y-auto px-5 pb-[max(2rem,env(safe-area-inset-bottom))] pt-6 no-scrollbar">
         <div className="mx-auto w-full max-w-lg space-y-6">
@@ -556,6 +571,7 @@ const ProfileLinkForm: React.FC<{
           </button>
         </div>
       </form>
+      <UnsavedChangesDialog open={showDiscard} onContinue={() => setShowDiscard(false)} onDiscard={onBack} />
     </section>
   );
 };

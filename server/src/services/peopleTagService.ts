@@ -1,3 +1,4 @@
+import { canCreateNotification } from './notificationPolicy';
 import { PeopleTagPermission, PeopleTagStatus, Prisma } from '@prisma/client';
 import { MEMBERSHIP_STATUS, POST_STATUS } from '../utils/constants';
 import { buildPostDeepLink } from '../utils/notificationTarget';
@@ -179,7 +180,8 @@ const createPeopleTagNotification = async (
   postId: string,
   actorUserId: string,
   targetUserId: string
-): Promise<string> => {
+): Promise<string | null> => {
+  if (!await canCreateNotification(tx, targetUserId, actorUserId, 'people_tag')) return null;
   const payload = {
     postId,
     peopleTagId: tagId,
@@ -267,7 +269,7 @@ export const reconcilePeopleTags = async (
         input.actorUserId,
         tag.taggedUserId
       );
-      notificationIds.push(notificationId);
+      if (notificationId) notificationIds.push(notificationId);
     }
     retained += 1;
   }
@@ -291,7 +293,7 @@ export const reconcilePeopleTags = async (
         input.actorUserId,
         targetUserId
       );
-      notificationIds.push(notificationId);
+      if (notificationId) notificationIds.push(notificationId);
     }
     created += 1;
   }

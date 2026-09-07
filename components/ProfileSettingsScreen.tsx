@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import { useBlocker, useNavigate, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, User, Mail, Globe, Lock, Eye, Search, Activity,
@@ -20,35 +20,27 @@ import { RichMentionInput } from './RichMentionInput';
 import { MediaImage } from './media/MediaImage';
 import { ProfileLinksManager } from './ProfileLinksManager';
 import { PROFILE_MAX_AGE, PROFILE_MIN_AGE, calculateAgeGroupFromDateOnly, serializeDateOnly, todayAsDateOnly, validateDateOfBirth } from '../utils/profileValidation';
+import { OAuthFeedback } from '../utils/authUi';
+import { AccountAccessScreen } from './AccountAccessScreen';
+import { DemographicSettingsScreen } from './settings/DemographicSettingsScreen';
+import { AccountPreferencesScreen } from './settings/AccountPreferencesScreen';
+import { SettingsHelpScreen } from './settings/SettingsHelpScreen';
+import { PublicProfilePreviewScreen } from './settings/PublicProfilePreviewScreen';
+import { AccountSecurityScreen } from './AccountSecurityScreen';
+import { AccountDataScreen } from './AccountDataScreen';
+import { BlockedAccountsScreen } from './BlockedAccountsScreen';
 import { profileEditHasChanges, profileMediaDraftHasChanged } from '../utils/profileEditState';
 
 interface ProfileSettingsScreenProps {
   userProfile: UserProfile;
   onUpdateProfile: (profile: UserProfile) => void;
   onBack: () => void;
-  onLogout: () => void;
+  onLogout: () => void | Promise<void>;
+  onSessionEnded: () => void;
+  oauthFeedback?: OAuthFeedback | null;
 }
 
-type SubPage = 'main' | 'edit-profile' | 'links' | 'username' | 'email-phone' | 'language' | 'privacy' | 'content-visibility' | 'demographics' | 'notifications-detailed' | 'group-privacy' | 'account-privacy';
-
-const NATIONALITIES = [
-  'Afghanistan', 'Albania', 'Algeria', 'Andorra', 'Angola', 'Argentina', 'Armenia', 'Australia', 'Austria', 'Azerbaijan',
-  'Bahamas', 'Bahrain', 'Bangladesh', 'Barbados', 'Belarus', 'Belgium', 'Belize', 'Benin', 'Bhutan', 'Bolivia', 'Bosnia and Herzegovina',
-  'Brazil', 'Brunei', 'Bulgaria', 'Burkina Faso', 'Burundi', 'Cambodia', 'Cameroon', 'Canada', 'Cape Verde',
-  'Chad', 'Chile', 'China', 'Colombia', 'Comoros', 'Congo', 'Costa Rica', 'Croatia', 'Cuba', 'Cyprus', 'Czech Republic',
-  'Denmark', 'Djibouti', 'Dominica', 'Dominican Republic', 'Ecuador', 'Egypt', 'El Salvador', 'Equatorial Guinea', 'Eritrea',
-  'Estonia', 'Ethiopia', 'Fiji', 'Finland', 'France', 'Gabon', 'Gambia', 'Georgia', 'Germany', 'Ghana',
-  'Greece', 'Grenada', 'Guatemala', 'Guinea', 'Guyana', 'Haiti', 'Honduras', 'Hungary', 'Iceland', 'India', 'Indonesia',
-  'Iran', 'Iraq', 'Ireland', 'Italy', 'Ivory Coast', 'Jamaica', 'Japan', 'Jordan', 'Kazakhstan', 'Kenya', 'Kuwait', 'Kyrgyzstan',
-  'Laos', 'Latvia', 'Lebanon', 'Liberia', 'Libya', 'Liechtenstein', 'Lithuania', 'Luxembourg', 'Madagascar',
-  'Malawi', 'Malaysia', 'Maldives', 'Mali', 'Malta', 'Mauritania', 'Mauritius', 'Mexico', 'Moldova', 'Monaco', 'Mongolia',
-  'Morocco', 'Mozambique', 'Namibia', 'Nepal', 'Netherlands', 'New Zealand', 'Nicaragua', 'Nigeria', 'Norway', 'Oman', 'Pakistan',
-  'Panama', 'Paraguay', 'Peru', 'Philippines', 'Poland', 'Portugal', 'Qatar', 'Romania', 'Russia', 'Rwanda', 'Saint Lucia',
-  'Samoa', 'Saudi Arabia', 'Senegal', 'Serbia', 'Seychelles', 'Sierra Leone', 'Singapore', 'Slovakia',
-  'Slovenia', 'Solomon Islands', 'Somalia', 'South Africa', 'South Korea', 'Spain', 'Sri Lanka', 'Sudan', 'Suriname',
-  'Sweden', 'Switzerland', 'Syria', 'Taiwan', 'Tajikistan', 'Tanzania', 'Thailand', 'Togo', 'Tonga', 'Tunisia', 'Turkey',
-  'Turkmenistan', 'Tuvalu', 'Uganda', 'Ukraine', 'United Arab Emirates', 'United Kingdom', 'United States', 'Uruguay', 'Uzbekistan', 'Vanuatu', 'Venezuela', 'Vietnam', 'Yemen', 'Zambia', 'Zimbabwe'
-];
+type SubPage = 'main' | 'edit-profile' | 'links' | 'username' | 'email-phone' | 'account-access' | 'language' | 'privacy' | 'content-visibility' | 'demographics' | 'notifications-detailed' | 'group-privacy' | 'account-privacy' | 'help' | 'theme' | 'security' | 'data' | 'blocked' | 'view-as';
 
 const shiftDateOnlyYears = (value: string, years: number): string => {
   const [year, month, day] = value.split('-').map(Number);
@@ -63,11 +55,12 @@ const normalizeEditableProfile = (profile: UserProfile): UserProfile => ({
   bio: profile.bio || ''
 });
 
-export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
+const ProfileSettingsContent: React.FC<ProfileSettingsScreenProps> = ({
   userProfile,
   onUpdateProfile,
   onBack,
-  onLogout
+  onLogout,
+  oauthFeedback
 }) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -84,13 +77,8 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
       navigate(`/settings/profile/${page}`);
     }
   };
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [nationalitySearch, setNationalitySearch] = useState('');
-  const [deleteConfirmText, setDeleteConfirmText] = useState('');
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [showFollowRequests, setShowFollowRequests] = useState(false);
 
   const [avatarMedia, setAvatarMedia] = useState<MediaDraft[]>(() => userProfile.avatarMediaId
     ? [createPersistedMediaDraftFromId(userProfile.avatarMediaId, 'PROFILE_AVATAR', userProfile.avatar)]
@@ -105,6 +93,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   const [showCoverActions, setShowCoverActions] = useState(false);
   const [confirmCoverRemoval, setConfirmCoverRemoval] = useState(false);
   const [linkCount, setLinkCount] = useState(userProfile.profileLinks?.length || 0);
+  const [linkDraftDirty, setLinkDraftDirty] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [privacySaveError, setPrivacySaveError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<{ name?: string; birthday?: string }>({});
@@ -113,12 +102,6 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   const [privateProfileRetryKey, setPrivateProfileRetryKey] = useState(0);
   const saveLatchRef = React.useRef(false);
   const allowNextProfileNavigationRef = React.useRef(false);
-
-  const [activeDemographicSelector, setActiveDemographicSelector] = useState<{
-    id: keyof NonNullable<UserProfile['demographics']>;
-    title: string;
-    options: string[];
-  } | null>(null);
 
   const getCalculatedAgeGroup = (profile: UserProfile): string => {
     if (profile.birthday) return calculateAgeGroupFromDateOnly(profile.birthday) || '';
@@ -241,23 +224,6 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
     };
   }, [userProfile.id, privateProfileRetryKey]);
 
-  const filteredNationalities = useMemo(() => {
-    if (!nationalitySearch) return NATIONALITIES.slice(0, 5); // Default common/preview
-    return NATIONALITIES.filter(n => n.toLowerCase().includes(nationalitySearch.toLowerCase())).slice(0, 10);
-  }, [nationalitySearch]);
-
-  const [settings, setSettings] = useState({
-    searchVisibility: true,
-    activityStatus: true,
-    allowSharing: true,
-    groupInvites: true,
-    showGroups: true,
-  });
-
-
-
-  // ... inside component ...
-
   const deepStripUndefined = (value: any): any => {
     if (Array.isArray(value)) return value.map(deepStripUndefined);
     if (value && typeof value === 'object') {
@@ -282,7 +248,9 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
     minimumAge: PROFILE_MIN_AGE,
     maximumAge: PROFILE_MAX_AGE
   });
-  const hasProfileChanges = profileEditHasChanges(profileForm, userProfile, avatarMedia, coverMedia);
+  const hasProfileChanges = profileEditHasChanges(profileForm, userProfile, avatarMedia, coverMedia)
+    || (profileForm.location || '') !== (userProfile.location || '')
+    || (profileForm.website || '') !== (userProfile.website || '');
   const resetProfileEditDraft = React.useCallback((): void => {
     void cancelTemporaryMediaDrafts([...avatarMediaRef.current, ...coverMediaRef.current]);
     setSaveError(null);
@@ -310,6 +278,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
       allowNextProfileNavigationRef.current = false;
       return false;
     }
+    if (linkDraftDirty && currentLocation.pathname === '/settings/profile/links') return currentLocation.pathname !== nextLocation.pathname;
     if (!hasProfileChanges) return false;
     const editTransactionPaths = ['/settings/profile/edit-profile', '/settings/profile/links'];
     if (!editTransactionPaths.includes(currentLocation.pathname)) return false;
@@ -317,7 +286,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
     // two screens retains the draft; every route outside it requires consent.
     return !editTransactionPaths.includes(nextLocation.pathname)
       && nextLocation.pathname !== currentLocation.pathname;
-  }, [hasProfileChanges]);
+  }, [hasProfileChanges, linkDraftDirty]);
   const profileNavigationBlocker = useBlocker(shouldBlockProfileNavigation);
   const profileMediaReady = mediaDraftsAreReady(avatarMedia)
     && mediaDraftsAreReady(coverMedia)
@@ -407,26 +376,11 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
         ...((profileForm.birthday || null) !== (userProfile.birthday || null) ? { birthday: profileForm.birthday || null } : {}),
         expectedUpdatedAt: profileForm.updatedAt || userProfile.updatedAt,
         name: profileForm.name.trim(),
-        bio: profileForm.bio
+        bio: profileForm.bio,
+        location: profileForm.location || '',
+        website: profileForm.website || ''
       };
-      const settingsDemographics = {
-        ...(userProfile.demographics || {}),
-        ...(profileForm.demographics || {})
-      };
-      delete settingsDemographics.ageGroup;
-      const settingsPayload = {
-        ...profileEditPayload,
-        language: profileForm.language,
-        location: profileForm.location,
-        website: profileForm.website,
-        email: profileForm.email,
-        phone: profileForm.phone,
-        groupPrivacy: profileForm.groupPrivacy,
-        isPrivate: profileForm.isPrivate,
-        peopleTagPermission: profileForm.peopleTagPermission,
-        demographics: settingsDemographics
-      };
-      const payload = deepStripUndefined(currentSubPage === 'edit-profile' ? profileEditPayload : settingsPayload);
+      const payload = deepStripUndefined(profileEditPayload);
 
       const updatedProfile = await api.updateUser(userProfile.id, payload);
 
@@ -434,7 +388,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
         ...userProfile,
         ...profileForm,
         ...updatedProfile,
-        demographics: updatedProfile.demographics || payload.demographics
+        demographics: updatedProfile.demographics || userProfile.demographics
       };
 
       const persistedAvatarMedia = avatarMedia.map((draft) => draft.assetId === merged.avatarMediaId
@@ -465,58 +419,8 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
     }
   };
 
-  const handleDeleteAccount = async () => {
-    if (deleteConfirmText !== 'DELETE') return;
-    setIsDeleting(true);
-    try {
-      await api.deleteAccount(userProfile.id!);
-      localStorage.removeItem('si_user');
-      onLogout(); // This will clear session in parent App.tsx
-      window.location.href = '/';
-    } catch (error) {
-      console.error("Failed to delete account:", error);
-      alert("Failed to delete account. Please try again.");
-    } finally {
-      setIsDeleting(false);
-      setShowDeleteModal(false);
-    }
-  };
-
-  const toggleSetting = (key: keyof typeof settings) => {
-    setSettings(prev => ({ ...prev, [key]: !prev[key] }));
-  };
-
-  const updateDemographics = (key: keyof NonNullable<UserProfile['demographics']>, value: string) => {
-    setProfileForm(prev => {
-      const currentVal = prev.demographics?.[key];
-      // If the clicked value is already selected, clear it (unselect)
-      const newVal = currentVal === value ? '' : value;
-      let extraUpdates: any = {};
-      if (key === 'employment') {
-        if (newVal === 'Unemployed' || newVal === 'Homemaker') {
-          extraUpdates = { industry: 'Not Applicable', sector: 'Not Applicable' };
-        } else if (currentVal === 'Unemployed' || currentVal === 'Homemaker') {
-          if (prev.demographics?.industry === 'Not Applicable') {
-            extraUpdates.industry = '';
-          }
-          if (prev.demographics?.sector === 'Not Applicable') {
-            extraUpdates.sector = '';
-          }
-        }
-      }
-      return {
-        ...prev,
-        demographics: {
-          ...(prev.demographics || {}),
-          [key]: newVal,
-          ...extraUpdates
-        }
-      };
-    });
-  };
-
   const SectionHeader = ({ title }: { title: string }) => (
-    <h3 className="px-5 pt-6 pb-2 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">{title}</h3>
+    <h3 className="px-5 pt-6 pb-2 text-sm font-bold text-gray-600">{title}</h3>
   );
 
   const SettingItem = ({
@@ -543,7 +447,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
       </div>
       <div className="flex-1 min-w-0">
         <p className={`text-sm font-bold ${type === 'danger' ? 'text-red-600' : 'text-gray-900'}`}>{label}</p>
-        {value && <p className="text-[10px] text-gray-400 font-medium truncate">{value}</p>}
+        {value && <p className="text-sm text-gray-600 font-medium leading-relaxed">{value}</p>}
       </div>
       {type === 'navigate' && <ChevronRight size={16} className="text-gray-300 rtl:rotate-180" />}
       {type === 'toggle' && (
@@ -580,13 +484,10 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
     </div>
   );
 
-  if (currentSubPage === 'notifications-detailed') {
-    return <NotificationSettingsScreen userId={userProfile.id} onBack={() => setCurrentSubPage('main')} />;
-  }
-
   if (currentSubPage === 'links') {
     return (
       <ProfileLinksManager
+        onDirtyChange={setLinkDraftDirty}
         onBack={() => navigate('/settings/profile/edit-profile', { replace: true })}
         onLinksChange={(links) => {
           setLinkCount(links.length);
@@ -594,177 +495,6 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
           onUpdateProfile({ ...userProfile, profileLinks: links });
         }}
       />
-    );
-  }
-
-  if (currentSubPage === 'demographics') {
-    return (
-      <div className="flex flex-col h-full bg-gray-50 animate-in slide-in-from-right duration-300">
-        <PageHeader title="Demographic Info" />
-        <div className="flex-1 overflow-y-auto pb-20 no-scrollbar">
-                      <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm m-5 mb-6">
-              <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4">{t('Why we ask?')}</h4>
-              <div className="text-sm text-gray-600 leading-relaxed space-y-4">
-                <p>{t('Sharing demographic information helps you and post creators get more relevant and meaningful insights.')}</p>
-                <p>{t('It also improves your experience and helps us keep the platform safe and fair.')}</p>
-                <p>{t('Your data is anonymized and used in aggregate — never shared in a way that identifies you.')}</p>
-                <p>
-                  <button onClick={() => navigate('/privacy')} className="text-blue-600 hover:underline font-medium">
-                    {t('Learn more in our Privacy Policy.')}
-                  </button>
-                </p>
-              </div>
-            </div>
-
-          <div className="bg-white border-y border-gray-100">
-            <SettingItem 
-              icon={UserCircle} 
-              label="Gender" 
-              value={profileForm.demographics?.gender || 'Not specified'} 
-              onClick={() => setActiveDemographicSelector({ id: 'gender', title: 'Gender', options: ['Male', 'Female', 'Prefer not to say'] })} 
-            />
-            
-            {/* Age Group - Disabled/Auto calculated */}
-            <div className="w-full flex items-center gap-4 px-5 py-3.5 bg-gray-50/50 border-b border-gray-50 text-left">
-              <div className="p-2 rounded-xl bg-gray-100 text-gray-400">
-                <Lock size={18} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-bold text-gray-500 flex items-center gap-2">
-                  Age Group 
-                  <span className="text-[8px] px-1.5 py-0.5 bg-gray-200 rounded text-gray-500 uppercase tracking-widest">Auto</span>
-                </p>
-                <p className="text-[10px] text-gray-400 font-medium truncate">{profileForm.demographics?.ageGroup || 'Not specified'}</p>
-              </div>
-            </div>
-
-            <SettingItem 
-              icon={Heart} 
-              label="Marital Status" 
-              value={profileForm.demographics?.maritalStatus || 'Not specified'} 
-              onClick={() => setActiveDemographicSelector({ id: 'maritalStatus', title: 'Marital Status', options: ['Single', 'Engaged', 'Married', 'Widowed', 'Divorced', 'Separated', 'Prefer not to say'] })} 
-            />
-            
-            <SettingItem 
-              icon={GraduationCap} 
-              label="Education Level" 
-              value={profileForm.demographics?.education || 'Not specified'} 
-              onClick={() => setActiveDemographicSelector({ id: 'education', title: 'Education Level', options: ['Primary Education', 'Preparatory / Middle School', 'Secondary Education (High School)', 'Diploma', 'Higher Diploma / Postgraduate Diploma', 'Bachelor’s Degree', 'Professional Diploma', 'Master’s Degree', 'Doctorate (PhD)', 'Prefer not to say'] })} 
-            />
-
-            <SettingItem 
-              icon={Briefcase} 
-              label="Employment Status" 
-              value={profileForm.demographics?.employment || 'Not specified'} 
-              onClick={() => setActiveDemographicSelector({ id: 'employment', title: 'Employment Status', options: ['Employed', 'Unemployed', 'Student', 'Retired', 'Homemaker', 'prefer not to specify'] })} 
-            />
-
-            {(profileForm.demographics?.employment !== 'Unemployed' && profileForm.demographics?.employment !== 'Homemaker') && (
-              <>
-                <SettingItem 
-                  icon={Briefcase} 
-                  label="Employment Type" 
-                  value={profileForm.demographics?.industry || 'Not specified'} 
-                  onClick={() => {
-                    setActiveDemographicSelector({ id: 'industry', title: 'Employment Type', options: ['Government', 'Private Sector', 'Non-profit / NGO', 'Self-employed / Freelancer', 'Not Applicable', 'Prefer not to say'] });
-                  }} 
-                />
-
-                <SettingItem 
-                  icon={Briefcase} 
-                  label="Employment Sector" 
-                  value={profileForm.demographics?.sector || 'Not specified'} 
-                  onClick={() => {
-                    setActiveDemographicSelector({ id: 'sector', title: 'Employment Sector', options: ['Agriculture, Forestry, And Fishing', 'Mining', 'Construction', 'Manufacturing', 'Transportation, Communications, Electric, Gas, And Sanitary Services', 'Wholesale Trade', 'Retail Trade', 'Finance, Insurance, And Real Estate', 'Services', 'Public Administration', 'Not Applicable', 'Prefer Not To Specify'] });
-                  }} 
-                />
-              </>
-            )}
-
-            <SettingItem 
-              icon={Globe} 
-              label="Nationality" 
-              value={profileForm.demographics?.nationality || 'Not specified'} 
-              onClick={() => setActiveDemographicSelector({ id: 'nationality', title: 'Nationality', options: [] })} 
-            />
-          </div>
-
-          <div className="px-5 mt-6 pb-6">
-             <div className="flex items-start gap-3 bg-blue-50 p-4 rounded-xl border border-blue-100 shadow-sm">
-               <Shield size={18} className="shrink-0 text-blue-500 mt-0.5" />
-               <p className="text-[10px] text-gray-600 font-medium leading-relaxed">
-                 <strong className="text-gray-900 block mb-1 text-xs">Age Group Auto-calculation</strong>
-                 Your age group is automatically calculated based on the Date of Birth provided during account registration to ensure context accuracy. It cannot be changed manually.
-               </p>
-             </div>
-          </div>
-        </div>
-
-        <BottomSheet isOpen={!!activeDemographicSelector} onClose={() => setActiveDemographicSelector(null)} title={activeDemographicSelector?.title || ''}>
-          <div className="flex flex-col h-[70vh] bg-gray-50 rounded-t-3xl border-t border-gray-100 overflow-hidden">
-            {activeDemographicSelector?.id === 'nationality' ? (
-              <div className="flex flex-col h-full bg-white rounded-t-3xl pb-8">
-                <div className="px-4 py-3 border-b border-gray-100 bg-white">
-                  <div className="relative">
-                    <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input
-                      type="text"
-                      value={nationalitySearch}
-                      onChange={(e) => setNationalitySearch(e.target.value)}
-                      placeholder="Search your country..."
-                      className="w-full bg-gray-50 border-none rounded-xl pl-11 pr-4 py-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition-all"
-                    />
-                  </div>
-                </div>
-                <div className="flex-1 overflow-y-auto p-4 space-y-2 no-scrollbar">
-                   {profileForm.demographics?.nationality && !nationalitySearch && (
-                      <button
-                        onClick={() => {
-                          updateDemographics('nationality', profileForm.demographics!.nationality!);
-                          setActiveDemographicSelector(null);
-                        }}
-                        className="w-full py-4 px-5 rounded-2xl text-sm font-bold border-2 text-left flex justify-between items-center bg-blue-50 border-blue-600 text-blue-700 mb-4"
-                      >
-                        {profileForm.demographics.nationality}
-                        <Check size={18} strokeWidth={3} />
-                      </button>
-                    )}
-                  {filteredNationalities.map(n => (
-                    <button
-                      key={n}
-                      onClick={() => {
-                        updateDemographics('nationality', n);
-                        setActiveDemographicSelector(null);
-                      }}
-                      className={`w-full py-4 px-5 rounded-2xl text-sm font-bold border-2 text-left flex justify-between items-center transition-all ${profileForm.demographics?.nationality === n ? 'hidden' : 'bg-white text-gray-700 border-gray-100 hover:border-gray-200'}`}
-                    >
-                      {n}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-col h-full bg-white rounded-t-3xl pb-8">
-                <div className="flex-1 overflow-y-auto p-4 space-y-2 no-scrollbar">
-                  {activeDemographicSelector?.options.map(opt => (
-                    <button
-                      key={opt}
-                      onClick={() => {
-                        updateDemographics(activeDemographicSelector.id, opt);
-                        setActiveDemographicSelector(null);
-                      }}
-                      className={`w-full py-4 px-5 rounded-2xl text-sm font-bold border-2 text-left flex justify-between items-center transition-all ${profileForm.demographics?.[activeDemographicSelector.id] === opt ? 'bg-blue-50 border-blue-600 text-blue-700' : 'bg-white text-gray-700 border-gray-100 hover:border-gray-200'}`}
-                    >
-                      {opt}
-                      {profileForm.demographics?.[activeDemographicSelector.id] === opt && <Check size={18} strokeWidth={3} />}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </BottomSheet>
-      </div>
     );
   }
 
@@ -983,6 +713,19 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
               </p>
             </div>
 
+            <div>
+              <label htmlFor="profile-fixed-handle" className="mb-2 block text-sm font-semibold text-gray-700">{t('settingsV2.profile.handle')}</label>
+              <input id="profile-fixed-handle" value={`@${profileForm.handle}`} readOnly dir="ltr" aria-describedby="profile-fixed-handle-hint" className="min-h-12 w-full rounded-2xl border border-gray-200 bg-gray-100 px-4 py-3 text-sm text-gray-700" />
+              <p id="profile-fixed-handle-hint" className="mt-2 text-sm leading-relaxed text-gray-600">{t('settingsV2.profile.handleHint')}</p>
+            </div>
+            {(['location', 'website'] as const).map((field) => (
+              <div key={field}>
+                <label htmlFor={`profile-${field}`} className="mb-2 block text-sm font-semibold text-gray-700">{t(`settingsV2.profile.${field}`)}</label>
+                <input id={`profile-${field}`} value={profileForm[field] || ''} onChange={(event) => { setProfileForm({ ...profileForm, [field]: event.target.value }); setSaveError(null); }} maxLength={field === 'location' ? 100 : 2048} type={field === 'website' ? 'url' : 'text'} dir={field === 'website' ? 'ltr' : undefined} autoComplete={field === 'website' ? 'url' : 'address-level2'} className="min-h-12 w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-600" />
+                <p className="mt-2 text-sm leading-relaxed text-gray-600">{t(`settingsV2.profile.${field}Hint`)}</p>
+              </div>
+            ))}
+
             {!hasProfileChanges && !isPrivateProfileLoading && (
               <p className="text-center text-xs text-gray-400" role="status">{t('profile.edit.noChanges', { defaultValue: 'Make a change to enable Save.' })}</p>
             )}
@@ -1063,398 +806,71 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
     );
   }
 
-  if (currentSubPage === 'group-privacy') {
-    return (
-      <div className="flex flex-col h-full bg-gray-50 animate-in slide-in-from-right duration-300">
-        <PageHeader title="Group Privacy" showSave={false} />
-        <div className="flex-1 overflow-y-auto px-5 py-6 space-y-4">
-          <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm mb-6">
-            <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4">Who can see your groups?</h4>
-            <p className="text-sm text-gray-600 leading-relaxed">
-              Choose who can see the groups you've joined on your profile page.
-            </p>
-          </div>
-          {['Public', 'Followers', 'Off'].map(opt => {
-            const isSelected = (profileForm.groupPrivacy || 'Public') === opt;
-            const label = opt === 'Followers' ? 'Followers Only' : opt;
-            return (
-              <button
-                key={opt}
-                onClick={() => {
-                  setProfileForm({ ...profileForm, groupPrivacy: opt as any });
-                  setCurrentSubPage('main');
-                }}
-                className={`w-full flex items-center justify-between p-4 bg-white rounded-2xl border transition-all ${isSelected ? 'border-blue-600 shadow-sm' : 'border-gray-100'}`}
-              >
-                <span className={`font-bold ${isSelected ? 'text-blue-600' : 'text-gray-900'}`}>{label}</span>
-                {isSelected && <Check className="text-blue-600" size={20} strokeWidth={3} />}
-              </button>
-            )
-          })}
-        </div>
-      </div>
-    );
-  }
-
-  if (currentSubPage === 'account-privacy') {
-    const peopleTagOptions: Array<{
-      value: NonNullable<UserProfile['peopleTagPermission']>;
-      label: string;
-    }> = [
-      { value: 'EVERYONE', label: t('Everyone') },
-      { value: 'FOLLOWING', label: t('People you follow') },
-      { value: 'NO_ONE', label: t('No one') }
-    ];
-
-    return (
-      <div className="flex flex-col h-full bg-gray-50 animate-in slide-in-from-right duration-300">
-        <PageHeader title={t('Account privacy')} showSave={false} />
-        <div className="flex-1 overflow-y-auto px-5 py-6 space-y-6">
-          <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-base font-bold text-gray-900">{t('Private account')}</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={profileForm.isPrivate}
-                aria-label={t('Private account')}
-                disabled={isSaving}
-                className={`w-12 h-6 rounded-full transition-colors cursor-pointer relative disabled:cursor-wait disabled:opacity-60 ${profileForm.isPrivate ? 'bg-blue-600' : 'bg-gray-200'}`}
-                onClick={async () => {
-                  if (isSaving || !userProfile.id) return;
-                  const newVal = !profileForm.isPrivate;
-                  if (!newVal) {
-                    const confirmPublic = window.confirm(t('Switching to Public will automatically accept all pending follow requests. Do you want to continue?'));
-                    if (!confirmPublic) return;
-                  }
-
-                  setPrivacySaveError(null);
-                  setIsSaving(true);
-                  setProfileForm((current) => ({ ...current, isPrivate: newVal }));
-                  try {
-                    const updatedProfile = await api.updateUser(userProfile.id, { isPrivate: newVal });
-                    const merged = { ...userProfile, ...updatedProfile, isPrivate: newVal };
-                    setProfileForm((current) => ({ ...current, ...updatedProfile, isPrivate: newVal }));
-                    onUpdateProfile(merged);
-                  } catch {
-                    setProfileForm((current) => ({ ...current, isPrivate: !newVal }));
-                    setPrivacySaveError(t('profile.privacy.saveFailed', { defaultValue: 'Account privacy could not be updated. Please try again.' }));
-                  } finally {
-                    setIsSaving(false);
-                  }
-                }}
-              >
-                <div className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${profileForm.isPrivate ? 'translate-x-6' : 'translate-x-0'}`} />
-              </button>
-            </div>
-
-            {privacySaveError && <p className="mb-4 text-sm font-semibold text-red-600" role="alert">{privacySaveError}</p>}
-            
-            <p className="text-sm text-gray-500 leading-relaxed mb-4">
-              {t("When your account is public, your profile and posts can be seen by anyone, on or off SocialInsight, even if they don't have a SocialInsight account.", "When your account is public, your profile and posts can be seen by anyone, on or off Opiniup, even if they don't have an Opiniup account.")}
-            </p>
-            <p className="text-sm text-gray-500 leading-relaxed">
-              {t("When your account is private, only the followers you approve can see what you share, including your polls and responses, and your followers and following lists. Certain info on your profile, like your profile picture and username, is visible to everyone on and off SocialInsight.", "When your account is private, only the followers you approve can see what you share, including your polls and responses, and your followers and following lists. Certain info on your profile, like your profile picture and username, is visible to everyone on and off Opiniup.")}
-            </p>
-          </div>
-
-          <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
-            <h2 className="text-base font-bold text-gray-900 mb-2">{t('Who can tag you in posts?')}</h2>
-            <p className="text-sm text-gray-500 leading-relaxed mb-4">
-              {t('Choose who can add your profile as a people tag. Text mentions are controlled separately.')}
-            </p>
-            <div role="radiogroup" aria-label={t('Who can tag you in posts?')} className="divide-y divide-gray-100">
-              {peopleTagOptions.map((option) => {
-                const isSelected = (profileForm.peopleTagPermission || 'EVERYONE') === option.value;
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    role="radio"
-                    aria-checked={isSelected}
-                    disabled={isSaving}
-                    onClick={async () => {
-                      if (isSelected || !userProfile.id) return;
-
-                      const previousValue = profileForm.peopleTagPermission || 'EVERYONE';
-                      setProfileForm((current) => ({ ...current, peopleTagPermission: option.value }));
-                      setIsSaving(true);
-                      try {
-                        const updatedProfile = await api.updateUser(userProfile.id, {
-                          peopleTagPermission: option.value
-                        });
-                        const merged = {
-                          ...userProfile,
-                          ...updatedProfile,
-                          peopleTagPermission: option.value
-                        };
-                        setProfileForm((current) => ({ ...current, ...updatedProfile, peopleTagPermission: option.value }));
-                        onUpdateProfile(merged);
-                      } catch (error) {
-                        console.error('Failed to update people tag privacy', error);
-                        setProfileForm((current) => ({ ...current, peopleTagPermission: previousValue }));
-                        alert(t('Failed to update people tag privacy'));
-                      } finally {
-                        setIsSaving(false);
-                      }
-                    }}
-                    className="w-full min-h-12 flex items-center justify-between py-3 text-start disabled:opacity-60"
-                  >
-                    <span className={`text-sm font-semibold ${isSelected ? 'text-blue-600' : 'text-gray-800'}`}>
-                      {option.label}
-                    </span>
-                    <span
-                      aria-hidden="true"
-                      className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${isSelected ? 'border-blue-600' : 'border-gray-300'}`}
-                    >
-                      {isSelected && <span className="w-2.5 h-2.5 rounded-full bg-blue-600" />}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (currentSubPage === 'language') {
-    const languages = [
-      { code: 'en', label: 'English', native: 'English' },
-      { code: 'ar', label: 'Arabic', native: 'العربية' },
-      { code: 'zh', label: 'Chinese', native: '中文' },
-      { code: 'hi', label: 'Hindi', native: 'हिन्दी' },
-      { code: 'ur', label: 'Urdu', native: 'اردو' },
-      { code: 'tr', label: 'Turkish', native: 'Türkçe' }
-    ];
-
-    const currentLang = profileForm.language || 'en';
-
-    return (
-      <div className="flex flex-col h-full bg-gray-50 animate-in slide-in-from-right duration-300">
-        <PageHeader title="Language" showSave={false} />
-        <div className="flex-1 overflow-y-auto px-5 py-6 space-y-4">
-          <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm mb-6">
-            <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4">App Language</h4>
-            <p className="text-sm text-gray-600 leading-relaxed">
-              Choose your preferred language for the application interface.
-            </p>
-          </div>
-          {languages.map(lang => {
-            const isSelected = currentLang === lang.code;
-            return (
-              <button
-                key={lang.code}
-                onClick={() => {
-                  const updatedProfile = { ...profileForm, language: lang.code };
-                  setProfileForm(updatedProfile);
-                  onUpdateProfile(updatedProfile);
-                  setCurrentSubPage('main');
-                  i18n.changeLanguage(lang.code);
-                }}
-                className={`w-full flex items-center justify-between p-4 bg-white rounded-2xl border transition-all ${isSelected ? 'border-blue-600 shadow-sm' : 'border-gray-100'}`}
-              >
-                <div className="flex flex-col items-start">
-                   <span className={`font-bold ${isSelected ? 'text-blue-600' : 'text-gray-900'}`}>{lang.native}</span>
-                   <span className="text-xs text-gray-400">{lang.label}</span>
-                </div>
-                {isSelected && <Check className="text-blue-600" size={20} strokeWidth={3} />}
-              </button>
-            )
-          })}
-        </div>
-      </div>
-    );
-  }
+  if (currentSubPage === 'email-phone' || currentSubPage === 'account-access') return <AccountAccessScreen userProfile={userProfile} onUpdateProfile={onUpdateProfile} onBack={() => setCurrentSubPage('main')} oauthFeedback={oauthFeedback} />;
 
   return (
-    <div className="flex flex-col h-full bg-gray-50 animate-in slide-in-from-right duration-300 z-50">
-      <div className="bg-white border-b border-gray-100 flex items-center px-4 h-14 sticky top-0 z-30">
-        <button
-          type="button"
-          onClick={onBack}
-          aria-label={t('common.back', { defaultValue: 'Back' })}
-          className="flex h-11 w-11 items-center justify-center -ms-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
-        >
-          <ArrowLeft size={24} className="rtl:rotate-180" />
-        </button>
-        <span className="font-bold text-lg ml-2">{t('Settings')}</span>
-      </div>
-
-      <div className="flex-1 overflow-y-auto no-scrollbar pb-10">
-        <SectionHeader title={t('Account')} />
-        <div className="bg-white border-y border-gray-100 shadow-sm">
-          <SettingItem
-            icon={User}
-            label={t('Edit Profile')}
-            value={`${profileForm.name}, Bio, Links`}
-            onClick={() => setCurrentSubPage('edit-profile')}
-          />
-          <SettingItem
-            icon={MapPin}
-            label={t('Demographic Info')}
-            value="Gender, Age, Education, Status"
-            onClick={() => setCurrentSubPage('demographics')}
-          />
-          <SettingItem
-            icon={Bell}
-            label={t('Notification Settings')}
-            value="Likes, Comments, Shares, Activity"
-            onClick={() => setCurrentSubPage('notifications-detailed')}
-          />
-          <SettingItem
-            icon={Languages}
-            label={t('Language')}
-            value={profileForm.language}
-            onClick={() => setCurrentSubPage('language')}
-          />
+    <section dir={i18n.dir()} className="flex h-full min-h-0 flex-col bg-gray-50">
+      <header className="flex min-h-16 items-center gap-2 border-b border-gray-100 bg-white px-3">
+        <button type="button" onClick={onBack} aria-label={t('common.back', { defaultValue: 'Back' })} className="flex h-11 w-11 items-center justify-center rounded-full text-gray-700 focus-visible:ring-2 focus-visible:ring-blue-600"><ArrowLeft size={23} className="rtl:rotate-180" /></button>
+        <h1 className="text-lg font-bold text-gray-900">{t('Settings')}</h1>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto pb-24">
+        <SectionHeader title={t('settingsV2.sections.profile')} />
+        <div className="border-y border-gray-100 bg-white">
+          <SettingItem icon={User} label={t('Edit Profile')} value={t('settingsV2.profile.summary')} onClick={() => setCurrentSubPage('edit-profile')} />
+          <SettingItem icon={Eye} label={t('settingsV2.viewAs')} onClick={() => setCurrentSubPage('view-as')} />
         </div>
-
-        <SectionHeader title={t('Privacy & Social')} />
-        <div className="bg-white border-y border-gray-100 shadow-sm">
-          <SettingItem
-            icon={Lock}
-            label={t('Account privacy')}
-            value={profileForm.isPrivate ? t('Private') : t('Public')}
-            onClick={() => setCurrentSubPage('account-privacy')}
-          />
-          <SettingItem
-            icon={Search}
-            label={t('Show my profile in search')}
-            type="toggle"
-            active={settings.searchVisibility}
-            onClick={() => toggleSetting('searchVisibility')}
-          />
-          <SettingItem
-            icon={Activity}
-            label={t('Show my activity status')}
-            type="toggle"
-            active={settings.activityStatus}
-            onClick={() => toggleSetting('activityStatus')}
-          />
+        <SectionHeader title={t('settingsV2.sections.security')} />
+        <div className="border-y border-gray-100 bg-white">
+          <SettingItem icon={Mail} label={t('settingsV2.access')} value={t('settingsV2.accessHint')} onClick={() => setCurrentSubPage('account-access')} />
+          <SettingItem icon={Shield} label={t('settingsV2.security')} value={t('settingsV2.securityHint')} onClick={() => setCurrentSubPage('security')} />
         </div>
-
-        <SectionHeader title={t('Content & Groups')} />
-        <div className="bg-white border-y border-gray-100 shadow-sm">
-          <SettingItem
-            icon={Share2}
-            label={t('Allow others to share my content')}
-            type="toggle"
-            active={settings.allowSharing}
-            onClick={() => toggleSetting('allowSharing')}
-          />
-          <SettingItem
-            icon={Mail}
-            label={t('Allow group invitations')}
-            type="toggle"
-            active={settings.groupInvites}
-            onClick={() => toggleSetting('groupInvites')}
-          />
-          <SettingItem
-            icon={Smartphone}
-            label={t('Show my groups on profile')}
-            value={(profileForm.groupPrivacy === 'Followers' ? 'Followers Only' : profileForm.groupPrivacy) || 'Public'}
-            onClick={() => setCurrentSubPage('group-privacy')}
-          />
+        <SectionHeader title={t('settingsV2.sections.privacy')} />
+        <div className="border-y border-gray-100 bg-white">
+          <SettingItem icon={Lock} label={t('settingsV2.privacy.title')} value={t('settingsV2.privacy.summary')} onClick={() => setCurrentSubPage('account-privacy')} />
+          <SettingItem icon={Users} label={t('settingsV2.privacy.groups')} value={t(`settingsV2.privacy.groupOptions.${userProfile.groupPrivacy || 'Public'}`)} onClick={() => setCurrentSubPage('group-privacy')} />
+          <SettingItem icon={UserPlus} label={t('settingsV2.blocked')} onClick={() => setCurrentSubPage('blocked')} />
         </div>
-
-        <SectionHeader title={t('Support & Legal')} />
-        <div className="bg-white border-y border-gray-100 shadow-sm">
-          <SettingItem icon={LifeBuoy} label={t('Help Center')} />
+        <SectionHeader title={t('settingsV2.sections.notifications')} />
+        <div className="border-y border-gray-100 bg-white"><SettingItem icon={Bell} label={t('Notification Settings')} value={t('settingsV2.notificationsHint')} onClick={() => setCurrentSubPage('notifications-detailed')} /></div>
+        <SectionHeader title={t('settingsV2.sections.preferences')} />
+        <div className="border-y border-gray-100 bg-white">
+          <SettingItem icon={Languages} label={t('settingsV2.language')} value={new Intl.DisplayNames([i18n.language], { type: 'language' }).of(userProfile.language || 'en')} onClick={() => setCurrentSubPage('language')} />
+          <SettingItem icon={Palette} label={t('settingsV2.theme')} onClick={() => setCurrentSubPage('theme')} />
+          <SettingItem icon={MapPin} label={t('settingsV2.demographics.title')} value={t('settingsV2.demographics.optionalLabel')} onClick={() => setCurrentSubPage('demographics')} />
+          <SettingItem icon={UserCircle} label={t('settingsV2.data')} value={t('settingsV2.dataHint')} onClick={() => setCurrentSubPage('data')} />
+        </div>
+        <SectionHeader title={t('settingsV2.sections.help')} />
+        <div className="border-y border-gray-100 bg-white">
+          <SettingItem icon={LifeBuoy} label={t('settingsV2.help.title')} onClick={() => setCurrentSubPage('help')} />
           <SettingItem icon={Shield} label={t('Privacy Policy')} onClick={() => navigate('/privacy')} />
         </div>
-
-        <SectionHeader title={t('Danger Zone')} />
-        <div className="bg-white border-y border-gray-100 shadow-sm">
-          <SettingItem
-            icon={Trash2}
-            label={t('Delete account')}
-            type="danger"
-            onClick={() => setShowDeleteModal(true)}
-          />
-        </div>
-
-        <div className="mt-8 px-4 pb-12">
-          <button
-            onClick={() => setShowLogoutConfirm(true)}
-            className="w-full bg-white border border-gray-200 text-red-600 py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all flex items-center justify-center gap-2 shadow-sm"
-          >
-            <LogOut size={14} /> {t('Log Out')}
-          </button>
-        </div>
+        <div className="px-4 pt-8"><button type="button" onClick={() => setShowLogoutConfirm(true)} className="flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white text-sm font-bold text-red-700 focus-visible:ring-2 focus-visible:ring-red-600"><LogOut size={19} />{t('Log Out')}</button></div>
       </div>
-
-      {showLogoutConfirm && (
-        <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-md flex items-center justify-center p-6 animate-in fade-in duration-200">
-          <div className="bg-white rounded-[2.5rem] p-8 w-full max-sm shadow-2xl animate-in zoom-in-95 duration-200 text-center">
-            <div className="w-16 h-16 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
-              <LogOut size={32} />
-            </div>
-            <h3 className="text-xl font-black text-gray-900 mb-2">{t('Log out of your account?')}</h3>
-            <p className="text-sm text-gray-500 mb-8 leading-relaxed">
-              {t('Are you sure you want to log out?')}
-            </p>
-            <div className="flex flex-col gap-2">
-              <button
-                onClick={onLogout}
-                className="w-full py-4 bg-red-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all"
-              >
-                {t('Log Out')}
-              </button>
-              <button
-                onClick={() => setShowLogoutConfirm(false)}
-                className="w-full py-4 bg-gray-100 text-gray-600 rounded-2xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all"
-              >
-                {t('Cancel')}
-              </button>
-            </div>
-          </div>
+      <BottomSheet isOpen={showLogoutConfirm} onClose={() => { if (!isSaving) { setShowLogoutConfirm(false); setSaveError(null); } }} title={t('Log out of your account?')}>
+        <div dir={i18n.dir()} className="space-y-4 pb-4">
+          <p className="text-sm leading-relaxed text-gray-600">{t('Are you sure you want to log out?')}</p>
+          {saveError && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800">{saveError}</p>}
+          <button type="button" disabled={isSaving} onClick={async () => { if (saveLatchRef.current) return; saveLatchRef.current = true; setIsSaving(true); setSaveError(null); try { await onLogout(); } catch { setSaveError(t('settingsV2.logoutFailed')); } finally { setIsSaving(false); saveLatchRef.current = false; } }} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-red-600 text-sm font-bold text-white disabled:opacity-50">{isSaving && <Loader2 size={18} className="animate-spin" />}{t('Log Out')}</button>
+          <button type="button" disabled={isSaving} onClick={() => setShowLogoutConfirm(false)} className="min-h-12 w-full rounded-xl border border-gray-200 text-sm font-bold">{t('Cancel')}</button>
         </div>
-      )}
-
-      {showDeleteModal && (
-        <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-md flex items-center justify-center p-6 animate-in fade-in duration-200">
-          <div className="bg-white rounded-[2.5rem] p-8 w-full max-sm shadow-2xl animate-in zoom-in-95 duration-200 text-center">
-            <div className="w-16 h-16 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
-              <AlertTriangle size={32} />
-            </div>
-            <h3 className="text-xl font-black text-gray-900 mb-2">Delete Account?</h3>
-            <p className="text-sm text-gray-500 mb-4 leading-relaxed">
-              This action is <span className="font-bold text-red-500">irreversible</span>. All your personal data, likes, and follows will be permanently removed. Your posts will remain but will be anonymized.
-            </p>
-            <div className="mb-6">
-              <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-2">Type "DELETE" to confirm</p>
-              <input
-                type="text"
-                value={deleteConfirmText}
-                onChange={(e) => setDeleteConfirmText(e.target.value)}
-                placeholder="DELETE"
-                className="w-full text-center bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 transition-all uppercase"
-              />
-            </div>
-            <div className="flex flex-col gap-2">
-              <button
-                onClick={handleDeleteAccount}
-                disabled={deleteConfirmText !== 'DELETE' || isDeleting}
-                className="w-full py-4 bg-red-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all disabled:opacity-50"
-              >
-                {isDeleting ? 'Deleting...' : 'Permanently Delete'}
-              </button>
-              <button
-                onClick={() => {
-                  setShowDeleteModal(false);
-                  setDeleteConfirmText('');
-                }}
-                disabled={isDeleting}
-                className="w-full py-4 bg-gray-100 text-gray-600 rounded-2xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+      </BottomSheet>
+    </section>
   );
+};
+
+export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = (props) => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const page = location.pathname.split('/settings/profile/')[1];
+  const onBack = () => navigate('/settings/profile', { replace: true });
+  if (page === 'demographics') return <DemographicSettingsScreen userProfile={props.userProfile} onUpdateProfile={props.onUpdateProfile} onBack={onBack} />;
+  if (page === 'account-privacy' || page === 'group-privacy' || page === 'language' || page === 'theme') return <AccountPreferencesScreen page={page} userProfile={props.userProfile} onUpdateProfile={props.onUpdateProfile} onBack={onBack} />;
+  if (page === 'help') return <SettingsHelpScreen onBack={onBack} />;
+  if (page === 'notifications-detailed') return <NotificationSettingsScreen userId={props.userProfile.id} onBack={onBack} />;
+  if (page === 'security') return <AccountSecurityScreen onBack={onBack} onSignedOut={props.onSessionEnded} />;
+  if (page === 'data') return <AccountDataScreen userProfile={props.userProfile} onBack={onBack} onSessionEnded={props.onSessionEnded} />;
+  if (page === 'blocked') return <BlockedAccountsScreen onBack={onBack} />;
+  if (page === 'view-as' && props.userProfile.id) return <PublicProfilePreviewScreen userId={props.userProfile.id} onBack={onBack} />;
+  return <ProfileSettingsContent {...props} />;
 };

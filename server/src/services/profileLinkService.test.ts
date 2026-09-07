@@ -106,7 +106,7 @@ test('update and delete always scope mutations by link id and authenticated owne
   assert.deepEqual(updateWhere, { id: 'link-owned-by-b', userId: 'owner-a' });
 
   const deleteClient: any = {
-    $transaction: async () => undefined,
+    $transaction: async (callback: (transaction: any) => Promise<any>) => callback(deleteClient),
     profileLink: {
       deleteMany: async ({ where }: any) => {
         deleteWhere = where;

@@ -81,7 +81,7 @@ test('public profile DTO never exposes DOB/contact fields and hides private link
     assert.deepEqual(state.body.profileLinks, []);
     assert.equal(state.body.coverMedia, null);
     assert.equal(demographicReads, 0);
-    assert.deepEqual(state.body.demographics, {});
+    assert.equal('demographics' in state.body, false);
     for (const key of ['birthday', 'email', 'phone', 'passwordHash', 'mediaPrivacyTarget']) {
       assert.equal(Object.prototype.hasOwnProperty.call(state.body, key), false, key);
     }
@@ -220,7 +220,7 @@ test('profile updates reject a different JWT owner before touching Prisma', asyn
   }
 });
 
-test('DOB and editable demographics update atomically while client ageGroup is ignored', async () => {
+test('versioned DOB and editable demographics update atomically while age is server-derived', async () => {
   const originals = {
     userFindUnique: prisma.user.findUnique,
     userFindUniqueOrThrow: prisma.user.findUniqueOrThrow,
@@ -244,8 +244,11 @@ test('DOB and editable demographics update atomically while client ageGroup is i
     });
     (prisma.userDemographics as any).upsert = async () => { outsideTransactionUpserts += 1; };
     (prisma as any).$transaction = async (callback: (tx: any) => Promise<unknown>) => callback({
+      $executeRaw: async () => 1,
+      authSession: { findFirst: async () => ({ id: 'session', createdAt: new Date() }) },
       user: {
         update: async () => ({}),
+        updateMany: async () => ({ count: 1 }),
         findUniqueOrThrow: async () => ({ bio: 'Bio' })
       },
       userDemographics: {
@@ -265,10 +268,12 @@ test('DOB and editable demographics update atomically while client ageGroup is i
     const { response, state } = createResponse();
     await updateUser({
       params: { id: 'profile-1' },
-      user: { userId: 'profile-1' },
+      user: { userId: 'profile-1', authMode: 'session' },
+      authSession: { id: 'session', userId: 'profile-1' },
       body: {
         birthday: '1990-09-01',
-        demographics: { gender: 'Female', ageGroup: '18-24' }
+        expectedUpdatedAt: '2026-08-31T00:00:00.000Z',
+        demographics: { gender: 'Female' }
       }
     } as any, response);
 

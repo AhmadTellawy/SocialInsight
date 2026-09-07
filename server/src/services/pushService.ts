@@ -1,7 +1,8 @@
 import webpush from 'web-push';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../prisma';
+import { isQuietTime, readNotificationSettings } from './notificationPolicy';
 
-const prisma = new PrismaClient();
+
 
 const publicVapidKey = process.env.VAPID_PUBLIC_KEY || '';
 const privateVapidKey = process.env.VAPID_PRIVATE_KEY || '';
@@ -23,6 +24,11 @@ export interface PushNotificationPayload {
 
 export const sendPushNotification = async (userId: string, payload: PushNotificationPayload) => {
     try {
+        const user = await prisma.user.findUnique({where:{id:userId},select:{status:true}});
+        if (!user || user.status !== 'ACTIVE') return;
+        const record = await prisma.notificationSettings.findUnique({where:{userId}});
+        const preferences = readNotificationSettings(record?.settings);
+        if (!preferences.toggles.pushNotifications || isQuietTime(preferences)) return;
         const subscriptions = await prisma.pushSubscription.findMany({
             where: { userId }
         });

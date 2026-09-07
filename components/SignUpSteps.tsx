@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, ArrowRight, Check, X, Calendar, User, Mail, Lock, Eye, EyeOff, Loader2, AtSign, RefreshCw, Bell } from 'lucide-react';
-import { api } from '../services/api';
+import { useTranslation } from 'react-i18next';
+import { api, ApiError } from '../services/api';
 
 interface StepProps {
     onNext: (data: any) => void;
     onBack?: () => void;
+    onResend?: () => Promise<{ cooldownUntil?: string } | void>;
     isLoading?: boolean;
     data?: any;
 }
@@ -75,8 +77,8 @@ export const BasicInfoStep: React.FC<StepProps> = ({ onNext, onBack, isLoading }
     return (
         <div className="flex flex-col h-full bg-white animate-in slide-in-from-right duration-300">
             <div className="px-6 pt-6 pb-4 border-b border-gray-50">
-                <button onClick={onBack} className="w-10 h-10 flex items-center justify-center rounded-full bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors mb-4">
-                    <ArrowLeft size={20} strokeWidth={2.5} />
+                <button type="button" aria-label="Back" onClick={onBack} className="w-10 h-10 flex items-center justify-center rounded-full bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors mb-4">
+                    <ArrowLeft size={20} strokeWidth={2.5} className="rtl:rotate-180" aria-hidden="true" />
                 </button>
                 <h2 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight">Create your account</h2>
                 <p className="text-gray-500 text-sm font-medium mt-1">Please provide your details below.</p>
@@ -84,38 +86,45 @@ export const BasicInfoStep: React.FC<StepProps> = ({ onNext, onBack, isLoading }
 
             <div className="flex-1 px-6 pt-6 space-y-6 overflow-y-auto">
                 <div className="space-y-1.5">
-                    <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider ml-1">Full Name</label>
+                    <label htmlFor="signup-full-name" className="text-[11px] font-bold text-gray-500 uppercase tracking-wider ms-1">Full name</label>
                     <div className="relative group">
-                        <User className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors" size={20} />
+                        <User className="absolute start-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors" size={20} aria-hidden="true" />
                         <input
+                            id="signup-full-name"
                             autoFocus
                             type="text"
+                            autoComplete="name"
                             value={formData.fullName}
                             onChange={e => setFormData({ ...formData, fullName: e.target.value })}
-                            className="w-full bg-gray-50 border border-gray-200 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 rounded-2xl pl-12 pr-4 py-4 outline-none transition-all font-medium text-gray-900 placeholder:text-gray-400"
+                            className="w-full bg-gray-50 border border-gray-200 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 rounded-2xl ps-12 pe-4 py-4 outline-none transition-all font-medium text-gray-900 placeholder:text-gray-400"
                             placeholder="e.g. John Doe"
                         />
                     </div>
                 </div>
 
                 <div className="space-y-1.5">
-                    <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider ml-1">Email Address</label>
+                    <label htmlFor="signup-email" className="text-[11px] font-bold text-gray-500 uppercase tracking-wider ms-1">Email address</label>
                     <div className="relative group">
-                        <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors" size={20} />
+                        <Mail className="absolute start-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors" size={20} aria-hidden="true" />
                         <input
+                            id="signup-email"
                             type="email"
+                            inputMode="email"
+                            autoComplete="email"
+                            dir="ltr"
                             value={formData.email}
                             onChange={e => setFormData({ ...formData, email: e.target.value })}
-                            className="w-full bg-gray-50 border border-gray-200 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 rounded-2xl pl-12 pr-4 py-4 outline-none transition-all font-medium text-gray-900 placeholder:text-gray-400"
+                            className="w-full bg-gray-50 border border-gray-200 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 rounded-2xl ps-12 pe-4 py-4 outline-none transition-all font-medium text-gray-900 placeholder:text-gray-400"
                             placeholder="you@example.com"
                         />
                     </div>
                 </div>
 
                 <div className="space-y-1.5">
-                    <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider ml-1">Date of Birth</label>
+                    <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider ms-1">Date of birth</p>
                     <div className="relative flex gap-2">
                         <select
+                            aria-label="Birth day"
                             value={day}
                             onChange={e => setDay(e.target.value)}
                             className="w-1/3 bg-gray-50 border border-gray-200 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 rounded-2xl px-4 py-4 outline-none transition-all font-medium text-gray-900 appearance-none"
@@ -126,6 +135,7 @@ export const BasicInfoStep: React.FC<StepProps> = ({ onNext, onBack, isLoading }
                             ))}
                         </select>
                         <select
+                            aria-label="Birth month"
                             value={month}
                             onChange={e => setMonth(e.target.value)}
                             className="flex-1 bg-gray-50 border border-gray-200 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 rounded-2xl px-4 py-4 outline-none transition-all font-medium text-gray-900 appearance-none"
@@ -136,6 +146,7 @@ export const BasicInfoStep: React.FC<StepProps> = ({ onNext, onBack, isLoading }
                             ))}
                         </select>
                         <select
+                            aria-label="Birth year"
                             value={year}
                             onChange={e => setYear(e.target.value)}
                             className="w-1/3 bg-gray-50 border border-gray-200 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 rounded-2xl px-4 py-4 outline-none transition-all font-medium text-gray-900 appearance-none"
@@ -151,6 +162,8 @@ export const BasicInfoStep: React.FC<StepProps> = ({ onNext, onBack, isLoading }
                 <div className="flex items-start gap-3 mt-6">
                     <button
                         type="button"
+                        aria-label="Agree to the Privacy Policy and Terms of Service"
+                        aria-pressed={consent}
                         onClick={() => setConsent(!consent)}
                         className={`w-5 h-5 mt-0.5 rounded flex items-center justify-center shrink-0 transition-colors ${consent ? 'bg-blue-600 border-blue-600' : 'bg-gray-50 border-2 border-gray-200 hover:border-gray-300'}`}
                     >
@@ -192,8 +205,8 @@ export const PasswordStep: React.FC<StepProps> = ({ onNext, onBack, isLoading })
     return (
         <div className="flex flex-col h-full bg-white animate-in slide-in-from-right duration-300">
             <div className="px-6 pt-6 pb-4 border-b border-gray-50">
-                <button onClick={onBack} className="w-10 h-10 flex items-center justify-center rounded-full bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors mb-4">
-                    <ArrowLeft size={20} strokeWidth={2.5} />
+                <button type="button" aria-label="Back" onClick={onBack} className="w-10 h-10 flex items-center justify-center rounded-full bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors mb-4">
+                    <ArrowLeft size={20} strokeWidth={2.5} className="rtl:rotate-180" aria-hidden="true" />
                 </button>
                 <h2 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight">Create a password</h2>
                 <p className="text-gray-500 text-sm font-medium mt-1">Make it strong and secure.</p>
@@ -201,18 +214,22 @@ export const PasswordStep: React.FC<StepProps> = ({ onNext, onBack, isLoading })
 
             <div className="flex-1 px-6 pt-6 space-y-6 overflow-y-auto">
                 <div className="relative group">
-                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors" size={20} />
+                    <Lock className="absolute start-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors" size={20} aria-hidden="true" />
                     <input
+                        aria-label="Create password"
                         autoFocus
                         type={showPassword ? "text" : "password"}
+                        autoComplete="new-password"
                         value={password}
                         onChange={e => setPassword(e.target.value)}
-                        className="w-full bg-gray-50 border border-gray-200 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 rounded-2xl pl-12 pr-12 py-4 outline-none transition-all font-medium text-gray-900"
+                        className="w-full bg-gray-50 border border-gray-200 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 rounded-2xl ps-12 pe-12 py-4 outline-none transition-all font-medium text-gray-900"
                         placeholder="Your password"
                     />
                     <button
+                        type="button"
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
                         onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                        className="absolute end-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
                     >
                         {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
                     </button>
@@ -282,8 +299,8 @@ export const HandleStep: React.FC<StepProps> = ({ onNext, onBack, isLoading: isE
     return (
         <div className="flex flex-col h-full bg-white animate-in slide-in-from-right duration-300">
             <div className="px-6 pt-6 pb-4 border-b border-gray-50">
-                <button onClick={onBack} className="w-10 h-10 flex items-center justify-center rounded-full bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors mb-4">
-                    <ArrowLeft size={20} strokeWidth={2.5} />
+                <button type="button" aria-label="Back" onClick={onBack} className="w-10 h-10 flex items-center justify-center rounded-full bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors mb-4">
+                    <ArrowLeft size={20} strokeWidth={2.5} className="rtl:rotate-180" aria-hidden="true" />
                 </button>
                 <h2 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight">Choose a handle</h2>
                 <p className="text-gray-500 text-sm font-medium mt-1">This is how people will find you.</p>
@@ -291,19 +308,21 @@ export const HandleStep: React.FC<StepProps> = ({ onNext, onBack, isLoading: isE
 
             <div className="flex-1 px-6 pt-6 space-y-6">
                 <div className="relative group">
-                    <AtSign className={`absolute left-4 top-1/2 -translate-y-1/2 transition-colors ${isAvailable === true ? 'text-green-500' : 'text-gray-400 group-focus-within:text-blue-500'}`} size={20} />
+                    <AtSign className={`absolute start-4 top-1/2 -translate-y-1/2 transition-colors ${isAvailable === true ? 'text-green-500' : 'text-gray-400 group-focus-within:text-blue-500'}`} size={20} aria-hidden="true" />
                     <input
+                        aria-label="Choose a username"
                         autoFocus
                         type="text"
+                        autoComplete="username"
                         value={handle}
                         onChange={e => {
                             const val = e.target.value.toLowerCase().replace(/[^a-z0-9_.]/g, '');
                             setHandle(val);
                         }}
-                        className={`w-full bg-gray-50 border focus:bg-white focus:ring-4 rounded-2xl pl-12 pr-12 py-4 outline-none transition-all font-medium text-gray-900 placeholder:text-gray-400 ${isAvailable === true ? 'border-green-500 focus:border-green-500 focus:ring-green-500/10' : isAvailable === false ? 'border-red-500 focus:border-red-500 focus:ring-red-500/10' : 'border-gray-200 focus:border-blue-500 focus:ring-blue-500/10'}`}
+                        className={`w-full bg-gray-50 border focus:bg-white focus:ring-4 rounded-2xl ps-12 pe-12 py-4 outline-none transition-all font-medium text-gray-900 placeholder:text-gray-400 ${isAvailable === true ? 'border-green-500 focus:border-green-500 focus:ring-green-500/10' : isAvailable === false ? 'border-red-500 focus:border-red-500 focus:ring-red-500/10' : 'border-gray-200 focus:border-blue-500 focus:ring-blue-500/10'}`}
                         placeholder="e.g. johndoe"
                     />
-                    <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                    <div className="absolute end-4 top-1/2 -translate-y-1/2">
                         {isChecking ? <Loader2 className="animate-spin text-blue-500" size={20} /> :
                             isAvailable === true ? <Check className="text-green-500" size={20} strokeWidth={3} /> :
                                 isAvailable === false ? <X className="text-red-500" size={20} strokeWidth={3} /> : null}
@@ -333,9 +352,17 @@ export const HandleStep: React.FC<StepProps> = ({ onNext, onBack, isLoading: isE
     );
 };
 
-export const OTPStep: React.FC<StepProps> = ({ onNext, data, isLoading }) => {
+export const OTPStep: React.FC<StepProps> = ({ onNext, onResend, data, isLoading }) => {
+    const { t } = useTranslation();
     const [otp, setOtp] = useState(['', '', '', '', '', '']);
-    const [timer, setTimer] = useState(60);
+    const cooldownSeconds = (cooldownUntil?: string): number => {
+        const timestamp = cooldownUntil ? Date.parse(cooldownUntil) : Number.NaN;
+        return Number.isFinite(timestamp) ? Math.max(0, Math.ceil((timestamp - Date.now()) / 1000)) : 60;
+    };
+    const [timer, setTimer] = useState(() => cooldownSeconds(data?.resendCooldownUntil));
+    const [isResending, setIsResending] = useState(false);
+    const [resendError, setResendError] = useState<string | null>(null);
+    const [resendNotice, setResendNotice] = useState<string | null>(null);
 
     useEffect(() => {
         if (timer > 0) {
@@ -345,23 +372,55 @@ export const OTPStep: React.FC<StepProps> = ({ onNext, data, isLoading }) => {
     }, [timer]);
 
     const handleChange = (index: number, value: string) => {
-        if (value.length > 1) {
-            // handle paste
-            return;
-        }
+        if (!/^\d?$/.test(value)) return;
         const newOtp = [...otp];
         newOtp[index] = value;
         setOtp(newOtp);
 
         if (value && index < 5) {
-            const nextInput = document.getElementById(`otp-${index + 1}`);
+            const nextInput = document.getElementById(`signup-otp-${index + 1}`);
             nextInput?.focus();
+        }
+    };
+
+    const handlePaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
+        event.preventDefault();
+        const pasted = event.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+        if (!pasted) return;
+        setOtp(Array.from({ length: 6 }, (_, index) => pasted[index] || ''));
+        document.getElementById(`signup-otp-${Math.min(pasted.length, 6) - 1}`)?.focus();
+    };
+
+    const handleResend = async () => {
+        if (!onResend || timer > 0 || isResending || isLoading) return;
+        setIsResending(true);
+        setResendError(null);
+        setResendNotice(null);
+        try {
+            const response = await onResend();
+            setOtp(['', '', '', '', '', '']);
+            setTimer(cooldownSeconds(response?.cooldownUntil));
+            setResendNotice(t('auth.signupOtp.resent'));
+            document.getElementById('signup-otp-0')?.focus();
+        } catch (error) {
+            if (error instanceof ApiError) {
+                const retryUntil = error.details?.cooldownUntil;
+                const retrySeconds = error.details?.retryAfterSeconds;
+                if (typeof retryUntil === 'string') setTimer(cooldownSeconds(retryUntil));
+                else if (typeof retrySeconds === 'number') setTimer(Math.max(1, Math.ceil(retrySeconds)));
+            }
+            const code = error instanceof ApiError ? error.code : undefined;
+            setResendError(code && ['OTP_COOLDOWN', 'REQUEST_TIMEOUT', 'NETWORK_ERROR'].includes(code)
+                ? t(`auth.errors.${code}`)
+                : t('auth.signupOtp.resendFailed'));
+        } finally {
+            setIsResending(false);
         }
     };
 
     const handleKeyDown = (index: number, e: React.KeyboardEvent) => {
         if (e.key === 'Backspace' && !otp[index] && index > 0) {
-            const prevInput = document.getElementById(`otp-${index - 1}`);
+            const prevInput = document.getElementById(`signup-otp-${index - 1}`);
             prevInput?.focus();
         }
     };
@@ -374,17 +433,21 @@ export const OTPStep: React.FC<StepProps> = ({ onNext, data, isLoading }) => {
                 <div className="w-16 h-16 bg-blue-50 text-blue-500 rounded-full flex items-center justify-center mx-auto mb-6">
                     <Mail size={32} strokeWidth={1.5} />
                 </div>
-                <h2 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight mb-2">Check your mail</h2>
-                <p className="text-gray-500 text-sm font-medium">We sent a verification code to <br/><span className="text-gray-900 font-bold">{data.email}</span></p>
+                <h2 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight mb-2">{t('auth.signupOtp.title')}</h2>
+                <p className="text-gray-500 text-sm font-medium">{t('auth.signupOtp.description')}<br/><span className="text-gray-900 font-bold" dir="ltr">{data.email}</span></p>
             </div>
 
             <div className="flex-1 px-6 pt-8 flex flex-col items-center">
-                <div className="flex gap-2">
+                <div className="flex gap-2" dir="ltr" onPaste={handlePaste}>
                     {otp.map((digit, i) => (
                         <input
                             key={i}
-                            id={`otp-${i}`}
+                            id={`signup-otp-${i}`}
+                            aria-label={t('auth.signupOtp.digitLabel', { index: i + 1 })}
                             type="text"
+                            inputMode="numeric"
+                            autoComplete={i === 0 ? 'one-time-code' : 'off'}
+                            pattern="[0-9]*"
                             maxLength={1}
                             value={digit}
                             onChange={e => handleChange(i, e.target.value)}
@@ -394,10 +457,18 @@ export const OTPStep: React.FC<StepProps> = ({ onNext, data, isLoading }) => {
                     ))}
                 </div>
 
+                {resendError && <p role="alert" className="mt-5 text-sm font-bold text-red-700 text-center">{resendError}</p>}
+                {resendNotice && <p role="status" className="mt-5 text-sm font-bold text-green-700 text-center">{resendNotice}</p>}
+
                 <div className="mt-10">
-                    <button disabled={timer > 0} onClick={() => setTimer(60)} className="flex items-center gap-2 text-sm font-bold text-blue-600 hover:text-blue-700 disabled:text-gray-400 transition-colors">
-                        <RefreshCw size={14} className={timer > 0 ? "animate-spin" : ""} />
-                        {timer > 0 ? `Resend code in ${timer}s` : "Resend Code"}
+                    <button
+                        type="button"
+                        disabled={timer > 0 || isResending || isLoading}
+                        onClick={handleResend}
+                        className="min-h-11 flex items-center gap-2 text-sm font-bold text-blue-600 hover:text-blue-700 disabled:text-gray-400 transition-colors"
+                    >
+                        <RefreshCw size={14} className={isResending ? 'animate-spin' : ''} aria-hidden="true" />
+                        {isResending ? t('auth.signupOtp.sending') : timer > 0 ? t('auth.signupOtp.resendIn', { seconds: timer }) : t('auth.signupOtp.resend')}
                     </button>
                 </div>
             </div>
@@ -408,7 +479,7 @@ export const OTPStep: React.FC<StepProps> = ({ onNext, data, isLoading }) => {
                     onClick={() => onNext({ code: otp.join('') })}
                     className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-black uppercase tracking-[0.15em] text-xs shadow-[0_8px_20px_rgb(37,99,235,0.25)] hover:shadow-[0_8px_25px_rgb(37,99,235,0.35)] active:scale-[0.98] transition-all disabled:opacity-70 disabled:shadow-none flex items-center justify-center gap-2 group"
                 >
-                    {isLoading ? <Loader2 className="animate-spin" /> : <>Verify <ArrowRight size={18} strokeWidth={2.5} className="group-hover:translate-x-1 transition-transform" /></>}
+                    {isLoading ? <Loader2 className="animate-spin" /> : <>{t('auth.signupOtp.verify')} <ArrowRight size={18} strokeWidth={2.5} className="group-hover:translate-x-1 transition-transform rtl:rotate-180" /></>}
                 </button>
             </div>
         </div>

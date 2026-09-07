@@ -2,6 +2,12 @@ import { PrismaClient } from '@prisma/client';
 import prisma from '../prisma';
 
 export class PrivacyService {
+  static getDiscoverableUserWhere(viewerId?: string | null): any {
+    return {
+      status: 'ACTIVE', searchVisibility: true,
+      ...(viewerId ? { NOT: [{ blockedBy: { some: { blockerId: viewerId } } }, { blocking: { some: { blockedId: viewerId } } }] } : {})
+    };
+  }
   /**
    * Central authorization logic to determine if `viewerId` can view `ownerId`'s content.
    */
@@ -9,13 +15,14 @@ export class PrivacyService {
     if (!viewerId) {
       const owner = await prisma.user.findUnique({
         where: { id: ownerId },
-        select: { isPrivate: true, mediaPrivacyTarget: true }
+        select: { isPrivate: true, mediaPrivacyTarget: true, status: true }
       });
-      return owner !== null && !(owner.isPrivate || owner.mediaPrivacyTarget === true);
+      return owner !== null && owner.status === 'ACTIVE' && !(owner.isPrivate || owner.mediaPrivacyTarget === true);
     }
 
     if (viewerId === ownerId) {
-      return true; 
+      const owner = await prisma.user.findUnique({ where: { id: ownerId }, select: { status: true } });
+      return owner?.status === 'ACTIVE';
     }
 
     const blockRecord = await prisma.userBlock.findFirst({
@@ -33,10 +40,10 @@ export class PrivacyService {
 
     const owner = await prisma.user.findUnique({
       where: { id: ownerId },
-      select: { isPrivate: true, mediaPrivacyTarget: true }
+      select: { isPrivate: true, mediaPrivacyTarget: true, status: true }
     });
 
-    if (!owner) {
+    if (!owner || owner.status !== 'ACTIVE') {
       return false; 
     }
 
@@ -75,13 +82,12 @@ export class PrivacyService {
     // SQL NOT true excludes NULL. The additive profile destination follows
     // canViewUserContent, where an unset transition flag is not private.
     // Keep the legacy query shape unless the new destination opts in.
-    const mediaPrivacyWhere = includeUnsetMediaPrivacy
-      ? { OR: [{ mediaPrivacyTarget: false }, { mediaPrivacyTarget: null }] }
-      : { NOT: { mediaPrivacyTarget: true } };
+    const mediaPrivacyWhere = { OR: [{ mediaPrivacyTarget: false }, { mediaPrivacyTarget: null }] };
     if (!viewerId) {
       // Guests only see public content
       return {
         author: {
+          status: 'ACTIVE',
           isPrivate: false,
           ...mediaPrivacyWhere
         }
@@ -90,6 +96,7 @@ export class PrivacyService {
 
     return {
       AND: [
+        { author: { status: 'ACTIVE' } },
         {
           OR: [
             { authorId: viewerId },

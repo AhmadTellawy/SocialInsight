@@ -195,7 +195,9 @@ export const withDerivedAgeGroup = (
   dateOfBirth: Date | null | undefined,
   today: Date = new Date()
 ): Record<string, unknown> => {
-  const { ageGroup: _cachedAgeGroup, ...editable } = demographics || {};
+  const editable = Object.fromEntries(['gender', 'maritalStatus', 'educationLevel', 'employmentType', 'industry', 'employmentSector', 'nationality']
+    .filter(key => demographics && key in demographics)
+    .map(key => [key, demographics![key]]));
   const ageGroup = calculateAgeGroupFromDate(dateOfBirth, today);
   return ageGroup ? { ...editable, ageGroup } : editable;
 };

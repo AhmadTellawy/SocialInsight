@@ -1,3 +1,5 @@
+import { GroupOwnershipError, lockGroupMutation, assertOtherActiveOwner, countOtherActiveOwners } from '../services/groupOwnershipService';
+import { Prisma } from '@prisma/client';
 import { Request, Response } from 'express';
 import { MentionState, MentionSurface } from '@prisma/client';
 import prisma from '../prisma';
@@ -485,6 +487,9 @@ export const deleteGroup = async (req: Request, res: Response) => {
         });
 
         await prisma.$transaction(async (tx) => {
+            await lockGroupMutation(tx, id, currentUserId);
+            const owner = await tx.groupMember.findUnique({ where: { userId_groupId: { userId: currentUserId, groupId: id } } });
+            if (owner?.role !== GROUP_ROLES.OWNER || owner.status !== MEMBERSHIP_STATUS.JOINED) throw new GroupOwnershipError('GROUP_ROLE_FORBIDDEN', 403);
             await softDeleteGroupAndCleanPosts(tx, id);
             await tx.groupMember.updateMany({
                 where: { groupId: id },
@@ -509,6 +514,7 @@ export const deleteGroup = async (req: Request, res: Response) => {
 
         res.json({ success: true, message: 'Group soft deleted successfully.' });
     } catch (error) {
+        if (error instanceof GroupOwnershipError) return res.status(error.status).json({ code: error.code, error: 'This group action is unavailable.' });
         console.error('Failed to delete group:', error);
         res.status(500).json({ error: 'Failed to delete group' });
     }
@@ -655,68 +661,28 @@ export const joinGroup = async (req: Request, res: Response) => {
 };
 
 export const leaveGroup = async (req: Request, res: Response) => {
-    const id = req.params.id as string;
-    const currentUserId = req.user?.userId;
-
-    if (!currentUserId) {
-        res.status(401).json({ error: 'Unauthorized' });
-        return;
-    }
-
+    const id = req.params.id as string, actorId = req.user?.userId;
+    if (!actorId) return res.status(401).json({ error: 'Unauthorized' });
     try {
-        const group = await prisma.group.findUnique({
-            where: { id: id as string, isDeleted: false }
-        });
-        if (!group) {
-            res.status(404).json({ error: 'Group not found' });
-            return;
-        }
-
-        const membership = await prisma.groupMember.findUnique({
-            where: { userId_groupId: { userId: currentUserId, groupId: id } }
-        });
-
-        if (!membership || membership.status !== MEMBERSHIP_STATUS.JOINED) {
-            res.status(404).json({ error: 'Not a member of this group' });
-            return;
-        }
-
-        if (membership.role === GROUP_ROLES.OWNER) {
-            const otherOwnersCount = await prisma.groupMember.count({
-                where: { groupId: id, role: GROUP_ROLES.OWNER, status: MEMBERSHIP_STATUS.JOINED, userId: { not: currentUserId } }
-            });
-
-            if (otherOwnersCount === 0) {
-                const otherMembersCount = await prisma.groupMember.count({
-                    where: { groupId: id, status: MEMBERSHIP_STATUS.JOINED, userId: { not: currentUserId } }
-                });
-
-                if (otherMembersCount > 0) {
-                    res.status(400).json({ error: 'You are the sole owner. You must transfer ownership to another member before leaving.' });
-                    return;
-                } else {
-                    await prisma.$transaction(async (tx) => {
-                        await softDeleteGroupAndCleanPosts(tx, id);
-                        await tx.groupMember.delete({
-                            where: { id: membership.id }
-                        });
-                    });
-                    res.json({ status: 'NOT_JOINED', role: null, deleted: true });
-                    return;
-                }
+        const deleted = await prisma.$transaction(async tx => {
+            await lockGroupMutation(tx, id, actorId);
+            const membership = await tx.groupMember.findUnique({ where: { userId_groupId: { userId: actorId, groupId: id } } });
+            if (!membership || membership.status !== MEMBERSHIP_STATUS.JOINED) throw new GroupOwnershipError('GROUP_MEMBERSHIP_REQUIRED', 404);
+            let deleteEmpty = false;
+            if (membership.role === GROUP_ROLES.OWNER && !(await countOtherActiveOwners(tx, id, actorId))) {
+                const otherMembers = await tx.groupMember.count({ where: { groupId: id, status: MEMBERSHIP_STATUS.JOINED, userId: { not: actorId } } });
+                if (otherMembers) throw new GroupOwnershipError('GROUP_OWNERSHIP_REQUIRED');
+                await softDeleteGroupAndCleanPosts(tx, id);
+                deleteEmpty = true;
             }
-        }
-
-        await prisma.groupMember.delete({
-            where: { id: membership.id }
+            await tx.groupMember.delete({ where: { id: membership.id } });
+            await tx.group.update({ where: { id }, data: { memberCount: await tx.groupMember.count({ where: { groupId: id, status: MEMBERSHIP_STATUS.JOINED } }) } });
+            return deleteEmpty;
         });
-
-        await updateGroupMemberCount(id);
-
-        res.json({ status: 'NOT_JOINED', role: null });
+        return res.json({ status: 'NOT_JOINED', role: null, ...(deleted ? { deleted: true } : {}) });
     } catch (error) {
-        console.error('Failed to leave group:', error);
-        res.status(500).json({ error: 'Failed to leave group' });
+        if (error instanceof GroupOwnershipError) return res.status(error.status).json({ code: error.code, error: error.code === 'GROUP_OWNERSHIP_REQUIRED' ? 'Transfer ownership to an active member before leaving.' : 'This group action is unavailable.' });
+        return res.status(500).json({ error: 'Failed to leave group.' });
     }
 };
 
@@ -962,7 +928,7 @@ export const getGroupPosts = async (req: Request, res: Response) => {
             include: {
                 author: {
                     select: {
-                        id: true, name: true, handle: true, avatar: true, bio: true, location: true, website: true,
+                        id: true, name: true, handle: true, avatar: true,
                         ...PUBLIC_AVATAR_MEDIA_SELECT,
                         isPrivate: true, groupPrivacy: true, verifiedBadge: true, followersCount: true, followingCount: true, createdAt: true,
                         ...(currentUserId ? {
@@ -1060,202 +1026,55 @@ export const getGroupPosts = async (req: Request, res: Response) => {
 // --- NEW MANAGEMENT ENDPOINTS ---
 
 export const updateMemberRole = async (req: Request, res: Response) => {
-    const id = req.params.id as string;
-    const memberId = req.params.memberId as string;
-    const { role: newRole } = req.body;
-    const currentUserId = req.user?.userId;
-
-    if (!currentUserId) {
-        res.status(401).json({ error: 'Unauthorized' });
-        return;
-    }
-
+    const id = req.params.id as string, memberId = req.params.memberId as string, actorId = req.user?.userId;
+    const newRole = req.body?.role;
+    if (!actorId) return res.status(401).json({ error: 'Unauthorized' });
+    if (!Object.values(GROUP_ROLES).includes(newRole)) return res.status(400).json({ error: 'Invalid group role.' });
     try {
-        const group = await prisma.group.findUnique({
-            where: { id, isDeleted: false }
-        });
-        if (!group) {
-            res.status(404).json({ error: 'Group not found' });
-            return;
-        }
-
-        const callerMembership = await prisma.groupMember.findUnique({
-            where: { userId_groupId: { userId: currentUserId, groupId: id } }
-        });
-
-        if (!callerMembership || callerMembership.status !== MEMBERSHIP_STATUS.JOINED) {
-            res.status(403).json({ error: 'Forbidden' });
-            return;
-        }
-
-        const targetMembership = await prisma.groupMember.findUnique({
-            where: { userId_groupId: { userId: memberId, groupId: id } }
-        });
-
-        if (!targetMembership || targetMembership.status !== MEMBERSHIP_STATUS.JOINED) {
-            res.status(404).json({ error: 'Member not found or not in group.' });
-            return;
-        }
-
-        const isAuthorized = GroupPermissionService.canChangeMemberRole(callerMembership.role, targetMembership.role, newRole);
-        if (!isAuthorized) {
-            res.status(403).json({ error: 'Forbidden: You do not have permissions to manage roles.' });
-            return;
-        }
-
-        if (targetMembership.role === GROUP_ROLES.OWNER && newRole !== GROUP_ROLES.OWNER) {
-            const ownersCount = await prisma.groupMember.count({
-                where: { groupId: id, role: GROUP_ROLES.OWNER, status: MEMBERSHIP_STATUS.JOINED }
-            });
-            if (ownersCount <= 1) {
-                res.status(400).json({ error: 'Cannot demote the sole owner. Transfer ownership first.' });
-                return;
+        const updated = await prisma.$transaction(async tx => {
+            await lockGroupMutation(tx, id, actorId, memberId);
+            const caller = await tx.groupMember.findUnique({ where: { userId_groupId: { userId: actorId, groupId: id } } });
+            const target = await tx.groupMember.findUnique({ where: { userId_groupId: { userId: memberId, groupId: id } } });
+            if (!caller || caller.status !== MEMBERSHIP_STATUS.JOINED || caller.role !== GROUP_ROLES.OWNER) throw new GroupOwnershipError('GROUP_ROLE_FORBIDDEN', 403);
+            if (!target || target.status !== MEMBERSHIP_STATUS.JOINED) throw new GroupOwnershipError('GROUP_MEMBERSHIP_REQUIRED', 404);
+            if (newRole === GROUP_ROLES.OWNER) {
+                const user = await tx.user.findUnique({ where: { id: memberId }, select: { status: true } });
+                if (user?.status !== 'ACTIVE') throw new GroupOwnershipError('GROUP_OWNER_MUST_BE_ACTIVE');
             }
-        }
-
-        const updated = await prisma.groupMember.update({
-            where: { id: targetMembership.id },
-            data: { role: newRole }
+            if (target.role === GROUP_ROLES.OWNER && newRole !== GROUP_ROLES.OWNER) await assertOtherActiveOwner(tx, id, memberId);
+            return tx.groupMember.update({ where: { id: target.id }, data: { role: newRole } });
         });
-
-        res.json({ success: true, member: updated });
+        return res.json({ success: true, member: updated });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: 'Failed to update role.' });
+        if (error instanceof GroupOwnershipError) return res.status(error.status).json({ code: error.code, error: error.code === 'GROUP_OWNERSHIP_REQUIRED' ? 'Keep another active owner before changing this role.' : 'This role change is unavailable.' });
+        return res.status(500).json({ error: 'Failed to update role.' });
     }
 };
 
-export const kickMember = async (req: Request, res: Response) => {
-    const id = req.params.id as string;
-    const memberId = req.params.memberId as string;
-    const currentUserId = req.user?.userId;
-
-    if (!currentUserId) {
-        res.status(401).json({ error: 'Unauthorized' });
-        return;
-    }
-
+const removeGroupMember = async (req: Request, res: Response, nextStatus: string) => {
+    const id = req.params.id as string, memberId = req.params.memberId as string, actorId = req.user?.userId;
+    if (!actorId) return res.status(401).json({ error: 'Unauthorized' });
     try {
-        const group = await prisma.group.findUnique({
-            where: { id, isDeleted: false }
+        await prisma.$transaction(async tx => {
+            await lockGroupMutation(tx, id, actorId, memberId);
+            const caller = await tx.groupMember.findUnique({ where: { userId_groupId: { userId: actorId, groupId: id } } });
+            const target = await tx.groupMember.findUnique({ where: { userId_groupId: { userId: memberId, groupId: id } } });
+            if (!caller || caller.status !== MEMBERSHIP_STATUS.JOINED || !GroupPermissionService.canRemoveMember(caller.role, target?.role || GROUP_ROLES.MEMBER)) throw new GroupOwnershipError('GROUP_ROLE_FORBIDDEN', 403);
+            if (target?.role === GROUP_ROLES.OWNER) throw new GroupOwnershipError('GROUP_OWNER_REMOVAL_FORBIDDEN');
+            if (!target) {
+                if (nextStatus !== MEMBERSHIP_STATUS.BANNED) throw new GroupOwnershipError('GROUP_MEMBERSHIP_REQUIRED', 404);
+                await tx.groupMember.create({ data: { userId: memberId, groupId: id, status: nextStatus, role: GROUP_ROLES.MEMBER } });
+            } else await tx.groupMember.update({ where: { id: target.id }, data: { status: nextStatus } });
+            await tx.group.update({ where: { id }, data: { memberCount: await tx.groupMember.count({ where: { groupId: id, status: MEMBERSHIP_STATUS.JOINED } }) } });
         });
-        if (!group) {
-            res.status(404).json({ error: 'Group not found' });
-            return;
-        }
-
-        const callerMembership = await prisma.groupMember.findUnique({
-            where: { userId_groupId: { userId: currentUserId, groupId: id } }
-        });
-
-        if (!callerMembership || callerMembership.status !== MEMBERSHIP_STATUS.JOINED) {
-            res.status(403).json({ error: 'Forbidden' });
-            return;
-        }
-
-        const targetMembership = await prisma.groupMember.findUnique({
-            where: { userId_groupId: { userId: memberId, groupId: id } }
-        });
-
-        if (!targetMembership || targetMembership.status !== MEMBERSHIP_STATUS.JOINED) {
-            res.status(404).json({ error: 'Member not found or not in group.' });
-            return;
-        }
-
-        const canKick = GroupPermissionService.canRemoveMember(callerMembership.role, targetMembership.role);
-        if (!canKick) {
-            res.status(403).json({ error: 'Forbidden: You cannot kick this member.' });
-            return;
-        }
-
-        if (targetMembership.role === GROUP_ROLES.OWNER) {
-            res.status(400).json({ error: 'Cannot kick a group owner.' });
-            return;
-        }
-
-        await prisma.groupMember.update({
-            where: { id: targetMembership.id },
-            data: { status: MEMBERSHIP_STATUS.REMOVED }
-        });
-
-        await updateGroupMemberCount(id);
-
-        res.json({ success: true, message: 'Member kicked successfully.' });
+        return res.json({ success: true });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: 'Failed to kick member.' });
+        if (error instanceof GroupOwnershipError) return res.status(error.status).json({ code: error.code, error: 'This member action is unavailable.' });
+        return res.status(500).json({ error: 'Failed to update group membership.' });
     }
 };
-
-export const banMember = async (req: Request, res: Response) => {
-    const id = req.params.id as string;
-    const memberId = req.params.memberId as string;
-    const currentUserId = req.user?.userId;
-
-    if (!currentUserId) {
-        res.status(401).json({ error: 'Unauthorized' });
-        return;
-    }
-
-    try {
-        const group = await prisma.group.findUnique({
-            where: { id, isDeleted: false }
-        });
-        if (!group) {
-            res.status(404).json({ error: 'Group not found' });
-            return;
-        }
-
-        const callerMembership = await prisma.groupMember.findUnique({
-            where: { userId_groupId: { userId: currentUserId, groupId: id } }
-        });
-
-        if (!callerMembership || callerMembership.status !== MEMBERSHIP_STATUS.JOINED) {
-            res.status(403).json({ error: 'Forbidden' });
-            return;
-        }
-
-        const targetMembership = await prisma.groupMember.findUnique({
-            where: { userId_groupId: { userId: memberId, groupId: id } }
-        });
-
-        if (!targetMembership) {
-            // Can ban non-member directly
-            await prisma.groupMember.create({
-                data: {
-                    userId: memberId,
-                    groupId: id,
-                    status: MEMBERSHIP_STATUS.BANNED
-                }
-            });
-            res.json({ success: true, message: 'User banned successfully.' });
-            return;
-        }
-
-        const canBan = GroupPermissionService.canRemoveMember(callerMembership.role, targetMembership.role);
-        if (!canBan) {
-            res.status(403).json({ error: 'Forbidden: You cannot ban this member.' });
-            return;
-        }
-
-        if (targetMembership.role === GROUP_ROLES.OWNER) {
-            res.status(400).json({ error: 'Cannot ban a group owner.' });
-            return;
-        }
-
-        await prisma.groupMember.update({
-            where: { id: targetMembership.id },
-            data: { status: MEMBERSHIP_STATUS.BANNED }
-        });
-
-        await updateGroupMemberCount(id);
-
-        res.json({ success: true, message: 'Member banned successfully.' });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: 'Failed to ban member.' });
-    }
-};
+export const kickMember = (req: Request, res: Response) => removeGroupMember(req, res, MEMBERSHIP_STATUS.REMOVED);
+export const banMember = (req: Request, res: Response) => removeGroupMember(req, res, MEMBERSHIP_STATUS.BANNED);
 
 export const getPendingRequests = async (req: Request, res: Response) => {
     const id = req.params.id as string;
@@ -1611,35 +1430,18 @@ export const inviteToGroup = async (req: Request, res: Response) => {
             return;
         }
 
-        const targetUser = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, name: true } });
-        if (!targetUser) { res.status(404).json({ error: 'User not found' }); return; }
-
-        const existing = await prisma.groupMember.findUnique({ where: { userId_groupId: { userId: targetUserId, groupId } } });
-
-        if (existing) {
-            switch (existing.status) {
-                case MEMBERSHIP_STATUS.JOINED:
-                    res.status(400).json({ error: 'User is already a member' }); return;
-                case MEMBERSHIP_STATUS.PENDING:
-                    res.status(400).json({ error: 'User already has a pending join request' }); return;
-                case MEMBERSHIP_STATUS.INVITED:
-                    res.status(400).json({ error: 'User has already been invited' }); return;
-                case MEMBERSHIP_STATUS.BANNED:
-                    res.status(403).json({ error: 'Cannot invite a banned user' }); return;
-                case MEMBERSHIP_STATUS.REMOVED:
-                    await prisma.groupMember.update({
-                        where: { userId_groupId: { userId: targetUserId, groupId } },
-                        data: { status: MEMBERSHIP_STATUS.INVITED, role: GROUP_ROLES.MEMBER }
-                    });
-                    break;
-                default:
-                    res.status(400).json({ error: 'Cannot invite this user' }); return;
-            }
-        } else {
-            await prisma.groupMember.create({
-                data: { userId: targetUserId, groupId, role: GROUP_ROLES.MEMBER, status: MEMBERSHIP_STATUS.INVITED }
-            });
-        }
+        const outcome = await prisma.$transaction(async tx => {
+            await tx.$queryRaw(Prisma.sql`SELECT id FROM users WHERE id IN (${actorId}, ${targetUserId}) ORDER BY id FOR UPDATE`);
+            const target = await tx.user.findUnique({ where: { id: targetUserId }, select: { status: true, groupInvites: true } });
+            const blocked = await tx.userBlock.findFirst({ where: { OR: [{ blockerId: actorId, blockedId: targetUserId }, { blockerId: targetUserId, blockedId: actorId }] } });
+            if (!target || target.status !== 'ACTIVE' || !target.groupInvites || blocked) return 'UNAVAILABLE';
+            const existing = await tx.groupMember.findUnique({ where: { userId_groupId: { userId: targetUserId, groupId } } });
+            if (existing && existing.status !== MEMBERSHIP_STATUS.REMOVED) return 'EXISTS';
+            if (existing) await tx.groupMember.update({ where: { id: existing.id }, data: { status: MEMBERSHIP_STATUS.INVITED, role: GROUP_ROLES.MEMBER } });
+            else await tx.groupMember.create({ data: { userId: targetUserId, groupId, role: GROUP_ROLES.MEMBER, status: MEMBERSHIP_STATUS.INVITED } });
+            return 'INVITED';
+        });
+        if (outcome !== 'INVITED') return res.status(403).json({ code: 'GROUP_INVITE_UNAVAILABLE', error: 'This account cannot receive an invitation.' });
 
         await notify(actorId, targetUserId, 'group_invite', `invited you to join ${group.name}`, 'group', groupId);
         res.json({ success: true, status: MEMBERSHIP_STATUS.INVITED });

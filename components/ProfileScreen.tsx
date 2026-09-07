@@ -8,9 +8,11 @@ import { SurveyCard } from './SurveyCard';
 import { BottomSheet } from './BottomSheet';
 import { ProfileAnalysis } from './ProfileAnalysis';
 import { api } from '../services/api';
+import { accountApi } from '../services/accountApi';
 import { useFollowState } from '../hooks/useFollowState';
 import { UserAvatar } from './UserAvatar';
 import { MediaImage } from './media/MediaImage';
+import { ProfileMediaEditor } from './ProfileMediaEditor';
 import { RichTextRenderer } from './RichTextRenderer';
 
 interface ProfileScreenProps {
@@ -96,13 +98,16 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [activeTab, setActiveTab] = useState<ProfileTab>('content');
   const [isFollowLoading, setIsFollowLoading] = useState(false);
   const [targetUser, setTargetUser] = useState<UserProfile | null>(null);
+  const [editingMedia, setEditingMedia] = useState<'avatar' | 'cover' | null>(null);
+  const [showBlockDialog, setShowBlockDialog] = useState(false);
+  const [blocking, setBlocking] = useState(false);
+  const [blockError, setBlockError] = useState(false);
+  const [locallyBlocked, setLocallyBlocked] = useState(false);
+  const blockLatch = useRef(false);
   const [showLinksSheet, setShowLinksSheet] = useState(false);
-  const [showCoverSheet, setShowCoverSheet] = useState(false);
-  const [confirmCoverRemoval, setConfirmCoverRemoval] = useState(false);
-  const [isRemovingCover, setIsRemovingCover] = useState(false);
-  const [coverActionError, setCoverActionError] = useState<string | null>(null);
 
   const viewUserId = (!user?.id || user.id === userProfile.id) ? userProfile.id : (user as any)?.id;
+  useEffect(() => { setLocallyBlocked(false); setShowBlockDialog(false); setBlockError(false); }, [viewUserId]);
   const initialFollowStatus = (user as any)?.followStatus || ((user as any)?.isFollowing ? 'ACTIVE' : 'NONE');
   const [isFollowing, setLocalFollowingState] = useFollowState(viewUserId, (user as any)?.isFollowing === true || initialFollowStatus === 'ACTIVE');
   const [followStatus, setFollowStatus] = useState<string>(initialFollowStatus);
@@ -492,29 +497,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       .sort((a, b) => a.sortOrder - b.sortOrder)
       .slice(0, 5);
   }, [canViewPrivateProfileContent, profileUser.profileLinks]);
-
-  const removeCoverPhoto = async (): Promise<void> => {
-    if (!isMe || !userProfile.id || isRemovingCover) return;
-    setIsRemovingCover(true);
-    setCoverActionError(null);
-    try {
-      const updated = await api.updateUser(userProfile.id, {
-        coverMediaId: null,
-        expectedUpdatedAt: userProfile.updatedAt
-      });
-      onUpdateCurrentUser?.({
-        ...updated,
-        coverMediaId: null,
-        coverMedia: null
-      });
-      setConfirmCoverRemoval(false);
-      setShowCoverSheet(false);
-    } catch {
-      setCoverActionError(t('profile.cover.removeFailed', { defaultValue: 'The cover photo could not be removed. Please try again.' }));
-    } finally {
-      setIsRemovingCover(false);
-    }
-  };
 
   const renderPrivateProfileState = () => (
     <div className="flex flex-col items-center justify-center py-20 px-8 text-center text-gray-400">
@@ -1118,6 +1100,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     }
   };
 
+  if (locallyBlocked) return <div className="flex min-h-80 flex-col items-center justify-center gap-5 bg-white p-8 text-center"><Shield size={36} className="text-gray-400" /><p className="text-sm text-gray-700">{t('settingsV2.block.success', { defaultValue: 'Account blocked. You can manage blocked accounts in Settings.' })}</p>{onBack && <button type="button" onClick={onBack} className="min-h-12 rounded-xl bg-blue-600 px-6 text-sm font-bold text-white">{t('common.back', { defaultValue: 'Back' })}</button>}</div>;
+
   return (
     <div onScroll={handleScroll} className="bg-white flex-1 overflow-y-auto min-h-full flex flex-col no-scrollbar">
       <div className={`flex items-center px-4 h-[60px] sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-gray-50 ${onBack ? 'justify-between' : 'justify-end'}`}>
@@ -1127,7 +1111,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           </button>
         )}
         <button
-          onClick={isMe ? onSettingsClick : undefined}
+          onClick={isMe ? onSettingsClick : () => { setBlockError(false); setShowBlockDialog(true); }}
           className="flex h-11 w-11 items-center justify-center -me-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors relative z-20"
           aria-label={isMe ? t('Settings') : t('common.more', { defaultValue: 'More options' })}
         >
@@ -1161,9 +1145,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             <button
               type="button"
               onClick={() => {
-                setCoverActionError(null);
-                setConfirmCoverRemoval(false);
-                setShowCoverSheet(true);
+                setEditingMedia('cover');
               }}
               className="absolute inset-0 flex items-end justify-end p-3 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-blue-500/70"
               aria-label={t('profile.cover.edit', { defaultValue: 'Edit cover photo' })}
@@ -1189,9 +1171,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             </div>
             {isMe && (
               <button
-                onClick={onEditProfileClick || onSettingsClick}
+                onClick={() => setEditingMedia('avatar')}
                 className="absolute -bottom-2 -end-2 flex h-11 w-11 items-center justify-center bg-blue-600 text-white rounded-2xl shadow-lg hover:bg-blue-700 transition-colors border-[3px] border-white active:scale-90 z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
-                aria-label={t('Edit Profile')}
+                aria-label={t('mediaEdit.avatar', { defaultValue: 'Edit profile photo' })}
               >
                 <Edit3 size={18} />
               </button>
@@ -1408,79 +1390,15 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         </div>
       </BottomSheet>
 
-      <BottomSheet
-        isOpen={showCoverSheet}
-        onClose={() => {
-          if (isRemovingCover) return;
-          setShowCoverSheet(false);
-          setConfirmCoverRemoval(false);
-          setCoverActionError(null);
-        }}
-        title={t('profile.cover.actionsTitle', { defaultValue: 'Cover photo' })}
-        ariaLabel={t('profile.cover.actionsTitle', { defaultValue: 'Cover photo' })}
-      >
-        {confirmCoverRemoval ? (
-          <div className="py-2 text-center">
-            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-red-50 text-red-600" aria-hidden="true">
-              <Trash2 size={25} />
-            </div>
-            <h4 className="text-base font-bold text-gray-900">{t('profile.cover.removeConfirmTitle', { defaultValue: 'Remove cover photo?' })}</h4>
-            <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-gray-500">{t('profile.cover.removeConfirmDescription', { defaultValue: 'Your profile will return to the default cover placeholder.' })}</p>
-            {coverActionError && <p role="alert" className="mt-3 text-sm font-semibold text-red-600">{coverActionError}</p>}
-            <div className="mt-6 space-y-2">
-              <button
-                type="button"
-                onClick={() => void removeCoverPhoto()}
-                disabled={isRemovingCover}
-                className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-red-600 px-4 font-bold text-white disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2"
-              >
-                {isRemovingCover && <Loader2 size={18} className="animate-spin" aria-hidden="true" />}
-                {isRemovingCover ? t('profile.cover.removing', { defaultValue: 'Removing...' }) : t('profile.cover.remove', { defaultValue: 'Remove cover photo' })}
-              </button>
-              <button
-                type="button"
-                onClick={() => { setConfirmCoverRemoval(false); setCoverActionError(null); }}
-                disabled={isRemovingCover}
-                className="min-h-12 w-full rounded-2xl bg-gray-100 px-4 font-bold text-gray-700 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
-              >
-                {t('common.cancel', { defaultValue: 'Cancel' })}
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-2 pt-2">
-            <button
-              type="button"
-              onClick={() => {
-                setShowCoverSheet(false);
-                (onEditProfileClick || onSettingsClick)?.();
-              }}
-              className="flex min-h-14 w-full items-center gap-3 rounded-2xl px-3 text-start font-bold text-gray-900 transition-colors hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
-            >
-              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600" aria-hidden="true"><Camera size={19} /></span>
-              {profileUser.coverMediaId || profileUser.coverMedia
-                ? t('profile.cover.change', { defaultValue: 'Change cover photo' })
-                : t('profile.cover.upload', { defaultValue: 'Upload cover photo' })}
-            </button>
-            {(profileUser.coverMediaId || profileUser.coverMedia) && (
-              <button
-                type="button"
-                onClick={() => setConfirmCoverRemoval(true)}
-                className="flex min-h-14 w-full items-center gap-3 rounded-2xl px-3 text-start font-bold text-red-600 transition-colors hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-600"
-              >
-                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-50 text-red-600" aria-hidden="true"><Trash2 size={19} /></span>
-                {t('profile.cover.remove', { defaultValue: 'Remove cover photo' })}
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => setShowCoverSheet(false)}
-              className="min-h-12 w-full rounded-2xl bg-gray-100 px-4 font-bold text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
-            >
-              {t('common.cancel', { defaultValue: 'Cancel' })}
-            </button>
-          </div>
-        )}
+      {editingMedia && isMe && <ProfileMediaEditor kind={editingMedia} profile={userProfile} onSaved={(updated) => { onUpdateCurrentUser?.(updated); setTargetUser((current) => current ? { ...current, ...updated } : current); }} onClose={() => setEditingMedia(null)} />}
+
+      <BottomSheet isOpen={showBlockDialog && !isMe} onClose={() => { if (!blocking) setShowBlockDialog(false); }} title={t('settingsV2.block.title', { defaultValue: 'Block account?' })}>
+        <div className="space-y-4 pb-4">
+          <p className="text-sm leading-relaxed text-gray-700">{t('settingsV2.block.description', { defaultValue: 'You will stop following each other and will no longer be able to interact. The account will not be notified. Unblocking later does not restore follows.' })}</p>
+          {blockError && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{t('settingsV2.block.failed', { defaultValue: 'This account could not be blocked. Please try again.' })}</p>}
+          <button type="button" disabled={blocking} onClick={async () => { if (blockLatch.current || !viewUserId || isMe) return; blockLatch.current = true; setBlocking(true); setBlockError(false); try { await accountApi.blockAccount(viewUserId); setShowBlockDialog(false); setLocallyBlocked(true); onFollowChange?.(viewUserId, false); } catch { setBlockError(true); } finally { blockLatch.current = false; setBlocking(false); } }} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-red-600 px-4 text-sm font-bold text-white disabled:opacity-50">{blocking && <Loader2 size={18} className="animate-spin" />}{t('settingsV2.block.confirm', { defaultValue: 'Block account' })}</button>
+          <button type="button" disabled={blocking} onClick={() => setShowBlockDialog(false)} className="min-h-12 w-full rounded-xl border border-gray-200 text-sm font-bold">{t('Cancel', { defaultValue: 'Cancel' })}</button>
+        </div>
       </BottomSheet>
 
       <BottomSheet

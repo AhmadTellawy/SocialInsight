@@ -42,7 +42,9 @@ const createHarness = () => {
   };
 
   const tx: any = {
+    notificationSettings: { findUnique: async () => null },
     user: {
+      findUnique: async ({ where }: any) => users.find(user => user.id === where.id),
       findMany: async ({ where }: any) => users.filter((user) =>
         user.status === where.status && where.OR.some((condition: any) => {
           if (condition.id?.in) return condition.id.in.includes(user.id);
@@ -50,8 +52,8 @@ const createHarness = () => {
         })
       )
     },
-    userBlock: { findMany: async () => [] },
-    follow: { findMany: async () => [] },
+    userBlock: { findMany: async () => [], findFirst: async () => null },
+    follow: { findMany: async () => [], findUnique: async () => null },
     groupMember: { findMany: async () => [] },
     post: { findUnique: async () => ({ ...post }) },
     mention: {

@@ -1,0 +1,21 @@
+/* Theme colors replace shared surface tokens; media pixels remain unchanged. */
+:root { --si-canvas:#f3f4f6; --si-surface:#fff; --si-raised:#f9fafb; --si-text:#111827; --si-muted:#4b5563; --si-border:#d1d5db; }
+:root[data-theme="dark"] { --si-canvas:#0b1220; --si-surface:#111827; --si-raised:#1f2937; --si-text:#f3f4f6; --si-muted:#cbd5e1; --si-border:#475569; }
+body { background-color:var(--si-canvas); color:var(--si-text); }
+:root[data-theme="dark"] :is(.bg-white) { background-color:var(--si-surface); }
+:root[data-theme="dark"] :is(.bg-gray-50,.bg-gray-100,.bg-slate-50,.bg-slate-100) { background-color:var(--si-raised); }
+:root[data-theme="dark"] :is(.text-gray-900,.text-gray-800,.text-gray-700,.text-slate-900,.text-slate-800,.text-slate-700) { color:var(--si-text); }
+:root[data-theme="dark"] :is(.text-gray-600,.text-gray-500,.text-gray-400,.text-slate-600,.text-slate-500,.text-slate-400) { color:var(--si-muted); }
+:root[data-theme="dark"] :is(.border-gray-50,.border-gray-100,.border-gray-200,.border-gray-300,.border-slate-100,.border-slate-200,.border) { border-color:var(--si-border); }
+:root[data-theme="dark"] :is(.bg-red-50,.bg-red-100) { background-color:#451a24; }
+:root[data-theme="dark"] :is(.text-red-600,.text-red-700,.text-red-800) { color:#fda4af; }
+:root[data-theme="dark"] :is(.bg-blue-50,.bg-blue-100) { background-color:#172f52; }
+:root[data-theme="dark"] :is(.text-blue-600,.text-blue-700,.text-blue-800,.text-blue-900,.text-blue-950) { color:#93c5fd; }
+:root[data-theme="dark"] :is(.bg-green-50,.bg-green-100) { background-color:#153d30; }
+:root[data-theme="dark"] :is(.text-green-600,.text-green-700,.text-green-800) { color:#86efac; }
+:root[data-theme="dark"] :is(input,textarea,select) { background-color:var(--si-raised); color:var(--si-text); }
+:root[data-theme="dark"] input::placeholder,:root[data-theme="dark"] textarea::placeholder { color:#94a3b8; }
+:root[data-theme="dark"] :is(.hover\:bg-gray-50:hover,.hover\:bg-gray-100:hover) { background-color:#334155; }
+:root[data-theme="dark"] .bg-\[\#FAFAFA\],:root[data-theme="dark"] .bg-\[\#f8fafc\] { background-color:var(--si-canvas); }
+:focus-visible { outline:2px solid #3b82f6; outline-offset:3px; }
+@media (prefers-reduced-motion: reduce) { *,*::before,*::after { animation-duration:0.01ms!important; transition-duration:0.01ms!important; scroll-behavior:auto!important; } }

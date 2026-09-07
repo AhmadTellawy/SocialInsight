@@ -1,5 +1,7 @@
 
 import React, { useState, useRef, useMemo } from 'react';
+import { clearSessionMetadata } from './services/api';
+import { demographicSnapshot } from './utils/demographicSettings';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { api, ApiError } from './services/api';
@@ -12,6 +14,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { PullToRefresh, PullToRefreshHandle } from './components/PullToRefresh';
 import { PostAnswerPayload, Survey, Option, Notification, SurveyType, Group, UserProfile } from './types';
 import { readMediaSafeJson, writeMediaSafeJson } from './utils/mediaSafeStorage';
+import { OAuthFeedback } from './utils/authUi';
 import { getNotificationDeepLink } from './utils/notificationNavigation';
 import {
   getFeedRetryDelayMs,
@@ -143,11 +146,28 @@ const App: React.FC = () => {
 
   // User Profile State
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  React.useEffect(() => {
+    const preference = userProfile?.theme || 'system';
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const apply = () => {
+      const theme = preference === 'system' ? (media.matches ? 'dark' : 'light') : preference;
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.style.colorScheme = theme;
+      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#111827' : '#ffffff');
+    };
+    apply(); media.addEventListener('change', apply);
+    return () => media.removeEventListener('change', apply);
+  }, [userProfile?.theme]);
+  React.useEffect(() => {
+    if (userProfile?.language === 'ar' || userProfile?.language === 'en') void i18n.changeLanguage(userProfile.language);
+  }, [userProfile?.language]);
   const userProfileIdRef = useRef<string | undefined>(undefined);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authBootstrapped, setAuthBootstrapped] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalType, setAuthModalType] = useState<'flow' | 'login'>('flow');
+  const [authRecoveryMessage, setAuthRecoveryMessage] = useState<string | null>(null);
+  const [accountAccessFeedback, setAccountAccessFeedback] = useState<OAuthFeedback | null>(null);
 
   const handleCloseAuth = () => {
     if (window.history.state && window.history.state.idx > 0) {
@@ -174,16 +194,14 @@ const App: React.FC = () => {
 
   const handleAuthSuccess = (authPayload: any) => {
     const authenticatedUser = authPayload?.user || authPayload;
-    const authToken = authPayload?.token || authenticatedUser?.token;
-    const { token: _token, ...profile } = authenticatedUser || {};
-
-    if (authToken) {
-      localStorage.setItem('si_token', authToken);
-    }
+    const profile = authenticatedUser || {};
+    resetViewerState();
+    userProfileIdRef.current = profile.id;
     writeMediaSafeJson('si_user', profile);
     setUserProfile(profile);
     setIsAuthenticated(true);
     setAuthBootstrapped(true);
+    setAuthRecoveryMessage(null);
     setAuthModalOpen(false);
     setAuthModalType('flow');
     setSelectedSurveyId(null);
@@ -196,18 +214,33 @@ const App: React.FC = () => {
     setActiveTab('home');
     navigate('/', { replace: true });
 
-    // Initialize Push Notifications if permission granted
-    api.setupPushNotifications().catch(console.error);
   };
 
-  const handleLogout = () => {
-    const previousUserId = userProfile?.id;
-    setIsAuthenticated(false);
-    setUserProfile(null);
+  const resetViewerState = () => {
+    const previousUserId = userProfileIdRef.current || readMediaSafeJson<UserProfile>('si_user')?.id;
+    feedRequestRef.current?.controller.abort();
+    feedRequestRef.current = null;
+    loadMoreAbortRef.current?.abort();
+    profileLoadMoreAbortRef.current?.abort();
+    profileRequestAbortRef.current?.abort();
+    notificationRequestRef.current?.abort();
+    detailRequestRef.current += 1;
+    groupRequestRef.current += 1;
+    profileRequestRef.current += 1;
+    userProfileIdRef.current = undefined;
     setSurveys([]);
+    setNextCursor(null);
+    setIsFeedLoading(true);
+    setIsLoadingMore(false);
+    isLoadingMoreRef.current = false;
     setProfileSurveys([]);
     setProfileNextCursor(null);
+    setIsProfileLoadingMore(false);
+    isProfileLoadingMoreRef.current = false;
     setNotifications([]);
+    setNotificationNextCursor(null);
+    setNotificationLoadError(null);
+    setUserGroups([]);
     setSelectedSurveyId(null);
     setDetailSurvey(null);
     setDetailError(null);
@@ -216,6 +249,19 @@ const App: React.FC = () => {
     setExternalGroup(null);
     setIsProfileSettingsOpen(false);
     setIsGroupSettingsOpen(false);
+    setEditingDraft(null);
+    setProfileError(null);
+    setGroupError(null);
+    localStorage.removeItem('si_user');
+    localStorage.removeItem('si_feed_cache');
+    if (previousUserId) localStorage.removeItem(getFeedCacheKey(previousUserId));
+  };
+
+  const clearAuthenticatedState = () => {
+    resetViewerState();
+    clearSessionMetadata();
+    setIsAuthenticated(false);
+    setUserProfile(null);
     setAuthModalOpen(false);
     setActiveCreationFlow(null);
     setActiveCreationGroupId(null);
@@ -224,10 +270,17 @@ const App: React.FC = () => {
     setActiveTab('home');
     setIsNavVisible(true);
     navigate('/', { replace: true });
-    localStorage.removeItem('si_user');
-    localStorage.removeItem('si_token');
-    localStorage.removeItem('si_feed_cache');
-    if (previousUserId) localStorage.removeItem(getFeedCacheKey(previousUserId));
+  };
+
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+      clearAuthenticatedState();
+    } catch (error) {
+      console.warn('The server could not end the current session', error);
+      setAuthRecoveryMessage(i18n.language.startsWith('ar') ? 'تعذر تسجيل خروجك. تحقق من اتصالك وأعد المحاولة.' : 'We could not log you out. Check your connection and try again.');
+      throw error;
+    }
   };
 
   // Creation Flow State
@@ -318,26 +371,9 @@ const App: React.FC = () => {
     };
   };
 
-  const [surveys, setSurveys] = useState<Survey[]>(() => {
-    try {
-      const user = readMediaSafeJson<UserProfile>('si_user');
-      const cached = readMediaSafeJson<any[]>(getFeedCacheKey(user?.id));
-      if (cached) {
-        return cached.map((s: any) => normalizeSurvey(s, user));
-      }
-    } catch (e) {
-      console.error("Failed to parse initial feed cache", e);
-    }
-    return [];
-  });
-  const [isFeedLoading, setIsFeedLoading] = useState<boolean>(() => {
-    try {
-      const user = readMediaSafeJson<UserProfile>('si_user');
-      return !localStorage.getItem(getFeedCacheKey(user?.id));
-    } catch (e) {
-      return true;
-    }
-  });
+  // Persisted account data cannot establish the current viewer's authority.
+  const [surveys, setSurveys] = useState<Survey[]>([]);
+  const [isFeedLoading, setIsFeedLoading] = useState(true);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const isLoadingMoreRef = useRef(false);
@@ -551,54 +587,109 @@ const App: React.FC = () => {
   };
 
   React.useEffect(() => {
-    const savedUser = readMediaSafeJson<UserProfile>('si_user');
-    if (savedUser) {
-      try {
-        const user = savedUser;
-        setUserProfile(user);
-        setIsAuthenticated(true);
-        setAuthBootstrapped(true);
+    let cancelled = false;
+    const controller = new AbortController();
 
-        // Refresh the cached profile in the background without blocking first paint.
-        api.getMe({ timeoutMs: 15_000 }).then(freshUser => {
-          setUserProfile(freshUser);
-          writeMediaSafeJson('si_user', freshUser);
-        }).catch(err => {
-          if (err instanceof ApiError && err.status === 401) {
-            console.error("Failed to refresh user profile because the session expired", err);
-            localStorage.removeItem(getFeedCacheKey(user.id));
-            setIsAuthenticated(false);
-            setUserProfile(null);
-            setSurveys([]);
-            return;
-          }
-          console.warn("Failed to refresh user profile; keeping the cached session", err);
-        });
-      } catch (err) {
-        console.error("Failed to parse cached user, starting guest session", err);
-        localStorage.removeItem('si_user');
-        setIsAuthenticated(false);
-        setUserProfile(null);
-        setSurveys([]);
-        setAuthBootstrapped(true);
-      }
-    } else {
-      setAuthBootstrapped(true);
+    // Remove credentials issued by versions that predate HttpOnly sessions.
+    localStorage.removeItem('si_token');
+
+    const query = new URLSearchParams(window.location.search);
+    const oauthStatus = query.get('oauth') || query.get('oauth_status');
+    const oauthError = query.get('oauth_error') || query.get('oauthError');
+    if (window.opener && (['reauthenticated', 'reauth_challenge'].includes(oauthStatus || '') || oauthError)) {
+      window.opener.postMessage({ type: 'opiniup:reauth', status: oauthError ? 'failed' : oauthStatus }, window.location.origin);
+      window.close();
+      return;
+    }
+    const oauthProviderValue = query.get('oauth_provider');
+    const oauthProvider = oauthProviderValue === 'google' || oauthProviderValue === 'facebook'
+      ? oauthProviderValue
+      : undefined;
+    if (oauthStatus || oauthError) {
+      query.delete('oauth');
+      query.delete('oauth_status');
+      query.delete('oauth_error');
+      query.delete('oauthError');
+      query.delete('oauth_provider');
+      const nextSearch = query.toString();
+      window.history.replaceState({}, '', `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`);
     }
 
+    const bootstrapSession = async () => {
+      let restoredSession = false;
+      try {
+        const session = await api.getSession({ signal: controller.signal, timeoutMs: 15_000, retryOnce: true });
+        if (cancelled) return;
+        if (session?.user) {
+          restoredSession = true;
+          resetViewerState();
+          userProfileIdRef.current = session.user.id;
+          setUserProfile(session.user as UserProfile);
+          writeMediaSafeJson('si_user', session.user);
+          setIsAuthenticated(true);
+          setAuthRecoveryMessage(null);
+          if (oauthStatus === 'linked' || oauthError) {
+            setAccountAccessFeedback({
+              tone: oauthStatus === 'linked' ? 'success' : 'error',
+              code: oauthStatus === 'linked' ? 'linked' : oauthError || 'OAUTH_AUTHENTICATION_FAILED',
+              provider: oauthProvider
+            });
+            setActiveTab('profile');
+            setIsProfileSettingsOpen(true);
+            navigate('/settings/profile/account-access', { replace: true });
+          }
+        } else {
+          resetViewerState();
+          clearSessionMetadata();
+          setUserProfile(null);
+          setIsAuthenticated(false);
+          if (oauthStatus || oauthError) {
+            setAuthRecoveryMessage(oauthError
+              ? t('auth.oauth.loginFailed')
+              : t('auth.oauth.noSession'));
+            setAuthModalType('login');
+            setAuthModalOpen(true);
+            navigate('/login', { replace: true });
+          }
+        }
+      } catch (error) {
+        if (cancelled || (error && typeof error === 'object' && (error as { name?: string }).name === 'AbortError')) return;
+        resetViewerState();
+        clearSessionMetadata();
+        setUserProfile(null);
+        setIsAuthenticated(false);
+        setAuthRecoveryMessage(t('auth.oauth.restoreFailed'));
+      } finally {
+        if (!cancelled) {
+          setAuthBootstrapped(true);
+          if (oauthError && !restoredSession) {
+            setAuthRecoveryMessage(t('auth.oauth.tryEmail'));
+            setAuthModalType('login');
+            setAuthModalOpen(true);
+            navigate('/login', { replace: true });
+          }
+          if (oauthStatus === 'challenge' && !restoredSession) {
+            setAuthRecoveryMessage(null);
+            setAuthModalType('login');
+            setAuthModalOpen(true);
+            navigate('/login', { replace: true });
+          }
+        }
+      }
+    };
+
+    void bootstrapSession();
+
     const handleAuthExpired = () => {
-      const expiredUserId = feedRequestRef.current?.userId || userProfileIdRef.current;
-      feedRequestRef.current?.controller.abort();
-      loadMoreAbortRef.current?.abort();
-      profileLoadMoreAbortRef.current?.abort();
-      setIsAuthenticated(false);
-      setUserProfile(null);
-      setSurveys([]);
-      if (expiredUserId) localStorage.removeItem(getFeedCacheKey(expiredUserId));
+      clearAuthenticatedState();
     };
 
     window.addEventListener('auth_expired', handleAuthExpired);
-    return () => window.removeEventListener('auth_expired', handleAuthExpired);
+    return () => {
+      cancelled = true;
+      controller.abort();
+      window.removeEventListener('auth_expired', handleAuthExpired);
+    };
   }, []);
 
   React.useEffect(() => {
@@ -1084,14 +1175,12 @@ const App: React.FC = () => {
 
   const handleUpdateDemographics = async (newDemographics: Partial<NonNullable<UserProfile['demographics']>>) => {
     if (!userProfile?.id) return;
-    const demographics = {
-      ...(userProfile.demographics || {}),
-      ...newDemographics
-    };
-    delete demographics.ageGroup;
-    const updated = await api.updateUser(userProfile.id, { demographics });
+    const fresh = await api.getMe();
+    if (fresh.id !== userProfileIdRef.current) return;
+    const demographics = demographicSnapshot({ ...demographicSnapshot(fresh.demographics), ...newDemographics });
+    const updated = await api.updateUser(fresh.id, { demographics, expectedUpdatedAt: fresh.updatedAt });
     handleProfileUpdated({
-      ...userProfile,
+      ...fresh,
       ...updated,
       demographics: {
         ...demographics,
@@ -1711,6 +1800,8 @@ const App: React.FC = () => {
                 onUpdateProfile={handleProfileUpdated}
                 onBack={() => navigate(userProfile.handle ? `/@${userProfile.handle}` : `/profile/${userProfile.id}`, { replace: true })}
                 onLogout={handleLogout}
+                onSessionEnded={clearAuthenticatedState}
+                oauthFeedback={accountAccessFeedback}
               />
             </ErrorBoundary>
           );
@@ -1898,7 +1989,12 @@ const App: React.FC = () => {
           <button onClick={handleCloseAuth} className="absolute top-4 right-4 z-[110] p-2 bg-gray-100 rounded-full hover:bg-gray-200">
             <X size={20} />
           </button>
-          <AuthScreen key={authModalType} onAuthSuccess={handleAuthSuccess} initialViewMode={authModalType} />
+          <AuthScreen
+            key={authModalType}
+            onAuthSuccess={handleAuthSuccess}
+            initialViewMode={authModalType}
+            initialError={authRecoveryMessage}
+          />
         </div>
       )}
       <div className="min-h-screen bg-gray-100/50 flex justify-center items-center">
