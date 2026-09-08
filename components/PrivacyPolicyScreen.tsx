@@ -11,7 +11,7 @@ export const PrivacyPolicyScreen: React.FC = () => {
     const sections = [
       {
         title: text('1. About this policy', '١. حول هذه السياسة'),
-        paragraphs: [text('This policy describes how Opiniup uses account information, content, participation data and privacy controls. The audience you choose for content and the permissions of a group also affect who can access it.', 'توضح هذه السياسة كيفية استخدام Opiniup لمعلومات الحساب والمحتوى وبيانات المشاركة وأدوات الخصوصية. يؤثر جمهور المحتوى الذي تختاره وصلاحيات المجموعة أيضًا في من يستطيع الوصول إليه.')]
+        paragraphs: [text('This policy describes how OpiniUp uses account information, content, participation data and privacy controls. The audience you choose for content and the permissions of a group also affect who can access it.', 'توضح هذه السياسة كيفية استخدام OpiniUp لمعلومات الحساب والمحتوى وبيانات المشاركة وأدوات الخصوصية. يؤثر جمهور المحتوى الذي تختاره وصلاحيات المجموعة أيضًا في من يستطيع الوصول إليه.')]
       },
       {
         title: text('2. Information we process', '٢. المعلومات التي نعالجها'),
@@ -86,7 +86,7 @@ export const PrivacyPolicyScreen: React.FC = () => {
                         <p className="text-blue-800">
                             {text('For questions about this policy or our privacy practices:', 'للاستفسارات عن هذه السياسة أو ممارسات الخصوصية:')}
                             <br /><br />
-                            <strong>{text('Email:', 'البريد:')}</strong> <bdi>privacy@socialinsightapp.com</bdi><br />
+                            <strong>{text('Email:', 'البريد:')}</strong> <a href="mailto:privacy@opiniup.com" className="rounded underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"><bdi>privacy@opiniup.com</bdi></a><br />
                         </p>
                     </section>
                 </div>
