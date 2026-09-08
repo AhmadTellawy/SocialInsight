@@ -60,6 +60,7 @@ async function installFixture(page: Page, options: FixtureOptions = {}) {
     if (pathname === '/api/posts/canonical-demographics-poll/vote' && method === 'POST') {
       state.votes.push(request.postDataJSON()); return json(route, { success: true });
     }
+    if (pathname === '/api/posts/canonical-demographics-poll/views' && method === 'POST') return json(route, { success: true });
     if (pathname === '/api/analytics/interactions/batch' && method === 'POST') return route.fulfill({ status: 204 });
     if (pathname === `/api/users/${profile.id}` && method === 'PUT') {
       const payload = request.postDataJSON();
@@ -79,6 +80,7 @@ test('protected export cancellation makes no download; retry verifies identity a
   const state = await installFixture(page);
   await page.goto('/settings/profile/data');
   const download = page.getByRole('button', { name: 'Download information', exact: true });
+  await expect(download).toBeEnabled({ timeout: 20_000 });
   await download.click();
   let dialog = page.getByRole('dialog', { name: 'Verify your identity' });
   await expect(dialog).toBeVisible();

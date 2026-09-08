@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { expect, test, type Page, type Route } from '@playwright/test';
+import { computedTextContrast } from '../post-ui-e2e/contrast';
 
 type ProfileLink = {
   id: string;
@@ -26,6 +27,7 @@ type MockProfile = {
   email: string;
   phone: string;
   language: string;
+  theme?: 'light' | 'dark' | 'system';
   birthday: string;
   profileLinks: ProfileLink[];
   updatedAt: string;
@@ -489,8 +491,10 @@ test.describe('settings critical acceptance', () => {
     expect(state.profileSaveCalls).toBe(0);
   });
 
-  test('profile photo controls open current image cropping directly and preserve its description', async ({ page }) => {
+  test('profile photo controls open current image cropping directly and preserve its description in dark theme at 390px', async ({ page }, testInfo) => {
     const state = settingsState();
+    state.profile.theme = 'dark';
+    await page.setViewportSize({ width: 390, height: 844 });
     state.profile.avatarMediaId = 'initial-avatar';
     state.profile.coverMediaId = 'initial-cover';
     state.profile.avatarMedia = { id: 'initial-avatar', access: 'PUBLIC', aspectRatio: 1, width: 192, height: 192, src: '/pwa-192x192.png' };
@@ -499,8 +503,15 @@ test.describe('settings critical acceptance', () => {
     state.mediaPurposeById.set('initial-cover', 'PROFILE_COVER');
     await installAuthenticatedMockApi(page, state);
     await page.goto('/profile');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await expect(page.locator('html')).toHaveCSS('--si-surface', '#111827');
     await page.getByRole('button', { name: 'Edit profile photo', exact: true }).click();
     await expect(page.getByTestId('media-crop-editor')).toHaveAttribute('data-media-purpose', 'PROFILE_AVATAR');
+    const avatarRatio = page.getByRole('button', { name: '1:1', exact: true });
+    await expect(avatarRatio).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(async () => (await computedTextContrast(avatarRatio)).ratio).toBeGreaterThanOrEqual(4.5);
+    await testInfo.attach('avatar-crop-contrast.json', { body: JSON.stringify(await computedTextContrast(avatarRatio), null, 2), contentType: 'application/json' });
+    await page.screenshot({ path: testInfo.outputPath('profile-current-avatar-dark-390.png') });
     await expect(page).toHaveURL(/\/profile$/);
     await expect(page.getByLabel('Image description', { exact: true })).toHaveValue('Existing accessible image description');
     await page.getByRole('button', { name: 'Done', exact: true }).click();
@@ -510,6 +521,10 @@ test.describe('settings critical acceptance', () => {
     await page.getByRole('button', { name: 'Edit cover photo', exact: true }).click();
     await expect(page.getByTestId('media-crop-editor')).toHaveAttribute('data-media-purpose', 'PROFILE_COVER');
     await expect(page.getByRole('button', { name: '3:1' })).toHaveAttribute('aria-pressed', 'true');
+    const coverRatio = page.getByRole('button', { name: '3:1', exact: true });
+    await expect.poll(async () => (await computedTextContrast(coverRatio)).ratio).toBeGreaterThanOrEqual(4.5);
+    await testInfo.attach('cover-crop-contrast.json', { body: JSON.stringify(await computedTextContrast(coverRatio), null, 2), contentType: 'application/json' });
+    await page.screenshot({ path: testInfo.outputPath('profile-current-cover-dark-390.png') });
     await expect(page.getByLabel('Image description', { exact: true })).toHaveValue('Existing accessible image description');
     await expect(page).toHaveURL(/\/profile$/);
     await page.getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -576,6 +591,7 @@ test.describe('settings critical acceptance', () => {
     await page.goto('/settings/profile/demographics');
     const employment = page.locator('fieldset').getByRole('button').nth(3);
     await expect(employment).toBeEnabled({ timeout: 15_000 });
+    await expect(page.getByRole('button', { name: language === 'ar' ? 'سياسة الخصوصية' : 'Privacy Policy', exact: true })).toBeVisible();
     await employment.click();
     const employmentGroup = page.getByRole('radiogroup');
     await employmentGroup.locator('[aria-checked="true"]').focus();

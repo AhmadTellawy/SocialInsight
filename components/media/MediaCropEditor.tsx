@@ -220,7 +220,7 @@ export const MediaCropEditor: React.FC<MediaCropEditorProps> = ({
               key={preset.id}
               type="button"
               onClick={() => setAspectRatio(preset.ratio)}
-              className={`h-9 rounded-md border px-3 text-xs font-medium ${Math.abs(aspectRatio - preset.ratio) < 0.001 ? 'border-white bg-white text-black' : 'border-white/25 text-gray-300 hover:border-white/60'}`}
+              className={`h-9 rounded-md border px-3 text-xs font-medium ${Math.abs(aspectRatio - preset.ratio) < 0.001 ? 'border-blue-600 bg-blue-600 text-white' : 'border-white/25 text-gray-300 hover:border-white/60'}`}
               aria-pressed={Math.abs(aspectRatio - preset.ratio) < 0.001}
             >
               {preset.label}

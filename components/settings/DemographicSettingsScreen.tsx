@@ -172,7 +172,7 @@ export const DemographicSettingsScreen: React.FC<{
           <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm leading-relaxed text-blue-950">
             <p className="mb-2 flex items-center gap-2 font-bold"><Info size={18} />{t('settingsV2.demographics.optionalTitle', { defaultValue: 'Optional information, useful insights' })}</p>
             <p>{t('settingsV2.demographics.purpose', { defaultValue: 'These optional details help describe participation in aggregate insights. They are not displayed on your public profile. You can leave fields blank or clear them at any time.' })}</p>
-            <button type="button" onClick={() => navigate('/privacy')} className="mt-2 min-h-11 font-bold underline underline-offset-4">{t('Privacy Policy', { defaultValue: 'Privacy policy' })}</button>
+            <button type="button" onClick={() => navigate('/privacy')} className="mt-2 min-h-11 font-bold underline underline-offset-4">{t('settings.privacy_policy')}</button>
           </div>
           {loading && <p role="status" className="flex items-center gap-2 text-sm text-gray-600"><Loader2 size={18} className="animate-spin" />{t('settingsV2.loading', { defaultValue: 'Loading your settings...' })}</p>}
           {loadError && <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800"><p>{t('settingsV2.loadFailed', { defaultValue: 'Your settings could not be loaded. Try again before making changes.' })}</p><button type="button" onClick={() => setRetryKey((value) => value + 1)} className="mt-2 flex min-h-11 items-center gap-2 font-bold"><RefreshCw size={17} />{t('common.retry', { defaultValue: 'Retry' })}</button></div>}

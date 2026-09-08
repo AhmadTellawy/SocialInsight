@@ -21,6 +21,20 @@ const cron = require('../services/cronService'); mock.method(cron, 'initCronJobs
 const sockets = require('../services/socketService'); mock.method(sockets, 'initSocket', () => undefined);
 const transitions = require('../services/mediaPrivacyTransitionService'); mock.method(transitions, 'resumeMediaPrivacyTransitions', async () => 0);
 const cleanup = require('../services/accountCleanupService'); mock.method(cleanup, 'resumeAccountCleanupJobs', async () => 0);
+const mediaStorage = require('../services/mediaStorage') as typeof import('../services/mediaStorage');
+const unexpectedStorageOperation = async (): Promise<never> => { throw new Error('Unexpected storage operation in privacy residuals fixture'); };
+// Discovery reads other suites' public avatar fixtures from the shared local
+// database. URL serialization is pure; any actual storage I/O must still fail.
+const fixtureMediaStorage: import('../services/mediaStorage').MediaStorage = {
+  getPublicUrl: (bucket, key) => 'https://storage.example.invalid/' + encodeURIComponent(bucket) + '/' + encodeURIComponent(key),
+  createSignedUpload: unexpectedStorageOperation,
+  createSignedReadUrl: unexpectedStorageOperation,
+  download: unexpectedStorageOperation,
+  upload: unexpectedStorageOperation,
+  copy: unexpectedStorageOperation,
+  remove: unexpectedStorageOperation,
+  provisionBuckets: unexpectedStorageOperation
+};
 const app = require('../app').default;
 let server: Server, base: string;
 class Browser {
@@ -41,11 +55,13 @@ class Browser {
   }
 }
 before(async () => {
+  mediaStorage.setMediaStorageForTests(fixtureMediaStorage);
   server = await new Promise<Server>(resolve => { const listening = app.listen(0, '127.0.0.1', () => resolve(listening)); });
   base = 'http://127.0.0.1:' + (server.address() as any).port;
 });
 after(async () => {
   await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); });
+  mediaStorage.setMediaStorageForTests();
   await prisma.$disconnect(); mock.restoreAll();
 });
 
