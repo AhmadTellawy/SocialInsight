@@ -1,0 +1,184 @@
+{
+  "taskId": "SI-ACCOUNT-SETTINGS-20260907",
+  "sourceRevision": "4d9daeacdd7c7f4cc7a67b3fc1331736597b0037",
+  "prismaVersion": "6.19.2",
+  "status": "PREPARED_NOT_EXECUTED",
+  "files": [
+    {
+      "path": "prisma/migrations/20260607000000_init/migration.sql",
+      "sourcePath": "server/prisma/migrations/20260607000000_init/migration.sql",
+      "bytes": 21349,
+      "sha256": "3bc06f2d6d0c6eddb988885586061fbf5980a1960dfb3bcc73f19550b99ce8ea"
+    },
+    {
+      "path": "prisma/migrations/20260705024551_add_group_rules/migration.sql",
+      "sourcePath": "server/prisma/migrations/20260705024551_add_group_rules/migration.sql",
+      "bytes": 63,
+      "sha256": "2b3689e6b28d964fdd03b4da6f9060366ee0479eecef8e78694fd393de511ea6"
+    },
+    {
+      "path": "prisma/migrations/20260815000000_media_platform_foundation/migration.sql",
+      "sourcePath": "server/prisma/migrations/20260815000000_media_platform_foundation/migration.sql",
+      "bytes": 7255,
+      "sha256": "f77e995e9e0460f5e2676034270b9196f3087228c81c81baa10db3291e6851bd"
+    },
+    {
+      "path": "prisma/migrations/20260821000000_add_option_presentation/migration.sql",
+      "sourcePath": "server/prisma/migrations/20260821000000_add_option_presentation/migration.sql",
+      "bytes": 335,
+      "sha256": "db3b710fea2874739f40ba6e53d5ff10c6bc3125e07cf657de2acaeb0cae1572"
+    },
+    {
+      "path": "prisma/migrations/20260821010000_social_tagging_platform/migration.sql",
+      "sourcePath": "server/prisma/migrations/20260821010000_social_tagging_platform/migration.sql",
+      "bytes": 8242,
+      "sha256": "ecd2059007cbac4d189b513ff8997e0f3b3a21ff63d09d7489ed158e4fe217f0"
+    },
+    {
+      "path": "prisma/migrations/20260822010000_post_options_hardening/migration.sql",
+      "sourcePath": "server/prisma/migrations/20260822010000_post_options_hardening/migration.sql",
+      "bytes": 722,
+      "sha256": "b18b1e5eda2c6cbdf480ea4b608b8623ca891ec17403cb1d1c2c238b0b6d7856"
+    },
+    {
+      "path": "prisma/migrations/20260831010000_feed_runtime_indexes/migration.sql",
+      "sourcePath": "server/prisma/migrations/20260831010000_feed_runtime_indexes/migration.sql",
+      "bytes": 3133,
+      "sha256": "185a8ccda944135d013182c1771a98439b53166811854eaaaf3c6564b75a45c6"
+    },
+    {
+      "path": "prisma/migrations/20260831015000_add_profile_cover_enum/migration.sql",
+      "sourcePath": "server/prisma/migrations/20260831015000_add_profile_cover_enum/migration.sql",
+      "bytes": 413,
+      "sha256": "d5cb9edb47d99d4bdb39a82f614043b86eddacf7a29feebdec21d1c1efe6ae63"
+    },
+    {
+      "path": "prisma/migrations/20260831020000_profile_links_dob_cover/migration.sql",
+      "sourcePath": "server/prisma/migrations/20260831020000_profile_links_dob_cover/migration.sql",
+      "bytes": 2137,
+      "sha256": "649cfcf4061330ae5892e14d2061760d22cc04ffcb7ea73006572b21f82ead81"
+    },
+    {
+      "path": "prisma/migrations/20260901000000_backfill_derived_age_groups/migration.sql",
+      "sourcePath": "server/prisma/migrations/20260901000000_backfill_derived_age_groups/migration.sql",
+      "bytes": 1232,
+      "sha256": "5b89b5d2e1ad7464ca7fb98849c010c5bd8cc7ebdc826621c588f39c139910b4"
+    },
+    {
+      "path": "prisma/migrations/20260904220000_auth_security/migration.sql",
+      "sourcePath": "server/prisma/migrations/20260904220000_auth_security/migration.sql",
+      "bytes": 9860,
+      "sha256": "f8b7a31e14e8046b86dce135b29252155182ed3b4f157e17898705d38ff9b743"
+    },
+    {
+      "path": "prisma/migrations/20260907220000_account_settings/migration.sql",
+      "sourcePath": "server/prisma/migrations/20260907220000_account_settings/migration.sql",
+      "bytes": 3415,
+      "sha256": "4dcc915a2c595ab6e47fc3d2e8346fdf760274e8f35231751a17b04a80849068"
+    },
+    {
+      "path": "prisma/migrations/20260907230000_guest_participation_proof/migration.sql",
+      "sourcePath": "server/prisma/migrations/20260907230000_guest_participation_proof/migration.sql",
+      "bytes": 203,
+      "sha256": "0f2648ef3bda633f089284dc5f7bc193f1d01a1e8a461bde839e25e39bf0da83"
+    },
+    {
+      "path": "prisma/migrations/20260908001500_demographic_nationality/migration.sql",
+      "sourcePath": "server/prisma/migrations/20260908001500_demographic_nationality/migration.sql",
+      "bytes": 212,
+      "sha256": "d697cf86b5dc9b88b019fa5006f3fcd391ed54f872762f89800e5e33550a862a"
+    },
+    {
+      "path": "prisma/migrations/20260908015000_media_cleanup_capabilities/migration.sql",
+      "sourcePath": "server/prisma/migrations/20260908015000_media_cleanup_capabilities/migration.sql",
+      "bytes": 429,
+      "sha256": "4780598603b06acb79ae87ff910001728e676e37c453f3c644b19c68808fa80e"
+    },
+    {
+      "path": "prisma/migrations/migration_lock.toml",
+      "sourcePath": "server/prisma/migrations/migration_lock.toml",
+      "bytes": 128,
+      "sha256": "99836963713b4f5b269ad49af0ed3d7b0b2e336115c2f92dc9ac683d139d0900"
+    },
+    {
+      "path": "prisma/schema.prisma",
+      "sourcePath": "server/prisma/schema.prisma",
+      "bytes": 37064,
+      "sha256": "c37e3261e9e490c8cf1902d0c7ec4f1d293d2d691b60a4cc1f52790d66271f2d"
+    },
+    {
+      "path": "package.json",
+      "sourcePath": "server/package.json",
+      "bytes": 3927,
+      "sha256": "abcfe0847fc71ad79516d000c86456b7552c4da35042bb8bb2d51e894c26aeb9"
+    },
+    {
+      "path": "package-lock.json",
+      "sourcePath": "server/package-lock.json",
+      "bytes": 155821,
+      "sha256": "44e36e605a239014657e9e798d90f8ddde8f1267a349dc74c710c953cd802ba6"
+    }
+  ],
+  "migrations": [
+    {
+      "name": "20260607000000_init",
+      "checksum": "3bc06f2d6d0c6eddb988885586061fbf5980a1960dfb3bcc73f19550b99ce8ea"
+    },
+    {
+      "name": "20260705024551_add_group_rules",
+      "checksum": "2b3689e6b28d964fdd03b4da6f9060366ee0479eecef8e78694fd393de511ea6"
+    },
+    {
+      "name": "20260815000000_media_platform_foundation",
+      "checksum": "f77e995e9e0460f5e2676034270b9196f3087228c81c81baa10db3291e6851bd"
+    },
+    {
+      "name": "20260821000000_add_option_presentation",
+      "checksum": "db3b710fea2874739f40ba6e53d5ff10c6bc3125e07cf657de2acaeb0cae1572"
+    },
+    {
+      "name": "20260821010000_social_tagging_platform",
+      "checksum": "ecd2059007cbac4d189b513ff8997e0f3b3a21ff63d09d7489ed158e4fe217f0"
+    },
+    {
+      "name": "20260822010000_post_options_hardening",
+      "checksum": "b18b1e5eda2c6cbdf480ea4b608b8623ca891ec17403cb1d1c2c238b0b6d7856"
+    },
+    {
+      "name": "20260831010000_feed_runtime_indexes",
+      "checksum": "185a8ccda944135d013182c1771a98439b53166811854eaaaf3c6564b75a45c6"
+    },
+    {
+      "name": "20260831015000_add_profile_cover_enum",
+      "checksum": "d5cb9edb47d99d4bdb39a82f614043b86eddacf7a29feebdec21d1c1efe6ae63"
+    },
+    {
+      "name": "20260831020000_profile_links_dob_cover",
+      "checksum": "649cfcf4061330ae5892e14d2061760d22cc04ffcb7ea73006572b21f82ead81"
+    },
+    {
+      "name": "20260901000000_backfill_derived_age_groups",
+      "checksum": "5b89b5d2e1ad7464ca7fb98849c010c5bd8cc7ebdc826621c588f39c139910b4"
+    },
+    {
+      "name": "20260904220000_auth_security",
+      "checksum": "f8b7a31e14e8046b86dce135b29252155182ed3b4f157e17898705d38ff9b743"
+    },
+    {
+      "name": "20260907220000_account_settings",
+      "checksum": "4dcc915a2c595ab6e47fc3d2e8346fdf760274e8f35231751a17b04a80849068"
+    },
+    {
+      "name": "20260907230000_guest_participation_proof",
+      "checksum": "0f2648ef3bda633f089284dc5f7bc193f1d01a1e8a461bde839e25e39bf0da83"
+    },
+    {
+      "name": "20260908001500_demographic_nationality",
+      "checksum": "d697cf86b5dc9b88b019fa5006f3fcd391ed54f872762f89800e5e33550a862a"
+    },
+    {
+      "name": "20260908015000_media_cleanup_capabilities",
+      "checksum": "4780598603b06acb79ae87ff910001728e676e37c453f3c644b19c68808fa80e"
+    }
+  ]
+}
