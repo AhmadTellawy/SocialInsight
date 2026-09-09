@@ -34,8 +34,8 @@ try {
     projectReceipt(receipt, context);
   }
   const expectedSteps = mode === 'preflight' ? ['PREFLIGHT'] : ['PREFLIGHT', 'MIGRATE_DEPLOY', 'POSTFLIGHT'];
-  if (mode !== 'verify' && (receipt.status !== 'PASSED' || receipt.project !== expectedProject || receipt.sourceRevision !== expectedSource || receipt.mode !== `--${mode}` ||
-      JSON.stringify(receipt.steps?.map(step => step.name)) !== JSON.stringify(expectedSteps) || receipt.steps.some(step => step.status !== 'PASSED' || step.exitCode !== 0))) throw new Error('RECEIPT_INVALID');
+  if (mode !== 'verify' && (receipt.status !== 'PASSED' || !receipt.finishedAt || receipt.project !== expectedProject || receipt.sourceRevision !== expectedSource || receipt.mode !== `--${mode}` ||
+      JSON.stringify(receipt.steps?.map(step => step.name)) !== JSON.stringify(expectedSteps) || receipt.steps.some(step => step.status !== 'PASSED' || step.exitCode !== 0 || !step.finishedAt))) throw new Error('RECEIPT_INVALID');
   const summary = { job: 'stage-initial-database-install', project: expectedProject, sourceRevision: expectedSource, mode, status: 'PASSED', completedAt: new Date().toISOString(), applicationDeployment: false };
   mkdirSync(publishDir);
   writeFileSync(resolve(publishDir, 'status.json'), JSON.stringify(summary, null, 2) + '\n', { flag: 'wx' });
