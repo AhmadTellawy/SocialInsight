@@ -3,6 +3,18 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertCredentialFree, credentialDiagnosticNames, verifyLinuxTLS } from './stage-engine-tls/verify.mjs';
 
+const OMITTED_PROVIDER_FUNCTIONS = new Set(['BASH_FUNC_copy_secret_files%%', 'BASH_FUNC_remove_secret_files%%']);
+
+export function providerShellEnvironment(env) {
+  const clean = Object.create(null);
+  for (const key of Object.keys(env)) {
+    if (OMITTED_PROVIDER_FUNCTIONS.has(key)) continue;
+    // A names-only view: never access dropped bodies, and defer every other
+    // value until after the existing credential-name guard permits execution.
+    Object.defineProperty(clean, key, { enumerable: true, get: () => env[key] });
+  }
+  return clean;
+}
 export function dependencyEnvironment(env) {
   const clean = {};
   for (const key of ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL']) {
@@ -29,6 +41,7 @@ export function runStageJob({ here, env, platform = process.platform, run = spaw
     catch (error) { spawn = spawnProjection({ error }); throw error; }
   };
   try {
+    env = providerShellEnvironment(env);
     if (platform !== 'linux') throw new Error('PLATFORM_INVALID');
     const mode = env.STAGING_INITIAL_INSTALL_MODE || 'verify';
     if (!['verify', 'preflight', 'deploy'].includes(mode)) throw new Error('MODE_INVALID');

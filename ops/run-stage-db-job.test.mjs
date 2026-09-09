@@ -117,3 +117,67 @@ test('thrown spawn errors and unknown TLS errors emit fixed fallback codes only'
   assert.throws(() => runStageJob({ here: process.cwd(), env: basicEnv, platform: 'linux', run: () => ({ status: 0 }), verifyTLS: ({ run }) => { run('controlled', [], {}); throw new Error('synthetic-private-tls-error'); }, emitFailure: line => tlsLines.push(line) }));
   assert.equal(JSON.parse(tlsLines[0]).phase, 'TLS'); assert.equal(JSON.parse(tlsLines[0]).spawn.status, 0); assert.equal(JSON.parse(tlsLines[0]).code, 'UNCLASSIFIED_FAILURE'); assert.equal(tlsLines[0].includes('synthetic-private'), false);
 });
+
+import { providerShellEnvironment } from './run-stage-db-job.mjs';
+const providerFunctionNames = ['BASH_FUNC_copy_secret_files%%', 'BASH_FUNC_remove_secret_files%%'];
+const withUnreadProviderBodies = (source = {}) => {
+  const env = { ...source };
+  for (const key of providerFunctionNames) Object.defineProperty(env, key, { enumerable: true, get: () => assert.fail('provider function body accessed') });
+  return env;
+};
+
+test('provider boundary drops only exact observed names before accessing any value', () => {
+  const env = withUnreadProviderBodies();
+  Object.defineProperty(env, 'DATABASE_URL', { enumerable: true, get: () => assert.fail('credential value accessed') });
+  const clean = providerShellEnvironment(env);
+  assert.equal(Object.getPrototypeOf(clean), null); assert.deepEqual(Object.keys(clean), ['DATABASE_URL']);
+  for (const key of providerFunctionNames) { assert.equal(Object.hasOwn(clean, key), false); assert.equal(clean[key], undefined); assert.equal(Object.hasOwn(env, key), true); }
+});
+
+test('provider boundary preserves pre-dependency rejection of every other credential name', () => {
+  for (const key of ['DATABASE_URL', 'DIRECT_URL', 'STAGING_DB_ADMIN_PASSWORD', 'JWT_SECRET', 'SUPABASE_ACCESS_TOKEN', 'RESEND_API_KEY',
+    'BASH_FUNC_unknown_secret_files%%', 'BASH_FUNC_copy_secret_files%%%', 'BASH_FUNC_remove_secret_files%%tail', 'bash_func_copy_secret_files%%', 'copy_secret_files']) {
+    const env = withUnreadProviderBodies(basicEnv); const lines = []; let calls = 0;
+    Object.defineProperty(env, key, { enumerable: true, get: () => assert.fail('rejected credential value accessed') });
+    assert.throws(() => runStageJob({ here: process.cwd(), env, platform: 'linux', run: () => { calls++; }, emitFailure: line => lines.push(line) }), /VERIFY_CREDENTIAL_CONFIGURATION_PRESENT/);
+    assert.equal(calls, 0); assert.equal(JSON.parse(lines[0]).spawn.attempted, false);
+  }
+});
+
+test('verify children receive no observed provider function names or bodies and preserve success ordering', () => {
+  const env = withUnreadProviderBodies(basicEnv); const order = []; const diagnostics = [];
+  runStageJob({ here: process.cwd(), env, platform: 'linux', run: (command, args, options) => {
+    order.push(command === 'npm' ? 'dependencies' : 'executor');
+    for (const key of providerFunctionNames) assert.equal(Object.hasOwn(options.env, key), false);
+    // Force the same remaining-value enumeration performed by a subprocess launcher.
+    const materialized = Object.fromEntries(Object.keys(options.env).map(key => [key, options.env[key]]));
+    assert.equal(JSON.stringify(materialized).includes('BASH_FUNC_'), false);
+    return { status: 0 };
+  }, verifyTLS: ({ env: clean }) => {
+    order.push('tls'); for (const key of providerFunctionNames) assert.equal(Object.hasOwn(clean, key), false);
+    assert.equal(clean.RENDER_SERVICE_ID, basicEnv.RENDER_SERVICE_ID); return { status: 'PASSED' };
+  }, emit: () => {}, emitFailure: line => diagnostics.push(line) });
+  assert.deepEqual(order, ['dependencies', 'tls', 'executor']); assert.deepEqual(diagnostics, []);
+});
+
+test('real controlled child cannot inherit omitted provider body markers', () => {
+  const body = 'synthetic-provider-function-body-marker';
+  const env = providerShellEnvironment({ ...dependencyEnvironment(process.env), [providerFunctionNames[0]]: body, [providerFunctionNames[1]]: body });
+  const child = spawnSync(process.execPath, ['-e', 'process.stdout.write(JSON.stringify(process.env))'], { env, encoding: 'utf8', timeout: 10000, windowsHide: true });
+  assert.equal(child.status, 0); assert.equal(child.stdout.includes(body), false);
+  const observed = JSON.parse(child.stdout); for (const name of providerFunctionNames) assert.equal(Object.hasOwn(observed, name), false);
+});
+
+test('credentialed modes retain intended executor credentials but omit provider functions in all children', () => {
+  for (const mode of ['preflight', 'deploy']) {
+    const observed = [];
+    const env = withUnreadProviderBodies({ ...basicEnv, STAGING_INITIAL_INSTALL_MODE: mode, STAGING_DB_ADMIN_PASSWORD: 'synthetic-approved-stage-password' });
+    runStageJob({ here: process.cwd(), env, platform: 'linux', run: (command, args, options) => {
+      observed.push(Object.fromEntries(Object.keys(options.env).map(key => [key, options.env[key]])));
+      return { status: 0 };
+    }, verifyTLS: () => assert.fail('controlled TLS must not run in credentialed mode') });
+    assert.equal(observed.length, 2); assert.equal(observed[0].STAGING_DB_ADMIN_PASSWORD, undefined);
+    assert.equal(observed[1].STAGING_DB_ADMIN_PASSWORD, 'synthetic-approved-stage-password');
+    for (const childEnv of observed) for (const key of providerFunctionNames) assert.equal(Object.hasOwn(childEnv, key), false);
+  }
+});
