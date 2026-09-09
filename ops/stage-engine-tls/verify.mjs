@@ -18,8 +18,10 @@ const instant = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:
 const isCredentialVariable = key => /(PASSWORD|PASSWD|SECRET|TOKEN|CREDENTIAL|PRIVATE_KEY|ACCESS_KEY|DATABASE_URL|DIRECT_URL|(?:^|_)API_KEY(?:_|$))/i.test(key) || /^PG(?:USER|HOST|PORT|DATABASE|SERVICE|SSLKEY|SSLCERT|PASSFILE)/i.test(key);
 
 export function credentialDiagnosticNames(env) {
-  // Values are never accessed. Unsafe names use one fixed placeholder.
-  const names = [...new Set(Object.keys(env).filter(isCredentialVariable).map(key => /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(key) ? key : 'UNSAFE_VARIABLE_NAME'))].sort();
+  // Values are never accessed. Accept only bounded ordinary identifiers or the
+  // exact Bash exported-function wrapper. Full-match equality excludes final newlines.
+  const safeName = key => /^(?:[A-Za-z_][A-Za-z0-9_]{0,63}|BASH_FUNC_[A-Za-z_][A-Za-z0-9_]{0,63}%%)$/.exec(key)?.[0] === key;
+  const names = [...new Set(Object.keys(env).filter(isCredentialVariable).map(key => safeName(key) ? key : 'UNSAFE_VARIABLE_NAME'))].sort();
   return { variableNames: names.slice(0, 16), variableNamesTruncated: names.length > 16 };
 }
 
