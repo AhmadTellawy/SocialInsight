@@ -1,4 +1,9 @@
 {
+  "git": {
+    "deploymentEnabled": {
+      "codex/account-settings-stage-bootstrap": false
+    }
+  },
   "buildCommand": "vite build",
   "rewrites": [
     {
