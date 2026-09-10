@@ -44,7 +44,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker cp tests/media-native/fixtures/example.heic si-heif-capacity:/tmp/heif-converter/diagnostic.heic
+          docker exec -i si-heif-capacity sh -c 'cat > /tmp/heif-converter/diagnostic.heic' < tests/media-native/fixtures/example.heic
           docker exec si-heif-capacity sh -c 'cd /tmp/heif-converter && /usr/bin/prlimit --as=805306368 --cpu=12 --fsize=134217728 --nproc=1 --nofile=64 -- /usr/local/bin/heif-convert diagnostic.heic diagnostic.png' || true
       - name: Record container memory, exit and cleanup evidence
         if: always()
