@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { chmod, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, open, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { ServiceError } from './errors.js';
 
 const MAX_FRAME=12*1024*1024+1028;
@@ -12,18 +12,25 @@ async function gone(pid) {
   }
   throw new ServiceError(503,'WORKER_CLEANUP_FAILED','Image processing is unavailable');
 }
-export async function runConfinedJob(input,{signal,probe=false,timeoutMs=45_000,onSpawn=()=>{},onDiagnostic=()=>{}}={}) {
+export async function runConfinedJob(input,{signal,probe=false,fault,timeoutMs=45_000,onSpawn=()=>{},onDiagnostic=()=>{},onLifetime=()=>{}}={}) {
+  if(fault!==undefined&&!['orphan','hold','hang','stdout','stderr'].includes(fault))throw new TypeError('Invalid fixture');
   if (!Buffer.isBuffer(input) || input.length>15*1024*1024) throw new ServiceError(413,'IMAGE_TOO_LARGE','Image exceeds the limit');
   if(signal?.aborted) throw new ServiceError(499,'CONVERSION_CANCELLED','Image processing cancelled');
   const job=await mkdtemp('/tmp/heif-converter/job-');
-  let child,cleanupFailure;
+  let child,cleanupFailure,canary;
   try {
     await chmod(job,0o700);
     await writeFile(job+'/input.heic',input,{flag:'wx',mode:0o600});
     await writeFile(job+'/decoded.png',Buffer.alloc(0),{flag:'wx',mode:0o600});
+    // A real inherited descriptor outside Landlock's readable paths must close
+    // before untrusted code starts; descriptor 63 is unused by the worker.
+    if(probe)canary=await open('/etc/passwd','r');
     const result=await new Promise((resolve,reject)=>{
-      child=spawn('/usr/local/bin/si-heif-confine',[probe?'--probe':'--worker',job,String(process.pid)],{
-        shell:false,detached:true,env:probe?{HEIF_CONVERTER_HMAC_SECRET:'synthetic-confinement-canary',NODE_OPTIONS:'--invalid-canary-option'}:{},stdio:['ignore','pipe','pipe'],
+      const args=fault?['--fault-probe',job,fault,String(process.pid)]:[probe?'--probe':'--worker',job,String(process.pid)];
+      const stdio=['ignore','pipe','pipe'];
+      if(canary){while(stdio.length<63)stdio.push('ignore');stdio.push(canary.fd);}
+      child=spawn('/usr/local/bin/si-heif-confine',args,{
+        shell:false,detached:true,env:probe?{HEIF_CONVERTER_HMAC_SECRET:'synthetic-confinement-canary',NODE_OPTIONS:'--invalid-canary-option'}:{},stdio,
       });
       let bytes=0,parts=[],reason;
       const stop=code=>{reason??=code;if(child.pid)killGroup(child.pid);};
@@ -32,11 +39,19 @@ export async function runConfinedJob(input,{signal,probe=false,timeoutMs=45_000,
       signal?.addEventListener('abort',abort,{once:true});
       if(signal?.aborted)abort();
       child.stdout.on('data',data=>{bytes+=data.length;if(bytes>MAX_FRAME)stop('INVALID_WORKER_OUTPUT');else parts.push(data);});
-      let diagnosticBytes=0;
+      let diagnosticBytes=0,diagnostics='';
       child.stderr.on('data',data=>{
         diagnosticBytes+=data.length;
         if(diagnosticBytes>2048)stop('INVALID_WORKER_OUTPUT');
-        else for(const code of data.toString('utf8').match(/CONFINEMENT_UNAVAILABLE:[A-Z_]+|CONFINEMENT_PROBE_FAILED:[A-Z_0-9]+/g)??[])onDiagnostic(code);
+        else {
+          diagnostics+=data.toString('utf8');
+          let index;
+          while((index=diagnostics.indexOf('\n'))>=0) {
+            const line=diagnostics.slice(0,index);diagnostics=diagnostics.slice(index+1);
+            if(/^(CONFINEMENT_UNAVAILABLE:[A-Z_]+|CONFINEMENT_PROBE_FAILED:[A-Z_0-9]+)$/.test(line))onDiagnostic(line);
+            if(fault&&/^CONFINEMENT_LIFETIME:[0-9]{1,10}$/.test(line))onLifetime(Number(line.split(':')[1]));
+          }
+        }
       });
       child.once('spawn',()=>onSpawn(child.pid));
       child.once('error',()=>{reason??='CONFINEMENT_UNAVAILABLE';});
@@ -66,6 +81,7 @@ export async function runConfinedJob(input,{signal,probe=false,timeoutMs=45_000,
       throw new ServiceError(503,'INVALID_WORKER_OUTPUT','Image processing is unavailable');
     return Object.freeze({data,mime:header.mime,width:header.width,height:header.height});
   } finally {
+    await canary?.close();
     if(child?.pid) { try { killGroup(child.pid);await gone(child.pid); } catch(e) { cleanupFailure=e; } }
     if(!cleanupFailure)await rm(job,{recursive:true,force:false});
     if(cleanupFailure)throw cleanupFailure;

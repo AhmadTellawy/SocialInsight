@@ -8,6 +8,9 @@ function denied(name,fn){let blocked=false;try{fn();}catch(e){blocked=['EACCES',
 try {
   check('uid',process.getuid()===10001);
   check('environment',Object.keys(process.env).sort().join(',')==='LANG,LC_ALL,MALLOC_ARENA_MAX,NODE_ENV,TZ,UV_THREADPOOL_SIZE,UV_USE_IO_URING');
+  let descriptorClosed=false;
+  try{fs.readSync(63,Buffer.alloc(128),0,128,0);}catch(e){descriptorClosed=e.code==='EBADF';}
+  check('inherited-descriptor-closed',descriptorClosed);
   // Inspect exec's environment before loading native libraries, which may set
   // their own process-local configuration variables during initialization.
   const sharp=(await import('sharp')).default;

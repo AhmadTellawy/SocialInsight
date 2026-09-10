@@ -319,10 +319,40 @@ static void system_calls(void) {
   struct sock_fprog program = { .len = sizeof(filter)/sizeof(filter[0]), .filter = filter };
   if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &program)) fail();
 }
+/* Test-only, credential-free real parent-death race. The grandchild is held
+ * until its spawning parent has been reaped by this non-PID1 subreaper. */
+static int parent_race_probe(void) {
+  phase="PARENT_RACE";
+  if(getpid()==1 || prctl(PR_SET_CHILD_SUBREAPER,1))fail();
+  int gate[2], identity[2], status;
+  if(pipe2(gate,O_CLOEXEC)||pipe2(identity,O_CLOEXEC))fail();
+  pid_t parent=fork();if(parent<0)fail();
+  if(!parent) {
+    close(gate[1]);close(identity[0]);
+    pid_t expected=getpid(),child=fork();if(child<0)fail();
+    if(!child) {
+      close(identity[1]);char byte;
+      if(read(gate[0],&byte,1)!=1 || getppid()==expected || getppid()==1)fail();
+      char value[32];snprintf(value,sizeof(value),"%d",expected);
+      execl("/usr/local/bin/si-heif-confine","si-heif-confine","--group-probe",value,NULL);fail();
+    }
+    if(write(identity[1],&child,sizeof(child))!=sizeof(child))fail();
+    _exit(0);
+  }
+  close(gate[0]);close(identity[1]);pid_t adopted;
+  if(read(identity[0],&adopted,sizeof(adopted))!=sizeof(adopted)
+    ||waitpid(parent,&status,0)!=parent||!WIFEXITED(status)||WEXITSTATUS(status))fail();
+  if(write(gate[1],"x",1)!=1 || waitpid(adopted,&status,0)!=adopted
+    || !WIFEXITED(status)||WEXITSTATUS(status)!=78)fail();
+  close(gate[1]);close(identity[0]);
+  puts("{\"status\":\"PASS\",\"actualAdoption\":true,\"nonPid1Subreaper\":true,\"rejectedExit\":78}");
+  return 0;
+}
 int main(int argc, char **argv) {
   if (getuid() != 10001 || geteuid() != getuid() || getgid() != 10001) fail();
   if (argc == 2 && !strcmp(argv[1], "--supervise")) return supervise(0);
   if (argc == 2 && !strcmp(argv[1], "--supervise-probe")) return supervise(1);
+  if (argc == 2 && !strcmp(argv[1], "--parent-race-probe")) return parent_race_probe();
   if(argc<3)fail();
   char *end;long expected_parent=strtol(argv[argc-1],&end,10);
   if(*end || expected_parent<1 || expected_parent>INT_MAX
@@ -332,6 +362,15 @@ int main(int argc, char **argv) {
   if(argc==3 && !strcmp(argv[1],"--group-probe")) {
     if(prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)!=1 || prctl(PR_GET_SECCOMP)!=2)fail();
     printf("{\"pid\":%d,\"group\":%d,\"session\":%d}\n",getpid(),getpgrp(),getsid(0));return 0;
+  }
+  if(argc==4 && !strcmp(argv[1],"--fork-sleeper")) {
+    if(prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)!=1 || prctl(PR_GET_SECCOMP)!=2)fail();
+    pid_t child=fork();if(child<0)fail();
+    if(!child) {close(0);close(1);close(2);alarm(60);for(;;)pause();}
+    printf("{\"descendant\":%d}\n",child);fflush(stdout);
+    if(!strcmp(argv[2],"orphan")){usleep(200000);return 0;}
+    if(strcmp(argv[2],"hold"))fail();
+    alarm(60);for(;;)pause();
   }
   char *env[] = { "LANG=C.UTF-8", "LC_ALL=C.UTF-8", "TZ=UTC", "NODE_ENV=production",
     "UV_THREADPOOL_SIZE=1", "UV_USE_IO_URING=0", "MALLOC_ARENA_MAX=2", NULL };
@@ -344,7 +383,10 @@ int main(int argc, char **argv) {
     char *args[] = { "/usr/local/bin/heif-convert", "--codec-threads", "1", "--tile-threads", "0", "--png-compression-level", "1", argv[2], argv[3], NULL };
     execve(args[0], args, env); fail();
   }
-  if (argc != 4 || (strcmp(argv[1], "--worker") && strcmp(argv[1], "--probe"))) fail();
+  int fault=argc==5 && !strcmp(argv[1],"--fault-probe");
+  if (!fault && (argc != 4 || (strcmp(argv[1], "--worker") && strcmp(argv[1], "--probe")))) fail();
+  if(fault && strcmp(argv[3],"orphan") && strcmp(argv[3],"hold")
+    && strcmp(argv[3],"hang") && strcmp(argv[3],"stdout") && strcmp(argv[3],"stderr"))fail();
   const char *job = argv[2]; char canonical[PATH_MAX], input[PATH_MAX], decoded[PATH_MAX]; struct stat s;
   phase="JOB_PATHS";
   if (!realpath(job, canonical) || strcmp(job, canonical)
@@ -366,6 +408,6 @@ int main(int argc, char **argv) {
   phase="LANDLOCK";filesystem(job, input, decoded);
   phase="SECCOMP";system_calls();
   char *args[] = { "/usr/local/bin/node", "--max-old-space-size=96", "--v8-pool-size=1",
-    !strcmp(argv[1], "--probe") ? "/app/src/confinedProbe.js" : "/app/src/confinedWorker.js", input, decoded, NULL };
+    fault ? "/app/src/confinedFaultProbe.js" : !strcmp(argv[1], "--probe") ? "/app/src/confinedProbe.js" : "/app/src/confinedWorker.js", input, decoded, fault ? argv[3] : NULL, NULL };
   phase="NODE_EXEC";execve(args[0], args, env); fail();
 }
