@@ -60,17 +60,16 @@ RUN git init libheif \
       -DWITH_JPEG_ENCODER_PLUGIN=OFF \
       -DWITH_UNCOMPRESSED_CODEC=OFF \
       -DWITH_KVAZAAR=OFF \
-      -DWITH_OPENJPEG_DECODER=OFF \
-      -DWITH_OPENJPEG_ENCODER=OFF \
+      -DWITH_OpenJPEG_DECODER=OFF \
+      -DWITH_OpenJPEG_ENCODER=OFF \
       -DWITH_OPENJPH_ENCODER=OFF \
       -DWITH_UVG266=OFF \
       -DWITH_VVDEC=OFF \
       -DWITH_VVENC=OFF \
       -DWITH_WEBCODECS=OFF \
       -DWITH_GDK_PIXBUF=OFF \
-      -DWITH_GOBJECT=OFF \
-    && cmake --build libheif/build --target heif-convert --parallel \
-    && install -D -m 0755 libheif/build/examples/heif-convert /native/heif-convert \
+    && cmake --build libheif/build --target heif-dec --parallel \
+    && install -D -m 0755 libheif/build/examples/heif-dec /native/heif-convert \
     && sha256sum /native/heif-convert | cut -d ' ' -f 1 > /native/heif-convert.sha256 \
     && git -C libheif rev-parse HEAD > /native/libheif.commit \
     && git -C libde265 rev-parse HEAD > /native/libde265.commit \
