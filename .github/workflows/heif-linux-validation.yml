@@ -1,11 +1,11 @@
-name: HEIF Linux capacity validation
+name: HEIF confined worker prototype
 on:
   push:
     branches: [codex/heif-linux-validation]
 permissions:
   contents: read
 jobs:
-  native-container:
+  confinement:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -19,40 +19,20 @@ jobs:
           git fetch --depth 1 origin "$GITHUB_SHA"
           git checkout --detach FETCH_HEAD
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-      - name: Build pinned decoder and runtime
-        run: docker build --progress=plain -t si-heif-validation heif-converter
-      - name: Verify converter guards in Linux runtime
-        run: docker run --rm --network none --entrypoint npm -v "$PWD/heif-converter/test:/app/test:ro" si-heif-validation test
-      - name: Prepare synthetic capacity fixtures
+      - name: Build pinned runtime with unprivileged confinement launcher
+        run: docker build --progress=plain -t si-heif-confined heif-converter
+      - name: Run complete converter guard suite
+        run: docker run --rm --network none --entrypoint npm -v "$PWD/heif-converter/test:/app/test:ro" si-heif-confined test
+      - name: Prove fresh worker and complete native Sharp confinement
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libheif-examples libheif-plugin-x265
-          mkdir -p tests/media-native/generated
-          chmod 0777 tests/media-native/generated
-          docker run --rm --network none --entrypoint node -v "$PWD/tests/media-native:/fixtures" si-heif-validation /fixtures/linux-runtime.mjs generate
-          heif-enc --version
-          heif-enc -q 70 tests/media-native/generated/12mp.png -o tests/media-native/generated/12mp.heic
-          heif-enc -q 70 tests/media-native/generated/40mp.png -o tests/media-native/generated/40mp.heic
-      - name: Exercise signed HTTP with actual free-instance resource limits
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker run -d --name si-heif-capacity --read-only --cap-drop ALL --security-opt no-new-privileges --memory 512m --memory-swap 512m --cpus 0.1 --pids-limit 128 --tmpfs /tmp/heif-converter:rw,noexec,nosuid,size=192m,uid=10001,gid=10001,mode=0700 -p 127.0.0.1:18080:8080 -e HEIF_CONVERTER_HMAC_SECRET=synthetic-ci-fixture-key-not-an-application-secret si-heif-validation
-          docker run --rm --network host --entrypoint node -v "$PWD/tests/media-native:/fixtures:ro" si-heif-validation /fixtures/linux-runtime.mjs test
-      - name: Diagnose failed decoder with identical process limits and synthetic input
-        if: failure()
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker exec -i si-heif-capacity sh -c 'cat > /tmp/heif-converter/diagnostic.heic' < tests/media-native/fixtures/example.heic
-          docker exec si-heif-capacity sh -c 'cd /tmp/heif-converter && /usr/bin/prlimit --as=805306368 --cpu=12 --fsize=134217728 --nproc=32 --nofile=64 -- /usr/local/bin/heif-convert --codec-threads 1 --tile-threads 0 --png-compression-level 1 diagnostic.heic diagnostic.png' || true
-      - name: Record container memory, exit and cleanup evidence
+          docker run --name si-heif-prototype --read-only --cap-drop ALL --security-opt no-new-privileges --memory 512m --memory-swap 512m --cpus 0.1 --pids-limit 128 --network none --tmpfs /tmp/heif-converter:rw,noexec,nosuid,size=192m,uid=10001,gid=10001,mode=0700 --entrypoint /usr/local/bin/si-heif-confine -v "$PWD/tests/media-native:/fixtures:ro" si-heif-confined --supervise-probe
+      - name: Record exact image and exit evidence
         if: always()
         shell: bash
         run: |
-          docker inspect --format '{{json .State}} {{json .HostConfig.Memory}} {{json .HostConfig.NanoCpus}}' si-heif-capacity || true
-          docker exec si-heif-capacity node -e 'const fs=require("fs"); for(const n of ["memory.peak","memory.events","cpu.stat"]){const p="/sys/fs/cgroup/"+n; if(fs.existsSync(p))console.log(n+" "+fs.readFileSync(p,"utf8"));} console.log("remaining_temp_entries "+fs.readdirSync("/tmp/heif-converter").length)' || true
-          docker logs --tail 50 si-heif-capacity || true
-          docker rm -f si-heif-capacity || true
+          docker image inspect --format '{{.Id}}' si-heif-confined || true
+          docker inspect --format '{{json .State}} {{json .HostConfig.Memory}} {{json .HostConfig.NanoCpus}}' si-heif-prototype || true
+          docker logs --tail 50 si-heif-prototype || true
+          docker rm -f si-heif-prototype || true

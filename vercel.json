@@ -1,7 +1,8 @@
 {
   "git": {
     "deploymentEnabled": {
-      "codex/account-settings-stage-bootstrap": false
+      "codex/account-settings-stage-bootstrap": false,
+      "codex/heif-linux-validation": false
     }
   },
   "buildCommand": "vite build",

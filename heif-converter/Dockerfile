@@ -11,6 +11,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
+COPY native/confine.c /build/confine.c
+RUN cc -O2 -Wall -Wextra -Werror -Wno-sign-compare -o /native-confine /build/confine.c
 RUN git init libde265 \
     && git -C libde265 remote add origin https://github.com/strukturag/libde265.git \
     && git -C libde265 fetch --depth 1 origin "${LIBDE265_COMMIT}" \
@@ -90,12 +92,14 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 converter \
     && useradd --system --uid 10001 --gid converter --home-dir /nonexistent --shell /usr/sbin/nologin converter \
-    && install -d -o converter -g converter -m 0700 /tmp/heif-converter /opt/heif-converter
+    && install -d -o converter -g converter -m 0700 /tmp/heif-converter \
+    && install -d -o root -g root -m 0755 /opt/heif-converter
 
 WORKDIR /app
-COPY --from=node-dependencies --chown=converter:converter /app/node_modules ./node_modules
-COPY --chown=converter:converter package.json ./
-COPY --chown=converter:converter src ./src
+COPY --from=node-dependencies --chown=root:root /app/node_modules ./node_modules
+COPY --chown=root:root package.json ./
+COPY --chown=root:root src ./src
+COPY --from=native-builder /native-confine /usr/local/bin/si-heif-confine
 COPY --from=native-builder /native/heif-convert /usr/local/bin/heif-convert
 COPY --from=native-builder /native/heif-convert.sha256 /tmp/heif-convert.sha256
 COPY --from=native-builder /native/libheif.commit /tmp/libheif.commit
