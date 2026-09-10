@@ -19,6 +19,10 @@ if (process.argv[2] === 'generate') {
   process.exit(0);
 }
 assert.equal(process.argv[2], 'test');
+// The HTTP client is outside the converter identity boundary. RLIMIT_NPROC
+// counts threads for a real UID, including other containers without userns.
+assert.equal(process.getuid(),10002);assert.equal(process.getgid(),10002);
+console.log(JSON.stringify({kind:'TEST_DRIVER',uid:process.getuid(),gid:process.getgid(),separateFromConverterUid10001:true}));
 const base='http://127.0.0.1:18080';
 const secret='synthetic-ci-fixture-key-not-an-application-secret';
 const reports=[];

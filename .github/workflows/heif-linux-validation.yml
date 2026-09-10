@@ -45,7 +45,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run -d --name si-heif-http --cap-drop ALL --security-opt no-new-privileges --memory 512m --memory-swap 512m --cpus 0.1 --pids-limit 512 -p 127.0.0.1:18080:8080 -e HEIF_CONVERTER_HMAC_SECRET=synthetic-ci-fixture-key-not-an-application-secret si-heif-confined
-          docker run --rm --network host --entrypoint node -v "$PWD/tests/media-native:/fixtures:ro" si-heif-confined /fixtures/linux-runtime.mjs test
+          docker run --rm --user 10002:10002 --network host --entrypoint node -v "$PWD/tests/media-native:/fixtures:ro" si-heif-confined /fixtures/linux-runtime.mjs test
           docker exec -e UV_THREADPOOL_SIZE=1 si-heif-http node --v8-pool-size=1 -e "const fs=require('fs'),assert=require('assert/strict');assert.deepEqual(fs.readdirSync('/tmp/heif-converter'),[]);const events=fs.readFileSync('/sys/fs/cgroup/memory.events','utf8');assert.match(events,/^oom 0$/m);assert.match(events,/^oom_kill 0$/m);console.log(JSON.stringify({emptyPrivateRoot:true,memoryPeak:Number(fs.readFileSync('/sys/fs/cgroup/memory.peak','utf8')),events}));"
           docker stop -t 12 si-heif-http
           test "$(docker inspect --format '{{.State.ExitCode}}' si-heif-http)" = 0
@@ -56,6 +56,6 @@ jobs:
           docker image inspect --format '{{.Id}}' si-heif-confined || true
           docker inspect --format '{{json .State}} {{json .HostConfig.Memory}} {{json .HostConfig.NanoCpus}}' si-heif-prototype || true
           docker logs --tail 50 si-heif-prototype || true
-          docker logs --tail 50 si-heif-http || true
+          docker logs --tail 200 si-heif-http || true
           docker inspect --format '{{json .State}}' si-heif-http || true
           docker rm -f si-heif-prototype si-heif-http || true
