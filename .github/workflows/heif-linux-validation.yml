@@ -21,6 +21,8 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - name: Build pinned decoder and runtime
         run: docker build --progress=plain -t si-heif-validation heif-converter
+      - name: Verify converter guards in Linux runtime
+        run: docker run --rm --network none --entrypoint npm -v "$PWD/heif-converter/test:/app/test:ro" si-heif-validation test
       - name: Prepare synthetic capacity fixtures
         shell: bash
         run: |
@@ -45,7 +47,7 @@ jobs:
         run: |
           set -euo pipefail
           docker exec -i si-heif-capacity sh -c 'cat > /tmp/heif-converter/diagnostic.heic' < tests/media-native/fixtures/example.heic
-          docker exec si-heif-capacity sh -c 'cd /tmp/heif-converter && /usr/bin/prlimit --as=805306368 --cpu=12 --fsize=134217728 --nproc=1 --nofile=64 -- /usr/local/bin/heif-convert diagnostic.heic diagnostic.png' || true
+          docker exec si-heif-capacity sh -c 'cd /tmp/heif-converter && /usr/bin/prlimit --as=805306368 --cpu=12 --fsize=134217728 --nproc=32 --nofile=64 -- /usr/local/bin/heif-convert --codec-threads 1 --tile-threads 0 diagnostic.heic diagnostic.png' || true
       - name: Record container memory, exit and cleanup evidence
         if: always()
         shell: bash

@@ -30,10 +30,14 @@ export function runHeifConvert({
       '--as=805306368',
       '--cpu=12',
       '--fsize=134217728',
-      '--nproc=1',
+      // RLIMIT_NPROC counts threads for the whole UID, including the Node
+      // supervisor. libde265 needs one worker; keep a finite task budget.
+      '--nproc=32',
       '--nofile=64',
       '--',
       converterPath,
+      '--codec-threads', '1',
+      '--tile-threads', '0',
       inputPath,
       outputPath,
     ];

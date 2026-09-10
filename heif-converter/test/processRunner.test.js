@@ -36,12 +36,12 @@ test('spawns prlimit without a shell and without inheriting secrets', async () =
   assert.equal(invocation.command, '/usr/bin/prlimit');
   assert.equal(invocation.spawnOptions.shell, false);
   assert.deepEqual(Object.keys(invocation.spawnOptions.env).sort(), ['LANG', 'LC_ALL', 'TMPDIR']);
-  assert.deepEqual(invocation.args.slice(-4), [
-    '--', '/usr/local/bin/heif-convert', '/tmp/job/input.heic', '/tmp/job/decoded.png',
+  assert.deepEqual(invocation.args.slice(-8), [
+    '--', '/usr/local/bin/heif-convert', '--codec-threads', '1', '--tile-threads', '0', '/tmp/job/input.heic', '/tmp/job/decoded.png',
   ]);
   assert.ok(invocation.args.includes('--as=805306368'));
   assert.ok(invocation.args.includes('--cpu=12'));
-  assert.ok(invocation.args.includes('--nproc=1'));
+  assert.ok(invocation.args.includes('--nproc=32'));
 });
 
 test('kills a native conversion that exceeds the timeout', async () => {

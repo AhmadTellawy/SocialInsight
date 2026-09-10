@@ -24,7 +24,7 @@ signature = "v1=" + HMAC_SHA256(HEIF_CONVERTER_HMAC_SECRET, canonical).hex
 - فحص ISO-BMFF فعليًا؛ لا ثقة بالامتداد أو MIME القادم.
 - قبول HEVC single-image فقط (`heic`/`heix` أو `mif1` العام عند وجود `hvcC`) ورفض AVIF وsequence/collection brands.
 - إثبات `ispe` dimensions قبل decode ورفض المجموع الأكبر من 40 MP.
-- تشغيل `heif-convert` عبر `prlimit` دون shell، ببيئة مصغرة لا ترث الأسرار، وحدود CPU/RSS/file/process، وtimeout 15 ثانية، وحد 8 KiB للمخرجات التشخيصية.
+- تشغيل `heif-convert` عبر `prlimit` دون shell، ببيئة مصغرة لا ترث الأسرار، وحدود CPU/address-space/file/tasks، وtimeout 15 ثانية، وحد 8 KiB للمخرجات التشخيصية. حد المهام 32 للمستخدم داخل الحاوية لأن Linux يحتسب خيوط Node ضمنه؛ يعمل فك HEVC بخيط عمل واحد دون فك متوازٍ للبلاطات. حد الذاكرة الفعلي للحاوية مستقل عن حد فضاء العناوين للعملية.
 - مجلد خاص `0700` لكل عملية، ثم حذف مضمون في `finally`.
 - تحويل PNG الوسيط بواسطة Sharp 0.35.4 إلى WebP بجودة 92 و`alphaQuality=100`، وبحد أقصى 2400px للحافة. لا تُنسخ metadata، ويعاد فحص MIME والأبعاد بعد encode.
 - رفض ناتج WebP الأكبر من 12 MiB حتى يطابق حد وسائط التطبيق.
