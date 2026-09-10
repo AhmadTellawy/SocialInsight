@@ -1,9 +1,12 @@
 // Credential-free Linux prototype harness. Never imported by the HTTP broker.
 import fs from 'node:fs/promises';
+import { chmodSync } from 'node:fs';
 import crypto from 'node:crypto';
 import nodeAssert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { runConfinedJob } from './confinedRunner.js';
+import { verifyBootstrap, verifyTempRoot, TEMP_ROOT } from './bootstrap.js';
+import { ConfinedHeifConverter } from './confinedService.js';
 
 const cases=[];
 let assertions=0;
@@ -21,12 +24,29 @@ if(process.env.SI_CONFINEMENT_DEATH_PROBE==='1') {
 }
 async function record(name,fn){const start=performance.now(),before=assertions;try{const details=await fn();cases.push({name,status:'PASS',ms:Math.round(performance.now()-start),assertions:assertions-before,...details});console.log(JSON.stringify(cases.at(-1)));}catch(e){cases.push({name,status:'FAIL',ms:Math.round(performance.now()-start),assertions:assertions-before,code:e.code??'ASSERTION'});console.log(JSON.stringify(cases.at(-1)));throw e;}}
 try {
+  await record('actual-bootstrap-envelope',async()=>{
+    const envelope=await verifyBootstrap({supervisorMode:'--supervise-probe'});
+    assert.ok(envelope.resources.pids<=512);assert.equal(envelope.resources.swapBytes,0);return{envelope};
+  });
   await record('enforced-container-memory',async()=>{
     const limit=(await fs.readFile('/sys/fs/cgroup/memory.max','utf8')).trim();
     assert.notEqual(limit,'max');assert.ok(Number(limit)>0&&Number(limit)<=512*1024*1024);
     return{bytes:Number(limit)};
   });
-  await record('whole-worker-confinement',async()=>{const probe=await runConfinedJob(Buffer.alloc(0),{probe:true,onDiagnostic:code=>console.log(JSON.stringify({diagnostic:code}))});assert.equal(probe.ok,true);assert.equal(probe.checks.length,19);assert.equal(probe.syscallReport.negativeSyscalls,30);return{probe};});
+  await record('whole-worker-confinement',async()=>{const probe=await runConfinedJob(Buffer.alloc(0),{probe:true,onDiagnostic:code=>console.log(JSON.stringify({diagnostic:code}))});assert.equal(probe.ok,true);assert.equal(probe.checks.length,19);assert.equal(probe.syscallReport.negativeSyscalls,31);return{probe};});
+  await record('actual-stale-and-permission-startup-rejection',async()=>{
+    await fs.writeFile(TEMP_ROOT+'/synthetic-stale','synthetic',{flag:'wx',mode:0o600});
+    try{await assert.rejects(verifyTempRoot(),e=>e.code==='CONFINEMENT_UNAVAILABLE');assert.equal(await fs.readFile(TEMP_ROOT+'/synthetic-stale','utf8'),'synthetic');}finally{await fs.unlink(TEMP_ROOT+'/synthetic-stale');}
+    await fs.chmod(TEMP_ROOT,0o755);
+    try{await assert.rejects(verifyTempRoot(),e=>e.code==='CONFINEMENT_UNAVAILABLE');}finally{await fs.chmod(TEMP_ROOT,0o700);}
+    await assert.rejects(verifyTempRoot({...fs,statfs:async()=>({bavail:0n,bsize:4096n,ffree:100n})}),e=>e.code==='CONFINEMENT_UNAVAILABLE');
+    return{actualStalePreserved:true,actualModeRejected:true,lowCapacityCheck:'injected statfs response'};
+  });
+  await record('actual-symlink-startup-rejection',async()=>{
+    const saved='/tmp/si-heif-synthetic-saved-root';await fs.rename(TEMP_ROOT,saved);
+    try{await fs.symlink(saved,TEMP_ROOT);await assert.rejects(verifyTempRoot(),e=>e.code==='CONFINEMENT_UNAVAILABLE');}
+    finally{await fs.unlink(TEMP_ROOT);await fs.rename(saved,TEMP_ROOT);}
+  });
   await record('actual-non-pid1-parent-adoption-race',async()=>{
     const report=await new Promise((resolve,reject)=>{
       const child=spawn(helper,['--parent-race-probe'],{env:{},stdio:['ignore','pipe','ignore']});
@@ -64,6 +84,12 @@ try {
     await assert.rejects(runConfinedJob(Buffer.alloc(0),{fault,timeoutMs:fault==='hang'?1500:10000,onSpawn:value=>{pid=value;}}),e=>e.code===expected);
     absent(pid);return{typedFailure:expected,workerGone:true};
   });
+  for(const fault of ['fork-exhaust','thread-exhaust'])await record('actual-'+fault+'-bounded',async()=>{
+    const controller=new AbortController();let pid,report;
+    await assert.rejects(runConfinedJob(Buffer.alloc(0),{fault,signal:controller.signal,timeoutMs:5000,onSpawn:value=>{pid=value;},onExhaustion:value=>{report=value;controller.abort();}}),e=>e.code==='CONVERSION_CANCELLED');
+    assert.equal(report.error,'EAGAIN');assert.equal(report.limit,32);assert.ok(report.created>0&&report.created<=32);absent(pid);for(const child of report.children)absent(child);
+    return{exhaustion:report,workerGone:true};
+  });
   const camera=Buffer.from(await fs.readFile('/fixtures/fixtures/camera-sample.base64','utf8'),'base64');
   for(const [name,input] of [['camera',camera],['aperture',await fs.readFile('/fixtures/fixtures/rainbow-451x461.heic')],['alpha',await fs.readFile('/fixtures/fixtures/with-alpha-512x512.heic')]]) {
     await record('native-sharp-'+name,async()=>{
@@ -91,6 +117,27 @@ try {
     const controller=new AbortController();let pid;
     await assert.rejects(runConfinedJob(camera,{signal:controller.signal,onSpawn:value=>{pid=value;setTimeout(()=>controller.abort(),150);}}),e=>e.code==='CONVERSION_CANCELLED');
     assert.throws(()=>process.kill(-pid,0),e=>e.code==='ESRCH');
+  });
+  await record('actual-cleanup-failure-latch-and-restart-refusal',async()=>{
+    let worker,calls=0;
+    const service=new ConfinedHeifConverter({bootstrap:()=>verifyBootstrap({supervisorMode:'--supervise-probe'}),runJob:(input,options)=>{
+      calls++;return runConfinedJob(input,{...options,onSpawn:pid=>{if(!options.probe){worker=pid;chmodSync(TEMP_ROOT,0o500);}}});
+    }});
+    await service.initialize();assert.equal(service.isReady(),true);
+    try {
+      await assert.rejects(service.convert(camera),e=>e.status===503);absent(worker);assert.equal(service.isReady(),false);
+      const before=calls;await assert.rejects(service.convert(camera),e=>e.status===503);assert.equal(calls,before);
+    } finally {await fs.chmod(TEMP_ROOT,0o700);}
+    assert.equal(service.isReady(),false);
+    let restartInvocations=0;
+    const restart=new ConfinedHeifConverter({bootstrap:()=>verifyBootstrap({supervisorMode:'--supervise-probe'}),runJob:()=>{restartInvocations++;}});
+    await assert.rejects(restart.initialize(),e=>e.status===503);assert.equal(restartInvocations,0);
+    const residual=await fs.readdir(TEMP_ROOT);assert.equal(residual.length,1);assert.match(residual[0],/^job-[A-Za-z0-9]+$/);
+    const dir=TEMP_ROOT+'/'+residual[0],entries=await fs.readdir(dir);assert.ok(entries.every(name=>['input.heic','decoded.png'].includes(name)));
+    // Only the synthetic test owner cleans after the failed service is stopped
+    // and all worker processes are proven gone. Production never does this.
+    await fs.rm(dir,{recursive:true,force:false});
+    return{fatalLatch:true,laterAdmissionRejected:true,restartBeforeWorkerRejected:true,actualFilesystemFailure:true};
   });
   await record('cleanup',async()=>{assert.deepEqual(await fs.readdir('/tmp/heif-converter'),[]);});
   await record('no-container-oom',async()=>{

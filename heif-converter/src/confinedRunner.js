@@ -12,8 +12,8 @@ async function gone(pid) {
   }
   throw new ServiceError(503,'WORKER_CLEANUP_FAILED','Image processing is unavailable');
 }
-export async function runConfinedJob(input,{signal,probe=false,fault,timeoutMs=45_000,onSpawn=()=>{},onDiagnostic=()=>{},onLifetime=()=>{}}={}) {
-  if(fault!==undefined&&!['orphan','hold','hang','stdout','stderr'].includes(fault))throw new TypeError('Invalid fixture');
+export async function runConfinedJob(input,{signal,probe=false,fault,timeoutMs=45_000,onSpawn=()=>{},onDiagnostic=()=>{},onLifetime=()=>{},onExhaustion=()=>{}}={}) {
+  if(fault!==undefined&&!['orphan','hold','hang','stdout','stderr','fork-exhaust','thread-exhaust'].includes(fault))throw new TypeError('Invalid fixture');
   if (!Buffer.isBuffer(input) || input.length>15*1024*1024) throw new ServiceError(413,'IMAGE_TOO_LARGE','Image exceeds the limit');
   if(signal?.aborted) throw new ServiceError(499,'CONVERSION_CANCELLED','Image processing cancelled');
   const job=await mkdtemp('/tmp/heif-converter/job-');
@@ -52,6 +52,9 @@ export async function runConfinedJob(input,{signal,probe=false,fault,timeoutMs=4
             if(/^(CONFINEMENT_PHASE:(NATIVE_STARTED|ENCODE_STARTED|ENCODE_FINISHED)|CONFINEMENT_NATIVE_EXIT:([0-9]{1,3}|SIG[A-Z]+|UNKNOWN))$/.test(line))onDiagnostic(line);
             if(line==='CONFINEMENT_NATIVE_TIMEOUT'){onDiagnostic(line);stop('CONVERSION_TIMEOUT');}
             if(fault&&/^CONFINEMENT_LIFETIME:[0-9]{1,10}$/.test(line))onLifetime(Number(line.split(':')[1]));
+            if(['fork-exhaust','thread-exhaust'].includes(fault)&&line.startsWith('CONFINEMENT_EXHAUSTION:')){
+              try{onExhaustion(JSON.parse(line.slice('CONFINEMENT_EXHAUSTION:'.length)));}catch{stop('INVALID_WORKER_OUTPUT');}
+            }
           }
         }
       });
@@ -59,7 +62,8 @@ export async function runConfinedJob(input,{signal,probe=false,fault,timeoutMs=4
       child.once('error',()=>{reason??='CONFINEMENT_UNAVAILABLE';});
       child.once('close',code=>{
         clearTimeout(timer);signal?.removeEventListener('abort',abort);
-        if(reason || code!==0)reject(new ServiceError(reason==='CONVERSION_CANCELLED'?499:422,reason??'IMAGE_PROCESSING_FAILED','Image processing did not finish'));
+        if(code===78)reason??='CONFINEMENT_UNAVAILABLE';
+        if(reason || code!==0)reject(new ServiceError(reason==='CONVERSION_CANCELLED'?499:['CONFINEMENT_UNAVAILABLE','INVALID_WORKER_OUTPUT'].includes(reason)?503:422,reason??'IMAGE_PROCESSING_FAILED','Image processing did not finish'));
         else resolve(Buffer.concat(parts));
       });
     });
@@ -85,7 +89,7 @@ export async function runConfinedJob(input,{signal,probe=false,fault,timeoutMs=4
   } finally {
     await canary?.close();
     if(child?.pid) { try { killGroup(child.pid);await gone(child.pid); } catch(e) { cleanupFailure=e; } }
-    if(!cleanupFailure)await rm(job,{recursive:true,force:false});
+    if(!cleanupFailure)try{await rm(job,{recursive:true,force:false});}catch{cleanupFailure=new ServiceError(503,'WORKER_CLEANUP_FAILED','Image processing is unavailable');}
     if(cleanupFailure)throw cleanupFailure;
   }
 }

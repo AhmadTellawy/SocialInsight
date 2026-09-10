@@ -3,11 +3,14 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <linux/audit.h>
+#include <linux/capability.h>
 #include <linux/filter.h>
+#include <linux/falloc.h>
 #include <linux/landlock.h>
 #include <linux/sched.h>
 #include <linux/seccomp.h>
 #include <signal.h>
+#include <pthread.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -96,6 +99,33 @@ static int supervise(int probe) {
 }
 static void limit(int resource, rlim_t value) {
   struct rlimit r = { value, value }; if (setrlimit(resource, &r)) fail();
+}
+static void no_capabilities(void) {
+  struct __user_cap_header_struct header={.version=_LINUX_CAPABILITY_VERSION_3,.pid=0};
+  struct __user_cap_data_struct data[2];
+  if(syscall(SYS_capget,&header,data))fail();
+  for(unsigned i=0;i<2;i++)if(data[i].effective||data[i].permitted||data[i].inheritable)fail();
+  for(int cap=0;cap<=CAP_LAST_CAP;cap++)if(prctl(PR_CAP_AMBIENT,PR_CAP_AMBIENT_IS_SET,cap,0,0)!=0)fail();
+}
+static void supervisor_boundary(void) {
+  phase="SUPERVISOR_BOUNDARY";no_capabilities();
+  limit(RLIMIT_NPROC,128);
+  struct rlimit r;if(getrlimit(RLIMIT_NPROC,&r)||r.rlim_cur!=128||r.rlim_max!=128)fail();
+  if(prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0)||prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)!=1)fail();
+}
+static void *sleep_thread(void *unused) {(void)unused;for(;;)pause();return NULL;}
+static int exhaustion_probe(int threads) {
+  phase="NPROC_EXHAUSTION";
+  struct rlimit r;if(getrlimit(RLIMIT_NPROC,&r)||r.rlim_cur!=32||r.rlim_max!=32)fail();
+  unsigned count=0;pid_t children[64];pthread_t workers[64];int error=0;
+  for(;count<64;count++) {
+    if(threads){error=pthread_create(&workers[count],NULL,sleep_thread,NULL);if(error)break;}
+    else {pid_t child=fork();if(child<0){error=errno;break;}if(!child){close(0);close(1);close(2);alarm(60);for(;;)pause();}children[count]=child;}
+  }
+  if(error!=EAGAIN||count<1||count>32)fail();
+  printf("{\"kind\":\"%s\",\"created\":%u,\"limit\":32,\"error\":\"EAGAIN\",\"children\":[",threads?"threads":"forks",count);
+  if(!threads)for(unsigned i=0;i<count;i++)printf("%s%d",i?",":"",children[i]);
+  puts("]}");fflush(stdout);alarm(60);for(;;)pause();
 }
 static void immutable(const char *path) {
   char resolved[PATH_MAX]; struct stat s;
@@ -200,6 +230,11 @@ static int syscall_probe(void) {
   EXPECT_DENIED(syscall(__NR_unshare,0));
   EXPECT_DENIED(syscall(__NR_setpgid,0,0));
   EXPECT_DENIED(syscall(__NR_setsid));
+  int decoded=open("decoded.png",O_RDWR|O_CLOEXEC);struct stat before,after;
+  if(decoded<0||fstat(decoded,&before))fail();
+  EXPECT_DENIED(syscall(__NR_fallocate,decoded,FALLOC_FL_KEEP_SIZE,0,4096));
+  if(fstat(decoded,&after)||before.st_size!=after.st_size||before.st_blocks!=after.st_blocks)fail();
+  close(decoded);
   if(fcntl(pair[0],F_GETFD)<0 || fcntl(pair[0],F_SETFD,FD_CLOEXEC)<0
     || fcntl(pair[0],F_SETFL,O_NONBLOCK)<0)fail();
   close(pair[0]);close(pair[1]);close(sockets[0]);close(sockets[1]);
@@ -225,7 +260,7 @@ static void system_calls(void) {
 #endif
     DENY(socket), DENY(connect), DENY(bind), DENY(listen), DENY(accept), DENY(accept4),
     DENY(sendto), DENY(sendmsg), DENY(sendmmsg), DENY(recvmsg), DENY(recvmmsg),
-    DENY(chmod), DENY(fchmod), DENY(fchmodat), DENY(fchmodat2),
+    DENY(chmod), DENY(fchmod), DENY(fchmodat), DENY(fchmodat2), DENY(fallocate),
     DENY(fchown), DENY(fchownat), DENY(setxattr), DENY(lsetxattr), DENY(fsetxattr),
     DENY(removexattr), DENY(lremovexattr), DENY(fremovexattr), DENY(utimensat),
 #if defined(__x86_64__)
@@ -349,9 +384,9 @@ static int parent_race_probe(void) {
   return 0;
 }
 int main(int argc, char **argv) {
-  if (getuid() != 10001 || geteuid() != getuid() || getgid() != 10001) fail();
-  if (argc == 2 && !strcmp(argv[1], "--supervise")) return supervise(0);
-  if (argc == 2 && !strcmp(argv[1], "--supervise-probe")) return supervise(1);
+  if (getuid() != 10001 || geteuid() != getuid() || getgid() != 10001 || getegid()!=getgid()) fail();
+  if (argc == 2 && !strcmp(argv[1], "--supervise")) {supervisor_boundary();return supervise(0);}
+  if (argc == 2 && !strcmp(argv[1], "--supervise-probe")) {supervisor_boundary();return supervise(1);}
   if (argc == 2 && !strcmp(argv[1], "--parent-race-probe")) return parent_race_probe();
   if(argc<3)fail();
   char *end;long expected_parent=strtol(argv[argc-1],&end,10);
@@ -359,6 +394,8 @@ int main(int argc, char **argv) {
     || getppid()!=expected_parent || prctl(PR_SET_PDEATHSIG,SIGKILL)
     || getppid()!=expected_parent)fail();
   if(argc==3 && !strcmp(argv[1],"--syscall-probe"))return syscall_probe();
+  if(argc==3 && !strcmp(argv[1],"--fork-exhaust-probe"))return exhaustion_probe(0);
+  if(argc==3 && !strcmp(argv[1],"--thread-exhaust-probe"))return exhaustion_probe(1);
   if(argc==3 && !strcmp(argv[1],"--group-probe")) {
     if(prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)!=1 || prctl(PR_GET_SECCOMP)!=2)fail();
     printf("{\"pid\":%d,\"group\":%d,\"session\":%d}\n",getpid(),getpgrp(),getsid(0));return 0;
@@ -386,7 +423,9 @@ int main(int argc, char **argv) {
   int fault=argc==5 && !strcmp(argv[1],"--fault-probe");
   if (!fault && (argc != 4 || (strcmp(argv[1], "--worker") && strcmp(argv[1], "--probe")))) fail();
   if(fault && strcmp(argv[3],"orphan") && strcmp(argv[3],"hold")
-    && strcmp(argv[3],"hang") && strcmp(argv[3],"stdout") && strcmp(argv[3],"stderr"))fail();
+    && strcmp(argv[3],"hang") && strcmp(argv[3],"stdout") && strcmp(argv[3],"stderr")
+    && strcmp(argv[3],"fork-exhaust") && strcmp(argv[3],"thread-exhaust"))fail();
+  phase="WORKER_CAPABILITIES";no_capabilities();
   const char *job = argv[2]; char canonical[PATH_MAX], input[PATH_MAX], decoded[PATH_MAX]; struct stat s;
   phase="JOB_PATHS";
   if (!realpath(job, canonical) || strcmp(job, canonical)

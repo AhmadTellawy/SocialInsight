@@ -1,7 +1,11 @@
 // Credential-free fault fixture; no HTTP route imports or selects this file.
 import { spawn } from 'node:child_process';
 const mode=process.argv[4];
-if(mode==='orphan'||mode==='hold') {
+if(mode==='fork-exhaust'||mode==='thread-exhaust') {
+  const child=spawn('/usr/local/bin/si-heif-confine',['--'+mode+'-probe',String(process.pid)],{env:{},stdio:['ignore','pipe','ignore']});
+  let output='';child.stdout.on('data',data=>{output+=data.toString();if(output.length>1024)process.exit(1);if(output.endsWith('\n'))process.stderr.write('CONFINEMENT_EXHAUSTION:'+output);});
+  child.on('error',()=>process.exit(1));setInterval(()=>{},1000);
+} else if(mode==='orphan'||mode==='hold') {
   const child=spawn('/usr/local/bin/si-heif-confine',['--fork-sleeper',mode,String(process.pid)],{env:{},stdio:['ignore','pipe','ignore']});
   child.stdout.once('data',data=>{
     const {descendant}=JSON.parse(data.toString());

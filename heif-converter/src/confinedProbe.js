@@ -33,7 +33,7 @@ try {
     let result='';p.stdout.on('data',b=>{result+=b.toString();if(result.length>512)reject(new Error('SYSCALL_PROBE_OUTPUT'));});
     p.once('error',reject);p.once('close',code=>{try{code===0?resolve(JSON.parse(result)):reject(Object.assign(new Error('SYSCALL_PROBE'),{probeCheck:'SYSCALL_PROBE'}));}catch(e){reject(e);}});
   });
-  check('syscall-boundary',syscallReport.status==='PASS'&&syscallReport.negativeSyscalls===30&&syscallReport.limitsVerified===5);
+  check('syscall-boundary',syscallReport.status==='PASS'&&syscallReport.negativeSyscalls===31&&syscallReport.limitsVerified===5);
   // A newly detached process would escape cancellation's process-group boundary.
   const escapeDenied=await new Promise(resolve=>{
     const p=spawn('/usr/local/bin/si-heif-confine',['--group-probe',String(process.pid)],{detached:true,stdio:['ignore','pipe','ignore'],env:{}});
@@ -53,6 +53,6 @@ try {
   const data=await sharp({create:{width:4,height:4,channels:4,background:'#33669980'}}).webp().toBuffer();
   const meta=await sharp(data).metadata();
   check('sharp-inside',meta.format==='webp'&&meta.width===4&&meta.height===4);
-  const header=Buffer.from(JSON.stringify({ok:true,bytes:0,checks,syscallReport})),prefix=Buffer.alloc(4);
+  const header=Buffer.from(JSON.stringify({ok:true,bytes:0,checks,syscallReport,versions:{sharp:sharp.versions.sharp,vips:sharp.versions.vips}})),prefix=Buffer.alloc(4);
   prefix.writeUInt32BE(header.length);process.stdout.write(prefix);process.stdout.end(header);
 } catch(error) {const code=String(error.probeCheck??error.code??'UNKNOWN');process.stderr.write('CONFINEMENT_PROBE_FAILED:'+(/^[A-Z_0-9]+$/.test(code)?code:'UNKNOWN')+'\n');process.exitCode=1;}

@@ -12,7 +12,7 @@ RUN apt-get update \
 
 WORKDIR /build
 COPY native/confine.c /build/confine.c
-RUN cc -O2 -Wall -Wextra -Werror -Wno-sign-compare -o /native-confine /build/confine.c
+RUN cc -O2 -pthread -Wall -Wextra -Werror -Wno-sign-compare -o /native-confine /build/confine.c
 RUN git init libde265 \
     && git -C libde265 remote add origin https://github.com/strukturag/libde265.git \
     && git -C libde265 fetch --depth 1 origin "${LIBDE265_COMMIT}" \
