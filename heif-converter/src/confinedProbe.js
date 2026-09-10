@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
-import sharp from 'sharp';
 
 const [input,decoded]=process.argv.slice(2), checks=[];
 function check(name,pass){if(!pass)throw Object.assign(new Error(name),{probeCheck:name.replaceAll('-','_').toUpperCase()});checks.push(name);}
@@ -9,6 +8,9 @@ function denied(name,fn){let blocked=false;try{fn();}catch(e){blocked=['EACCES',
 try {
   check('uid',process.getuid()===10001);
   check('environment',Object.keys(process.env).sort().join(',')==='LANG,LC_ALL,MALLOC_ARENA_MAX,NODE_ENV,TZ,UV_THREADPOOL_SIZE,UV_USE_IO_URING');
+  // Inspect exec's environment before loading native libraries, which may set
+  // their own process-local configuration variables during initialization.
+  const sharp=(await import('sharp')).default;
   check('input-read',fs.readFileSync(input).length>=0);
   denied('input-write',()=>fs.writeFileSync(input,'changed'));
   denied('outside-read',()=>fs.readFileSync('/etc/passwd'));

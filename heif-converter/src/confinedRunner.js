@@ -23,7 +23,7 @@ export async function runConfinedJob(input,{signal,probe=false,timeoutMs=45_000,
     await writeFile(job+'/decoded.png',Buffer.alloc(0),{flag:'wx',mode:0o600});
     const result=await new Promise((resolve,reject)=>{
       child=spawn('/usr/local/bin/si-heif-confine',[probe?'--probe':'--worker',job,String(process.pid)],{
-        shell:false,detached:true,env:{},stdio:['ignore','pipe','pipe'],
+        shell:false,detached:true,env:probe?{HEIF_CONVERTER_HMAC_SECRET:'synthetic-confinement-canary',NODE_OPTIONS:'--invalid-canary-option'}:{},stdio:['ignore','pipe','pipe'],
       });
       let bytes=0,parts=[],reason;
       const stop=code=>{reason??=code;if(child.pid)killGroup(child.pid);};
