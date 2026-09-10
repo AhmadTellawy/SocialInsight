@@ -126,6 +126,7 @@ static int exhaustion_probe(int threads) {
   printf("{\"kind\":\"%s\",\"created\":%u,\"limit\":32,\"error\":\"EAGAIN\",\"children\":[",threads?"threads":"forks",count);
   if(!threads)for(unsigned i=0;i<count;i++)printf("%s%d",i?",":"",children[i]);
   puts("]}");fflush(stdout);alarm(60);for(;;)pause();
+  return 0;
 }
 static void immutable(const char *path) {
   char resolved[PATH_MAX]; struct stat s;
