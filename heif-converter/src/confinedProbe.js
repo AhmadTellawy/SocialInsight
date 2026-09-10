@@ -30,11 +30,13 @@ try {
     let result='';p.stdout.on('data',b=>{result+=b.toString();if(result.length>512)reject(new Error('SYSCALL_PROBE_OUTPUT'));});
     p.once('error',reject);p.once('close',code=>{try{code===0?resolve(JSON.parse(result)):reject(Object.assign(new Error('SYSCALL_PROBE'),{probeCheck:'SYSCALL_PROBE'}));}catch(e){reject(e);}});
   });
-  check('syscall-boundary',syscallReport.status==='PASS'&&syscallReport.negativeSyscalls===29&&syscallReport.limitsVerified===5);
+  check('syscall-boundary',syscallReport.status==='PASS'&&syscallReport.negativeSyscalls===30&&syscallReport.limitsVerified===5);
   // A newly detached process would escape cancellation's process-group boundary.
   const escapeDenied=await new Promise(resolve=>{
-    const p=spawn('/usr/local/bin/node',['-e','process.exit(0)'],{detached:true,stdio:'ignore',env:{}});
-    p.once('error',e=>resolve(e.code==='EPERM'));p.once('close',code=>{if(code===0)resolve(false);});
+    const p=spawn('/usr/local/bin/si-heif-confine',['--group-probe',String(process.pid)],{detached:true,stdio:['ignore','pipe','ignore'],env:{}});
+    let result='';p.stdout.on('data',b=>{result+=b.toString();if(result.length>512)resolve(false);});
+    p.once('error',e=>resolve(e.code==='EPERM'));
+    p.once('close',code=>{try{const identity=JSON.parse(result);resolve(code===0&&identity.group===process.pid&&identity.session===process.pid&&identity.pid!==process.pid);}catch{resolve(false);}});
   });
   check('group-escape',escapeDenied);
   const networkDenied=await new Promise(resolve=>{

@@ -199,6 +199,7 @@ static int syscall_probe(void) {
   EXPECT_DENIED(syscall(__NR_io_uring_setup,1,NULL));
   EXPECT_DENIED(syscall(__NR_unshare,0));
   EXPECT_DENIED(syscall(__NR_setpgid,0,0));
+  EXPECT_DENIED(syscall(__NR_setsid));
   if(fcntl(pair[0],F_GETFD)<0 || fcntl(pair[0],F_SETFD,FD_CLOEXEC)<0
     || fcntl(pair[0],F_SETFL,O_NONBLOCK)<0)fail();
   close(pair[0]);close(pair[1]);close(sockets[0]);close(sockets[1]);
@@ -328,6 +329,10 @@ int main(int argc, char **argv) {
     || getppid()!=expected_parent || prctl(PR_SET_PDEATHSIG,SIGKILL)
     || getppid()!=expected_parent)fail();
   if(argc==3 && !strcmp(argv[1],"--syscall-probe"))return syscall_probe();
+  if(argc==3 && !strcmp(argv[1],"--group-probe")) {
+    if(prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)!=1 || prctl(PR_GET_SECCOMP)!=2)fail();
+    printf("{\"pid\":%d,\"group\":%d,\"session\":%d}\n",getpid(),getpgrp(),getsid(0));return 0;
+  }
   char *env[] = { "LANG=C.UTF-8", "LC_ALL=C.UTF-8", "TZ=UTC", "NODE_ENV=production",
     "UV_THREADPOOL_SIZE=1", "UV_USE_IO_URING=0", "MALLOC_ARENA_MAX=2", NULL };
   limit(RLIMIT_CORE, 0); limit(RLIMIT_NOFILE, 64); limit(RLIMIT_NPROC, 32);
