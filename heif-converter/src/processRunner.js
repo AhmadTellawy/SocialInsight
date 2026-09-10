@@ -38,6 +38,9 @@ export function runHeifConvert({
       converterPath,
       '--codec-threads', '1',
       '--tile-threads', '0',
+      // The intermediate PNG is lossless and temporary; avoid spending the
+      // CPU budget on maximum compression before the final WebP encode.
+      '--png-compression-level', '1',
       inputPath,
       outputPath,
     ];
