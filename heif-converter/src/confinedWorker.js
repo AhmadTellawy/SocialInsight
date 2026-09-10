@@ -39,7 +39,10 @@ try {
     || meta.exif || meta.xmp || meta.iptc || meta.icc) throw new Error('INVALID_ENCODED_OUTPUT');
   process.stderr.write('CONFINEMENT_PHASE:ENCODE_FINISHED\n');
   frame({ok:true,mime:'image/webp',width:meta.width,height:meta.height,bytes:data.length},data);
-} catch {
+ } catch (error) {
+  // Report only a fixed classification, never a native message or file path.
+  const reason=error?.code==='EAGAIN'||/thread|Resource temporarily unavailable/i.test(String(error?.message))?'THREAD_RESOURCE':error?.message==='NATIVE_START_FAILED'?'NATIVE_START':error?.message==='INVALID_HEIF'?'NATIVE_REJECT':'ENCODE_REJECT';
+  process.stderr.write('CONFINEMENT_FAILURE:'+reason+'\n');
   frame({ok:false,code:'IMAGE_PROCESSING_FAILED',bytes:0});
   process.exitCode=1;
 }

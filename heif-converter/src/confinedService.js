@@ -9,8 +9,8 @@ export class ConfinedHeifConverter {
   #active=false;
   #shutdown=new AbortController();
   #idle=Promise.resolve();
-  constructor({runJob=runConfinedJob,bootstrap=verifyBootstrap,checkRoot=verifyTempRoot,io=fs}={}) {
-    this.runJob=runJob;this.bootstrap=bootstrap;this.checkRoot=checkRoot;this.io=io;
+  constructor({runJob=runConfinedJob,bootstrap=verifyBootstrap,checkRoot=verifyTempRoot,io=fs,onDiagnostic=()=>{}}={}) {
+    this.runJob=runJob;this.bootstrap=bootstrap;this.checkRoot=checkRoot;this.io=io;this.onDiagnostic=onDiagnostic;
   }
   isReady(){return this.#state==='ready';}
   markUnhealthy(){this.#state='unhealthy';}
@@ -34,7 +34,7 @@ export class ConfinedHeifConverter {
     this.#idle=new Promise(resolve=>{completed=resolve;});
     try {
       await this.checkRoot();
-      return await this.runJob(input,{signal:signal?AbortSignal.any([signal,this.#shutdown.signal]):this.#shutdown.signal});
+      return await this.runJob(input,{onDiagnostic:this.onDiagnostic,signal:signal?AbortSignal.any([signal,this.#shutdown.signal]):this.#shutdown.signal});
     } catch(error) {
       if(!(error instanceof ServiceError)||error.status>=500||error.code==='CONFINEMENT_UNAVAILABLE')this.markUnhealthy();
       throw error instanceof ServiceError?error:unavailable();

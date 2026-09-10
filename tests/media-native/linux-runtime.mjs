@@ -59,6 +59,8 @@ async function convert(name,body,expected) {
 }
 const camera=Buffer.from(await readFile('/fixtures/fixtures/camera-sample.base64','utf8'),'base64');
 await convert('camera',camera,'SUCCESS');
+await convert('camera-repeat',camera,'SUCCESS');
+await convert('camera-repeat-2',camera,'SUCCESS');
 await convert('clean-aperture',await readFile('/fixtures/fixtures/rainbow-451x461.heic'),'SUCCESS');
 await convert('alpha',await readFile('/fixtures/fixtures/with-alpha-512x512.heic'),'SUCCESS');
 await convert('generated-12mp',await readFile('/fixtures/generated/12mp.heic'),'SUCCESS');

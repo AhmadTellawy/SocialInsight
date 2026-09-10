@@ -123,5 +123,5 @@ ENV NODE_ENV=production \
 USER 10001:10001
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:8080/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+  CMD ["/usr/bin/env", "UV_THREADPOOL_SIZE=1", "node", "--v8-pool-size=1", "-e", "fetch('http://127.0.0.1:'+process.env.PORT+'/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
 CMD ["/usr/local/bin/si-heif-confine", "--supervise"]

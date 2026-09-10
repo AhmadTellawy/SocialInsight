@@ -3,7 +3,7 @@ import { ConfinedHeifConverter } from './confinedService.js';
 import { loadHealthEvidence } from './health.js';
 import { createConverterServer } from './server.js';
 
-const converter = new ConfinedHeifConverter();
+const converter = new ConfinedHeifConverter({ onDiagnostic: code => console.info(JSON.stringify({ event: 'heif_worker_diagnostic', code })) });
 let server;
 let stopping = false;
 const shutdown = async () => {
