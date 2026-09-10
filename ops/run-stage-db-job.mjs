@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertCredentialFree, credentialDiagnosticNames, verifyLinuxTLS } from './stage-engine-tls/verify.mjs';
+import { verifyCredentialedParity } from './stage-credentialed-parity/verify.mjs';
 
 const OMITTED_PROVIDER_FUNCTIONS = new Set(['BASH_FUNC_copy_secret_files%%', 'BASH_FUNC_remove_secret_files%%']);
 
@@ -25,14 +26,14 @@ export function dependencyEnvironment(env) {
 }
 
 const FAILURE_CODES = new Set(['PLATFORM_INVALID', 'MODE_INVALID', 'VERIFY_CREDENTIAL_CONFIGURATION_PRESENT', 'DEPENDENCIES_FAILED', 'EXECUTOR_FAILED',
-  'OPENSSL_SELECTION_INVALID', 'OPENSSL_SELECTION_AMBIGUOUS_OR_MISSING', 'PROVIDER_IDENTITY_INVALID', 'TLS_HARNESS_BINDING_INVALID', 'TLS_HARNESS_FAILED', 'TLS_RECEIPT_FILE_INVALID', 'TLS_ENGINE_FILE_INVALID', 'TLS_RECEIPT_INVALID']);
+  'OPENSSL_SELECTION_INVALID', 'OPENSSL_SELECTION_AMBIGUOUS_OR_MISSING', 'PROVIDER_IDENTITY_INVALID', 'TLS_HARNESS_BINDING_INVALID', 'TLS_HARNESS_FAILED', 'TLS_RECEIPT_FILE_INVALID', 'TLS_ENGINE_FILE_INVALID', 'TLS_RECEIPT_INVALID', 'PARITY_MANIFEST_INVALID', 'PARITY_CONTEXT_INVALID', 'PARITY_INPUT_MISMATCH', 'PARITY_REPLAY_OR_OUTPUT_INVALID', 'PARITY_NATIVE_ENGINE_INVALID', 'PARITY_REPOSITORY_INVALID', 'PARITY_ENGINE_VERSION_FAILED']);
 const SPAWN_ERROR_CODES = new Set(['ENOENT', 'EACCES', 'EPERM', 'ENOMEM', 'ETIMEDOUT', 'E2BIG', 'EAGAIN', 'ENOBUFS']);
 const SIGNALS = new Set(['SIGTERM', 'SIGKILL', 'SIGABRT', 'SIGSEGV', 'SIGINT']);
 const spawnProjection = result => ({ attempted: true, status: Number.isInteger(result?.status) && result.status >= 0 && result.status <= 255 ? result.status : null,
   errorCode: result?.error ? (SPAWN_ERROR_CODES.has(result.error.code) ? result.error.code : 'UNCLASSIFIED_SPAWN_ERROR') : null,
   signal: result?.signal ? (SIGNALS.has(result.signal) ? result.signal : 'UNCLASSIFIED_SIGNAL') : null });
 
-export function runStageJob({ here, env, platform = process.platform, run = spawnSync, verifyTLS = verifyLinuxTLS, emit = console.log, emitFailure = console.error }) {
+export function runStageJob({ here, env, platform = process.platform, run = spawnSync, verifyTLS = verifyLinuxTLS, verifyParity = verifyCredentialedParity, emit = console.log, emitFailure = console.error }) {
   let phase = 'CONFIGURATION';
   let spawn = { attempted: false, status: null, errorCode: null, signal: null };
   const invoke = (...args) => {
@@ -54,6 +55,13 @@ export function runStageJob({ here, env, platform = process.platform, run = spaw
     if (mode === 'verify') {
       phase = 'TLS'; spawn = { attempted: false, status: null, errorCode: null, signal: null };
       const summary = verifyTLS({ here, env: { ...dependencyEnvironment(env), RENDER_SERVICE_ID: env.RENDER_SERVICE_ID, RENDER_GIT_COMMIT: env.RENDER_GIT_COMMIT }, run: invoke });
+      emit(JSON.stringify(summary));
+    } else {
+      phase = 'PARITY'; spawn = { attempted: false, status: null, errorCode: null, signal: null };
+      const summary = verifyParity({ here, env: dependencyEnvironment(env), run: invoke, context: {
+        mode, project: env.STAGING_INITIAL_INSTALL_PROJECT, transport: env.STAGING_DB_TRANSPORT,
+        serviceId: env.RENDER_SERVICE_ID, operationsCommit: env.RENDER_GIT_COMMIT,
+      } });
       emit(JSON.stringify(summary));
     }
     phase = 'EXECUTOR'; spawn = { attempted: false, status: null, errorCode: null, signal: null };

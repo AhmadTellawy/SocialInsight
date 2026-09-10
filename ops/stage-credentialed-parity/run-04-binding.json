@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "kind": "STAGE_RUN_04_LINUX_TLS_PARITY_BINDING",
+  "purpose": "INPUT_PARITY_ONLY_NOT_CREDENTIAL_AUTHORIZATION",
+  "proof": {
+    "runId": "a29c85ae-c7f4-4735-adb3-cc00605f0917",
+    "operationsCommit": "a0e74ebf72e01ba7e4774a7a9b82f9af6e0ab42e",
+    "serviceId": "srv-dagsvgek1f9s73dqpg7g",
+    "deployId": "dep-dagtrd6k1f9s73du2udg",
+    "finishedAt": "2026-09-09T22:29:33.534Z",
+    "harnessSha256": "0d73fb8c77e3a232e7c63c3accf121ca7a48805c926c157a5b98cf9fdb2409b1"
+  },
+  "target": {
+    "project": "mnfiixtgnlzmduunfryt",
+    "sourceRevision": "4d9daeacdd7c7f4cc7a67b3fc1331736597b0037",
+    "transport": "session"
+  },
+  "runtime": {
+    "platform": "linux",
+    "node": "v24.21.0",
+    "prismaVersion": "6.19.2",
+    "engineVersion": "schema-engine-cli c2990dca591cba766e3b7ef5d9e8a84796e47ab7",
+    "engineSha256": "5d42b181631fd20bb0ecc5abcdba72575e7f467a0d52f4d5ef1ff28f0c74e6e9",
+    "prismaCliSha256": "69a2bd6412521259b90c653aff9822b6d2fc63a17f9c46d46d07d319ea0dbb3e",
+    "contractSha256": "359e16cadc2da5b3c1aca1dc2dde2cfdb9baf3ef8f5590f95cd79f063daf1e74",
+    "stageCaSha256": "700723581420dd1ac98fd7e9ac529f0ef210eadcaf87fc868a3ad7d114c2f3b7",
+    "sourceBindingSha256": "be884508e0c69eef814a3525606f097cc1b7bbf897970706c030865a34f73a9e"
+  }
+}

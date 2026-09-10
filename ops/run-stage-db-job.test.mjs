@@ -53,7 +53,7 @@ test('dependency and TLS failures cannot reach publisher', () => {
 test('credentialed modes do not invoke controlled TLS; dependency child remains filtered', () => {
   for (const mode of ['preflight', 'deploy']) {
     const observed = [];
-    runStageJob({ here: process.cwd(), env: { ...basicEnv, STAGING_INITIAL_INSTALL_MODE: mode, STAGING_DB_ADMIN_PASSWORD: 'synthetic' }, platform: 'linux', run: (command, args, options) => { observed.push(options.env); return { status: 0 }; }, verifyTLS: () => assert.fail('TLS harness must not see credentials') });
+    runStageJob({ here: process.cwd(), env: { ...basicEnv, STAGING_INITIAL_INSTALL_MODE: mode, STAGING_DB_ADMIN_PASSWORD: 'synthetic' }, platform: 'linux', run: (command, args, options) => { observed.push(options.env); return { status: 0 }; }, verifyTLS: () => assert.fail('TLS harness must not see credentials'), verifyParity: () => ({ status: 'CONTROLLED_PARITY_PASS' }), emit: () => {} });
     assert.equal(observed[0].STAGING_DB_ADMIN_PASSWORD, undefined); assert.equal(observed[1].STAGING_DB_ADMIN_PASSWORD, 'synthetic');
   }
 });
@@ -175,9 +175,30 @@ test('credentialed modes retain intended executor credentials but omit provider 
     runStageJob({ here: process.cwd(), env, platform: 'linux', run: (command, args, options) => {
       observed.push(Object.fromEntries(Object.keys(options.env).map(key => [key, options.env[key]])));
       return { status: 0 };
-    }, verifyTLS: () => assert.fail('controlled TLS must not run in credentialed mode') });
+    }, verifyTLS: () => assert.fail('controlled TLS must not run in credentialed mode'), verifyParity: () => ({ status: 'CONTROLLED_PARITY_PASS' }), emit: () => {} });
     assert.equal(observed.length, 2); assert.equal(observed[0].STAGING_DB_ADMIN_PASSWORD, undefined);
     assert.equal(observed[1].STAGING_DB_ADMIN_PASSWORD, 'synthetic-approved-stage-password');
     for (const childEnv of observed) for (const key of providerFunctionNames) assert.equal(Object.hasOwn(childEnv, key), false);
   }
+});
+
+test('credentialed parity is between npm and executor and receives no credentials or provider function bodies', () => {
+  const order = []; const env = withUnreadProviderBodies({ ...basicEnv, STAGING_INITIAL_INSTALL_MODE: 'preflight', STAGING_INITIAL_INSTALL_PROJECT: 'mnfiixtgnlzmduunfryt', STAGING_DB_TRANSPORT: 'session', STAGING_DB_ADMIN_PASSWORD: 'synthetic-private-parity-sentinel' });
+  runStageJob({ here: process.cwd(), env, platform: 'linux', run: (command, args, options) => { order.push(command === 'npm' ? 'npm' : 'executor'); return { status: 0 }; }, verifyParity: ({ env: clean, context }) => {
+    order.push('parity'); assert.equal(JSON.stringify(clean).includes('synthetic-private-parity-sentinel'), false); assert.equal(Object.hasOwn(clean, 'STAGING_DB_ADMIN_PASSWORD'), false);
+    assert.deepEqual(Object.keys(context).sort(), ['mode', 'operationsCommit', 'project', 'serviceId', 'transport']); assert.equal(context.project, 'mnfiixtgnlzmduunfryt');
+    for (const name of providerFunctionNames) assert.equal(Object.hasOwn(clean, name), false); return { status: 'CONTROLLED_PARITY_PASS' };
+  }, emit: () => {} });
+  assert.deepEqual(order, ['npm', 'parity', 'executor']);
+});
+
+test('parity failure stops before any credential-bearing executor or credential value read', () => {
+  const env = withUnreadProviderBodies({ ...basicEnv, STAGING_INITIAL_INSTALL_MODE: 'deploy' }); const lines = []; let calls = 0;
+  Object.defineProperty(env, 'STAGING_DB_ADMIN_PASSWORD', { enumerable: true, get: () => assert.fail('credential read before parity') });
+  assert.throws(() => runStageJob({ here: process.cwd(), env, platform: 'linux', run: () => { calls++; return { status: 0 }; }, verifyParity: () => { throw new Error('PARITY_INPUT_MISMATCH'); }, emitFailure: line => lines.push(line) }), /PARITY_INPUT_MISMATCH/);
+  assert.equal(calls, 1); const failure = JSON.parse(lines[0]); assert.equal(failure.phase, 'PARITY'); assert.equal(failure.code, 'PARITY_INPUT_MISMATCH'); assert.equal(failure.spawn.attempted, false);
+});
+
+test('verify mode does not run the credentialed parity gate', () => {
+  runStageJob({ here: process.cwd(), env: basicEnv, platform: 'linux', run: () => ({ status: 0 }), verifyTLS: () => ({ status: 'CONTROLLED_TLS_PASS' }), verifyParity: () => assert.fail('credentialed parity in verify mode'), emit: () => {} });
 });

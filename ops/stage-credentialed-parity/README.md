@@ -1,0 +1,15 @@
+# Credentialed engine parity candidate
+
+This candidate adds a fail-closed input comparison after filtered dependency installation and before the preflight/deploy executor. It is preparation only and does not approve credential linkage, database authentication, migration or release. Run-04 dependency-warning triage remains an independent requirement.
+
+The fixed SHA-pinned `run-04-binding.json` records the Linux TLS proof from operations commit `a0e74ebf72e01ba7e4774a7a9b82f9af6e0ab42e`, service `srv-dagsvgek1f9s73dqpg7g`, deployment `dep-dagtrd6k1f9s73du2udg`, run UUID `a29c85ae-c7f4-4735-adb3-cc00605f0917`. The manifest is not loaded from an environment variable and cannot be replaced by a previous execution receipt. Its `.gitattributes` entry preserves exact bytes.
+
+Credentialed modes require Linux, Node v24.21.0, Prisma 6.19.2, exactly one native schema engine, and exact engine/CLI/contract/Stage CA/source-binding hashes. The engine is hashed before its credential-free `--version` subprocess runs. The checked-out Git HEAD must equal the current Render commit metadata; Git absence or mismatch fails closed. Exact input hashes preserve the relationship to the older proof without requiring the new parity commit to equal it. No runtime ancestry query is used; A01/E03 must retain the reviewed ancestry locally at integration.
+
+The launcher passes the parity module only a filtered OS/CI environment and five explicit nonsecret context fields. The original secret-bearing environment is never passed to the parity module. Target project, session transport and exact service must match the manifest. Missing/mismatched inputs or ambiguous engines stop before the credentialed executor.
+
+Each successful comparison creates a fresh UUID and exclusively writes private `stage-credentialed-parity/execution-preflight.json` or `execution-deploy.json`, outside the publish directory. An existing file or write failure stops execution. Existing receipts never bypass live comparison and are not accepted as proof; a new build must perform the comparison again. The projected build event contains only fixed identity, version and hash fields. Provider metadata is checked against repository HEAD and the exact known service, not treated as cryptographic provider attestation.
+
+Apply runtime changes from `candidate/run-stage-db-job.mjs`, `candidate/run-stage-db-job.test.mjs` and the new `candidate/stage-credentialed-parity/` directory. `candidate/stage-engine-tls/verify.mjs` is unchanged test import support and must not be treated as a new runtime delta.
+
+Tests: from candidate, `node --test --test-reporter=tap run-stage-db-job.test.mjs stage-credentialed-parity/verify.test.mjs`. These are local controlled tests. A full positive live Linux parity run, actual credentialed subprocess and hosted database execution have not been performed by this assignment. The dependency package is unchanged; later dependency minimization or input changes require independent review and a new precise binding disposition, without rewriting run-04 history.
