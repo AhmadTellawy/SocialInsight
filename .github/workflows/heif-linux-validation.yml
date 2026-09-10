@@ -27,7 +27,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run --name si-heif-prototype --read-only --cap-drop ALL --security-opt no-new-privileges --memory 512m --memory-swap 512m --cpus 0.1 --pids-limit 128 --network none --tmpfs /tmp/heif-converter:rw,noexec,nosuid,size=192m,uid=10001,gid=10001,mode=0700 --entrypoint /usr/local/bin/si-heif-confine -v "$PWD/tests/media-native:/fixtures:ro" si-heif-confined --supervise-probe
+          docker run --name si-heif-prototype --cap-drop ALL --security-opt no-new-privileges --memory 512m --memory-swap 512m --cpus 0.1 --pids-limit 128 --network none --tmpfs /tmp/heif-converter:rw,noexec,nosuid,size=192m,uid=10001,gid=10001,mode=0700 --entrypoint /usr/local/bin/si-heif-confine -v "$PWD/tests/media-native:/fixtures:ro" si-heif-confined --supervise-probe
       - name: Record exact image and exit evidence
         if: always()
         shell: bash

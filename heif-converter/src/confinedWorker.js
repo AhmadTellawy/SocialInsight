@@ -13,7 +13,7 @@ function frame(header, data = Buffer.alloc(0)) {
 try {
   await new Promise((resolve,reject)=>{
     // Never detached: the launcher sealed the worker group before Node started.
-    const child=spawn('/usr/local/bin/si-heif-confine',['--native',input,decoded],{
+    const child=spawn('/usr/local/bin/si-heif-confine',['--native',input,decoded,String(process.pid)],{
       env:{}, shell:false, detached:false, stdio:'ignore',
     });
     const timer=setTimeout(()=>process.kill(0,'SIGKILL'),15_000);

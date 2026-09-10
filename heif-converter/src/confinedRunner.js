@@ -22,7 +22,7 @@ export async function runConfinedJob(input,{signal,probe=false,timeoutMs=45_000,
     await writeFile(job+'/input.heic',input,{flag:'wx',mode:0o600});
     await writeFile(job+'/decoded.png',Buffer.alloc(0),{flag:'wx',mode:0o600});
     const result=await new Promise((resolve,reject)=>{
-      child=spawn('/usr/local/bin/si-heif-confine',[probe?'--probe':'--worker',job],{
+      child=spawn('/usr/local/bin/si-heif-confine',[probe?'--probe':'--worker',job,String(process.pid)],{
         shell:false,detached:true,env:{},stdio:['ignore','pipe','pipe'],
       });
       let bytes=0,parts=[],reason;
@@ -35,7 +35,8 @@ export async function runConfinedJob(input,{signal,probe=false,timeoutMs=45_000,
       let diagnosticBytes=0;
       child.stderr.on('data',data=>{
         diagnosticBytes+=data.length;
-        if(diagnosticBytes<=2048)for(const code of data.toString('utf8').match(/CONFINEMENT_UNAVAILABLE:[A-Z_]+|CONFINEMENT_PROBE_FAILED/g)??[])onDiagnostic(code);
+        if(diagnosticBytes>2048)stop('INVALID_WORKER_OUTPUT');
+        else for(const code of data.toString('utf8').match(/CONFINEMENT_UNAVAILABLE:[A-Z_]+|CONFINEMENT_PROBE_FAILED:[A-Z_0-9]+/g)??[])onDiagnostic(code);
       });
       child.once('spawn',()=>onSpawn(child.pid));
       child.once('error',()=>{reason??='CONFINEMENT_UNAVAILABLE';});
@@ -46,6 +47,7 @@ export async function runConfinedJob(input,{signal,probe=false,timeoutMs=45_000,
       });
     });
     if(child.pid){killGroup(child.pid);await gone(child.pid);}
+    if(((await stat('/tmp/heif-converter')).mode&0o777)!==0o700||((await stat(job)).mode&0o777)!==0o700)throw new ServiceError(503,'WORKER_CLEANUP_FAILED','Image processing is unavailable');
     const files=(await readdir(job)).sort();
     if(files.join(',')!=='decoded.png,input.heic' || (await stat(job+'/decoded.png')).size>128*1024*1024) throw new ServiceError(503,'INVALID_WORKER_OUTPUT','Image processing is unavailable');
     if(result.length<4)throw new ServiceError(503,'INVALID_WORKER_OUTPUT','Image processing is unavailable');
