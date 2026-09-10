@@ -9,6 +9,7 @@ import { childEnvironment, connectionUrl, localDatabase, profile, targetFor } fr
 import { materialize, runRelease, verifyRuntime } from '../install.mjs';
 import { pgClient } from '../capture.mjs';
 import { expectedMigrations, ident, preflightSql } from '../sql.mjs';
+import { applicationName } from '../backend-cleanup.mjs';
 
 const stamp=randomUUID().replaceAll('-','').slice(0,16),directory=resolve(ROOT,`evidence/rehearsal-${stamp}`);
 mkdirSync(directory,{recursive:true,mode:0o700});
@@ -80,6 +81,11 @@ try {
     const runtime=verifyRuntime(process.platform==='linux'?ROOT:resolve(ROOT,'../../../../account-settings/server'),true);
     const result=spawnSync(process.execPath,[runtime.cli,'db','execute','--file',resolve(dir,'guard.sql'),'--schema',resolve(dir,'prisma/schema.prisma')],{cwd:dir,env:childEnvironment(clean,url.href),encoding:'utf8',windowsHide:true,timeout:60000,stdio:['ignore','pipe','pipe']});
     assert.equal(result.status,1);assert.match(result.stderr,/CONNECTION_SETTINGS_MISMATCH/);pass('actual_Prisma_connection_without_UTC_and_bounds_is_rejected');
+    // A transport that drops the UUID tag must fail before any migration is attempted.
+    const marker=applicationName(randomUUID());
+    writeFileSync(resolve(dir,'tag-guard.sql'),preflightSql(binding,'STAGE_EMPTY',targetFor('STAGE_EMPTY','direct',settingsDb),undefined,marker));
+    const tagResult=spawnSync(process.execPath,[runtime.cli,'db','execute','--file',resolve(dir,'tag-guard.sql'),'--schema',resolve(dir,'prisma/schema.prisma')],{cwd:dir,env:childEnvironment(clean,connectionUrl(targetFor('STAGE_EMPTY','direct',settingsDb),'settings-local-fixture')),encoding:'utf8',windowsHide:true,timeout:60000,stdio:['ignore','pipe','pipe']});
+    assert.equal(tagResult.status,1);assert.match(tagResult.stderr,/INVOCATION_TAG_MISMATCH/);pass('actual_Prisma_connection_without_run_tag_is_rejected');
   } finally {await settings.end();}
   assert.equal(verifyBundle().bindingSha256,binding.bindingSha256);pass('source_binding_unchanged_through_rehearsal');
   receipt.status='PASSED';

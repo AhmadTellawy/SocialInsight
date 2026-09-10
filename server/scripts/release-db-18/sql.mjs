@@ -22,10 +22,13 @@ export function preservationSql(snapshot, { requireSnapshot = false } = {}) {
     return `IF NOT EXISTS (SELECT 1 FROM (${tableDigestSql(t.name, t.columns)}) s WHERE s.count=${quote(t.count)} AND s.digest=${quote(t.digest)}) THEN RAISE EXCEPTION 'BASELINE_DATA_CHANGED'; END IF;`;
   }).join('\n');
 }
-function connectionChecks(target) {
+function connectionChecks(target, marker) {
+  if (marker === undefined) must(target.local, 'RUN_TAG_REQUIRED');
+  else must(/^si_release18_[a-f0-9-]{36}(?![\s\S])/.test(marker), 'APPLICATION_NAME_INVALID');
   return `IF current_database() <> ${quote(target.database)} OR current_user <> 'postgres' OR session_user <> 'postgres' THEN RAISE EXCEPTION 'TARGET_IDENTITY_MISMATCH'; END IF;
   IF current_setting('server_version_num')::int / 10000 <> 17 THEN RAISE EXCEPTION 'POSTGRES_VERSION_MISMATCH'; END IF;
   IF current_setting('transaction_read_only') <> 'on' OR current_setting('TimeZone') <> 'UTC' OR current_setting('lock_timeout')::interval <> interval '5 seconds' OR current_setting('statement_timeout')::interval <> interval '120 seconds' THEN RAISE EXCEPTION 'CONNECTION_SETTINGS_MISMATCH'; END IF;
+  ${marker === undefined ? '' : `IF current_setting('application_name') <> ${quote(marker)} THEN RAISE EXCEPTION 'INVOCATION_TAG_MISMATCH'; END IF;`}
   ${target.local ? `IF inet_server_addr() <> '127.0.0.1'::inet OR inet_server_port() <> 55447 THEN RAISE EXCEPTION 'LOCAL_ENDPOINT_MISMATCH'; END IF;` : `IF NOT EXISTS (SELECT 1 FROM pg_stat_ssl WHERE pid=pg_backend_pid() AND ssl) THEN RAISE EXCEPTION 'DATABASE_TLS_REQUIRED'; END IF;
   IF (SELECT count(*) FROM pg_roles WHERE rolname IN ('anon','authenticated')) <> 2 THEN RAISE EXCEPTION 'HOSTED_ROLES_MISSING'; END IF;`}`;
 }
@@ -46,7 +49,7 @@ function tableSetChecks(tables) {
   return `IF EXISTS (SELECT 1 FROM (SELECT c.relname::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p')) actual FULL JOIN unnest(ARRAY[${[...tables,'_prisma_migrations'].map(quote).join(',')}]) expected(name) ON actual.relname=expected.name WHERE actual.relname IS NULL OR expected.name IS NULL) THEN RAISE EXCEPTION 'TABLE_SET_MISMATCH'; END IF;`;
 }
 const validity = `IF EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid=i.indrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND (NOT i.indisvalid OR NOT i.indisready)) OR EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_namespace n ON n.oid=c.connamespace WHERE n.nspname='public' AND NOT c.convalidated) THEN RAISE EXCEPTION 'CATALOG_INVALID'; END IF;`;
-export function preflightSql(binding, name, target, snapshot) {
+export function preflightSql(binding, name, target, snapshot, marker) {
   const baseline = profile(name).baseline;
   if (snapshot) {
     must(HASH.test(snapshot.rollbackDigest ?? ''), 'ROLLBACK_SNAPSHOT_REQUIRED');
@@ -55,7 +58,7 @@ export function preflightSql(binding, name, target, snapshot) {
   return `BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SET LOCAL search_path=pg_catalog;
 DO $release18$ BEGIN
-${connectionChecks(target)}
+${connectionChecks(target, marker)}
 ${baseline === 0 ? readRegular(resolve(ROOT, 'sql/preflight-stage-empty.sql')).toString() : `${ledgerChecks(binding,name,baseline,snapshot?.rollbackDigest)}
 ${tableSetChecks(binding.tables[String(baseline)])}
 ${validity}
@@ -65,12 +68,12 @@ ${preservationSql(snapshot, {requireSnapshot: !target.local})}`}
 END $release18$;
 ROLLBACK;`;
 }
-export function postflightSql(binding, name, target, snapshot, migrationStartedAt) {
+export function postflightSql(binding, name, target, snapshot, migrationStartedAt, marker) {
   if (snapshot) must(HASH.test(snapshot.rollbackDigest ?? ''), 'ROLLBACK_SNAPSHOT_REQUIRED');
   return `BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SET LOCAL search_path=pg_catalog;
 DO $release18$ BEGIN
-${connectionChecks(target)}
+${connectionChecks(target, marker)}
 ${ledgerChecks(binding,name,18,snapshot?.rollbackDigest)}
 ${tableSetChecks(binding.tables['18'])}
 ${validity}

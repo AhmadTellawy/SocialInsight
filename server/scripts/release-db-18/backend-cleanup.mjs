@@ -11,10 +11,11 @@ export function applicationName(runId) {
 
 // This is limited to a captured PID/start identity for this exact database/principal/run marker.
 // It never terminates a backend, changes data, broad-cancels activity or asserts DDL rollback.
-export async function settleInvocationBackends(target,password,marker) {
+export async function settleInvocationBackends(target,password,marker,{tagVerified=false}={}) {
   must(/^si_release18_[a-f0-9-]{36}(?![\s\S])/.test(marker),'APPLICATION_NAME_INVALID');
   const started=Date.now();
   const result={status:'UNVERIFIED',applicationName:marker,budgetMs:BACKEND_CLEANUP_MS,observedBackends:[],remainingBackends:[],cancelAttempts:[],queryEndConfirmed:false,rollbackConfirmed:false,elapsedMs:0};
+  if (!tagVerified) return {...result,failureCode:'CLEANUP_TAG_NOT_VERIFIED',observedAt:new Date().toISOString()};
   let client,expired=false,connected=false;
   const timer=setTimeout(()=>{expired=true;client?.connection?.stream?.destroy();},BACKEND_CLEANUP_MS);
   try {
@@ -41,6 +42,7 @@ export async function settleInvocationBackends(target,password,marker) {
         must(Date.now()-started<BACKEND_CLEANUP_MS,'CLEANUP_DEADLINE');
         const cancelled=(await client.query("SELECT pg_cancel_backend(pid) AS cancelled FROM pg_stat_activity WHERE pid=$1 AND backend_start=$2::timestamptz AND datname=$3 AND usename='postgres' AND application_name=$4 AND backend_type='client backend' AND pid<>pg_backend_pid()",[row.pid,row.backend_start,target.database,marker])).rows;
         result.cancelAttempts.push({pid:row.pid,backend_start:row.backend_start,identityMatched:cancelled.length===1,cancelAccepted:cancelled.length===1&&cancelled[0].cancelled===true});
+        must(cancelled.length===1&&cancelled[0].cancelled===true,'CLEANUP_CANCEL_NOT_VERIFIED');
       }
       while(remaining.length&&!expired&&Date.now()-started<BACKEND_CLEANUP_MS){await delay(100);remaining=await observe();}
     }

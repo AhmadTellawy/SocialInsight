@@ -7,7 +7,7 @@ import { APPLICATION, HASH, ROOT, readRegular, sha256, verifyBundle } from '../c
 import { CA_SHA256, CLI_SHA256, CONNECTION_OPTIONS, LINUX_ENGINE_SHA256, childEnvironment, connectionUrl, localDatabase, profile, rejectInherited, targetFor, validateApproval } from '../contract.mjs';
 import { runRelease } from '../install.mjs';
 import { expectedMigrations, preflightSql, preservationSql } from '../sql.mjs';
-import { applicationName } from '../backend-cleanup.mjs';
+import { applicationName, settleInvocationBackends } from '../backend-cleanup.mjs';
 
 const id=()=>randomUUID();
 const h='a'.repeat(64);
@@ -96,4 +96,10 @@ test('a rejected preflight never runs migrate deploy and duplicate run UUID cann
 test('cleanup marker requires an exact fresh UUID and cannot select another application',()=>{
   const runId=id();assert.equal(applicationName(runId),`si_release18_${runId}`);
   for(const invalid of ['postgres','',runId+'\n',runId+'%'])assert.throws(()=>applicationName(invalid));
+});
+
+test('without a proven Prisma connection tag, cleanup cannot claim quiescence or connect to cancel',async()=>{
+  const result=await settleInvocationBackends(targetFor('PROD_10'),'unused-synthetic',applicationName(id()));
+  assert.equal(result.status,'UNVERIFIED');assert.equal(result.failureCode,'CLEANUP_TAG_NOT_VERIFIED');
+  assert.equal(result.queryEndConfirmed,false);assert.equal(result.cancelAttempts.length,0);
 });

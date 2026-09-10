@@ -229,8 +229,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 12795,
-      "sha256": "47f5622ece725a30f534cdd2197861e99edf988dfea3f29a7e80fa7b27ac626b"
+      "bytes": 13242,
+      "sha256": "5ebd93c4655f0fb14eaf6a17698755d43887c4a16c1e71564ecf719353c34cad"
     },
     {
       "path": "approval.schema.json",
@@ -239,8 +239,8 @@
     },
     {
       "path": "backend-cleanup.mjs",
-      "bytes": 4184,
-      "sha256": "85642c8effce529ad42d61802ad40a3d9abf80867574a696018785586b854e9b"
+      "bytes": 4419,
+      "sha256": "34bd0f01e15147adb45ec2b1026d9f15d7e9220534b4f03535aeb74648f54277"
     },
     {
       "path": "capture.mjs",
@@ -259,8 +259,8 @@
     },
     {
       "path": "install.mjs",
-      "bytes": 10318,
-      "sha256": "fb776bccb5ad6988ff0f12621a1285a3d47996fbf7d6fd8ac137a4781c144c4f"
+      "bytes": 10484,
+      "sha256": "6e0ce2033ff439109e25ed9c218e8287bb0bd5a40016d8b459c4cf06dd82f36d"
     },
     {
       "path": "launch.mjs",
@@ -394,8 +394,8 @@
     },
     {
       "path": "sql.mjs",
-      "bytes": 8405,
-      "sha256": "dbeb5d333147d0f9d72b57e58bb58ab61b357facdb6cbc9b80cfe9efb3c2b791"
+      "bytes": 8758,
+      "sha256": "419b0899d7848deda4ff436ee13324d02ddcb8bcecb8a27b5b476940bf6f0703"
     },
     {
       "path": "sql/inspect-state.sql",
@@ -439,8 +439,8 @@
     },
     {
       "path": "tests/guards.test.mjs",
-      "bytes": 10602,
-      "sha256": "9f6e03e9a9b8350eec6460a18617e25cba84bfe0df12c842914296921b57bb9d"
+      "bytes": 11051,
+      "sha256": "9eea4f3ac9e4bb7d4d9562b3edc817b856bf3947e93f900d11fa489f735751cc"
     },
     {
       "path": "tests/interruption-worker.mjs",
@@ -454,8 +454,8 @@
     },
     {
       "path": "tests/rehearse.mjs",
-      "bytes": 8551,
-      "sha256": "e23efb2aff8b3fa6ed91a7ba3d6da4e7a07d5849ddfac9c88c4bedf0e32cf518"
+      "bytes": 9412,
+      "sha256": "a4ebf3799535898e6df476edd6b2eff96c5aa56d5031ffe91a5d9131ec6832f2"
     },
     {
       "path": "tests/tls-peer.mjs",

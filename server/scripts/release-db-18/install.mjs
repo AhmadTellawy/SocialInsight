@@ -62,7 +62,7 @@ export async function runRelease(options) {
   const lockPath=resolve(receiptBase,`target-${sha256(`${target.host}:${target.port}/${target.database}`)}.lock`);
   const receipt={schemaVersion:1,runId,profile:name,project:target.project,host:target.host,database:target.database,command,application:APPLICATION,sourceBindingSha256:binding.bindingSha256,startedAt:new Date().toISOString(),status:'PREPARING',steps:[],applicationDeployment:false,localSyntheticOnly:target.local,lockScope:'PERSISTED_EXECUTION_DIRECTORY_ONLY',missingReceiptAfterInterruption:'UNKNOWN_REQUIRES_F01_DISPOSITION',externalFenceRequiredUntil:'VERIFIED_QUIESCENCE_AND_F01_DISPOSITION',cleanupReserveMs:CLEANUP_RESERVE_MS,applicationName:marker,runtime:{...runtime,cli:undefined},approvalConfigSha256:target.local?undefined:env.RELEASE18_APPROVED_CONFIG_SHA256};
   writeFileSync(receiptPath,JSON.stringify(receipt,null,2)+'\n',{flag:'wx',mode:0o600});
-  let ownsLock=false, migrationStarted=false;
+  let ownsLock=false, migrationStarted=false, preflightTagVerified=false;
   const started=Date.now();
   const persist=()=>saveReceipt(receiptPath,receipt);
   try {
@@ -75,7 +75,7 @@ export async function runRelease(options) {
     persist();
     materialize(binding,name,directory);
     assertNoAmbientDotenv(directory);
-    writeFileSync(resolve(directory,'preflight.sql'),preflightSql(binding,name,target,snapshot),{flag:'wx',mode:0o600});
+    writeFileSync(resolve(directory,'preflight.sql'),preflightSql(binding,name,target,snapshot,marker),{flag:'wx',mode:0o600});
     const run=async(phase,args)=>{
       const timeout=Math.min(LIMITS[phase],RUN_BUDGET_MS-(Date.now()-started)-CLEANUP_RESERVE_MS);
       must(timeout>0,'RUN_DEADLINE_EXCEEDED');
@@ -94,7 +94,7 @@ export async function runRelease(options) {
       if(step.status!=='PASSED'){
         receipt.status=migrationStarted?'FAILED_OR_UNKNOWN':'PREFLIGHT_REJECTED';receipt.failureCode=`${phase}_FAILED`;persist();
         const settle=target.local&&options.localBackendCleanup?options.localBackendCleanup:settleInvocationBackends;
-        step.backendCleanup=await settle(target,password,marker);
+        step.backendCleanup=await settle(target,password,marker,{tagVerified:preflightTagVerified});
         step.finishedAt=new Date().toISOString();
       }
       persist();
@@ -102,12 +102,13 @@ export async function runRelease(options) {
       must(step.status==='PASSED',`${phase}_FAILED`);
     };
     await run('PREFLIGHT',['db','execute','--file',resolve(directory,'preflight.sql')]);
+    preflightTagVerified=true; receipt.preflightApplicationNameVerified=true; persist();
     if(command==='deploy') {
       const migrationStartedAt=snapshot.databaseObservedAt??new Date().toISOString();
       // Recheck every frozen byte immediately before the first write-capable subprocess.
       must(verifyBundle().bindingSha256===binding.bindingSha256,'SOURCE_CHANGED_DURING_RUN');
       await run('MIGRATE_DEPLOY',['migrate','deploy']);
-      writeFileSync(resolve(directory,'postflight.sql'),postflightSql(binding,name,target,snapshot,migrationStartedAt),{flag:'wx',mode:0o600});
+      writeFileSync(resolve(directory,'postflight.sql'),postflightSql(binding,name,target,snapshot,migrationStartedAt,marker),{flag:'wx',mode:0o600});
       await run('POSTFLIGHT',['db','execute','--file',resolve(directory,'postflight.sql')]);
     }
     receipt.status='PASSED';
