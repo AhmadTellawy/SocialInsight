@@ -1,0 +1,2 @@
+IF NOT EXISTS (SELECT 1 FROM pg_index i WHERE indexrelid=to_regclass('public.users_email_lower_key') AND indisunique AND indisvalid AND indisready AND pg_get_indexdef(indexrelid)='CREATE UNIQUE INDEX users_email_lower_key ON public.users USING btree (lower(email)) WHERE (email IS NOT NULL)') THEN RAISE EXCEPTION 'CANONICAL_EMAIL_INDEX_INVALID'; END IF;
+IF EXISTS (SELECT 1 FROM public."Response" WHERE guest_proof_hash IS NOT NULL GROUP BY "postId",guest_proof_hash HAVING count(*)>1) THEN RAISE EXCEPTION 'GUEST_PROOF_COLLISION'; END IF;

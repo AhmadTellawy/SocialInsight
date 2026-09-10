@@ -1,0 +1,451 @@
+{
+  "schemaVersion": 1,
+  "application": "9a8a3aeea6b614fbd58421d0fc1f1c01b36eb4ef",
+  "opsBase": "583cee66281aef4519d87d0d06af4616c30d9719",
+  "prismaVersion": "6.19.2",
+  "migrations": [
+    {
+      "name": "20260607000000_init",
+      "checksum": "3bc06f2d6d0c6eddb988885586061fbf5980a1960dfb3bcc73f19550b99ce8ea"
+    },
+    {
+      "name": "20260705024551_add_group_rules",
+      "checksum": "2b3689e6b28d964fdd03b4da6f9060366ee0479eecef8e78694fd393de511ea6"
+    },
+    {
+      "name": "20260815000000_media_platform_foundation",
+      "checksum": "f77e995e9e0460f5e2676034270b9196f3087228c81c81baa10db3291e6851bd"
+    },
+    {
+      "name": "20260821000000_add_option_presentation",
+      "checksum": "db3b710fea2874739f40ba6e53d5ff10c6bc3125e07cf657de2acaeb0cae1572"
+    },
+    {
+      "name": "20260821010000_social_tagging_platform",
+      "checksum": "ecd2059007cbac4d189b513ff8997e0f3b3a21ff63d09d7489ed158e4fe217f0"
+    },
+    {
+      "name": "20260822010000_post_options_hardening",
+      "checksum": "b18b1e5eda2c6cbdf480ea4b608b8623ca891ec17403cb1d1c2c238b0b6d7856"
+    },
+    {
+      "name": "20260831010000_feed_runtime_indexes",
+      "checksum": "185a8ccda944135d013182c1771a98439b53166811854eaaaf3c6564b75a45c6"
+    },
+    {
+      "name": "20260831015000_add_profile_cover_enum",
+      "checksum": "d5cb9edb47d99d4bdb39a82f614043b86eddacf7a29feebdec21d1c1efe6ae63"
+    },
+    {
+      "name": "20260831020000_profile_links_dob_cover",
+      "checksum": "649cfcf4061330ae5892e14d2061760d22cc04ffcb7ea73006572b21f82ead81"
+    },
+    {
+      "name": "20260901000000_backfill_derived_age_groups",
+      "checksum": "5b89b5d2e1ad7464ca7fb98849c010c5bd8cc7ebdc826621c588f39c139910b4"
+    },
+    {
+      "name": "20260904220000_auth_security",
+      "checksum": "f8b7a31e14e8046b86dce135b29252155182ed3b4f157e17898705d38ff9b743"
+    },
+    {
+      "name": "20260907220000_account_settings",
+      "checksum": "4dcc915a2c595ab6e47fc3d2e8346fdf760274e8f35231751a17b04a80849068"
+    },
+    {
+      "name": "20260907230000_guest_participation_proof",
+      "checksum": "0f2648ef3bda633f089284dc5f7bc193f1d01a1e8a461bde839e25e39bf0da83"
+    },
+    {
+      "name": "20260908001500_demographic_nationality",
+      "checksum": "d697cf86b5dc9b88b019fa5006f3fcd391ed54f872762f89800e5e33550a862a"
+    },
+    {
+      "name": "20260908015000_media_cleanup_capabilities",
+      "checksum": "4780598603b06acb79ae87ff910001728e676e37c453f3c644b19c68808fa80e"
+    },
+    {
+      "name": "20260910000000_identity_and_vote_integrity",
+      "checksum": "46c4eb30d69ff0144becfa7a3c74267ac3811a575d69d7dc70a3c234c1268eaf"
+    },
+    {
+      "name": "20260910001000_email_casefold_integrity",
+      "checksum": "a164494876ba0e2cab75b06e1695802dd45fa1c5e9d6d4571fc14a5f92cef83c"
+    },
+    {
+      "name": "20260910002000_deletion_decision_journal",
+      "checksum": "2e400ad26cc0d44c17c47050ea47dd007be8c947299e6f49d410793832dcc26f"
+    }
+  ],
+  "tables": {
+    "0": [],
+    "10": [
+      "Answer",
+      "Comment",
+      "CommentHashtag",
+      "CommentLike",
+      "Group",
+      "GroupMember",
+      "Hashtag",
+      "InteractionEvent",
+      "MediaAsset",
+      "MediaPrivacyTransition",
+      "MediaVariant",
+      "Mention",
+      "MentionOccurrence",
+      "NotificationSettings",
+      "OTPCode",
+      "Option",
+      "PendingRegistration",
+      "Post",
+      "PostHashtag",
+      "PostMedia",
+      "PostTaggedUser",
+      "Question",
+      "Response",
+      "Section",
+      "UserLike",
+      "_PostTargetGroups",
+      "follows",
+      "notifications",
+      "post_views",
+      "profile_links",
+      "push_subscriptions",
+      "reports",
+      "user_blocks",
+      "user_demographics",
+      "user_hidden_posts",
+      "user_saved_posts",
+      "users"
+    ],
+    "15": [
+      "Answer",
+      "Comment",
+      "CommentHashtag",
+      "CommentLike",
+      "Group",
+      "GroupMember",
+      "Hashtag",
+      "InteractionEvent",
+      "MediaAsset",
+      "MediaPrivacyTransition",
+      "MediaVariant",
+      "Mention",
+      "MentionOccurrence",
+      "NotificationSettings",
+      "OTPCode",
+      "Option",
+      "PendingRegistration",
+      "Post",
+      "PostHashtag",
+      "PostMedia",
+      "PostTaggedUser",
+      "Question",
+      "Response",
+      "Section",
+      "UserLike",
+      "_PostTargetGroups",
+      "account_cleanup_jobs",
+      "auth_challenges",
+      "auth_rate_limits",
+      "auth_sessions",
+      "follows",
+      "notifications",
+      "oauth_accounts",
+      "oauth_states",
+      "otp_challenges",
+      "post_views",
+      "profile_links",
+      "push_subscriptions",
+      "reports",
+      "user_blocks",
+      "user_demographics",
+      "user_hidden_posts",
+      "user_mfa",
+      "user_saved_posts",
+      "users"
+    ],
+    "18": [
+      "Answer",
+      "Comment",
+      "CommentHashtag",
+      "CommentLike",
+      "Group",
+      "GroupMember",
+      "Hashtag",
+      "InteractionEvent",
+      "MediaAsset",
+      "MediaPrivacyTransition",
+      "MediaVariant",
+      "Mention",
+      "MentionOccurrence",
+      "NotificationSettings",
+      "OTPCode",
+      "Option",
+      "PendingRegistration",
+      "Post",
+      "PostHashtag",
+      "PostMedia",
+      "PostTaggedUser",
+      "Question",
+      "Response",
+      "Section",
+      "UserLike",
+      "_PostTargetGroups",
+      "account_cleanup_jobs",
+      "auth_challenges",
+      "auth_rate_limits",
+      "auth_sessions",
+      "deletion_decisions",
+      "follows",
+      "handle_aliases",
+      "notifications",
+      "oauth_accounts",
+      "oauth_states",
+      "otp_challenges",
+      "post_views",
+      "profile_links",
+      "push_subscriptions",
+      "reports",
+      "security_email_outbox",
+      "user_blocks",
+      "user_demographics",
+      "user_hidden_posts",
+      "user_mfa",
+      "user_saved_posts",
+      "users"
+    ]
+  },
+  "files": [
+    {
+      "path": ".gitattributes",
+      "bytes": 8,
+      "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da"
+    },
+    {
+      "path": ".gitignore",
+      "bytes": 36,
+      "sha256": "48bd6fc7d9e9e254c56cebf2d9e2ded8e8c070321a7f6e374ea8f80da063a729"
+    },
+    {
+      "path": "README.md",
+      "bytes": 10324,
+      "sha256": "52f47f9d373b9372c80dbb6801e2efcd069b5f2afbd930aad4ac404c8889d6e3"
+    },
+    {
+      "path": "approval.schema.json",
+      "bytes": 5810,
+      "sha256": "3ccaac4731e8180287b89ea5bd8627986b68cf7cb6f054c1d86dca610289180b"
+    },
+    {
+      "path": "capture.mjs",
+      "bytes": 3960,
+      "sha256": "41ece838676b83e626b56ce2dc7f4ada9a1742bff2430c36f904dacdddb77668"
+    },
+    {
+      "path": "contract.mjs",
+      "bytes": 10400,
+      "sha256": "9c66c1916e3d357d537fefd7148a5915e91b78470ea221955f71059d02069bc1"
+    },
+    {
+      "path": "core.mjs",
+      "bytes": 4556,
+      "sha256": "377e15e0168519a9a0f29a6f6afef9c578febdaffbb7dc0aff96393d51988866"
+    },
+    {
+      "path": "install.mjs",
+      "bytes": 8928,
+      "sha256": "9768f39438139017b1023492324a81817cec1e5d879f78e1e77c358a641cc2ab"
+    },
+    {
+      "path": "launch.mjs",
+      "bytes": 1669,
+      "sha256": "9dc655327ef8966baff06f9d1e53ed154aea102896e74c21005b2ab331c3ec93"
+    },
+    {
+      "path": "overlays/PROD_10/migration10.sql",
+      "bytes": 1257,
+      "sha256": "6c523622f3a261b11eacdd71a541fca178f0f757c36852f32325d7f486363f21"
+    },
+    {
+      "path": "package-lock.json",
+      "bytes": 19830,
+      "sha256": "39915a5668d8e85858c41f36af7c9e022e5d91c08d47f26a48f51bb7fde28dfb"
+    },
+    {
+      "path": "package.json",
+      "bytes": 420,
+      "sha256": "198d33f88498de72ec3c15dde9a3fd7a93621c68c05b8ff56acbbe50ceea5c4e"
+    },
+    {
+      "path": "prepare-source.mjs",
+      "bytes": 2757,
+      "sha256": "2760af65b243492ece1b9c67440b3c2cb4ed1a6046c8fd96852d1c6e02b463fb"
+    },
+    {
+      "path": "prisma/migrations/20260607000000_init/migration.sql",
+      "bytes": 21349,
+      "sha256": "3bc06f2d6d0c6eddb988885586061fbf5980a1960dfb3bcc73f19550b99ce8ea"
+    },
+    {
+      "path": "prisma/migrations/20260705024551_add_group_rules/migration.sql",
+      "bytes": 63,
+      "sha256": "2b3689e6b28d964fdd03b4da6f9060366ee0479eecef8e78694fd393de511ea6"
+    },
+    {
+      "path": "prisma/migrations/20260815000000_media_platform_foundation/migration.sql",
+      "bytes": 7255,
+      "sha256": "f77e995e9e0460f5e2676034270b9196f3087228c81c81baa10db3291e6851bd"
+    },
+    {
+      "path": "prisma/migrations/20260821000000_add_option_presentation/migration.sql",
+      "bytes": 335,
+      "sha256": "db3b710fea2874739f40ba6e53d5ff10c6bc3125e07cf657de2acaeb0cae1572"
+    },
+    {
+      "path": "prisma/migrations/20260821010000_social_tagging_platform/migration.sql",
+      "bytes": 8242,
+      "sha256": "ecd2059007cbac4d189b513ff8997e0f3b3a21ff63d09d7489ed158e4fe217f0"
+    },
+    {
+      "path": "prisma/migrations/20260822010000_post_options_hardening/migration.sql",
+      "bytes": 722,
+      "sha256": "b18b1e5eda2c6cbdf480ea4b608b8623ca891ec17403cb1d1c2c238b0b6d7856"
+    },
+    {
+      "path": "prisma/migrations/20260831010000_feed_runtime_indexes/migration.sql",
+      "bytes": 3133,
+      "sha256": "185a8ccda944135d013182c1771a98439b53166811854eaaaf3c6564b75a45c6"
+    },
+    {
+      "path": "prisma/migrations/20260831015000_add_profile_cover_enum/migration.sql",
+      "bytes": 413,
+      "sha256": "d5cb9edb47d99d4bdb39a82f614043b86eddacf7a29feebdec21d1c1efe6ae63"
+    },
+    {
+      "path": "prisma/migrations/20260831020000_profile_links_dob_cover/migration.sql",
+      "bytes": 2137,
+      "sha256": "649cfcf4061330ae5892e14d2061760d22cc04ffcb7ea73006572b21f82ead81"
+    },
+    {
+      "path": "prisma/migrations/20260901000000_backfill_derived_age_groups/migration.sql",
+      "bytes": 1232,
+      "sha256": "5b89b5d2e1ad7464ca7fb98849c010c5bd8cc7ebdc826621c588f39c139910b4"
+    },
+    {
+      "path": "prisma/migrations/20260904220000_auth_security/migration.sql",
+      "bytes": 9860,
+      "sha256": "f8b7a31e14e8046b86dce135b29252155182ed3b4f157e17898705d38ff9b743"
+    },
+    {
+      "path": "prisma/migrations/20260907220000_account_settings/migration.sql",
+      "bytes": 3415,
+      "sha256": "4dcc915a2c595ab6e47fc3d2e8346fdf760274e8f35231751a17b04a80849068"
+    },
+    {
+      "path": "prisma/migrations/20260907230000_guest_participation_proof/migration.sql",
+      "bytes": 203,
+      "sha256": "0f2648ef3bda633f089284dc5f7bc193f1d01a1e8a461bde839e25e39bf0da83"
+    },
+    {
+      "path": "prisma/migrations/20260908001500_demographic_nationality/migration.sql",
+      "bytes": 212,
+      "sha256": "d697cf86b5dc9b88b019fa5006f3fcd391ed54f872762f89800e5e33550a862a"
+    },
+    {
+      "path": "prisma/migrations/20260908015000_media_cleanup_capabilities/migration.sql",
+      "bytes": 429,
+      "sha256": "4780598603b06acb79ae87ff910001728e676e37c453f3c644b19c68808fa80e"
+    },
+    {
+      "path": "prisma/migrations/20260910000000_identity_and_vote_integrity/migration.sql",
+      "bytes": 2973,
+      "sha256": "46c4eb30d69ff0144becfa7a3c74267ac3811a575d69d7dc70a3c234c1268eaf"
+    },
+    {
+      "path": "prisma/migrations/20260910001000_email_casefold_integrity/migration.sql",
+      "bytes": 617,
+      "sha256": "a164494876ba0e2cab75b06e1695802dd45fa1c5e9d6d4571fc14a5f92cef83c"
+    },
+    {
+      "path": "prisma/migrations/20260910002000_deletion_decision_journal/migration.sql",
+      "bytes": 1744,
+      "sha256": "2e400ad26cc0d44c17c47050ea47dd007be8c947299e6f49d410793832dcc26f"
+    },
+    {
+      "path": "prisma/migrations/migration_lock.toml",
+      "bytes": 128,
+      "sha256": "99836963713b4f5b269ad49af0ed3d7b0b2e336115c2f92dc9ac683d139d0900"
+    },
+    {
+      "path": "prisma/schema.prisma",
+      "bytes": 38933,
+      "sha256": "68160bd07c98a52a50ee0d7943a54ab848ed6e1e0da9176f91b702dc8aaa6626"
+    },
+    {
+      "path": "sql.mjs",
+      "bytes": 8405,
+      "sha256": "dbeb5d333147d0f9d72b57e58bb58ab61b357facdb6cbc9b80cfe9efb3c2b791"
+    },
+    {
+      "path": "sql/inspect-state.sql",
+      "bytes": 1228,
+      "sha256": "8577e4a4bb4644a37c6bc98ba36d8aaad4b8452c741f5e46f6bb4ad11163c42e"
+    },
+    {
+      "path": "sql/postflight18.sql",
+      "bytes": 2398,
+      "sha256": "d5f7599881031ae03a2fefa864ff83b55807c27d3ae590e36650b7e92cb86608"
+    },
+    {
+      "path": "sql/preflight-common.sql",
+      "bytes": 1864,
+      "sha256": "a0cb5196b037471a352798f9829482f586aa028454bb3cc9c0c748e0a401b5fc"
+    },
+    {
+      "path": "sql/preflight-prod10.sql",
+      "bytes": 934,
+      "sha256": "183ccef148505ac4ac6fc36de2eb493fef212cf837263b63e0d54c2e5cb24e9b"
+    },
+    {
+      "path": "sql/preflight-stage-empty.sql",
+      "bytes": 598,
+      "sha256": "6b08fc8b902c756d6a7f9b7bde74777457efaff871a6b55bc8af123c161a7e3d"
+    },
+    {
+      "path": "sql/preflight-stage15.sql",
+      "bytes": 541,
+      "sha256": "60ed203d3b3b769b8b07a56341fd18dc38e0dade07657f36877d50e5816ed916"
+    },
+    {
+      "path": "supabase-root-2021.crt",
+      "bytes": 1367,
+      "sha256": "700723581420dd1ac98fd7e9ac529f0ef210eadcaf87fc868a3ad7d114c2f3b7"
+    },
+    {
+      "path": "tests/fixture.sql",
+      "bytes": 2947,
+      "sha256": "675bb9db54ba566b29bcfaaf7387537d3467554a7eed6e378c937d834d4fe866"
+    },
+    {
+      "path": "tests/guards.test.mjs",
+      "bytes": 10045,
+      "sha256": "5f3ad12daf93d73675f6142a6eb15cc3773ea2c88470753058daed4ea8f76a02"
+    },
+    {
+      "path": "tests/rehearse.mjs",
+      "bytes": 8551,
+      "sha256": "e23efb2aff8b3fa6ed91a7ba3d6da4e7a07d5849ddfac9c88c4bedf0e32cf518"
+    },
+    {
+      "path": "tests/tls-peer.mjs",
+      "bytes": 22925,
+      "sha256": "3ff8040f03ae0d580ae81833210e356c2b3cad510b0e609d6d6dd046ccfcb2af"
+    },
+    {
+      "path": "tests/tls.mjs",
+      "bytes": 2718,
+      "sha256": "609409fb913f66f22caea27b2c08b7b923a86966d9e3e9a03a5aec33d50e1e9b"
+    }
+  ]
+}

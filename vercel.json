@@ -1,7 +1,8 @@
 {
   "git": {
     "deploymentEnabled": {
-      "codex/account-settings-stage-bootstrap": false
+      "codex/account-settings-stage-bootstrap": false,
+      "codex/release-db18-validation": false
     }
   },
   "buildCommand": "vite build",

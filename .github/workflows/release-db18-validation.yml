@@ -1,0 +1,47 @@
+name: Release DB18 package Linux proof
+on:
+  push:
+    branches: [codex/release-db18-validation]
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Read exact public source without stored credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git init .
+          git remote add origin https://github.com/AhmadTellawy/SocialInsight.git
+          git fetch --depth 1 origin "$GITHUB_SHA"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Prepare pinned Node and synthetic PostgreSQL17
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull node:24.20.0-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
+          docker run -d --name si-release18-pg --network host -e POSTGRES_PASSWORD=settings-local-fixture postgres:17.9-bookworm -p 55447 -c listen_addresses=127.0.0.1
+          for i in $(seq 1 30); do docker exec si-release18-pg pg_isready -U postgres -p 55447 && break; sleep 1; done
+          docker exec si-release18-pg pg_isready -U postgres -p 55447
+      - name: Run bound guards and real three profile rehearsal
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network host -v "$PWD/server/scripts/release-db-18:/work" -w /work node:24.20.0-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e sh -c 'apt-get update -qq && apt-get install -y --no-install-recommends openssl ca-certificates && npm ci --no-audit --no-fund && node launch.mjs verify && node --test --test-concurrency=1 tests/guards.test.mjs && node tests/rehearse.mjs && node tests/tls.mjs'
+      - name: Retain nonsecret detailed receipts in build log
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,pathlib
+          root=pathlib.Path('server/scripts/release-db-18/evidence')
+          for p in sorted(root.glob('**/*.json')):
+              if p.name == 'receipt.json' or p.name.startswith('tls-'):
+                  print(json.dumps({'artifact':str(p),'receipt':json.loads(p.read_text())},separators=(',',':')))
+          PY
+          docker inspect --format '{{json .State}}' si-release18-pg || true
+          docker rm -f si-release18-pg || true

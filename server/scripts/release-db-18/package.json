@@ -1,0 +1,14 @@
+{
+  "name": "socialinsight-release-db-18",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.13.0 <25" },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 tests/guards.test.mjs",
+    "test:local": "node tests/rehearse.mjs",
+    "verify": "node launch.mjs verify",
+    "freeze": "node prepare-source.mjs"
+  },
+  "dependencies": { "prisma": "6.19.2", "pg": "8.23.0" }
+}
