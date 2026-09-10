@@ -14,6 +14,7 @@ export const CA_SHA256 = '700723581420dd1ac98fd7e9ac529f0ef210eadcaf87fc868a3ad7
 export const CONNECTION_OPTIONS = '-c timezone=UTC -c lock_timeout=5000 -c statement_timeout=120000';
 export const LIMITS = Object.freeze({ PREFLIGHT: 60000, MIGRATE_DEPLOY: 360000, POSTFLIGHT: 60000 });
 export const RUN_BUDGET_MS = 600000;
+export const CLEANUP_RESERVE_MS = 15000;
 const OS_KEYS = ['PATH','Path','SystemRoot','SYSTEMROOT','WINDIR','COMSPEC','TEMP','TMP','TMPDIR','HOME','USERPROFILE','APPDATA','LOCALAPPDATA'];
 
 export function profile(name) { must(Object.hasOwn(PROFILES, name ?? ''), 'PROFILE_INVALID'); return PROFILES[name]; }

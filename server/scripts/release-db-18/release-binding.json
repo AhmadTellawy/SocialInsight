@@ -229,13 +229,18 @@
     },
     {
       "path": "README.md",
-      "bytes": 10324,
-      "sha256": "52f47f9d373b9372c80dbb6801e2efcd069b5f2afbd930aad4ac404c8889d6e3"
+      "bytes": 12795,
+      "sha256": "47f5622ece725a30f534cdd2197861e99edf988dfea3f29a7e80fa7b27ac626b"
     },
     {
       "path": "approval.schema.json",
       "bytes": 5810,
       "sha256": "3ccaac4731e8180287b89ea5bd8627986b68cf7cb6f054c1d86dca610289180b"
+    },
+    {
+      "path": "backend-cleanup.mjs",
+      "bytes": 4184,
+      "sha256": "85642c8effce529ad42d61802ad40a3d9abf80867574a696018785586b854e9b"
     },
     {
       "path": "capture.mjs",
@@ -244,8 +249,8 @@
     },
     {
       "path": "contract.mjs",
-      "bytes": 10400,
-      "sha256": "9c66c1916e3d357d537fefd7148a5915e91b78470ea221955f71059d02069bc1"
+      "bytes": 10441,
+      "sha256": "26b4f1914bb2cd5a50f97f94f05be3ef6a4f3abb31efd08d548bb3247c04b3e1"
     },
     {
       "path": "core.mjs",
@@ -254,8 +259,8 @@
     },
     {
       "path": "install.mjs",
-      "bytes": 8928,
-      "sha256": "9768f39438139017b1023492324a81817cec1e5d879f78e1e77c358a641cc2ab"
+      "bytes": 10318,
+      "sha256": "fb776bccb5ad6988ff0f12621a1285a3d47996fbf7d6fd8ac137a4781c144c4f"
     },
     {
       "path": "launch.mjs",
@@ -274,8 +279,8 @@
     },
     {
       "path": "package.json",
-      "bytes": 420,
-      "sha256": "198d33f88498de72ec3c15dde9a3fd7a93621c68c05b8ff56acbbe50ceea5c4e"
+      "bytes": 476,
+      "sha256": "64f36d9c7452b4368fc350e176dd422c8df3b0490340e3913ce00af91ea22195"
     },
     {
       "path": "prepare-source.mjs",
@@ -383,6 +388,11 @@
       "sha256": "68160bd07c98a52a50ee0d7943a54ab848ed6e1e0da9176f91b702dc8aaa6626"
     },
     {
+      "path": "process-runner.mjs",
+      "bytes": 6188,
+      "sha256": "5d18fd19ace4d756715a98480f017a7bf5e22c2105e3d8786c17a03eff3f994d"
+    },
+    {
       "path": "sql.mjs",
       "bytes": 8405,
       "sha256": "dbeb5d333147d0f9d72b57e58bb58ab61b357facdb6cbc9b80cfe9efb3c2b791"
@@ -429,8 +439,18 @@
     },
     {
       "path": "tests/guards.test.mjs",
-      "bytes": 10045,
-      "sha256": "5f3ad12daf93d73675f6142a6eb15cc3773ea2c88470753058daed4ea8f76a02"
+      "bytes": 10602,
+      "sha256": "9f6e03e9a9b8350eec6460a18617e25cba84bfe0df12c842914296921b57bb9d"
+    },
+    {
+      "path": "tests/interruption-worker.mjs",
+      "bytes": 2157,
+      "sha256": "69f142f0d269577bddd503bc18a1aea13c637c47f13775dfa4407e3be024ef7f"
+    },
+    {
+      "path": "tests/interruption.mjs",
+      "bytes": 10885,
+      "sha256": "5e8fa6d6c7e74640ef2c019610f7a6833509935f01e99d6b94c5a8a15ba431f8"
     },
     {
       "path": "tests/rehearse.mjs",

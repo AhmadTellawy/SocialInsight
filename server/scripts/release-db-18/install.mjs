@@ -1,10 +1,11 @@
-import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { APPLICATION, PRISMA, ROOT, UUID, must, readRegular, realDirectory, sanitizedFailure, sha256, verifyBundle } from './core.mjs';
-import { CA_SHA256, CLI_SHA256, LINUX_ENGINE_SHA256, LIMITS, RUN_BUDGET_MS, assertNoAmbientDotenv, childEnvironment, connectionUrl, profile, readHostedApproval, rejectInherited, targetFor } from './contract.mjs';
+import { CA_SHA256, CLEANUP_RESERVE_MS, CLI_SHA256, LINUX_ENGINE_SHA256, LIMITS, RUN_BUDGET_MS, assertNoAmbientDotenv, childEnvironment, connectionUrl, profile, readHostedApproval, rejectInherited, targetFor } from './contract.mjs';
 import { postflightSql, preflightSql } from './sql.mjs';
 import { captureBaseline } from './capture.mjs';
+import { runPrismaProcess } from './process-runner.mjs';
+import { applicationName, settleInvocationBackends } from './backend-cleanup.mjs';
 
 export function materialize(binding, name, directory, count = 18) {
   must(Number.isInteger(count) && count >= 1 && count <= 18, 'MATERIALIZE_COUNT_INVALID');
@@ -38,7 +39,7 @@ export function saveReceipt(path,receipt) {
   renameSync(tmp,path);
 }
 export function projectedReceipt(r) {
-  return {schemaVersion:1,runId:r.runId,profile:r.profile,project:r.project,host:r.host,database:r.database,command:r.command,application:r.application,sourceBindingSha256:r.sourceBindingSha256,startedAt:r.startedAt,finishedAt:r.finishedAt,status:r.status,failureCode:r.failureCode,applicationDeployment:false,localSyntheticOnly:r.localSyntheticOnly,lockScope:'PERSISTED_EXECUTION_DIRECTORY_ONLY',missingReceiptAfterInterruption:'UNKNOWN_REQUIRES_F01_DISPOSITION',steps:r.steps.map(s=>({name:s.name,status:s.status,startedAt:s.startedAt,finishedAt:s.finishedAt,exitCode:s.exitCode}))};
+  return {schemaVersion:1,runId:r.runId,profile:r.profile,project:r.project,host:r.host,database:r.database,command:r.command,application:r.application,sourceBindingSha256:r.sourceBindingSha256,startedAt:r.startedAt,finishedAt:r.finishedAt,status:r.status,failureCode:r.failureCode,applicationDeployment:false,localSyntheticOnly:r.localSyntheticOnly,lockScope:'PERSISTED_EXECUTION_DIRECTORY_ONLY',missingReceiptAfterInterruption:'UNKNOWN_REQUIRES_F01_DISPOSITION',externalFenceRequiredUntil:'VERIFIED_QUIESCENCE_AND_F01_DISPOSITION',steps:r.steps.map(s=>({name:s.name,status:s.status,startedAt:s.startedAt,finishedAt:s.finishedAt,exitCode:s.exitCode,timeoutMs:s.timeoutMs,executionTimeoutMs:s.executionTimeoutMs,cancellationReason:s.cancellationReason,processCleanup:s.processCleanup,backendCleanup:s.backendCleanup}))};
 }
 export async function runRelease(options) {
   const {command,name,runId,localName,transport='direct',approvalFile,env=process.env}=options;
@@ -52,13 +53,14 @@ export async function runRelease(options) {
   const caPath=resolve(ROOT,'supabase-root-2021.crt');
   if (!target.local) must(sha256(readRegular(caPath))===CA_SHA256,'CA_BINDING_INVALID');
   const password=target.local ? 'settings-local-fixture' : env.RELEASE18_DB_ADMIN_PASSWORD;
-  const url=connectionUrl(target,password,caPath);
-  const childEnv=childEnvironment(env,url);
+  const marker=applicationName(runId);
+  const url=new URL(connectionUrl(target,password,caPath));url.searchParams.set('application_name',marker);
+  const childEnv=childEnvironment(env,url.href);
   const receiptBase=evidenceRoot(), directory=resolve(receiptBase,runId);
   must(!existsSync(directory),'RUN_ALREADY_EXISTS'); mkdirSync(directory,{mode:0o700});
   const receiptPath=resolve(directory,'receipt.json');
   const lockPath=resolve(receiptBase,`target-${sha256(`${target.host}:${target.port}/${target.database}`)}.lock`);
-  const receipt={schemaVersion:1,runId,profile:name,project:target.project,host:target.host,database:target.database,command,application:APPLICATION,sourceBindingSha256:binding.bindingSha256,startedAt:new Date().toISOString(),status:'PREPARING',steps:[],applicationDeployment:false,localSyntheticOnly:target.local,lockScope:'PERSISTED_EXECUTION_DIRECTORY_ONLY',missingReceiptAfterInterruption:'UNKNOWN_REQUIRES_F01_DISPOSITION',runtime:{...runtime,cli:undefined},approvalConfigSha256:target.local?undefined:env.RELEASE18_APPROVED_CONFIG_SHA256};
+  const receipt={schemaVersion:1,runId,profile:name,project:target.project,host:target.host,database:target.database,command,application:APPLICATION,sourceBindingSha256:binding.bindingSha256,startedAt:new Date().toISOString(),status:'PREPARING',steps:[],applicationDeployment:false,localSyntheticOnly:target.local,lockScope:'PERSISTED_EXECUTION_DIRECTORY_ONLY',missingReceiptAfterInterruption:'UNKNOWN_REQUIRES_F01_DISPOSITION',externalFenceRequiredUntil:'VERIFIED_QUIESCENCE_AND_F01_DISPOSITION',cleanupReserveMs:CLEANUP_RESERVE_MS,applicationName:marker,runtime:{...runtime,cli:undefined},approvalConfigSha256:target.local?undefined:env.RELEASE18_APPROVED_CONFIG_SHA256};
   writeFileSync(receiptPath,JSON.stringify(receipt,null,2)+'\n',{flag:'wx',mode:0o600});
   let ownsLock=false, migrationStarted=false;
   const started=Date.now();
@@ -74,27 +76,39 @@ export async function runRelease(options) {
     materialize(binding,name,directory);
     assertNoAmbientDotenv(directory);
     writeFileSync(resolve(directory,'preflight.sql'),preflightSql(binding,name,target,snapshot),{flag:'wx',mode:0o600});
-    const run=(phase,args)=>{
-      must(Date.now()-started < RUN_BUDGET_MS,'RUN_DEADLINE_EXCEEDED');
-      if(approval) must(Date.parse(approval.expiresAt)>Date.now()+LIMITS[phase],'APPROVAL_EXPIRED_DURING_RUN');
-      const step={name:phase,startedAt:new Date().toISOString(),status:'RUNNING'};
+    const run=async(phase,args)=>{
+      const timeout=Math.min(LIMITS[phase],RUN_BUDGET_MS-(Date.now()-started)-CLEANUP_RESERVE_MS);
+      must(timeout>0,'RUN_DEADLINE_EXCEEDED');
+      if(approval) must(Date.parse(approval.expiresAt)>Date.now()+timeout+CLEANUP_RESERVE_MS,'APPROVAL_EXPIRED_DURING_RUN');
+      const step={name:phase,startedAt:new Date().toISOString(),status:'RUNNING',timeoutMs:timeout};
       receipt.steps.push(step); receipt.status='RUNNING'; persist();
       if(phase==='MIGRATE_DEPLOY') migrationStarted=true;
-      const spawn=target.local && options.localSpawn ? options.localSpawn : spawnSync;
-      const result=spawn(process.execPath,[runtime.cli,...args,'--schema',resolve(directory,'prisma/schema.prisma')],{cwd:directory,env:childEnv,encoding:'utf8',timeout:Math.min(LIMITS[phase],RUN_BUDGET_MS-(Date.now()-started)),maxBuffer:1024*1024,windowsHide:true,stdio:['ignore','pipe','pipe']});
+      const spawn=target.local && options.localSpawn ? options.localSpawn : runPrismaProcess;
+      const result=await spawn(process.execPath,[runtime.cli,...args,'--schema',resolve(directory,'prisma/schema.prisma')],{cwd:directory,env:childEnv,timeout,maxBuffer:1024*1024});
       step.finishedAt=new Date().toISOString(); step.exitCode=Number.isInteger(result.status)?result.status:null;
-      step.status=result.status===0 && !result.error && !result.signal?'PASSED':'FAILED'; persist();
+      step.processCleanup=result.processCleanup;
+      step.executionTimeoutMs=result.timeoutMs??timeout;
+      step.cancellationReason=result.reason;
+      const treeVerified=target.local&&options.localSpawn&&!result.processCleanup ? true : process.platform!=='linux'||result.processCleanup?.verified===true&&result.processCleanup?.quiescent===true;
+      step.status=result.status===0 && !result.error && !result.signal && !result.reason && treeVerified?'PASSED':'FAILED';
+      if(step.status!=='PASSED'){
+        receipt.status=migrationStarted?'FAILED_OR_UNKNOWN':'PREFLIGHT_REJECTED';receipt.failureCode=`${phase}_FAILED`;persist();
+        const settle=target.local&&options.localBackendCleanup?options.localBackendCleanup:settleInvocationBackends;
+        step.backendCleanup=await settle(target,password,marker);
+        step.finishedAt=new Date().toISOString();
+      }
+      persist();
       // Never inspect, emit or persist raw child output or Error objects: they may contain secrets.
       must(step.status==='PASSED',`${phase}_FAILED`);
     };
-    run('PREFLIGHT',['db','execute','--file',resolve(directory,'preflight.sql')]);
+    await run('PREFLIGHT',['db','execute','--file',resolve(directory,'preflight.sql')]);
     if(command==='deploy') {
       const migrationStartedAt=snapshot.databaseObservedAt??new Date().toISOString();
       // Recheck every frozen byte immediately before the first write-capable subprocess.
       must(verifyBundle().bindingSha256===binding.bindingSha256,'SOURCE_CHANGED_DURING_RUN');
-      run('MIGRATE_DEPLOY',['migrate','deploy']);
+      await run('MIGRATE_DEPLOY',['migrate','deploy']);
       writeFileSync(resolve(directory,'postflight.sql'),postflightSql(binding,name,target,snapshot,migrationStartedAt),{flag:'wx',mode:0o600});
-      run('POSTFLIGHT',['db','execute','--file',resolve(directory,'postflight.sql')]);
+      await run('POSTFLIGHT',['db','execute','--file',resolve(directory,'postflight.sql')]);
     }
     receipt.status='PASSED';
   } catch(error) {

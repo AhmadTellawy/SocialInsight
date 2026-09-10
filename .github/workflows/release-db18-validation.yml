@@ -31,17 +31,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm --network host -v "$PWD/server/scripts/release-db-18:/work" -w /work node:24.20.0-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e sh -c 'apt-get update -qq && apt-get install -y --no-install-recommends openssl ca-certificates && npm ci --no-audit --no-fund && node launch.mjs verify && node --test --test-concurrency=1 tests/guards.test.mjs && node tests/rehearse.mjs && node tests/tls.mjs'
+          docker run --rm --network host -v "$PWD/server/scripts/release-db-18:/work" -w /work node:24.20.0-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e sh -c 'apt-get update -qq && apt-get install -y --no-install-recommends openssl ca-certificates && npm ci --no-audit --no-fund && node launch.mjs verify && node --test --test-concurrency=1 tests/guards.test.mjs && node tests/rehearse.mjs && node tests/tls.mjs && node tests/interruption.mjs'
       - name: Retain nonsecret detailed receipts in build log
         if: always()
         shell: bash
         run: |
-          python3 - <<'PY'
-          import json,pathlib
-          root=pathlib.Path('server/scripts/release-db-18/evidence')
-          for p in sorted(root.glob('**/*.json')):
-              if p.name == 'receipt.json' or p.name.startswith('tls-'):
-                  print(json.dumps({'artifact':str(p),'receipt':json.loads(p.read_text())},separators=(',',':')))
-          PY
+          docker run --rm --network none -v "$PWD/server/scripts/release-db-18:/work:ro" -w /work node:24.20.0-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e node -e 'const fs=require("node:fs");function walk(p){for(const e of fs.readdirSync(p,{withFileTypes:true})){const q=p+"/"+e.name;if(e.isDirectory())walk(q);else if(e.name==="receipt.json"||e.name.startsWith("tls-")&&e.name.endsWith(".json"))console.log(JSON.stringify({artifact:q,receipt:JSON.parse(fs.readFileSync(q))}));}}if(fs.existsSync("evidence"))walk("evidence");'
           docker inspect --format '{{json .State}}' si-release18-pg || true
           docker rm -f si-release18-pg || true

@@ -7,6 +7,7 @@
   "scripts": {
     "test": "node --test --test-concurrency=1 tests/guards.test.mjs",
     "test:local": "node tests/rehearse.mjs",
+    "test:interruption": "node tests/interruption.mjs",
     "verify": "node launch.mjs verify",
     "freeze": "node prepare-source.mjs"
   },

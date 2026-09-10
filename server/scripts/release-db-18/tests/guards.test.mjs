@@ -7,9 +7,11 @@ import { APPLICATION, HASH, ROOT, readRegular, sha256, verifyBundle } from '../c
 import { CA_SHA256, CLI_SHA256, CONNECTION_OPTIONS, LINUX_ENGINE_SHA256, childEnvironment, connectionUrl, localDatabase, profile, rejectInherited, targetFor, validateApproval } from '../contract.mjs';
 import { runRelease } from '../install.mjs';
 import { expectedMigrations, preflightSql, preservationSql } from '../sql.mjs';
+import { applicationName } from '../backend-cleanup.mjs';
 
 const id=()=>randomUUID();
 const h='a'.repeat(64);
+const syntheticCleanup=async()=>({status:'UNVERIFIED',queryEndConfirmed:false,rollbackConfirmed:false,failureCode:'SYNTHETIC_NO_BACKEND'});
 function fixture() {
   const binding=verifyBundle(), now=Date.now(), target=targetFor('PROD_10');
   const ctx={binding,target,profile:'PROD_10',command:'deploy',runId:id(),now,opsRevision:'b'.repeat(40),serviceId:'srv-synthetic'};
@@ -80,14 +82,18 @@ test('invalid digest metadata and SQL identifiers fail before SQL execution',()=
 test('a write-capable timeout keeps unknown status and blocks another run without leaking child output',async()=>{
   const localName=`si_release18_unknown_${id().replaceAll('-','').slice(0,12)}`;
   let calls=0;
-  const result=await runRelease({command:'deploy',name:'STAGE_EMPTY',runId:id(),localName,env:{},localSnapshot:{tables:[],rollbackDigest:sha256('')},localSpawn(){calls++;return calls===1?{status:0}:{status:null,signal:'SIGTERM',error:new Error('PRIVATE_CANARY'),stdout:'PRIVATE_CANARY',stderr:'PRIVATE_CANARY'};}});
+  const result=await runRelease({command:'deploy',name:'STAGE_EMPTY',runId:id(),localName,env:{},localSnapshot:{tables:[],rollbackDigest:sha256('')},localBackendCleanup:syntheticCleanup,localSpawn(){calls++;return calls===1?{status:0}:{status:null,signal:'SIGTERM',error:new Error('PRIVATE_CANARY'),stdout:'PRIVATE_CANARY',stderr:'PRIVATE_CANARY'};}});
   assert.equal(result.status,'FAILED_OR_UNKNOWN');assert.equal(result.failureCode,'MIGRATE_DEPLOY_FAILED');assert.equal(calls,2);assert.doesNotMatch(JSON.stringify(result),/PRIVATE_CANARY/);
   const again=await runRelease({command:'deploy',name:'STAGE_EMPTY',runId:id(),localName,env:{},localSnapshot:{tables:[],rollbackDigest:sha256('')},localSpawn(){throw Error('SHOULD_NOT_RUN');}});
   assert.equal(again.failureCode,'UNRESOLVED_TARGET_RUN');
 });
 test('a rejected preflight never runs migrate deploy and duplicate run UUID cannot overwrite its receipt',async()=>{
   const runId=id(),localName=`si_release18_reject_${id().replaceAll('-','').slice(0,12)}`;let calls=0;
-  const options={command:'deploy',name:'STAGE_EMPTY',runId,localName,env:{},localSnapshot:{tables:[],rollbackDigest:sha256('')},localSpawn(){calls++;return {status:1,stderr:'PRIVATE_CANARY'};}};
+  const options={command:'deploy',name:'STAGE_EMPTY',runId,localName,env:{},localSnapshot:{tables:[],rollbackDigest:sha256('')},localBackendCleanup:syntheticCleanup,localSpawn(){calls++;return {status:1,stderr:'PRIVATE_CANARY'};}};
   const result=await runRelease(options);assert.equal(result.status,'PREFLIGHT_REJECTED');assert.equal(calls,1);
   await assert.rejects(()=>runRelease(options),/RUN_ALREADY_EXISTS/);
+});
+test('cleanup marker requires an exact fresh UUID and cannot select another application',()=>{
+  const runId=id();assert.equal(applicationName(runId),`si_release18_${runId}`);
+  for(const invalid of ['postgres','',runId+'\n',runId+'%'])assert.throws(()=>applicationName(invalid));
 });
