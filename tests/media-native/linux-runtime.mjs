@@ -28,6 +28,9 @@ for(let attempt=0;attempt<30;attempt++) {
   await new Promise(resolve=>setTimeout(resolve,1000));
 }
 assert.ok(health,'Pinned native runtime must become ready');
+assert.equal(health.protocolVersion,2);
+assert.deepEqual(health.capabilities,{wholeWorkerIsolation:'landlock-seccomp-v1',supervisor:'subreaper-v1',failurePolicy:'fail-closed-v1'});
+assert.deepEqual(health.limits,{inputBytes:15728640,outputBytes:12582912,maxPixels:40000000,wholeWorkerMs:45000});
 console.log(JSON.stringify({kind:'READY',health}));
 function headers(body, id=randomUUID()) {
   const timestamp=String(Math.floor(Date.now()/1000)); const digest=createHash('sha256').update(body).digest('hex');
@@ -38,7 +41,7 @@ let failures=0;
 async function convert(name,body,expected) {
   const started=performance.now(); const report={name,bytes:body.length,sha256:createHash('sha256').update(body).digest('hex')};
   try {
-    const response=await fetch(base+'/v1/convert',{method:'POST',body,headers:headers(body),signal:AbortSignal.timeout(35000)});
+    const response=await fetch(base+'/v1/convert',{method:'POST',body,headers:headers(body),signal:AbortSignal.timeout(60000)});
     report.status=response.status;
     if(response.ok) {
       const output=Buffer.from(await response.arrayBuffer()); const metadata=await sharp(output).metadata();
@@ -66,8 +69,23 @@ await convert('sequence',await readFile('/fixtures/fixtures/example.heic'),'REJE
 await convert('uncompressed-codec',await readFile('/fixtures/fixtures/uncompressed_pix_RGB.heif'),'REJECT');
 await convert('truncated',camera.subarray(0,48),'REJECT');
 const proof=headers(camera);
-const first=await fetch(base+'/v1/convert',{method:'POST',body:camera,headers:proof,signal:AbortSignal.timeout(35000)});await first.arrayBuffer();
+const first=await fetch(base+'/v1/convert',{method:'POST',body:camera,headers:proof,signal:AbortSignal.timeout(60000)});await first.arrayBuffer();
 const replay=await fetch(base+'/v1/convert',{method:'POST',body:camera,headers:proof,signal:AbortSignal.timeout(5000)});
 assert.equal(replay.status,409);await replay.arrayBuffer();
+const cancellation=new AbortController();
+const longInput=await readFile('/fixtures/generated/40mp.heic');
+const pending=fetch(base+'/v1/convert',{method:'POST',body:longInput,headers:headers(longInput),signal:cancellation.signal}).then(()=>{throw Error('Expected cancellation');},error=>{assert.equal(error.name,'AbortError');});
+await new Promise(resolve=>setTimeout(resolve,500));
+const busy=await fetch(base+'/v1/convert',{method:'POST',body:camera,headers:headers(camera),signal:AbortSignal.timeout(5000)});
+assert.equal(busy.status,429);assert.equal(busy.headers.get('retry-after'),'1');await busy.arrayBuffer();
+cancellation.abort();await pending;
+let resumed=false;
+for(let attempt=0;attempt<20;attempt++) {
+  const retry=await fetch(base+'/v1/convert',{method:'POST',body:camera,headers:headers(camera),signal:AbortSignal.timeout(60000)});
+  await retry.arrayBuffer();if(retry.status===200){resumed=true;break;}
+  assert.equal(retry.status,429);await new Promise(resolve=>setTimeout(resolve,250));
+}
+assert.equal(resumed,true);assert.equal((await fetch(base+'/health/ready')).status,200);
+console.log(JSON.stringify({kind:'HTTP_CANCELLATION',busyRejected:true,callerAborted:true,laterConversionSucceeded:true}));
 console.log(JSON.stringify({kind:'SUMMARY',resourceLimits:{memoryBytes:536870912,cpu:0.1},cases:reports.length,failures,replayRejected:true,productionRuntimeVerified:false}));
 if(failures)process.exitCode=1;

@@ -26,10 +26,10 @@ export function loadConfig(env = process.env) {
     maxBodyBytes: integer(env.MAX_BODY_BYTES, 15 * 1024 * 1024, 1024, 15 * 1024 * 1024, 'MAX_BODY_BYTES'),
     maxAggregatePixels: integer(env.MAX_AGGREGATE_PIXELS, 40_000_000, 1_000_000, 40_000_000, 'MAX_AGGREGATE_PIXELS'),
     maxConcurrency: integer(env.MAX_CONCURRENCY, 1, 1, 1, 'MAX_CONCURRENCY'),
-    conversionTimeoutMs: integer(env.CONVERSION_TIMEOUT_MS, 15_000, 1_000, 30_000, 'CONVERSION_TIMEOUT_MS'),
-    tempRoot: env.TEMP_ROOT ?? '/tmp/heif-converter',
-    converterPath: env.HEIF_CONVERT_PATH ?? '/usr/local/bin/heif-convert',
+    conversionTimeoutMs: 45_000,
+    tempRoot: '/tmp/heif-converter',
+    converterPath: '/usr/local/bin/heif-convert',
     prlimitPath: env.PRLIMIT_PATH ?? '/usr/bin/prlimit',
-    versionManifestPath: env.NATIVE_VERSION_MANIFEST ?? '/opt/heif-converter/native-versions.json',
+    versionManifestPath: '/opt/heif-converter/native-versions.json',
   });
 }

@@ -87,7 +87,7 @@ export async function runConfinedJob(input,{signal,probe=false,fault,timeoutMs=4
       throw new ServiceError(503,'INVALID_WORKER_OUTPUT','Image processing is unavailable');
     return Object.freeze({data,mime:header.mime,width:header.width,height:header.height});
   } finally {
-    await canary?.close();
+    try{await canary?.close();}catch{cleanupFailure=new ServiceError(503,'WORKER_CLEANUP_FAILED','Image processing is unavailable');}
     if(child?.pid) { try { killGroup(child.pid);await gone(child.pid); } catch(e) { cleanupFailure=e; } }
     if(!cleanupFailure)try{await rm(job,{recursive:true,force:false});}catch{cleanupFailure=new ServiceError(503,'WORKER_CLEANUP_FAILED','Image processing is unavailable');}
     if(cleanupFailure)throw cleanupFailure;

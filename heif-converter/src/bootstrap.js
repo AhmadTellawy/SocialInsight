@@ -51,19 +51,26 @@ export async function verifyResourceEnvelope(io=fs) {
 }
 
 export async function verifyBootstrap({io=fs,supervisorMode='--supervise'}={}) {
+  let phase='IDENTITY';
   try {
     if(process.platform!=='linux'||process.getuid()!==10001||process.geteuid()!==10001||process.getgid()!==10001||process.getegid()!==10001)throw unavailable();
+    phase='CAPABILITIES';
     const status=await io.readFile('/proc/self/status','utf8');
     for(const name of ['CapEff','CapPrm','CapInh','CapAmb'])if(!new RegExp('^'+name+':\\s+0+$','m').test(status))throw unavailable();
     if(!/^NoNewPrivs:\s+1$/m.test(status))throw unavailable();
+    phase='PROCESS_LIMIT';
     const limits=await io.readFile('/proc/self/limits','utf8');
-    if(!/^Max processes\s+128\s+128\s+processes$/m.test(limits))throw unavailable();
+    if(!/^Max processes\s+128\s+128\s+processes[ \t]*$/m.test(limits))throw unavailable();
+    phase='SUPERVISOR';
     const parent=process.ppid;
     if(await io.readlink('/proc/'+parent+'/exe')!=='/usr/local/bin/si-heif-confine')throw unavailable();
     const argv=(await io.readFile('/proc/'+parent+'/cmdline','utf8')).split('\0').filter(Boolean);
     if(argv.length!==2||argv[1]!==supervisorMode)throw unavailable();
-    const storage=await verifyTempRoot(io),resources=await verifyResourceEnvelope(io);
+    phase='STORAGE';
+    const storage=await verifyTempRoot(io);
+    phase='RESOURCES';
+    const resources=await verifyResourceEnvelope(io);
     if(process.ppid!==parent)throw unavailable();
     return Object.freeze({storage,resources});
-  } catch {throw unavailable();}
+  } catch {const error=unavailable();error.phase=phase;throw error;}
 }

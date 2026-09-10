@@ -26,7 +26,10 @@ function probeCommand(command, args, timeoutMs = 2000) {
 export async function loadHealthEvidence(config, dependencies = {}) {
   const read = dependencies.readFile ?? readFile;
   const probe = dependencies.probeCommand ?? probeCommand;
-  const sharpVersions = dependencies.sharpVersions ?? (await import('sharp')).default.versions;
+  // Supplied by the completed confined worker probe. The long-lived broker
+  // never loads an image decoder merely to report its version.
+  const sharpVersions = dependencies.sharpVersions;
+  if (!sharpVersions) throw new Error('Confined worker version evidence is required');
   const manifest = JSON.parse(await read(config.versionManifestPath, 'utf8'));
   const converterBinary = await read(config.converterPath);
   const converterSha256 = createHash('sha256').update(converterBinary).digest('hex');
@@ -40,6 +43,18 @@ export async function loadHealthEvidence(config, dependencies = {}) {
   return Object.freeze({
     status: 'ready',
     service: 'heif-converter',
+    protocolVersion: 2,
+    capabilities: Object.freeze({
+      wholeWorkerIsolation: 'landlock-seccomp-v1',
+      supervisor: 'subreaper-v1',
+      failurePolicy: 'fail-closed-v1',
+    }),
+    limits: Object.freeze({
+      inputBytes: config.maxBodyBytes,
+      outputBytes: 12 * 1024 * 1024,
+      maxPixels: config.maxAggregatePixels,
+      wholeWorkerMs: 45_000,
+    }),
     versions: Object.freeze({
       node: process.versions.node,
       sharp: sharpVersions.sharp,

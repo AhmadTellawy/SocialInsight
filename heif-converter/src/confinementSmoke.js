@@ -25,7 +25,8 @@ if(process.env.SI_CONFINEMENT_DEATH_PROBE==='1') {
 async function record(name,fn){const start=performance.now(),before=assertions;try{const details=await fn();cases.push({name,status:'PASS',ms:Math.round(performance.now()-start),assertions:assertions-before,...details});console.log(JSON.stringify(cases.at(-1)));}catch(e){cases.push({name,status:'FAIL',ms:Math.round(performance.now()-start),assertions:assertions-before,code:e.code??'ASSERTION'});console.log(JSON.stringify(cases.at(-1)));throw e;}}
 try {
   await record('actual-bootstrap-envelope',async()=>{
-    const envelope=await verifyBootstrap({supervisorMode:'--supervise-probe'});
+    let envelope;
+    try{envelope=await verifyBootstrap({supervisorMode:'--supervise-probe'});}catch(e){console.log(JSON.stringify({bootstrapFailurePhase:e.phase??'UNKNOWN'}));throw e;}
     assert.ok(envelope.resources.pids<=512);assert.equal(envelope.resources.swapBytes,0);return{envelope};
   });
   await record('enforced-container-memory',async()=>{

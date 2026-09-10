@@ -14,6 +14,7 @@ const SECURITY_HEADERS = Object.freeze({
 });
 
 function json(response, status, value, extraHeaders = {}) {
+  if (response.destroyed || response.writableEnded) return;
   const body = Buffer.from(JSON.stringify(value));
   response.writeHead(status, {
     ...SECURITY_HEADERS,
@@ -34,7 +35,8 @@ export function createConverterServer({ config, converter, healthEvidence, clock
       return;
     }
     if (request.method === 'GET' && request.url === '/health/ready') {
-      json(response, 200, healthEvidence);
+      if (converter.isReady?.() === true) json(response, 200, healthEvidence);
+      else json(response, 503, { status: 'unavailable' });
       return;
     }
     if (request.method !== 'POST' || request.url !== '/v1/convert') {
@@ -44,6 +46,11 @@ export function createConverterServer({ config, converter, healthEvidence, clock
 
     let requestId;
     let release;
+    const cancellation = new AbortController();
+    const abort = () => cancellation.abort();
+    const disconnected = () => { if (!response.writableFinished) abort(); };
+    request.once('aborted', abort);
+    response.once('close', disconnected);
     try {
       // Authenticate the signed digest before reserving conversion capacity or reading bytes.
       requestId = authenticateHeaders({
@@ -53,6 +60,9 @@ export function createConverterServer({ config, converter, healthEvidence, clock
         windowSeconds: config.signatureWindowSeconds,
         replayGuard,
       });
+      if (converter.isReady?.() !== true) {
+        throw new ServiceError(503, 'CONVERTER_UNAVAILABLE', 'Image processing is unavailable');
+      }
       release = gate.tryAcquire();
       if (!release) {
         json(response, 429, { error: { code: 'CONVERTER_BUSY', message: 'Converter concurrency limit reached' } }, { 'retry-after': '1', connection: 'close' });
@@ -61,7 +71,8 @@ export function createConverterServer({ config, converter, healthEvidence, clock
       const body = await readFixedBinaryBody(request, config.maxBodyBytes);
       verifyBodyDigest(body, request.headers['x-si-body-sha256']);
       inspectHeif(body, { maxAggregatePixels: config.maxAggregatePixels });
-      const converted = await converter.convert(body);
+      const converted = await converter.convert(body, { signal: cancellation.signal });
+      if (response.destroyed || response.writableEnded) return;
       response.writeHead(200, {
         ...SECURITY_HEADERS,
         'content-type': converted.mime,
@@ -86,6 +97,8 @@ export function createConverterServer({ config, converter, healthEvidence, clock
         { ...(serviceError.retryAfterSeconds ? { 'retry-after': String(serviceError.retryAfterSeconds) } : {}), ...(!request.readableEnded ? { connection: 'close' } : {}) },
       );
     } finally {
+      request.removeListener('aborted', abort);
+      response.removeListener('close', disconnected);
       release?.();
     }
   });
