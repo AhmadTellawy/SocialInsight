@@ -28,17 +28,19 @@
 #ifndef LANDLOCK_ACCESS_FS_TRUNCATE
 #define LANDLOCK_ACCESS_FS_TRUNCATE (1ULL << 14)
 #endif
-static void fail(void) { fputs("CONFINEMENT_UNAVAILABLE\n", stderr); _exit(78); }
+static const char *phase = "ENTRY";
+static void fail(void) { fprintf(stderr,"CONFINEMENT_UNAVAILABLE:%s\n",phase); _exit(78); }
 static volatile sig_atomic_t broker_pid;
 static void forward_signal(int sig) { if (broker_pid > 0) kill(broker_pid, sig); }
 static int supervise(int probe) {
+  phase="SUPERVISOR";
   if (prctl(PR_SET_CHILD_SUBREAPER, 1)) fail();
   struct sigaction handler = { .sa_handler = forward_signal };
   sigemptyset(&handler.sa_mask);
   if (sigaction(SIGTERM, &handler, NULL) || sigaction(SIGINT, &handler, NULL)) fail();
-  pid_t pid = fork(); if (pid < 0) fail();
+  pid_t expected_parent=getpid(), pid = fork(); if (pid < 0) fail();
   if (!pid) {
-    if (prctl(PR_SET_PDEATHSIG, SIGKILL) || getppid() == 1) fail();
+    if (prctl(PR_SET_PDEATHSIG, SIGKILL) || getppid() != expected_parent) fail();
     execl("/usr/local/bin/node", "node", probe ? "/app/src/confinementSmoke.js" : "/app/src/index.js", NULL);
     fail();
   }
@@ -206,6 +208,7 @@ int main(int argc, char **argv) {
   }
   if (argc != 3 || (strcmp(argv[1], "--worker") && strcmp(argv[1], "--probe"))) fail();
   const char *job = argv[2]; char canonical[PATH_MAX], input[PATH_MAX], decoded[PATH_MAX]; struct stat s;
+  phase="JOB_PATHS";
   if (!realpath(job, canonical) || strcmp(job, canonical)
       || strncmp(job, "/tmp/heif-converter/job-", 24)
       || strchr(job + 24, '/') || lstat(job, &s) || !S_ISDIR(s.st_mode)
@@ -215,14 +218,16 @@ int main(int argc, char **argv) {
   job_file(input, job, 0); job_file(decoded, job, 1);
   const char *paths[] = { "/app/src", "/app/node_modules", "/app/package.json", "/usr/local/bin/node",
     "/usr/local/bin/heif-convert", "/usr/local/bin/si-heif-confine", "/opt/heif-converter/native-versions.json", "/usr/lib", "/etc/ld.so.cache" };
+  phase="IMMUTABLE_RUNTIME";
   for (unsigned i=0; i<sizeof(paths)/sizeof(paths[0]); i++) immutable(paths[i]);
   limit(RLIMIT_CPU, 30);
   if (chdir(job)) fail();
   /* A process-group leader created by the broker cannot join another group. */
   if (getpgrp() != getpid()) fail();
   if (syscall(SYS_close_range, 3, ~0U, 0)) fail();
-  filesystem(job, input, decoded); system_calls();
+  phase="LANDLOCK";filesystem(job, input, decoded);
+  phase="SECCOMP";system_calls();
   char *args[] = { "/usr/local/bin/node", "--max-old-space-size=96", "--v8-pool-size=1",
     !strcmp(argv[1], "--probe") ? "/app/src/confinedProbe.js" : "/app/src/confinedWorker.js", input, decoded, NULL };
-  execve(args[0], args, env); fail();
+  phase="NODE_EXEC";execve(args[0], args, env); fail();
 }

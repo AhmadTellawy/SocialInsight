@@ -12,7 +12,7 @@ try {
     assert.notEqual(limit,'max');assert.ok(Number(limit)>0&&Number(limit)<=512*1024*1024);
     return{bytes:Number(limit)};
   });
-  await record('whole-worker-confinement',async()=>({probe:await runConfinedJob(Buffer.alloc(0),{probe:true})}));
+  await record('whole-worker-confinement',async()=>({probe:await runConfinedJob(Buffer.alloc(0),{probe:true,onDiagnostic:code=>console.log(JSON.stringify({diagnostic:code}))})}));
   const camera=Buffer.from(await fs.readFile('/fixtures/fixtures/camera-sample.base64','utf8'),'base64');
   for(const [name,input] of [['camera',camera],['aperture',await fs.readFile('/fixtures/fixtures/rainbow-451x461.heic')],['alpha',await fs.readFile('/fixtures/fixtures/with-alpha-512x512.heic')]]) {
     await record('native-sharp-'+name,async()=>{

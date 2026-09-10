@@ -12,7 +12,7 @@ async function gone(pid) {
   }
   throw new ServiceError(503,'WORKER_CLEANUP_FAILED','Image processing is unavailable');
 }
-export async function runConfinedJob(input,{signal,probe=false,timeoutMs=45_000,onSpawn=()=>{}}={}) {
+export async function runConfinedJob(input,{signal,probe=false,timeoutMs=45_000,onSpawn=()=>{},onDiagnostic=()=>{}}={}) {
   if (!Buffer.isBuffer(input) || input.length>15*1024*1024) throw new ServiceError(413,'IMAGE_TOO_LARGE','Image exceeds the limit');
   if(signal?.aborted) throw new ServiceError(499,'CONVERSION_CANCELLED','Image processing cancelled');
   const job=await mkdtemp('/tmp/heif-converter/job-');
@@ -23,7 +23,7 @@ export async function runConfinedJob(input,{signal,probe=false,timeoutMs=45_000,
     await writeFile(job+'/decoded.png',Buffer.alloc(0),{flag:'wx',mode:0o600});
     const result=await new Promise((resolve,reject)=>{
       child=spawn('/usr/local/bin/si-heif-confine',[probe?'--probe':'--worker',job],{
-        shell:false,detached:true,env:{},stdio:['ignore','pipe','ignore'],
+        shell:false,detached:true,env:{},stdio:['ignore','pipe','pipe'],
       });
       let bytes=0,parts=[],reason;
       const stop=code=>{reason??=code;if(child.pid)killGroup(child.pid);};
@@ -32,6 +32,11 @@ export async function runConfinedJob(input,{signal,probe=false,timeoutMs=45_000,
       signal?.addEventListener('abort',abort,{once:true});
       if(signal?.aborted)abort();
       child.stdout.on('data',data=>{bytes+=data.length;if(bytes>MAX_FRAME)stop('INVALID_WORKER_OUTPUT');else parts.push(data);});
+      let diagnosticBytes=0;
+      child.stderr.on('data',data=>{
+        diagnosticBytes+=data.length;
+        if(diagnosticBytes<=2048)for(const code of data.toString('utf8').match(/CONFINEMENT_UNAVAILABLE:[A-Z_]+|CONFINEMENT_PROBE_FAILED/g)??[])onDiagnostic(code);
+      });
       child.once('spawn',()=>onSpawn(child.pid));
       child.once('error',()=>{reason??='CONFINEMENT_UNAVAILABLE';});
       child.once('close',code=>{
