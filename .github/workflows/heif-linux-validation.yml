@@ -26,7 +26,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libheif-examples
+          sudo apt-get install -y --no-install-recommends libheif-examples libheif-plugin-x265
           mkdir -p tests/media-native/generated
           chmod 0777 tests/media-native/generated
           docker run --rm --network none --entrypoint node -v "$PWD/tests/media-native:/fixtures" si-heif-validation /fixtures/linux-runtime.mjs generate
