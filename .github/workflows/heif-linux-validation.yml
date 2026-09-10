@@ -39,6 +39,13 @@ jobs:
           set -euo pipefail
           docker run -d --name si-heif-capacity --read-only --cap-drop ALL --security-opt no-new-privileges --memory 512m --memory-swap 512m --cpus 0.1 --pids-limit 128 --tmpfs /tmp/heif-converter:rw,noexec,nosuid,size=192m,uid=10001,gid=10001,mode=0700 -p 127.0.0.1:18080:8080 -e HEIF_CONVERTER_HMAC_SECRET=synthetic-ci-fixture-key-not-an-application-secret si-heif-validation
           docker run --rm --network host --entrypoint node -v "$PWD/tests/media-native:/fixtures:ro" si-heif-validation /fixtures/linux-runtime.mjs test
+      - name: Diagnose failed decoder with identical process limits and synthetic input
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker cp tests/media-native/fixtures/example.heic si-heif-capacity:/tmp/heif-converter/diagnostic.heic
+          docker exec si-heif-capacity sh -c 'cd /tmp/heif-converter && /usr/bin/prlimit --as=805306368 --cpu=12 --fsize=134217728 --nproc=1 --nofile=64 -- /usr/local/bin/heif-convert diagnostic.heic diagnostic.png' || true
       - name: Record container memory, exit and cleanup evidence
         if: always()
         shell: bash
