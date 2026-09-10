@@ -1,0 +1,49 @@
+name: HEIF Linux capacity validation
+on:
+  push:
+    branches: [codex/heif-linux-validation]
+permissions:
+  contents: read
+jobs:
+  native-container:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Read exact public source without stored credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git init .
+          git remote add origin https://github.com/AhmadTellawy/SocialInsight.git
+          git fetch --depth 1 origin "$GITHUB_SHA"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Build pinned decoder and runtime
+        run: docker build --progress=plain -t si-heif-validation heif-converter
+      - name: Prepare synthetic capacity fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libheif-examples
+          mkdir -p tests/media-native/generated
+          chmod 0777 tests/media-native/generated
+          docker run --rm --network none --entrypoint node -v "$PWD/tests/media-native:/fixtures" si-heif-validation /fixtures/linux-runtime.mjs generate
+          heif-enc --version
+          heif-enc -q 70 tests/media-native/generated/12mp.png -o tests/media-native/generated/12mp.heic
+          heif-enc -q 70 tests/media-native/generated/40mp.png -o tests/media-native/generated/40mp.heic
+      - name: Exercise signed HTTP with actual free-instance resource limits
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name si-heif-capacity --read-only --cap-drop ALL --security-opt no-new-privileges --memory 512m --memory-swap 512m --cpus 0.1 --pids-limit 128 --tmpfs /tmp/heif-converter:rw,noexec,nosuid,size=192m,uid=10001,gid=10001,mode=0700 -p 127.0.0.1:18080:8080 -e HEIF_CONVERTER_HMAC_SECRET=synthetic-ci-fixture-key-not-an-application-secret si-heif-validation
+          docker run --rm --network host --entrypoint node -v "$PWD/tests/media-native:/fixtures:ro" si-heif-validation /fixtures/linux-runtime.mjs test
+      - name: Record container memory, exit and cleanup evidence
+        if: always()
+        shell: bash
+        run: |
+          docker inspect --format '{{json .State}} {{json .HostConfig.Memory}} {{json .HostConfig.NanoCpus}}' si-heif-capacity || true
+          docker exec si-heif-capacity node -e 'const fs=require("fs"); for(const n of ["memory.peak","memory.events","cpu.stat"]){const p="/sys/fs/cgroup/"+n; if(fs.existsSync(p))console.log(n+" "+fs.readFileSync(p,"utf8"));} console.log("remaining_temp_entries "+fs.readdirSync("/tmp/heif-converter").length)' || true
+          docker logs --tail 50 si-heif-capacity || true
+          docker rm -f si-heif-capacity || true
