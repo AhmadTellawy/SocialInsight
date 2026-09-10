@@ -308,15 +308,57 @@ export const authFetch = async (input: RequestInfo | URL, init?: AuthFetchInit):
     return response;
 };
 
+let guestPreparation: Promise<void> | null = null;
+async function ensureGuestParticipation(postId: string) {
+    if (!guestPreparation) guestPreparation = (async () => {
+        const response = await authFetch(`${API_BASE_URL}/posts/${postId}/participation-session`, { method: 'POST' });
+        if (!response.ok) throw new Error('Could not prepare your participation session');
+    })().finally(() => { guestPreparation = null; });
+    await guestPreparation;
+}
+
+let viewProofPreparation: Promise<void> | null = null;
+let viewProofReady = false;
+async function ensureViewProof(postId: string) {
+    if (viewProofReady) return;
+    if (!viewProofPreparation) {
+        const prepare = async () => {
+            if (getAuthSessionIdentity() !== null) throw new ApiError('Account changed', 409, 'VIEW_ACTOR_CHANGED');
+            const response = await authFetch(`${API_BASE_URL}/posts/${postId}/views`, {
+                method: 'POST', body: JSON.stringify({ initialize: true, expectedActorId: null })
+            });
+            if (!response.ok) return throwApiError(response, 'Could not prepare view tracking');
+            const result = await response.json();
+            if (result?.initialized !== true) throw new ApiError('View tracking unavailable', 503, 'VIEW_PROOF_UNAVAILABLE');
+            viewProofReady = true;
+        };
+        // Coordinate first-use cookies across tabs where Web Locks is available.
+        // The server reuses a valid cookie; it never replaces it on ordinary views.
+        viewProofPreparation = (typeof navigator !== 'undefined' && navigator.locks
+            ? navigator.locks.request('si-view-proof', prepare) : prepare()
+        ).finally(() => { viewProofPreparation = null; });
+    }
+    await viewProofPreparation;
+}
+
 export const api = {
-    recordPostView: async (postId: string, data: { source: string; deviceType: string; guestSessionId: string }) => {
-        const response = await authFetch(`${API_BASE_URL}/posts/${postId}/views`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-        });
-        if (!response.ok) throw new Error('Failed to record view');
-        return response.json();
+    recordPostView: async (postId: string, data: { source: string; deviceType: string }) => {
+        const expectedActorId = getAuthSessionIdentity();
+        if (!expectedActorId) await ensureViewProof(postId);
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            if (getAuthSessionIdentity() !== expectedActorId) throw new ApiError('Account changed', 409, 'VIEW_ACTOR_CHANGED');
+            const response = await authFetch(`${API_BASE_URL}/posts/${postId}/views`, {
+                method: 'POST', body: JSON.stringify({ ...data, expectedActorId })
+            });
+            if (response.status === 428 && !expectedActorId && attempt === 0) {
+                await response.json();
+                viewProofReady = false;
+                await ensureViewProof(postId);
+                continue;
+            }
+            if (!response.ok) return throwApiError(response, 'Failed to record view');
+            return response.json();
+        }
     },
     getSurveys: async (
         userId?: string,
@@ -327,6 +369,7 @@ export const api = {
         requestOptions: SurveyRequestOptions = {}
     ) => {
         const guestId = !userId ? getGuestId() : undefined;
+
         let url = userId ? `${API_BASE_URL}/posts?userId=${userId}&limit=${limit}` : `${API_BASE_URL}/posts?guestId=${guestId}&limit=${limit}`;
         if (cursor) {
             url += `&cursor=${cursor}`;
@@ -419,6 +462,7 @@ export const api = {
     ) => {
         const payloadOptionIds = Array.isArray(optionIds) ? optionIds : [optionIds];
         const guestId = !userId ? getGuestId() : undefined;
+        if (guestId) await ensureGuestParticipation(postId);
         const response = await authFetch(`${API_BASE_URL}/posts/${postId}/vote`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1114,20 +1158,12 @@ export const api = {
         return response.json();
     },
 
-    trackInteractionsBatch: async (events: any[]) => {
-        try {
-            const response = await authFetch(`${API_BASE_URL}/analytics/interactions/batch`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(events)
-            });
-            if (!response.ok) throw new Error('Failed to send analytics');
-            return response.json();
-        } catch (error) {
-            console.warn("Analytics failed, but continuing:", error);
-            // Non-blocking in frontend
-            return null;
-        }
+    trackInteractionsBatch: async (events: unknown[], signal: AbortSignal | undefined, expectedActorId: string) => {
+        const response = await authFetch(`${API_BASE_URL}/analytics/interactions/batch`, {
+            method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ events, expectedActorId })
+        });
+        if (!response.ok) throw new Error('Analytics acknowledgement unavailable');
+        return response.json();
     },
 
     getNotificationsPage: async (

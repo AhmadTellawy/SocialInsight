@@ -1,4 +1,5 @@
 
+import { Analytics } from './utils/analytics';
 import React, { useState, useRef, useMemo } from 'react';
 import { clearSessionMetadata } from './services/api';
 import { demographicSnapshot } from './utils/demographicSettings';
@@ -199,6 +200,7 @@ const App: React.FC = () => {
     userProfileIdRef.current = profile.id;
     writeMediaSafeJson('si_user', profile);
     setUserProfile(profile);
+    Analytics.setActor(profile.id || null);
     setIsAuthenticated(true);
     setAuthBootstrapped(true);
     setAuthRecoveryMessage(null);
@@ -216,7 +218,8 @@ const App: React.FC = () => {
 
   };
 
-  const resetViewerState = () => {
+  const resetViewerState = (preservePendingAnalytics = false) => {
+    if (!preservePendingAnalytics) Analytics.setActor(null);
     const previousUserId = userProfileIdRef.current || readMediaSafeJson<UserProfile>('si_user')?.id;
     feedRequestRef.current?.controller.abort();
     feedRequestRef.current = null;
@@ -622,9 +625,10 @@ const App: React.FC = () => {
         if (cancelled) return;
         if (session?.user) {
           restoredSession = true;
-          resetViewerState();
+          resetViewerState(true);
           userProfileIdRef.current = session.user.id;
           setUserProfile(session.user as UserProfile);
+          Analytics.setActor(session.user.id || null);
           writeMediaSafeJson('si_user', session.user);
           setIsAuthenticated(true);
           setAuthRecoveryMessage(null);
@@ -654,7 +658,7 @@ const App: React.FC = () => {
         }
       } catch (error) {
         if (cancelled || (error && typeof error === 'object' && (error as { name?: string }).name === 'AbortError')) return;
-        resetViewerState();
+        resetViewerState(true);
         clearSessionMetadata();
         setUserProfile(null);
         setIsAuthenticated(false);

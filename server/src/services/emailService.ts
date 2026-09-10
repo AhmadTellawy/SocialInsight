@@ -61,6 +61,24 @@ export const buildAuthEmailContent = (input: Pick<AuthEmailInput, 'code' | 'purp
 };
 
 export const sendAuthEmail = async (input: AuthEmailInput): Promise<{ messageId: string }> => {
+    return deliverEmail({ ...input, ...buildAuthEmailContent(input), subject: SUBJECTS[input.purpose] });
+};
+
+export type SecurityEmailKind = 'PASSWORD_CHANGED' | 'PASSWORD_RESET' | 'EMAIL_CHANGED' | 'USERNAME_CHANGED';
+export const sendSecurityChangeEmail = async (input: { to: string; kind: SecurityEmailKind; occurredAt: Date; idempotencyKey: string }): Promise<{ messageId: string }> => {
+    const names: Record<SecurityEmailKind, [string, string]> = {
+        PASSWORD_CHANGED: ['Your password was changed', 'تم تغيير كلمة المرور'],
+        PASSWORD_RESET: ['Your password was reset', 'تمت إعادة تعيين كلمة المرور'],
+        EMAIL_CHANGED: ['Your account email was changed', 'تم تغيير بريد الحساب'],
+        USERNAME_CHANGED: ['Your username was changed', 'تم تغيير اسم المستخدم']
+    };
+    const [en, ar] = names[input.kind];
+    const date = input.occurredAt.toISOString();
+    const text = `${en} on Opiniup at ${date}. If you did not make this change, secure your account using the app and contact support. Never share a password or verification code.\n\n${ar} على Opiniup في ${date}. إذا لم تُجرِ هذا التغيير، أمّن حسابك من التطبيق وتواصل مع الدعم. لا تشارك كلمة المرور أو رمز التحقق.`;
+    return deliverEmail({ to: input.to, idempotencyKey: input.idempotencyKey, purpose: input.kind, subject: 'Opiniup account security | أمان حسابك', text, html: `<div style="font-family:Arial,sans-serif;white-space:pre-line">${escapeHtml(text)}</div>`, security: true });
+};
+
+const deliverEmail = async (input: { to: string; idempotencyKey: string; purpose: string; subject: string; text: string; html: string; security?: boolean }): Promise<{ messageId: string }> => {
     const apiKey = process.env.RESEND_API_KEY?.trim();
     const fromAddress = process.env.EMAIL_FROM_ADDRESS?.trim()
         || (process.env.NODE_ENV === 'production' ? '' : 'onboarding@resend.dev');
@@ -72,21 +90,20 @@ export const sendAuthEmail = async (input: AuthEmailInput): Promise<{ messageId:
     const from = `${fromName.replace(/[<>\r\n]/g, '')} <${fromAddress}>`;
 
     const resend = new Resend(apiKey);
-    const content = buildAuthEmailContent(input);
     const response = await withDeliveryTimeout(resend.emails.send({
         from,
         to: [input.to],
-        subject: SUBJECTS[input.purpose],
-        text: content.text,
-        html: content.html
+        subject: input.subject,
+        text: input.text,
+        html: input.html
     }, { idempotencyKey: input.idempotencyKey }));
 
     if (response.error || !response.data?.id) {
         const error = Object.assign(new Error('Email delivery failed'), { code: response.error?.name || 'EMAIL_DELIVERY_FAILED' });
-        console.error(JSON.stringify({ event: 'auth_email_delivery_failed', purpose: input.purpose, destination: maskEmail(input.to), errorCode: error.code }));
+        console.error(JSON.stringify({ event: 'auth_email_delivery_failed', purpose: input.purpose, ...(!input.security ? { destination: maskEmail(input.to), errorCode: error.code } : {}) }));
         throw error;
     }
 
-    console.info(JSON.stringify({ event: 'auth_email_delivered', purpose: input.purpose, destination: maskEmail(input.to), messageId: response.data.id }));
+    if (!input.security) console.info(JSON.stringify({ event: 'auth_email_delivered', purpose: input.purpose, destination: maskEmail(input.to), messageId: response.data.id }));
     return { messageId: response.data.id };
 };

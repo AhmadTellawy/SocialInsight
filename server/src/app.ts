@@ -25,13 +25,22 @@ import { initSocket } from './services/socketService';
 import { isMediaStorageConfigured } from './services/mediaStorage';
 import prisma from './prisma';
 import { requestContext } from './middleware/requestContext';
+import { readRestoreMaintenance } from './config/maintenance';
 
 const app = express();
+const restoreMaintenance = readRestoreMaintenance();
+// This startup guard supplements an external restore fence. It cannot stop an
+// older deployment or prevent direct access to previously public storage URLs.
+app.use((_req, res, next) => {
+    if (!restoreMaintenance) return next();
+    res.set({ 'Cache-Control': 'no-store', 'Retry-After': '60' })
+        .status(503).json({ status: 'maintenance' });
+});
 // Render terminates TLS and supplies the client address through one trusted proxy.
 // Express needs this for secure-cookie behavior and accurate IP rate limiting.
 app.set('trust proxy', 1);
 const httpServer = createServer(app);
-initSocket(httpServer);
+if (!restoreMaintenance) initSocket(httpServer);
 
 const PORT = process.env.PORT || 3001;
 
@@ -167,7 +176,7 @@ app.get('/', (req, res) => {
 });
 
 // Initialize scheduled jobs
-initCronJobs();
+if (!restoreMaintenance) initCronJobs();
 
 if (require.main === module) {
     httpServer.listen(PORT, () => {

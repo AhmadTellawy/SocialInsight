@@ -1,4 +1,5 @@
 import prisma from '../prisma';
+import { cleanupSecurityNotifications } from './securityNotificationService';
 
 const db = prisma as any;
 
@@ -13,6 +14,7 @@ export interface AuthRetentionResult {
     pendingMfa: number;
     guestProofs: number;
     completedCleanupJobs: number;
+    securityEmails: number;
 }
 
 const retentionHours = (name: string, fallback: number, min: number, max: number): number => {
@@ -82,6 +84,7 @@ export const cleanupExpiredAuthArtifacts = async (now = new Date()): Promise<Aut
         authChallenges: authChallenges.count,
         pendingMfa: pendingMfa.count,
         guestProofs: guestProofs.count,
-        completedCleanupJobs: completedCleanupJobs.count
+        completedCleanupJobs: completedCleanupJobs.count,
+        securityEmails: await cleanupSecurityNotifications(now)
     };
 };

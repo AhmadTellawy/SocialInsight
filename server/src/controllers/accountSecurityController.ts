@@ -7,6 +7,7 @@ import { AccountSecurityError, consumeMfaProof, encryptMfaSecret, findTotpStep, 
 import { challengeAfterPrimaryProof, challengeSummary, clearAuthChallengeCookies, readAuthChallenge } from '../services/authChallengeService';
 import { authenticationResponse, SAFE_USER_SELECT } from './authController';
 import { assertActiveAccountSession, invalidateAccountOtps } from '../services/accountSecurityPolicy';
+import { enqueueSecurityNotification } from '../services/securityNotificationService';
 
 const db = prisma as any;
 const passwordSchema = z.string().min(8).max(128).regex(/[A-Z]/).regex(/[a-z]/).regex(/\d/).regex(/[!@#$%^&*]/);
@@ -81,6 +82,7 @@ export const changeAccountPassword = handler(async (req, res) => {
         await invalidateAccountOtps(tx, userId);
         const now = new Date();
         await tx.user.update({ where: { id: userId }, data: { passwordHash, password: null, passwordUpdatedAt: now, authInvalidatedAt: now } });
+        if (user.email && user.emailVerifiedAt) await enqueueSecurityNotification(tx, userId, 'PASSWORD_CHANGED', [user.email]);
         const sessions = await tx.authSession.findMany({ where: { userId, revokedAt: null, id: { not: req.authSession!.id } }, select: { id: true } });
         await tx.authSession.updateMany({ where: { userId, revokedAt: null, id: { not: req.authSession!.id } }, data: { revokedAt: now } });
         await tx.authChallenge.updateMany({ where: { userId, consumedAt: null }, data: { consumedAt: now } });

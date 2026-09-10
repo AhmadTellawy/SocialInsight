@@ -1,3 +1,4 @@
+import { recordConfirmedVote } from '../services/confirmedAnalyticsService';
 import { prepareGuestParticipationProof, readGuestParticipationHash, guestProofMatches, writeGuestParticipationCookie } from '../services/guestParticipationService';
 import { AggregateResults } from '../services/aggregateResults';
 import { Request, Response } from 'express';
@@ -1692,10 +1693,22 @@ export const getSavedPosts = async (req: Request, res: Response) => {
     }
 };
 
+export const initializeGuestParticipation = async (req: Request, res: Response) => {
+    if (!req.user) writeGuestParticipationCookie(res, prepareGuestParticipationProof(req));
+    res.set('Cache-Control', 'private, no-store').json({ success: true });
+};
+
 export const votePost = async (req: Request, res: Response) => {
     const rawId = req.params.id as string;
-    const { guestId, optionId, optionIds, isAnonymous, newOption, followUpAnswers = {}, answers = [] } = req.body;
+    const { guestId, optionId, optionIds, isAnonymous, newOption, followUpAnswers = {}, answers = [] } = req.body || {};
     try {
+        if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)
+            || (optionIds !== undefined && (!Array.isArray(optionIds) || optionIds.length > 100 || optionIds.some((v: unknown) => typeof v !== 'string' || !v || v.length > 128)))
+            || (optionId !== undefined && (typeof optionId !== 'string' || !optionId || optionId.length > 128))
+            || !Array.isArray(answers) || answers.length > 100
+            || answers.some((a: any) => !a || typeof a.questionId !== 'string' || !a.questionId || a.questionId.length > 128 || (a.optionId != null && (typeof a.optionId !== 'string' || a.optionId.length > 128)) || (a.textValue != null && (typeof a.textValue !== 'string' || a.textValue.length > 10000)))) {
+            return void res.status(400).json({ error: 'Invalid vote payload' });
+        }
         const id = await resolveInteractionTarget(rawId, 'vote');
         const guestIp = req.ip || req.socket?.remoteAddress;
         const actorUserId = req.user?.userId || null;
@@ -1705,7 +1718,7 @@ export const votePost = async (req: Request, res: Response) => {
             return;
         }
 
-        const post = await prisma.post.findUnique({
+        let post = await prisma.post.findUnique({
             where: { id },
             select: {
                 allowAnonymous: true,
@@ -1715,6 +1728,7 @@ export const votePost = async (req: Request, res: Response) => {
                 allowUserOptions: true,
                 type: true,
                 targetAudience: true,
+                groupId: true,
                 targetedGroups: { select: { id: true } },
                 status: true,
                 isDeleted: true,
@@ -1735,7 +1749,7 @@ export const votePost = async (req: Request, res: Response) => {
         }
 
         const isAuthor = !!actorUserId && post.authorId === actorUserId;
-        const targetGroupIds = mapTargetGroups(post);
+        const targetGroupIds = Array.from(new Set([post.groupId, ...mapTargetGroups(post)].filter((id): id is string => Boolean(id))));
         if (isProfileAndGroups(post.targetAudience) && !(await canInteractWithProfileAndGroups(id, post.authorId, actorUserId, targetGroupIds))) {
             res.status(403).json({ error: 'Forbidden' });
             return;
@@ -1804,6 +1818,19 @@ export const votePost = async (req: Request, res: Response) => {
             if (proof) {
                 for (const key of [`guest-id:${id}:${guestId}`, `guest-proof:${id}:${proof.hash}`].sort()) await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
             }
+            // Serialize this post, then reread eligibility after any wait. No stale pre-lock decision writes votes.
+            await tx.$queryRaw(Prisma.sql`SELECT id FROM "Post" WHERE id = ${id} FOR UPDATE`);
+            const currentPost = await tx.post.findFirst({ where: { id, ...buildVisiblePublishedPostWhere(actorUserId) }, include: { targetedGroups: { select: { id: true } } } });
+            if (!currentPost) throw Object.assign(new Error('Post is no longer available'), { statusCode: 403 });
+            if (currentPost.expiresAt && currentPost.expiresAt.getTime() <= Date.now()) throw Object.assign(new Error('This post has ended'), { statusCode: 400 });
+            post = currentPost;
+            const currentGroups = Array.from(new Set([currentPost.groupId, ...mapTargetGroups(currentPost)].filter((id): id is string => Boolean(id))));
+            if (isProfileAndGroups(currentPost.targetAudience)) {
+                if (!(await canInteractWithProfileAndGroups(id, currentPost.authorId, actorUserId, currentGroups, tx))) throw Object.assign(new Error('Forbidden'), { statusCode: 403 });
+            } else if (actorUserId !== currentPost.authorId && (currentPost.targetAudience === 'Groups' || currentGroups.length)) {
+                if (!actorUserId || !(await tx.groupMember.findFirst({ where: { userId: actorUserId, groupId: { in: currentGroups }, status: 'JOINED', group: { isDeleted: false } } }))) throw Object.assign(new Error('Forbidden'), { statusCode: 403 });
+            }
+            finalIsAnonymous = currentPost.forceAnonymous || parseBoolean(isAnonymous);
             const customClientId = typeof newOption?.id === 'string' ? newOption.id : undefined;
             const customText = typeof newOption?.text === 'string' ? newOption.text.trim() : '';
             let resolvedOptionIds = [...optionsToProcess];
@@ -1828,7 +1855,7 @@ export const votePost = async (req: Request, res: Response) => {
                     select: { order: true }
                 });
 
-                createdCustomOption = await tx.option.create({
+                createdCustomOption = await tx.option.findFirst({ where: { questionId: question.id, text: customText, isUserAdded: true, ...(actorUserId ? { addedByUserId: actorUserId } : { addedByGuestId: guestId }) } }) || await tx.option.create({
                     data: {
                         text: customText,
                         questionId: question.id,
@@ -1873,9 +1900,10 @@ export const votePost = async (req: Request, res: Response) => {
                 const questionIds = Array.from(new Set(structuredAnswers.map((answer: any) => answer.questionId)));
                 const questions = await tx.question.findMany({
                     where: { id: { in: questionIds }, postId: id },
-                    select: { id: true }
+                    select: { id: true, type: true }
                 });
                 const validQuestionIds = new Set(questions.map(q => q.id));
+                const questionTypes = new Map(questions.map(q => [q.id, q.type]));
 
                 if (validQuestionIds.size !== questionIds.length) {
                     throw Object.assign(new Error('Invalid questions for this post'), { statusCode: 400 });
@@ -1893,6 +1921,8 @@ export const votePost = async (req: Request, res: Response) => {
 
                 const uniqueAnswers = new Map<string, any>();
                 for (const answer of structuredAnswers) {
+                    const isText = questionTypes.get(answer.questionId) === 'text';
+                    if (isText ? Boolean(answer.optionId) || !answer.textValue : !answer.optionId) throw Object.assign(new Error('Answer does not match the question type'), { statusCode: 400 });
                     if (answer.optionId) {
                         const option = optionsById.get(answer.optionId);
                         if (!option || option.questionId !== answer.questionId) {
@@ -1902,7 +1932,17 @@ export const votePost = async (req: Request, res: Response) => {
                     uniqueAnswers.set(`${answer.questionId}:${answer.optionId || 'text'}`, answer);
                 }
 
+                const perQuestion = new Map<string, number>();
+                for (const answer of uniqueAnswers.values()) perQuestion.set(answer.questionId, (perQuestion.get(answer.questionId) || 0) + 1);
+                if (!post!.allowMultipleSelection && [...perQuestion.values()].some(count => count > 1)) throw Object.assign(new Error('This question accepts one answer only'), { statusCode: 400 });
                 for (const answer of uniqueAnswers.values()) {
+                    if (!post!.allowMultipleSelection) {
+                        const prior = await tx.answer.findFirst({ where: { responseId: response.id, questionId: answer.questionId } });
+                        if (prior) {
+                            if (prior.optionId !== (answer.optionId || null) || (prior.textValue || null) !== (answer.textValue || null)) throw Object.assign(new Error('This answer has already been recorded'), { statusCode: 409 });
+                            continue;
+                        }
+                    }
                     const existingAnswer = await tx.answer.findFirst({
                         where: {
                             responseId: response.id,
@@ -1945,11 +1985,15 @@ export const votePost = async (req: Request, res: Response) => {
                 }
 
                 for (const opt of dbOptions) {
-                    if (!post.allowMultipleSelection) {
+                    if (opt.question.type === 'text') throw Object.assign(new Error('This question requires text'), { statusCode: 400 });
+                    if (!post!.allowMultipleSelection) {
                         const existingQuestionAnswer = await tx.answer.findFirst({
-                            where: { responseId: response.id, questionId: opt.question.id, optionId: { not: null } }
+                            where: { responseId: response.id, questionId: opt.question.id }
                         });
-                        if (existingQuestionAnswer) continue;
+                        if (existingQuestionAnswer) {
+                            if (existingQuestionAnswer.optionId !== opt.id) throw Object.assign(new Error('This answer has already been recorded'), { statusCode: 409 });
+                            continue;
+                        }
                     }
 
                     const existingAnswer = await tx.answer.findFirst({
@@ -1972,12 +2016,13 @@ export const votePost = async (req: Request, res: Response) => {
             }
 
             if (!existingResponse) {
+                await recordConfirmedVote(tx, response.id, id, actorUserId);
                 await tx.post.update({
                     where: { id },
                     data: { responseCount: { increment: 1 } }
                 });
             }
-        });
+        }, { maxWait: 10000, timeout: 10000 });
 
         if (actorUserId && shouldNotify && !finalIsAnonymous && post.authorId) {
             await notify(actorUserId, post.authorId as string, 'vote', 'voted on your post', 'survey', id, { optionId: notificationOptionId });
@@ -1986,7 +2031,8 @@ export const votePost = async (req: Request, res: Response) => {
         if (proof) writeGuestParticipationCookie(res, proof);
         res.json({ success: true, newOption: createdCustomOption });
     } catch (error: any) {
-        console.error(error);
+        if (['P2028', 'P2034'].includes(error?.code)) return void res.status(503).set('Retry-After', '1').json({ error: 'Voting is busy. Retry this request.', code: 'VOTE_RETRY_REQUIRED' });
+        if (!error?.statusCode && !(error instanceof AccountSecurityError)) console.error('Vote write failed', { code: typeof error?.code === 'string' ? error.code : 'UNKNOWN' });
         if (error instanceof AccountSecurityError) return void res.status(error.status).json({ code: error.code, error: 'Sign in again to respond.' });
         res.status(error?.statusCode || 500).json({ error: error?.statusCode ? error.message : 'Failed to vote', ...(error?.code === 'GUEST_PARTICIPATION_PROOF_REQUIRED' ? { code: error.code } : {}) });
     }

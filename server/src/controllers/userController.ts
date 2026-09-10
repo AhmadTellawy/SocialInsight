@@ -6,6 +6,8 @@ import { parseSettingsChanges, requireProfileVersion, validateDemographics } fro
 import { protectDistribution } from '../services/aggregateResults';
 import { lockAccountSecurity, AccountSecurityError } from '../services/mfaService';
 import { assertActiveAccountSession } from '../services/accountSecurityPolicy';
+import { HandleError, normalizeHandle, reserveRenamedHandle, resolveHandleUserId } from '../services/handleService';
+import { enqueueSecurityNotification } from '../services/securityNotificationService';
 import { notify } from '../services/notificationService';
 import { processBase64Image } from '../utils/imageProcessor';
 import { GroupPermissionService } from '../services/groupPermissionService';
@@ -304,8 +306,8 @@ export const getUser = async (req: Request, res: Response) => {
 
 export const getUserByHandle = async (req: Request, res: Response) => {
     try {
-        const cleanHandle = (req.params.handle as string).replace(/^@/, '');
-        const user = await prisma.user.findUnique({ where: { handle: cleanHandle }, select: PROFILE_READ_SELECT });
+        const userId = await resolveHandleUserId(prisma, req.params.handle);
+        const user = userId ? await prisma.user.findUnique({ where: { id: userId }, select: PROFILE_READ_SELECT }) : null;
         if (!user) return res.status(404).json({ error: 'User not found' });
         await sendPublicProfile(req, res, user);
     } catch (error) {
@@ -381,7 +383,8 @@ export const updateUser = async (req: Request, res: Response) => {
             }
         });
         if (!currentUser) return res.status(404).json({ error: 'User not found' });
-        if (data.handle !== undefined && data.handle !== currentUser.handle) throw new ProfileValidationError('HANDLE_CHANGE_UNAVAILABLE', 'Username changes are currently unavailable.');
+        const nextHandle = data.handle === undefined || data.handle === currentUser.handle ? currentUser.handle : normalizeHandle(data.handle);
+        const handleChanged = nextHandle !== currentUser.handle;
 
         const expectedUpdatedAtValue = data.expectedUpdatedAt ?? data.updatedAt;
         let expectedUpdatedAt: Date | undefined;
@@ -430,7 +433,7 @@ export const updateUser = async (req: Request, res: Response) => {
             const maximum = key === 'bio' ? 1000 : key === 'website' ? 2048 : key === 'handle' ? 30 : 100;
             if (updateData[key] !== null && (typeof updateData[key] !== 'string' || updateData[key].length > maximum)) throw new ProfileValidationError('INVALID_PROFILE_FIELD', `Invalid ${key}.`);
         }
-        if (updateData.handle !== undefined && !/^[A-Za-z0-9_]{3,30}$/.test(updateData.handle)) throw new ProfileValidationError('INVALID_HANDLE', 'Username must contain 3–30 letters, numbers or underscores.');
+        if (updateData.handle !== undefined) updateData.handle = nextHandle;
         if (updateData.name !== undefined && (typeof updateData.name !== 'string' || !updateData.name.trim())) throw new ProfileValidationError('INVALID_NAME', 'Name is required.');
         if (updateData.website) {
             try { const url = new URL(updateData.website); if (!['https:', 'http:'].includes(url.protocol)) throw new Error(); }
@@ -495,7 +498,8 @@ export const updateUser = async (req: Request, res: Response) => {
 
             await prisma.$transaction(async (tx) => {
                 await lockAccountSecurity(tx, id);
-                await assertActiveAccountSession(tx, req, false);
+                await assertActiveAccountSession(tx, req, handleChanged);
+                if (handleChanged) await reserveRenamedHandle(tx, id, currentUser.handle, nextHandle);
                 if (expectedUpdatedAt) {
                     const versionedUpdate = await tx.user.updateMany({
                         where: { id, updatedAt: expectedUpdatedAt },
@@ -508,6 +512,7 @@ export const updateUser = async (req: Request, res: Response) => {
                     await tx.user.update({ where: { id }, data: updateData });
                 }
                 const updated = await tx.user.findUniqueOrThrow({ where: { id } });
+                if (handleChanged && updated.email && updated.emailVerifiedAt) await enqueueSecurityNotification(tx, id, 'USERNAME_CHANGED', [updated.email]);
                 await reconcileProfileMentions(tx, {
                     profileUserId: id,
                     actorUserId: id,
@@ -611,6 +616,8 @@ export const updateUser = async (req: Request, res: Response) => {
         if (error instanceof Error && error.message.includes('privacy transition')) {
             return res.status(409).json({ error: error.message, code: 'PRIVACY_TRANSITION_IN_PROGRESS' });
         }
+        if (error instanceof HandleError) return res.status(error.status).json({ error: 'Username is invalid or unavailable.', code: error.code });
+        if ((error as any)?.code === 'P2002' && data.handle !== undefined) return res.status(409).json({ error: 'Username is unavailable.', code: 'HANDLE_UNAVAILABLE' });
         if (error instanceof AccountSecurityError) return res.status(error.status).json({ error: 'Sign in again to save changes.', code: error.code });
         logUserRequestFailure(req, 'profile_update_failed', error);
         res.status(500).json({ error: 'Failed to update user' });

@@ -200,7 +200,9 @@ test('Facebook identity never treats its unverified profile email as the canonic
   let createdUserData: any;
   let createdOAuthData: any;
   prisma.$transaction = async (callback: any) => callback({
-    user: { create: async ({ data }: any) => { createdUserData = data; return { id: 'new-user', status: 'ACTIVE', ...data }; } },
+    $executeRaw: async () => {},
+    handleAlias: { findUnique: async () => null, create: async () => ({}) },
+    user: { findFirst: async () => null, create: async ({ data }: any) => { createdUserData = data; return { id: 'new-user', status: 'ACTIVE', ...data }; } },
     oAuthAccount: { create: async ({ data }: any) => { createdOAuthData = data; return {}; } },
     notificationSettings: { create: async () => ({}) }
   });

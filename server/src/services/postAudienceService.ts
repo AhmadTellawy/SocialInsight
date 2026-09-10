@@ -14,12 +14,12 @@ export const validateProfileAndGroupsInput = (audience: unknown, groupIds: unkno
 };
 
 // Reading a public group does not alone grant the right to participate in it.
-export const canInteractWithProfileAndGroups = async (postId: string, authorId: string, viewerId: string | null | undefined, groupIds: string[]): Promise<boolean> => {
-  const visible = await prisma.post.count({ where: { id: postId, ...buildVisiblePublishedPostWhere(viewerId) } });
+export const canInteractWithProfileAndGroups = async (postId: string, authorId: string, viewerId: string | null | undefined, groupIds: string[], db: any = prisma): Promise<boolean> => {
+  const visible = await db.post.count({ where: { id: postId, ...buildVisiblePublishedPostWhere(viewerId) } });
   if (!visible) return false;
-  if (await PrivacyService.canViewUserContent(viewerId, authorId)) return true;
+  if (await PrivacyService.canViewUserContent(viewerId, authorId, db)) return true;
   if (!viewerId) return false;
-  return !!(await prisma.groupMember.findFirst({
+  return !!(await db.groupMember.findFirst({
     where: { userId: viewerId, groupId: { in: groupIds }, status: 'JOINED', group: { isDeleted: false } },
     select: { userId: true }
   }));

@@ -1248,7 +1248,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         post_id: survey.id,
         method: 'COPY_LINK',
         actor_user_id: userProfile?.id,
-        source_surface: sourceSurface
+        source_surface: sourceSurface,
+        ...(sourceSurface === 'FEED' ? { position_in_feed: positionInFeed } : {})
       });
       setTimeout(() => setShowShareToast(false), 2000);
     } catch (err) {
@@ -2522,6 +2523,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       <BottomSheet isOpen={isShareSheetOpen} onClose={() => { setIsShareSheetOpen(false); setShareSheetInitialStep('menu'); }}>
         <React.Suspense fallback={<SheetContentFallback />}>
           <ShareSheet
+            positionInFeed={positionInFeed}
             survey={survey}
             onClose={() => { setIsShareSheetOpen(false); setShareSheetInitialStep('menu'); }}
             onShareToFeed={onShareToFeed}

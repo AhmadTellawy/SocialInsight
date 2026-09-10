@@ -87,9 +87,54 @@ model User {
   linkingOAuthStates      OAuthState[]             @relation("OAuthStateLinkingUser")
   mfa                     UserMfa?
   authChallenges          AuthChallenge[]
+  handleAliases           HandleAlias[]
+  securityEmails          SecurityEmailOutbox[]
 
   @@index([status, followersCount(sort: Desc), id], map: "users_status_followers_id_idx")
   @@map("users")
+}
+
+model HandleAlias {
+  handle    String   @id
+  userId    String?  @map("user_id")
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("handle_aliases")
+}
+
+model SecurityEmailOutbox {
+  id            String    @id @default(uuid())
+  userId        String    @map("user_id")
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recipient     String
+  kind          String
+  createdAt     DateTime  @default(now()) @map("created_at")
+  expiresAt     DateTime  @map("expires_at")
+  nextAttemptAt DateTime  @default(now()) @map("next_attempt_at")
+  lockedUntil   DateTime? @map("locked_until")
+  attempts      Int       @default(0)
+
+  @@index([nextAttemptAt, expiresAt])
+  @@index([userId])
+  @@map("security_email_outbox")
+}
+
+// Operational erasure decisions survive removal of the subject. Before a
+// restore, export this journal outside the restored project under a write fence.
+model DeletionDecision {
+  id               String   @id
+  subjectKind      String   @map("subject_kind")
+  subjectId        String   @map("subject_id")
+  action           String
+  actionVersion    Int      @default(1) @map("action_version")
+  resourcePointers Json     @map("resource_pointers")
+  recordedAt       DateTime @default(now()) @map("recorded_at")
+
+  @@index([subjectId])
+  @@index([recordedAt, id])
+  @@map("deletion_decisions")
 }
 
 model ProfileLink {
@@ -499,6 +544,9 @@ model Response {
   @@index([postId, guestProofHash], map: "response_post_guest_proof_idx")
   @@index([postId])
   @@index([postId, userId], map: "Response_post_user_idx")
+  @@unique([postId, userId], map: "Response_post_user_unique")
+  @@unique([postId, guestId], map: "Response_post_guest_unique")
+  @@unique([postId, guestProofHash], map: "Response_post_guest_proof_unique")
   @@index([postId, guestId], map: "Response_post_guest_idx")
   @@index([userId, timestamp(sort: Desc)], map: "Response_user_timestamp_idx")
   @@index([postId, timestamp(sort: Desc), id(sort: Desc)], map: "Response_post_timestamp_id_idx")
@@ -515,6 +563,7 @@ model Answer {
   option     Option?  @relation(fields: [optionId], references: [id])
 
   @@index([responseId, questionId])
+  @@unique([responseId, questionId, optionId], map: "Answer_response_question_option_unique")
 }
 
 model Comment {

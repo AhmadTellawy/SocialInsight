@@ -112,7 +112,8 @@ test('registration completion consumes a purpose-bound OTP, verifies email and s
   prisma.$transaction = async (callback: any) => callback({
     $executeRaw: async () => {},
     otpChallenge: {updateMany: async () => ({count: 1})},
-    user: { create: async ({ data }: any) => { createdData = data; return baseUser(data); } },
+    handleAlias: { findUnique: async () => null, create: async () => ({}) },
+    user: { findFirst: async () => null, create: async ({ data }: any) => { createdData = data; return baseUser(data); } },
     notificationSettings: { create: async () => ({}) },
     pendingRegistration: { delete: async () => ({}) }
   });
@@ -159,6 +160,21 @@ test('successful login returns safe user data, CSRF and cookies but no bearer to
   assert.equal(Object.prototype.hasOwnProperty.call(state.body, 'token'), false);
   assert.equal(JSON.stringify(state.body).includes('stored-hash'), false);
   assert.equal(state.headers['cache-control'], 'no-store');
+});
+
+test('registration completion rejects a former username before creating an account', async () => {
+  const browserSecret = 'completion-browser-secret-at-least-thirty-two-characters';
+  const pending = {id:PENDING_ID,email:'new@example.test',fullName:'New User',dob:new Date('1990-09-01'),password:'hash',handle:'former_name',currentStep:5,browserSecretHash:sessionService.hashSessionSecret(`registration:${browserSecret}`)};
+  prisma.pendingRegistration.findUnique = async () => pending;
+  let writes = 0;
+  (otpService as any).consumeEmailOtp = async (_input:any,work:any) => ({value:await work({
+    $executeRaw:async()=>{}, handleAlias:{findUnique:async()=>({userId:'prior-owner'})}, user:{create:async()=>{writes++;}}
+  },{createdAt:new Date()})});
+  const {response,state}=createResponse();
+  await completeRegistration({body:{pendingId:PENDING_ID,otp:'123456'},headers:{cookie:`si_registration_browser=${browserSecret}`}} as any,response);
+  assert.equal(state.statusCode,409);
+  assert.equal(state.body.code,'HANDLE_UNAVAILABLE');
+  assert.equal(writes,0);
 });
 
 test('legacy bearer rollout is opt-in, short-lived and does not require cookie CSRF', async () => {
@@ -280,8 +296,10 @@ test('password reset consumes bound OTP, updates hash and revokes all sessions a
   };
   (bcrypt as any).hash = async () => 'new-password-hash';
   const operations: any[] = [];
+  let notification: any;
   prisma.$transaction = async (callback: any) => callback({
     $executeRaw: async () => {},
+    securityEmailOutbox: { createMany: async ({data}: any) => { notification = data[0]; return {count: data.length}; } },
     otpChallenge: {updateMany: async () => ({count: 1})},
     user: { findUnique: async () => ({email: 'private@example.test', status: 'ACTIVE', authInvalidatedAt: null}), update: async (input: any) => { operations.push(['user', input]); return {}; } },
     authSession: { findFirst: async () => ({id: 'session-old', recentAuthenticatedAt: new Date()}), updateMany: async (input: any) => { operations.push(['sessions', input]); return { count: 2 }; } }
@@ -293,6 +311,8 @@ test('password reset consumes bound OTP, updates hash and revokes all sessions a
   assert.equal(operations[0][1].data.passwordHash, 'new-password-hash');
   assert.deepEqual(operations[1][1].where, { userId: 'user-1', revokedAt: null });
   assert.ok(operations[1][1].data.revokedAt instanceof Date);
+  assert.equal(notification.kind, 'PASSWORD_RESET');
+  assert.equal(notification.recipient, 'private@example.test');
 });
 
 test('a password reset OTP cannot cross a concurrent email or credential change', async () => {
@@ -345,10 +365,12 @@ test('email change confirmation revokes old sessions then issues a fresh session
     return { challengeId: 'challenge-change', value: await prisma.$transaction((tx: any) => onConsume(tx, {createdAt: new Date()})) };
   };
   const operations: any[] = [];
+  const queued: any[] = [];
   prisma.$transaction = async (callback: any) => callback({
     $executeRaw: async () => {},
+    securityEmailOutbox: { createMany: async (args: any) => { queued.push(...args.data); return { count: args.data.length }; } },
     otpChallenge: {updateMany: async () => ({count: 1})},
-    user: { findUnique: async () => ({email: 'private@example.test', status: 'ACTIVE', authInvalidatedAt: null}), update: async (input: any) => { operations.push(['user', input]); return {}; } },
+    user: { findUnique: async () => ({email: 'private@example.test', emailVerifiedAt: new Date(), status: 'ACTIVE', authInvalidatedAt: null}), update: async (input: any) => { operations.push(['user', input]); return {}; } },
     authSession: { findFirst: async () => ({id: 'session-old', recentAuthenticatedAt: new Date()}), updateMany: async (input: any) => { operations.push(['sessions', input]); return { count: 3 }; } }
   });
   (sessionService as any).createSession = async (userId: string, res: any) => {
@@ -364,6 +386,8 @@ test('email change confirmation revokes old sessions then issues a fresh session
   assert.deepEqual(operations[1][1].where, { userId: 'user-1', revokedAt: null });
   assert.equal(state.body.csrfToken, 'new-csrf');
   assert.equal(state.body.email, 'new@example.test');
+  assert.deepEqual(queued.map(row => row.recipient).sort(), ['new@example.test', 'private@example.test']);
+  assert.ok(queued.every(row => row.kind === 'EMAIL_CHANGED'));
 });
 
 test('email change request does not disclose whether another account owns the destination', async () => {

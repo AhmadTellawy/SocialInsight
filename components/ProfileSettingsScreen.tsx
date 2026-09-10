@@ -13,6 +13,7 @@ import { BottomSheet } from './BottomSheet';
 import { MediaDraft, UserProfile } from '../types';
 import { NotificationSettingsScreen } from './NotificationSettingsScreen';
 import { api } from '../services/api';
+import { useProtectedAccountAction, securityErrorText } from './ReauthenticationDialog';
 import { useTranslation } from 'react-i18next';
 import { MediaPicker, MediaPickerControls, MediaPickerHandle } from './media/MediaPicker';
 import { createPersistedMediaDraftFromId, mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds, cancelTemporaryMediaDrafts } from '../utils/mediaDrafts';
@@ -65,6 +66,7 @@ const ProfileSettingsContent: React.FC<ProfileSettingsScreenProps> = ({
   const navigate = useNavigate();
   const location = useLocation();
   const { t, i18n } = useTranslation();
+  const { run: runProtected, dialog: reauthenticationDialog } = useProtectedAccountAction();
   const subPageMatch = location.pathname.split('/settings/profile/')[1];
   const currentSubPage = (subPageMatch as SubPage) || 'main';
 
@@ -96,7 +98,7 @@ const ProfileSettingsContent: React.FC<ProfileSettingsScreenProps> = ({
   const [linkDraftDirty, setLinkDraftDirty] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [privacySaveError, setPrivacySaveError] = useState<string | null>(null);
-  const [fieldErrors, setFieldErrors] = useState<{ name?: string; birthday?: string }>({});
+  const [fieldErrors, setFieldErrors] = useState<{ name?: string; birthday?: string; handle?: string }>({});
   const [isPrivateProfileLoading, setIsPrivateProfileLoading] = useState(false);
   const [privateProfileLoadError, setPrivateProfileLoadError] = useState<string | null>(null);
   const [privateProfileRetryKey, setPrivateProfileRetryKey] = useState(0);
@@ -180,6 +182,7 @@ const ProfileSettingsContent: React.FC<ProfileSettingsScreenProps> = ({
         } as UserProfile);
         setProfileForm((current) => ({
           ...merged,
+          handle: current.handle !== userProfile.handle ? current.handle : merged.handle,
           name: (current.name || '') !== (userProfile.name || '') ? current.name : merged.name,
           bio: (current.bio || '') !== (userProfile.bio || '') ? current.bio : merged.bio,
           birthday: (current.birthday || null) !== (userProfile.birthday || null)
@@ -249,6 +252,7 @@ const ProfileSettingsContent: React.FC<ProfileSettingsScreenProps> = ({
     maximumAge: PROFILE_MAX_AGE
   });
   const hasProfileChanges = profileEditHasChanges(profileForm, userProfile, avatarMedia, coverMedia)
+    || profileForm.handle !== userProfile.handle
     || (profileForm.location || '') !== (userProfile.location || '')
     || (profileForm.website || '') !== (userProfile.website || '');
   const resetProfileEditDraft = React.useCallback((): void => {
@@ -348,12 +352,15 @@ const ProfileSettingsContent: React.FC<ProfileSettingsScreenProps> = ({
   };
 
   const handleSave = async () => {
-    const nextErrors: { name?: string; birthday?: string } = {};
+    const nextErrors: { name?: string; birthday?: string; handle?: string } = {};
     if (currentSubPage === 'edit-profile' && !profileForm.name.trim()) {
       nextErrors.name = t('profile.edit.nameRequired', { defaultValue: 'Name is required.' });
     }
     if (currentSubPage === 'edit-profile' && 'error' in birthdayValidation) {
       nextErrors.birthday = birthdayErrorMessage(birthdayValidation.error);
+    }
+    if (profileForm.handle !== userProfile.handle && !/^[a-z0-9_.]{3,30}$/i.test(profileForm.handle.trim())) {
+      nextErrors.handle = i18n.language.startsWith('ar') ? 'استخدم من 3 إلى 30 حرفًا إنجليزيًا أو رقمًا أو نقطة أو شرطة سفلية.' : 'Use 3–30 English letters, numbers, dots or underscores.';
     }
     setFieldErrors(nextErrors);
     if (
@@ -376,13 +383,15 @@ const ProfileSettingsContent: React.FC<ProfileSettingsScreenProps> = ({
         ...((profileForm.birthday || null) !== (userProfile.birthday || null) ? { birthday: profileForm.birthday || null } : {}),
         expectedUpdatedAt: profileForm.updatedAt || userProfile.updatedAt,
         name: profileForm.name.trim(),
+        ...(profileForm.handle !== userProfile.handle ? { handle: profileForm.handle.trim().toLowerCase() } : {}),
         bio: profileForm.bio,
         location: profileForm.location || '',
         website: profileForm.website || ''
       };
       const payload = deepStripUndefined(profileEditPayload);
 
-      const updatedProfile = await api.updateUser(userProfile.id, payload);
+      let updatedProfile: UserProfile | undefined;
+      if (!(await runProtected(async () => { updatedProfile = await api.updateUser(userProfile.id, payload); })) || !updatedProfile) return;
 
       const merged: UserProfile = {
         ...userProfile,
@@ -409,6 +418,12 @@ const ProfileSettingsContent: React.FC<ProfileSettingsScreenProps> = ({
       setCurrentSubPage('main');
     } catch (error) {
       console.error("Failed to update profile", error);
+      const code = (error as { code?: string })?.code;
+      if (code && ['INVALID_HANDLE', 'HANDLE_RESERVED', 'HANDLE_UNAVAILABLE'].includes(code)) {
+        setFieldErrors(current => ({ ...current, handle: code === 'INVALID_HANDLE' ? (i18n.language.startsWith('ar') ? 'صيغة اسم المستخدم غير صالحة.' : 'The username format is invalid.') : (i18n.language.startsWith('ar') ? 'اسم المستخدم غير متاح. اختر اسمًا آخر.' : 'This username is unavailable. Choose another.') }));
+        return;
+      }
+      if (code === 'AUTH_REQUIRED' || code === 'REAUTHENTICATION_REQUIRED') { setSaveError(securityErrorText(error, i18n.language.startsWith('ar'))); return; }
       const message = error instanceof Error ? error.message : '';
       setSaveError(message.toLowerCase().includes('conflict') || message.toLowerCase().includes('changed')
         ? t('profile.edit.conflict', { defaultValue: 'Your profile changed elsewhere. Reload and try again.' })
@@ -501,6 +516,7 @@ const ProfileSettingsContent: React.FC<ProfileSettingsScreenProps> = ({
   if (currentSubPage === 'edit-profile') {
     return (
       <div className="flex flex-col h-full bg-gray-50 animate-in slide-in-from-right duration-300">
+        {reauthenticationDialog}
         <PageHeader title={t('profile.edit.title', { defaultValue: 'Edit Profile' })} />
         <div className="flex-1 overflow-y-auto pb-10 no-scrollbar">
           <div className="relative">
@@ -715,8 +731,9 @@ const ProfileSettingsContent: React.FC<ProfileSettingsScreenProps> = ({
 
             <div>
               <label htmlFor="profile-fixed-handle" className="mb-2 block text-sm font-semibold text-gray-700">{t('settingsV2.profile.handle')}</label>
-              <input id="profile-fixed-handle" value={`@${profileForm.handle}`} readOnly dir="ltr" aria-describedby="profile-fixed-handle-hint" className="min-h-12 w-full rounded-2xl border border-gray-200 bg-gray-100 px-4 py-3 text-sm text-gray-700" />
-              <p id="profile-fixed-handle-hint" className="mt-2 text-sm leading-relaxed text-gray-600">{t('settingsV2.profile.handleHint')}</p>
+              <input id="profile-fixed-handle" value={profileForm.handle} onChange={event => { setProfileForm({ ...profileForm, handle: event.target.value.replace(/^@/, '') }); setFieldErrors(current => ({ ...current, handle: undefined })); setSaveError(null); }} maxLength={30} autoCapitalize="none" autoCorrect="off" autoComplete="username" spellCheck={false} aria-invalid={Boolean(fieldErrors.handle)} dir="ltr" aria-describedby="profile-fixed-handle-hint profile-handle-error" className="min-h-12 w-full rounded-2xl border border-gray-200 bg-gray-100 px-4 py-3 text-sm text-gray-700" />
+              {fieldErrors.handle && <p id="profile-handle-error" role="alert" className="mt-2 text-sm text-red-700">{fieldErrors.handle}</p>}
+              <p id="profile-fixed-handle-hint" className="mt-2 text-sm leading-relaxed text-gray-600">{i18n.language.startsWith('ar') ? 'يبقى اسمك السابق محجوزًا لك، وتصل روابطه إلى ملفك الحالي.' : 'Your previous username stays reserved for you, and its links lead to your current profile.'}</p>
             </div>
             {(['location', 'website'] as const).map((field) => (
               <div key={field}>

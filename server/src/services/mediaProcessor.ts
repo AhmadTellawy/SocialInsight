@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import sharp from 'sharp';
+import sharp, { type Metadata, type OutputInfo } from 'sharp';
 import { MediaPurpose, MediaVariantKind } from '@prisma/client';
 import {
   AllowedMediaMime,
@@ -146,7 +146,7 @@ export const processMediaBuffer = async (
     throw new MediaValidationError('UNSUPPORTED_MEDIA_TYPE', 'Only JPEG, PNG, and WebP images are supported.');
   }
 
-  let metadata: sharp.Metadata;
+  let metadata: Metadata;
   try {
     metadata = await sharp(input, {
       failOn: 'error',
@@ -161,7 +161,7 @@ export const processMediaBuffer = async (
     throw new MediaValidationError('MIME_MISMATCH', 'The image content does not match its declared file type.');
   }
 
-  let normalized: { data: Buffer; info: sharp.OutputInfo };
+  let normalized: { data: Buffer; info: OutputInfo };
   try {
     normalized = await sharp(input, {
       failOn: 'error',

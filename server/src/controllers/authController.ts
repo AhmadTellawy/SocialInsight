@@ -27,6 +27,8 @@ import { assertActiveAccountSession, invalidateAccountOtps } from '../services/a
 import { challengeAfterPrimaryProof } from '../services/authChallengeService';
 import { normalizeSecurityCode, lockAccountSecurity } from '../services/mfaService';
 import { createLegacyBearerToken } from '../middleware/authMiddleware';
+import { HandleError, normalizeHandle, assertHandleAvailable, claimHandle, lockHandleNamespace } from '../services/handleService';
+import { enqueueSecurityNotification } from '../services/securityNotificationService';
 
 const db = prisma as any;
 const GENERIC_LOGIN_ERROR = 'Invalid login credentials';
@@ -208,9 +210,12 @@ export const checkHandleAvailability = async (req: Request, res: Response): Prom
     const parsed = z.string().trim().min(3).max(30).regex(/^[a-z0-9_.]+$/i).safeParse(req.query.handle);
     if (!parsed.success) return validationFailure(res, 'INVALID_HANDLE');
     try {
-        const existing = await prisma.user.findFirst({ where: { handle: { equals: parsed.data.toLowerCase(), mode: 'insensitive' } } });
-        res.json({ available: !existing });
-    } catch {
+        const handle = normalizeHandle(parsed.data);
+        await assertHandleAvailable(prisma, handle);
+        noStore(res);
+        res.json({ available: true });
+    } catch (error) {
+        if (error instanceof HandleError) { noStore(res); res.json({ available: false, code: error.code }); return; }
         res.status(500).json({ error: 'Unable to check handle', code: 'HANDLE_CHECK_FAILED' });
     }
 };
@@ -218,15 +223,11 @@ export const checkHandleAvailability = async (req: Request, res: Response): Prom
 export const reserveHandle = async (req: Request, res: Response): Promise<void> => {
     const parsed = reserveHandleSchema.safeParse(req.body);
     if (!parsed.success) return validationFailure(res, 'INVALID_HANDLE');
-    const handle = parsed.data.handle.toLowerCase();
     try {
+        const handle = normalizeHandle(parsed.data.handle);
         const pending = await findBoundPendingRegistration(req, parsed.data.pendingId);
         if (!pending || !pending.password || pending.currentStep < 3) return validationFailure(res, 'REGISTRATION_SESSION_INVALID');
-        const existing = await prisma.user.findFirst({ where: { handle: { equals: handle, mode: 'insensitive' } } });
-        if (existing) {
-            res.status(409).json({ error: 'Handle is unavailable', code: 'HANDLE_UNAVAILABLE' });
-            return;
-        }
+        await assertHandleAvailable(prisma, handle);
         const updated = await prisma.pendingRegistration.updateMany({
             where: { id: pending.id, browserSecretHash: pending.browserSecretHash, password: { not: null }, currentStep: { gte: 3 } },
             data: { handle, currentStep: 4 }
@@ -238,6 +239,7 @@ export const reserveHandle = async (req: Request, res: Response): Promise<void> 
             res.status(409).json({ error: 'Handle is unavailable', code: 'HANDLE_UNAVAILABLE' });
             return;
         }
+        if (error instanceof HandleError) { res.status(error.status).json({ error: 'Handle is invalid or unavailable', code: error.code }); return; }
         logFailure(req, 'registration_handle_failed', error);
         res.status(500).json({ error: 'Unable to continue registration', code: 'REGISTRATION_FAILED' });
     }
@@ -270,10 +272,12 @@ export const completeRegistration = async (req: Request, res: Response): Promise
     try {
         const pending = await findBoundPendingRegistration(req, parsed.data.pendingId);
         if (!pending || !pending.password || !pending.handle || pending.currentStep < 5) return validationFailure(res, 'REGISTRATION_SESSION_INVALID');
-        const pendingHandle = pending.handle;
+        const pendingHandle = normalizeHandle(pending.handle);
         const pendingPassword = pending.password;
         const birthday = parseAndValidateDateOfBirth(formatDateOnly(pending.dob)!);
         const consumed = await consumeEmailOtp({ destination: pending.email, purpose: 'REGISTRATION', subject: pending.id, code: parsed.data.otp || parsed.data.code! }, async (tx) => {
+            await lockHandleNamespace(tx);
+            await assertHandleAvailable(tx, pendingHandle);
             const created = await tx.user.create({
                 data: {
                     email: pending.email, name: pending.fullName, birthday, handle: pendingHandle,
@@ -282,6 +286,7 @@ export const completeRegistration = async (req: Request, res: Response): Promise
                 },
                 select: SAFE_USER_SELECT
             });
+            await claimHandle(tx, pendingHandle, created.id);
             await tx.notificationSettings.create({ data: { userId: created.id, settings: JSON.stringify({
                 myPosts: { likes: 'everyone', comments: 'everyone', shares: 'following' },
                 sharedPosts: { likes: 'following', comments: 'following', shares: 'off' },
@@ -311,6 +316,7 @@ export const completeRegistration = async (req: Request, res: Response): Promise
             res.status(409).json({ error: 'Account cannot be created', code: 'ACCOUNT_UNAVAILABLE' });
             return;
         }
+        if (error instanceof HandleError) { res.status(error.status).json({ error: 'Handle is invalid or unavailable', code: error.code }); return; }
         logFailure(req, 'registration_completion_failed', error);
         res.status(500).json({ error: 'Unable to complete registration', code: 'REGISTRATION_FAILED' });
     }
@@ -352,11 +358,14 @@ export const confirmPasswordReset = async (req: Request, res: Response): Promise
         const passwordHash = await bcrypt.hash(parsed.data.password, 12);
         await consumeEmailOtp({ destination: email, purpose: 'PASSWORD_RESET', subject: user.id, code: parsed.data.code }, async (tx, challenge) => {
             await lockAccountSecurity(tx, user.id);
-            const current = await tx.user.findUnique({ where: { id: user.id }, select: { email: true, authInvalidatedAt: true, status: true } });
+            const current = await tx.user.findUnique({ where: { id: user.id }, select: { email: true, emailVerifiedAt: true, authInvalidatedAt: true, status: true } });
             if (!current || !['ACTIVE', 'DEACTIVATED'].includes(current.status) || current.email?.toLowerCase() !== email || (current.authInvalidatedAt && challenge.createdAt < current.authInvalidatedAt)) throw new OtpError('OTP_INVALID', 'Invalid or expired code');
             await invalidateAccountOtps(tx, user.id);
             const invalidatedAt = new Date();
             await tx.user.update({ where: { id: user.id, status: { in: ['ACTIVE', 'DEACTIVATED'] } }, data: { passwordHash, password: null, passwordUpdatedAt: invalidatedAt, authInvalidatedAt: invalidatedAt } });
+            // The consumed OTP itself proves current mailbox ownership, also
+            // for legacy accounts without a stored emailVerifiedAt timestamp.
+            await enqueueSecurityNotification(tx, user.id, 'PASSWORD_RESET', [email]);
             await tx.authSession.updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: new Date() } });
         });
         notifyUserSessionsRevoked(user.id);
@@ -439,10 +448,12 @@ export const confirmEmailChange = async (req: Request, res: Response): Promise<v
     try {
         const consumed = await consumeEmailOtp({ destination: email, purpose: 'EMAIL_CHANGE', subject: req.user!.userId, code: parsed.data.code }, async (tx) => {
             await lockAccountSecurity(tx, req.user!.userId);
-                await assertActiveAccountSession(tx, req);
+            await assertActiveAccountSession(tx, req);
+            const previous = await tx.user.findUnique({ where: { id: req.user!.userId }, select: { email: true, emailVerifiedAt: true } });
             await invalidateAccountOtps(tx, req.user!.userId);
             const changedAt = new Date();
             const changedUser = await tx.user.update({ where: { id: req.user!.userId, status: 'ACTIVE' }, data: { email, emailVerifiedAt: changedAt, authInvalidatedAt: changedAt } });
+            await enqueueSecurityNotification(tx, req.user!.userId, 'EMAIL_CHANGED', [email, ...(previous?.email && previous.emailVerifiedAt ? [previous.email] : [])]);
             await tx.authSession.updateMany({ where: { userId: req.user!.userId, revokedAt: null }, data: { revokedAt: new Date() } });
             return { expectedAuthInvalidatedAt: changedAt, expectedPasswordUpdatedAt: changedUser.passwordUpdatedAt };
         });

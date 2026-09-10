@@ -6,7 +6,8 @@ import {
   deleteMediaAsset,
   finalizeMediaUpload,
   getMediaConfigResponse,
-  getMediaReadPresentation
+  getMediaReadPresentation,
+  prepareMediaUpload
 } from '../services/mediaService';
 import { MediaValidationError } from '../services/mediaProcessor';
 import { assertActiveAccountSession } from '../services/accountSecurityPolicy';
@@ -59,8 +60,16 @@ const respondWithMediaError = (req: Request, res: Response, error: unknown): voi
   });
 };
 
-export const getMediaConfig = (_req: Request, res: Response): void => {
-  res.json(getMediaConfigResponse());
+export const getMediaConfig = async (req: Request, res: Response): Promise<void> => {
+  try { res.json(await getMediaConfigResponse()); }
+  catch (error) { respondWithMediaError(req, res, error); }
+};
+
+export const prepareMedia = async (req: Request, res: Response): Promise<void> => {
+  try {
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json(await prepareMediaUpload(req.user!.userId, req.params.id as string, tx => assertActiveAccountSession(tx, req, false)));
+  } catch (error) { respondWithMediaError(req, res, error); }
 };
 
 export const startMediaUpload = async (req: Request, res: Response): Promise<void> => {

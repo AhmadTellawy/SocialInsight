@@ -11,9 +11,9 @@ export class PrivacyService {
   /**
    * Central authorization logic to determine if `viewerId` can view `ownerId`'s content.
    */
-  static async canViewUserContent(viewerId: string | undefined | null, ownerId: string): Promise<boolean> {
+  static async canViewUserContent(viewerId: string | undefined | null, ownerId: string, db: any = prisma): Promise<boolean> {
     if (!viewerId) {
-      const owner = await prisma.user.findUnique({
+      const owner = await db.user.findUnique({
         where: { id: ownerId },
         select: { isPrivate: true, mediaPrivacyTarget: true, status: true }
       });
@@ -21,11 +21,11 @@ export class PrivacyService {
     }
 
     if (viewerId === ownerId) {
-      const owner = await prisma.user.findUnique({ where: { id: ownerId }, select: { status: true } });
+      const owner = await db.user.findUnique({ where: { id: ownerId }, select: { status: true } });
       return owner?.status === 'ACTIVE';
     }
 
-    const blockRecord = await prisma.userBlock.findFirst({
+    const blockRecord = await db.userBlock.findFirst({
       where: {
         OR: [
           { blockerId: viewerId, blockedId: ownerId },
@@ -38,7 +38,7 @@ export class PrivacyService {
       return false; 
     }
 
-    const owner = await prisma.user.findUnique({
+    const owner = await db.user.findUnique({
       where: { id: ownerId },
       select: { isPrivate: true, mediaPrivacyTarget: true, status: true }
     });
@@ -51,7 +51,7 @@ export class PrivacyService {
       return true; 
     }
 
-    const followRecord = await prisma.follow.findUnique({
+    const followRecord = await db.follow.findUnique({
       where: {
         followerId_followingId: {
           followerId: viewerId,

@@ -6,6 +6,7 @@ import {
     updatePost,
     getDrafts,
     votePost,
+    initializeGuestParticipation,
     getParticipants,
     getPostResults,
     getComments,
@@ -59,6 +60,7 @@ router.post('/people-tags/:id/reject', requireAuth, rejectPeopleTag);
 router.delete('/people-tags/:id', requireAuth, removePeopleTag);
 router.post('/', requireAuth, createPost);
 router.put('/:id', requireAuth, updatePost);
+router.post('/:id/participation-session', optionalAuth, initializeGuestParticipation);
 router.post('/:id/vote', optionalAuth, votePost); // Guest voting might be allowed based on poll settings, we keep optionalAuth
 router.post('/:id/comments', requireAuth, createComment);
 router.post('/:id/like', requireAuth, likePost);

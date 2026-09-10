@@ -70,3 +70,24 @@ test('a queued sensitive mutation rechecks session revocation after acquiring th
   const {res,state}=response();await controller.unlinkSignInMethod(request({}, {provider:'google'}),res);
   assert.equal(state.status,401);assert.equal(state.body.code,'AUTH_REQUIRED');assert.equal(mutations,0);
 });
+
+test('a recently authenticated OAuth account can set its first password only with a verified canonical email', async () => {
+  for (const verified of [false, true]) {
+    let writes = 0;
+    let queued: any[] = [];
+    prisma.$transaction = async (work: any) => work(guarded({
+      $executeRaw: async () => {},
+      user: { findUnique: async () => ({status: 'ACTIVE', passwordHash: null, email: 'owner@example.test', emailVerifiedAt: verified ? new Date() : null}), update: async () => { writes++; return {}; } },
+      authSession: {findMany: async () => [], updateMany: async () => ({count: 0})},
+      authChallenge: {updateMany: async () => ({count: 0})},
+      securityEmailOutbox: {createMany: async ({data}: any) => { queued = data; return {count: data.length}; }}
+    }));
+    const {res,state}=response();
+    await controller.changeAccountPassword(request({password:'SafePassword1!'}), res);
+    assert.equal(state.status, verified ? 200 : 409);
+    assert.equal(writes, verified ? 1 : 0);
+    assert.equal(queued.length, verified ? 1 : 0);
+    if (verified) assert.equal(queued[0].kind, 'PASSWORD_CHANGED');
+    else assert.equal(state.body.code, 'VERIFIED_EMAIL_REQUIRED');
+  }
+});

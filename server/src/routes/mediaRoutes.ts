@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
-import { cancelMedia, finalizeMedia, getMedia, getMediaConfig, startMediaUpload } from '../controllers/mediaController';
+import { cancelMedia, prepareMedia, finalizeMedia, getMedia, getMediaConfig, startMediaUpload } from '../controllers/mediaController';
 import { optionalAuth, requireAuth } from '../middleware/authMiddleware';
 
 const router = Router();
@@ -15,6 +15,7 @@ const mediaMutationLimiter = rateLimit({
 
 router.get('/config', getMediaConfig);
 router.post('/uploads', mediaMutationLimiter, requireAuth, startMediaUpload);
+router.post('/:id/prepare', mediaMutationLimiter, requireAuth, prepareMedia);
 router.post('/:id/finalize', mediaMutationLimiter, requireAuth, finalizeMedia);
 router.get('/:id', optionalAuth, getMedia);
 router.delete('/:id', mediaMutationLimiter, requireAuth, cancelMedia);

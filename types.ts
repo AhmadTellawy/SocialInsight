@@ -77,6 +77,7 @@ export interface PeopleTag {
 }
 
 export interface MediaDraft {
+  serverPrepared?: boolean;
   clientId: string;
   file: File | null;
   previewUrl: string;

@@ -6,6 +6,7 @@ import { resumeMediaPrivacyTransitions } from './mediaPrivacyTransitionService';
 import { calculateAgeGroupFromDate } from '../utils/profileValidation';
 import { cleanupExpiredAuthArtifacts } from './authRetentionService';
 import { resumeAccountCleanupJobs } from './accountCleanupService';
+import { processSecurityNotifications } from './securityNotificationService';
 
 export function calculateAgeGroup(dob: Date | null | undefined): string | undefined {
     return calculateAgeGroupFromDate(dob);
@@ -68,6 +69,17 @@ export const runAgeGroupComputation = async () => {
 };
 
 export const initCronJobs = () => {
+    let securityEmailRunActive = false;
+    cron.schedule('* * * * *', async () => {
+        if (securityEmailRunActive) return;
+        securityEmailRunActive = true;
+        try {
+            const counts = await processSecurityNotifications();
+            if (counts.delivered || counts.retried || counts.deleted) console.info(JSON.stringify({ event: 'security_email_queue_processed', ...counts }));
+        } catch {
+            console.error(JSON.stringify({ event: 'security_email_queue_failed' }));
+        } finally { securityEmailRunActive = false; }
+    });
     // Daily at midnight; birthdays can cross an age-band boundary on any day.
     cron.schedule('0 0 * * *', () => {
         void runAgeGroupComputation().catch(() => {

@@ -4,6 +4,7 @@ import fetch from 'node-fetch';
 import prisma from '../prisma';
 import { hashSessionSecret } from './sessionService';
 import { lockAccountSecurity } from './mfaService';
+import { assertHandleAvailable, claimHandle, HandleError, lockHandleNamespace, normalizeHandle } from './handleService';
 
 export type OAuthProvider = 'GOOGLE' | 'FACEBOOK';
 export type OAuthMode = 'LOGIN' | 'LINK' | 'REAUTH';
@@ -210,12 +211,18 @@ const facebookIdentity = async (code: string, stateRecord: any): Promise<Provide
     };
 };
 
-const uniqueHandle = async (name: string): Promise<string> => {
-    const stem = name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 20) || 'user';
+const uniqueHandle = async (tx: any, name: string): Promise<string> => {
+    const candidateStem = name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 20) || 'user';
+    const stem = candidateStem === 'deleted' || candidateStem.startsWith('deleted_') ? 'user' : candidateStem;
     for (let attempt = 0; attempt < 8; attempt += 1) {
         const suffix = randomBytes(4).toString('hex');
-        const handle = `${stem}_${suffix}`;
-        if (!await db.user.findUnique({ where: { handle }, select: { id: true } })) return handle;
+        try {
+            const handle = normalizeHandle(`${stem}_${suffix}`);
+            await assertHandleAvailable(tx, handle);
+            return handle;
+        } catch (error) {
+            if (!(error instanceof HandleError)) throw error;
+        }
     }
     throw new OAuthError('OAUTH_ACCOUNT_CREATE_FAILED');
 };
@@ -269,8 +276,9 @@ const resolveIdentity = async (identity: ProviderIdentity, stateRecord: any): Pr
         if (emailOwner) throw new OAuthError('ACCOUNT_LINK_REQUIRED');
     }
 
-    const handle = await uniqueHandle(identity.name);
     return db.$transaction(async (tx: any) => {
+        await lockHandleNamespace(tx);
+        const handle = await uniqueHandle(tx, identity.name);
         const user = await tx.user.create({
             data: {
                 name: identity.name,
@@ -280,6 +288,7 @@ const resolveIdentity = async (identity: ProviderIdentity, stateRecord: any): Pr
                 authProvider: identity.provider === 'GOOGLE' ? 'Google' : 'Facebook'
             }
         });
+        await claimHandle(tx, handle, user.id);
         await tx.oAuthAccount.create({ data: { userId: user.id, provider: identity.provider, providerAccountId: identity.providerAccountId, emailSnapshot: identity.email } });
         await tx.notificationSettings.create({
             data: {

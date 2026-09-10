@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import prisma from '../prisma';
 import { cleanupExpiredAuthArtifacts } from './authRetentionService';
+import * as securityNotifications from './securityNotificationService';
 
 test('authentication retention cleanup targets only expired or terminal artifacts', async () => {
     const original = (prisma as any).$transaction;
+    const originalNotifications = securityNotifications.cleanupSecurityNotifications;
     const calls: unknown[] = [];
     const models = ['authSession', 'oAuthState', 'otpChallenge', 'oTPCode', 'pendingRegistration', 'authRateLimit', 'authChallenge', 'accountCleanupJob'];
     const originals = new Map<string, unknown>();
@@ -12,6 +14,7 @@ test('authentication retention cleanup targets only expired or terminal artifact
     const responseUpdate = (prisma as any).response.updateMany;
 
     try {
+        (securityNotifications as any).cleanupSecurityNotifications = async () => 0;
         (prisma as any).userMfa.updateMany = (args: unknown) => { calls.push({model: "userMfa", args}); return {count: 1}; };
         (prisma as any).response.updateMany = (args: unknown) => { calls.push({model: 'response', args}); return {count: 1}; };
         for (const model of models) {
@@ -31,7 +34,7 @@ test('authentication retention cleanup targets only expired or terminal artifact
             otpChallenges: 1,
             legacyOtpCodes: 1,
             pendingRegistrations: 1,
-            rateLimits: 1, authChallenges: 1, pendingMfa: 1, guestProofs: 1, completedCleanupJobs: 1
+            rateLimits: 1, authChallenges: 1, pendingMfa: 1, guestProofs: 1, completedCleanupJobs: 1, securityEmails: 0
         });
         assert.equal(calls.length, 10);
         assert.match(JSON.stringify(calls[0]), /expiresAt/);
@@ -39,6 +42,7 @@ test('authentication retention cleanup targets only expired or terminal artifact
         assert.match(JSON.stringify(calls[8]), /guestProofHash.*null/);
         assert.match(JSON.stringify(calls[9]), /completedAt/);
     } finally {
+        (securityNotifications as any).cleanupSecurityNotifications = originalNotifications;
         (prisma as any).$transaction = original;
         (prisma as any).userMfa.updateMany = mfaUpdate;
         (prisma as any).response.updateMany = responseUpdate;
