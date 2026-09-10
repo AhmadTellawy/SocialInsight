@@ -49,6 +49,8 @@ export async function runConfinedJob(input,{signal,probe=false,fault,timeoutMs=4
           while((index=diagnostics.indexOf('\n'))>=0) {
             const line=diagnostics.slice(0,index);diagnostics=diagnostics.slice(index+1);
             if(/^(CONFINEMENT_UNAVAILABLE:[A-Z_]+|CONFINEMENT_PROBE_FAILED:[A-Z_0-9]+)$/.test(line))onDiagnostic(line);
+            if(/^(CONFINEMENT_PHASE:(NATIVE_STARTED|ENCODE_STARTED|ENCODE_FINISHED)|CONFINEMENT_NATIVE_EXIT:([0-9]{1,3}|SIG[A-Z]+|UNKNOWN))$/.test(line))onDiagnostic(line);
+            if(line==='CONFINEMENT_NATIVE_TIMEOUT'){onDiagnostic(line);stop('CONVERSION_TIMEOUT');}
             if(fault&&/^CONFINEMENT_LIFETIME:[0-9]{1,10}$/.test(line))onLifetime(Number(line.split(':')[1]));
           }
         }

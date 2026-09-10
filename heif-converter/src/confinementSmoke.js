@@ -74,9 +74,10 @@ try {
   }
   for(const [name,width,height] of [['12mp',2400,1800],['40mp',2400,1500]])await record('generated-'+name,async()=>{
     const input=await fs.readFile('/fixtures/generated/'+name+'.heic');
-    const result=await runConfinedJob(input);
+    const phases=[],started=performance.now();
+    const result=await runConfinedJob(input,{onDiagnostic:code=>{const phase={code,ms:Math.round(performance.now()-started)};phases.push(phase);console.log(JSON.stringify({fixture:name,phase}));}});
     assert.equal(result.mime,'image/webp');assert.equal(result.width,width);assert.equal(result.height,height);
-    return{inputBytes:input.length,inputSha256:crypto.createHash('sha256').update(input).digest('hex'),outputBytes:result.data.length,width:result.width,height:result.height};
+    return{inputBytes:input.length,inputSha256:crypto.createHash('sha256').update(input).digest('hex'),outputBytes:result.data.length,width:result.width,height:result.height,phases};
   });
   await record('near15MiB-valid-free-box',async()=>{
     const padding=Buffer.alloc(15*1024*1024-camera.length);padding.writeUInt32BE(padding.length);padding.write('free',4,'ascii');
@@ -97,4 +98,6 @@ try {
     assert.equal(Number(events.oom),0);assert.equal(Number(events.oom_kill),0);return{events};
   });
   console.log(JSON.stringify({status:'PASS',cases:cases.length,assertions,memoryPeak:Number((await fs.readFile('/sys/fs/cgroup/memory.peak','utf8')).trim())}));
-}catch{process.exitCode=1;}
+}catch{process.exitCode=1;}finally{
+  console.log(JSON.stringify({resourceObservation:{memoryPeak:Number((await fs.readFile('/sys/fs/cgroup/memory.peak','utf8')).trim()),memoryEvents:(await fs.readFile('/sys/fs/cgroup/memory.events','utf8')).trim(),remainingTempEntries:await fs.readdir('/tmp/heif-converter')}}));
+}
