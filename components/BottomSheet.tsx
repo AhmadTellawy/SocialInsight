@@ -10,9 +10,10 @@ interface BottomSheetProps {
   title?: string;
   height?: string; // New prop to control height
   ariaLabel?: string;
+  dismissDisabled?: boolean;
 }
 
-export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, children, customLayout = false, title, height, ariaLabel }) => {
+export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, children, customLayout = false, title, height, ariaLabel, dismissDisabled = false }) => {
   const [isRendered, setIsRendered] = useState(isOpen);
   const [isDragging, setIsDragging] = useState(false);
   const [translateY, setTranslateY] = useState(0);
@@ -22,11 +23,20 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
   const startY = useRef<number>(0);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
+  const dismissDisabledRef = useRef(dismissDisabled);
+  dismissDisabledRef.current = dismissDisabled;
   const titleId = useId();
 
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
+
+  useEffect(() => {
+    if (dismissDisabled) {
+      setIsDragging(false);
+      setTranslateY(0);
+    }
+  }, [dismissDisabled]);
 
   useEffect(() => {
     if (isOpen) {
@@ -66,7 +76,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        onCloseRef.current();
+        if (!dismissDisabledRef.current) onCloseRef.current();
         return;
       }
       if (event.key !== 'Tab') return;
@@ -94,6 +104,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
   }, [isOpen, isRendered]);
 
   const handleTouchStart = (e: React.TouchEvent) => {
+    if (dismissDisabledRef.current) return;
     const target = e.target as HTMLElement;
     const isHandle = target.closest('.drag-handle');
     
@@ -106,7 +117,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
-    if (!isDragging) return;
+    if (dismissDisabledRef.current || !isDragging) return;
     const currentY = e.touches[0].clientY;
     const diff = currentY - startY.current;
 
@@ -117,7 +128,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
 
   const handleTouchEnd = () => {
     setIsDragging(false);
-    if (translateY > 100) {
+    if (!dismissDisabledRef.current && translateY > 100) {
       onClose();
     } else {
       setTranslateY(0);
@@ -131,7 +142,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
       {/* Backdrop */}
       <div 
         className={`absolute inset-0 bg-black/60 transition-opacity duration-300 ease-out ${isOpen ? 'opacity-100' : 'opacity-0'}`}
-        onClick={onClose}
+        onClick={() => { if (!dismissDisabledRef.current) onClose(); }}
         aria-hidden="true"
       />
       

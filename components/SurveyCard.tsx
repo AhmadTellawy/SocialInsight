@@ -2510,7 +2510,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           />
         </React.Suspense>
       </BottomSheet>
-      <BottomSheet isOpen={isShareSheetOpen} ariaLabel={t('postSharing.menuTitle')} onClose={() => { if (!isShareBusy) { setIsShareSheetOpen(false); setShareSheetInitialStep('menu'); } }}>
+      <BottomSheet isOpen={isShareSheetOpen} dismissDisabled={isShareBusy} ariaLabel={t('postSharing.menuTitle')} onClose={() => { if (!isShareBusy) { setIsShareSheetOpen(false); setShareSheetInitialStep('menu'); } }}>
         <React.Suspense fallback={<SheetContentFallback />}>
           <ShareSheet
             survey={survey}
@@ -2523,7 +2523,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           />
         </React.Suspense>
       </BottomSheet>
-      <BottomSheet isOpen={isRepostMenuOpen} onClose={() => !isReposting && setIsRepostMenuOpen(false)} ariaLabel={t('postSharing.repost')} customLayout={false}>
+      <BottomSheet isOpen={isRepostMenuOpen} dismissDisabled={isReposting} onClose={() => !isReposting && setIsRepostMenuOpen(false)} ariaLabel={t('postSharing.repost')} customLayout={false}>
         <div dir={i18n.dir()} className="p-2 space-y-1">
           {repostError && <p role="alert" className="px-4 text-sm text-red-600">{repostError}</p>}
           <button disabled={isReposting || !onShareToFeed} onClick={handleInlineRepost} className="w-full flex items-center gap-4 p-4 hover:bg-gray-50 rounded-xl transition-colors text-start group">

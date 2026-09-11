@@ -1,3 +1,4 @@
+import { PostSaveStatus } from './PostSaveStatus';
 import { usePostSaveFeedback } from '../hooks/usePostSaveFeedback';
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
@@ -670,8 +671,8 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
 
   return (
     <>
-      {(isSaving || isSubmitting) && <div role="status" className="fixed inset-x-4 top-4 z-[200] rounded-xl bg-gray-900 p-3 text-center text-sm text-white">{t('postOptions.saving')}</div>}
-      <div inert={isSaving || isSubmitting} aria-busy={isSaving || isSubmitting} className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-bottom duration-300">
+      <PostSaveStatus active={isSaving || isSubmitting} label={t('postOptions.saving')} />
+      <div data-post-editor inert={isSaving || isSubmitting} aria-busy={isSaving || isSubmitting} className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-bottom duration-300">
       {submissionError && <p role="alert" className="shrink-0 border-b border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">{submissionError}</p>}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white/95 backdrop-blur-md sticky top-0 z-40 safe-top shrink-0">
         <button aria-label={composerStep === 2 ? 'Back' : 'Close'} onClick={() => { if (composerStep === 2) { setComposerStep(1); setHasAttemptedSubmit(false); scrollContainerRef.current?.scrollTo({ top: 0 }); } else handleClose(); }} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">{composerStep === 2 ? <ChevronLeft size={24} /> : <X size={24} />}</button>

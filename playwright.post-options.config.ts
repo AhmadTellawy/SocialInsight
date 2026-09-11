@@ -10,6 +10,8 @@ export default defineConfig({
   reporter: [['list'], ['json', { outputFile: `${results}/report.json` }]],
   outputDir: `${results}/artifacts`,
   use: {
+    actionTimeout: 10000,
+    navigationTimeout: 120000,
     baseURL: process.env.POST_OPTIONS_BASE_URL || 'http://127.0.0.1:4189',
     browserName: 'chromium',
     serviceWorkers: 'block',

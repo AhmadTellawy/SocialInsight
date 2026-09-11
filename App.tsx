@@ -2102,7 +2102,7 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      <BottomSheet isOpen={editRestrictionState.isOpen} onClose={() => {
+      <BottomSheet isOpen={editRestrictionState.isOpen} dismissDisabled={isRestrictedDeleting} onClose={() => {
         if (!restrictedDeleteLock.current) setEditRestrictionState({ isOpen: false });
       }} title={t('Editing Disabled')}>
         <div className="p-4 space-y-4">
