@@ -1,13 +1,13 @@
-name: HEIF confined worker prototype
+name: HEIF active conversion shutdown
 on:
   push:
     branches: [codex/heif-linux-validation]
 permissions:
   contents: read
 jobs:
-  confinement:
+  active-shutdown:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - name: Read exact public source without stored credentials
         shell: bash
@@ -19,43 +19,10 @@ jobs:
           git fetch --depth 1 origin "$GITHUB_SHA"
           git checkout --detach FETCH_HEAD
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-      - name: Build pinned runtime with unprivileged confinement launcher
+      - name: Build unchanged pinned runtime
         run: docker build --progress=plain -t si-heif-confined heif-converter
-      - name: Run complete converter guard suite
-        run: docker run --rm --network none --entrypoint npm -v "$PWD/heif-converter/test:/app/test:ro" si-heif-confined test
-      - name: Prepare genuine synthetic 12MP and 40MP encoded fixtures
+      - name: Signal default supervisor during one actual camera conversion
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libheif-examples libheif-plugin-x265
-          mkdir -p tests/media-native/generated
-          chmod 0777 tests/media-native/generated
-          docker run --rm --network none --entrypoint node -v "$PWD/tests/media-native:/fixtures" si-heif-confined /fixtures/linux-runtime.mjs generate
-          heif-enc --version
-          heif-enc -q 70 tests/media-native/generated/12mp.png -o tests/media-native/generated/12mp.heic
-          heif-enc -q 70 tests/media-native/generated/40mp.png -o tests/media-native/generated/40mp.heic
-      - name: Prove fresh worker and complete native Sharp confinement
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker run --name si-heif-prototype --no-healthcheck --cap-drop ALL --security-opt no-new-privileges --memory 512m --memory-swap 512m --cpus 0.1 --pids-limit 512 --network none --entrypoint /usr/local/bin/si-heif-confine -v "$PWD/tests/media-native:/fixtures:ro" si-heif-confined --supervise-probe
-      - name: Verify default supervised HTTP entrypoint and real conversion lifecycle
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker run -d --name si-heif-http --cap-drop ALL --security-opt no-new-privileges --memory 512m --memory-swap 512m --cpus 0.1 --pids-limit 512 -p 127.0.0.1:18080:8080 -e HEIF_CONVERTER_HMAC_SECRET=synthetic-ci-fixture-key-not-an-application-secret si-heif-confined
-          docker run --rm --user 10002:10002 --network host --entrypoint node -v "$PWD/tests/media-native:/fixtures:ro" si-heif-confined /fixtures/linux-runtime.mjs test
-          docker exec -e UV_THREADPOOL_SIZE=1 si-heif-http node --v8-pool-size=1 -e "const fs=require('fs'),assert=require('assert/strict');assert.deepEqual(fs.readdirSync('/tmp/heif-converter'),[]);const events=fs.readFileSync('/sys/fs/cgroup/memory.events','utf8');assert.match(events,/^oom 0$/m);assert.match(events,/^oom_kill 0$/m);console.log(JSON.stringify({emptyPrivateRoot:true,memoryPeak:Number(fs.readFileSync('/sys/fs/cgroup/memory.peak','utf8')),events}));"
-          docker stop -t 12 si-heif-http
-          test "$(docker inspect --format '{{.State.ExitCode}}' si-heif-http)" = 0
-      - name: Record exact image and exit evidence
-        if: always()
-        shell: bash
-        run: |
-          docker image inspect --format '{{.Id}}' si-heif-confined || true
-          docker inspect --format '{{json .State}} {{json .HostConfig.Memory}} {{json .HostConfig.NanoCpus}}' si-heif-prototype || true
-          docker logs --tail 50 si-heif-prototype || true
-          docker logs --tail 200 si-heif-http || true
-          docker inspect --format '{{json .State}}' si-heif-http || true
-          docker rm -f si-heif-prototype si-heif-http || true
+          sudo "$(command -v node)" tests/media-native/linux-active-shutdown.mjs "$GITHUB_SHA"
