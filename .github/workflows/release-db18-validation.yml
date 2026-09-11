@@ -1,11 +1,11 @@
-name: Release DB18 package Linux proof
+name: Release DB18 transport and cache Linux proof
 on:
   push:
     branches: [codex/release-db18-validation]
 permissions:
   contents: read
 jobs:
-  package:
+  transport:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -19,23 +19,25 @@ jobs:
           git fetch --depth 1 origin "$GITHUB_SHA"
           git checkout --detach FETCH_HEAD
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-      - name: Prepare pinned Node and synthetic PostgreSQL17
+      - name: Prepare pinned Node and disposable TLS PostgreSQL
         shell: bash
         run: |
           set -euo pipefail
           docker pull node:24.20.0-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
-          docker run -d --name si-release18-pg --network host -e POSTGRES_PASSWORD=settings-local-fixture postgres:17.9-bookworm -p 55447 -c listen_addresses=127.0.0.1
-          for i in $(seq 1 30); do docker exec si-release18-pg pg_isready -U postgres -p 55447 && break; sleep 1; done
-          docker exec si-release18-pg pg_isready -U postgres -p 55447
-      - name: Run bound guards and real three profile rehearsal
+          bash ops/release18-transport/linux-test-setup.sh start
+      - name: Run selected transport, cache and interruption checks
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm --network host -v "$PWD/server/scripts/release-db-18:/work" -w /work node:24.20.0-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e sh -c 'apt-get update -qq && apt-get install -y --no-install-recommends openssl ca-certificates && npm ci --no-audit --no-fund && node launch.mjs verify && node --test --test-concurrency=1 tests/guards.test.mjs && node tests/rehearse.mjs && node tests/tls.mjs && node tests/interruption.mjs'
-      - name: Retain nonsecret detailed receipts in build log
+          docker run --rm --network host \
+            -v "$PWD:/work" -w /work \
+            -v "$RELEASE18_TEST_FIXTURE/tls:/tls:ro" \
+            -e RELEASE18_TEST_CLI=/work/server/scripts/release-db-18/node_modules/prisma/build/index.js \
+            -e RELEASE18_TEST_PACKAGE_ROOT=/work/server/scripts/release-db-18 \
+            -e RELEASE18_TEST_ARTIFACT_ROOT=/work/transport-test-artifacts \
+            node:24.20.0-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e \
+            sh -c 'set -eu; apt-get update -qq; apt-get install -y --no-install-recommends openssl ca-certificates git; cd /work/server/scripts/release-db-18; npm ci --no-audit --no-fund; cd /work; node --test --test-concurrency=1 ops/release18-transport/*.test.mjs'
+      - name: Remove only the owned synthetic fixture
         if: always()
         shell: bash
-        run: |
-          docker run --rm --network none -v "$PWD/server/scripts/release-db-18:/work:ro" -w /work node:24.20.0-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e node -e 'const fs=require("node:fs");function walk(p){for(const e of fs.readdirSync(p,{withFileTypes:true})){const q=p+"/"+e.name;if(e.isDirectory())walk(q);else if(e.name==="receipt.json"||e.name.startsWith("tls-")&&e.name.endsWith(".json"))console.log(JSON.stringify({artifact:q,receipt:JSON.parse(fs.readFileSync(q))}));}}if(fs.existsSync("evidence"))walk("evidence");'
-          docker inspect --format '{{json .State}}' si-release18-pg || true
-          docker rm -f si-release18-pg || true
+        run: bash ops/release18-transport/linux-test-setup.sh stop

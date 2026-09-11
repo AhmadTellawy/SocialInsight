@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Independent Stage read-only DB18 transport capture approval; no preflight/deploy authority",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "authority",
+    "command",
+    "runId",
+    "opsRevision",
+    "serviceId",
+    "target",
+    "sourceBindingSha256",
+    "runnerSourceSha256",
+    "validFrom",
+    "expiresAt",
+    "gates",
+    "controlledTlsProof",
+    "projectionMode",
+    "databaseMutation",
+    "applicationDeployment",
+    "unknownRunPolicy",
+    "toolchainCacheManifestSha256"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "authority": {
+      "const": "F01_INDEPENDENT_TRANSPORT_REVIEW"
+    },
+    "command": {
+      "const": "CAPTURE_STAGE_READ_ONLY"
+    },
+    "runId": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+      "minLength": 36,
+      "maxLength": 36
+    },
+    "opsRevision": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$",
+      "minLength": 40,
+      "maxLength": 40
+    },
+    "serviceId": {
+      "const": "srv-dagsvgek1f9s73dqpg7g"
+    },
+    "target": {
+      "const": {
+        "project": "mnfiixtgnlzmduunfryt",
+        "host": "aws-0-ap-southeast-1.pooler.supabase.com",
+        "port": 5432,
+        "database": "postgres",
+        "user": "postgres.mnfiixtgnlzmduunfryt",
+        "transport": "session"
+      }
+    },
+    "sourceBindingSha256": {
+      "const": "c74ce2ef9946377b793a723ea0efc6b4fbbd0210fc84d4882b47d54568b6271f"
+    },
+    "runnerSourceSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "validFrom": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "format": "date-time"
+    },
+    "expiresAt": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "format": "date-time"
+    },
+    "gates": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "role",
+          "status",
+          "evidenceSha256",
+          "sourceBindingSha256",
+          "runnerSourceSha256"
+        ],
+        "properties": {
+          "role": {
+            "enum": [
+              "E03",
+              "E04",
+              "E01",
+              "D04",
+              "F01"
+            ]
+          },
+          "status": {
+            "const": "PASSED"
+          },
+          "evidenceSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "sourceBindingSha256": {
+            "const": "c74ce2ef9946377b793a723ea0efc6b4fbbd0210fc84d4882b47d54568b6271f"
+          },
+          "runnerSourceSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "minLength": 64,
+            "maxLength": 64
+          }
+        }
+      }
+    },
+    "controlledTlsProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "evidenceSha256",
+        "operationsCommit",
+        "serviceId",
+        "sourceBindingSha256",
+        "contractSha256",
+        "nodePlatform",
+        "prismaVersion",
+        "cliSha256",
+        "engineSha256",
+        "caSha256",
+        "validPeer",
+        "wrongCaRejectedBeforeCredentials",
+        "wrongHostnameRejectedBeforeCredentials",
+        "noTlsRejectedBeforeCredentials",
+        "noPlaintextFallback",
+        "observedAt"
+      ],
+      "properties": {
+        "status": {
+          "const": "PASSED"
+        },
+        "evidenceSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "operationsCommit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$",
+          "minLength": 40,
+          "maxLength": 40
+        },
+        "serviceId": {
+          "const": "srv-dagsvgek1f9s73dqpg7g"
+        },
+        "sourceBindingSha256": {
+          "const": "c74ce2ef9946377b793a723ea0efc6b4fbbd0210fc84d4882b47d54568b6271f"
+        },
+        "contractSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "nodePlatform": {
+          "const": "linux"
+        },
+        "prismaVersion": {
+          "const": "6.19.2"
+        },
+        "cliSha256": {
+          "const": "69a2bd6412521259b90c653aff9822b6d2fc63a17f9c46d46d07d319ea0dbb3e"
+        },
+        "engineSha256": {
+          "const": "5d42b181631fd20bb0ecc5abcdba72575e7f467a0d52f4d5ef1ff28f0c74e6e9"
+        },
+        "caSha256": {
+          "const": "700723581420dd1ac98fd7e9ac529f0ef210eadcaf87fc868a3ad7d114c2f3b7"
+        },
+        "validPeer": {
+          "const": true
+        },
+        "wrongCaRejectedBeforeCredentials": {
+          "const": true
+        },
+        "wrongHostnameRejectedBeforeCredentials": {
+          "const": true
+        },
+        "noTlsRejectedBeforeCredentials": {
+          "const": true
+        },
+        "noPlaintextFallback": {
+          "const": true
+        },
+        "observedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+          "format": "date-time"
+        }
+      }
+    },
+    "projectionMode": {
+      "enum": [
+        "SUMMARY_ONLY",
+        "REVIEWED_SANITIZED_PROOF"
+      ]
+    },
+    "databaseMutation": {
+      "const": false
+    },
+    "applicationDeployment": {
+      "const": false
+    },
+    "unknownRunPolicy": {
+      "const": "STOP_AND_REVIEW_NO_AUTOMATIC_RETRY"
+    },
+    "toolchainCacheManifestSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "minLength": 64,
+      "maxLength": 64
+    }
+  }
+}
