@@ -12,6 +12,7 @@ import {
 import { MediaValidationError } from '../services/mediaProcessor';
 import { assertActiveAccountSession } from '../services/accountSecurityPolicy';
 import { AccountSecurityError } from '../services/mfaService';
+import { HeifConversionError, verifyHeifConversionReadiness } from '../services/heifConversionClient';
 
 const uploadSchema = z.object({
   purpose: z.nativeEnum(MediaPurpose),
@@ -45,6 +46,9 @@ const respondWithMediaError = (req: Request, res: Response, error: unknown): voi
     return;
   }
   if (error instanceof MediaValidationError) {
+    if (error instanceof HeifConversionError && error.retryAfterSeconds !== undefined) {
+      res.setHeader('Retry-After', String(error.retryAfterSeconds));
+    }
     res.status(error.statusCode).json({ error: error.message, code: error.code });
     return;
   }
@@ -61,15 +65,46 @@ const respondWithMediaError = (req: Request, res: Response, error: unknown): voi
 };
 
 export const getMediaConfig = async (req: Request, res: Response): Promise<void> => {
-  try { res.json(await getMediaConfigResponse()); }
+  try {
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json(await getMediaConfigResponse());
+  }
   catch (error) { respondWithMediaError(req, res, error); }
 };
 
-export const prepareMedia = async (req: Request, res: Response): Promise<void> => {
+const mediaRequestCancellation = (req: Request, res: Response) => {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  const onClose = () => { if (!res.writableEnded) controller.abort(); };
+  req.once('aborted', onAbort);
+  res.once('close', onClose);
+  if (req.aborted || res.destroyed) controller.abort();
+  return {
+    signal: controller.signal,
+    dispose() { req.removeListener('aborted', onAbort); res.removeListener('close', onClose); }
+  };
+};
+
+export const warmupHeif = async (req: Request, res: Response): Promise<void> => {
+  const cancellation = mediaRequestCancellation(req, res);
   try {
     res.setHeader('Cache-Control', 'private, no-store');
-    res.json(await prepareMediaUpload(req.user!.userId, req.params.id as string, tx => assertActiveAccountSession(tx, req, false)));
-  } catch (error) { respondWithMediaError(req, res, error); }
+    const heifServerPreparationEnabled = await verifyHeifConversionReadiness(false, fetch, { warmup: true, signal: cancellation.signal });
+    if (!cancellation.signal.aborted) res.json({ heifServerPreparationEnabled });
+  } catch (error) {
+    if (!cancellation.signal.aborted) respondWithMediaError(req, res, error);
+  } finally { cancellation.dispose(); }
+};
+
+export const prepareMedia = async (req: Request, res: Response): Promise<void> => {
+  const cancellation = mediaRequestCancellation(req, res);
+  try {
+    res.setHeader('Cache-Control', 'private, no-store');
+    const result = await prepareMediaUpload(req.user!.userId, req.params.id as string, tx => assertActiveAccountSession(tx, req, false), cancellation.signal);
+    if (!cancellation.signal.aborted) res.json(result);
+  } catch (error) {
+    if (!cancellation.signal.aborted) respondWithMediaError(req, res, error);
+  } finally { cancellation.dispose(); }
 };
 
 export const startMediaUpload = async (req: Request, res: Response): Promise<void> => {

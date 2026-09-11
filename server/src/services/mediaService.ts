@@ -10,7 +10,7 @@ import { createHash, randomUUID } from 'crypto';
 import sharp from 'sharp';
 import { lockAccountSecurity, AccountSecurityError } from './mfaService';
 import { MEDIA_CONFIG, isHeifMediaMime, isSupportedSourceMime, maxInputBytesForPurpose } from '../config/media';
-import { convertHeifRemotely, verifyHeifConversionReadiness } from './heifConversionClient';
+import { convertHeifRemotely, HeifConversionError, isHeifConversionConfigured, verifyHeifConversionReadiness } from './heifConversionClient';
 import { inspectHeifBuffer } from './heifInspection';
 import { GroupPermissionService } from './groupPermissionService';
 import { PrivacyService } from './privacyService';
@@ -47,6 +47,66 @@ const boundedMediaOperation = async <T>(operation: Promise<T>): Promise<T> => {
   try {
     return await Promise.race([operation, new Promise<T>((_, reject) => { timer = setTimeout(() => reject(new MediaValidationError('MEDIA_OPERATION_TIMEOUT', 'Image processing timed out. Please try again.', 503)), MEDIA_OPERATION_TIMEOUT_MS); })]);
   } finally { if (timer) clearTimeout(timer); }
+};
+
+// Process-local admission bounds source/output buffers before any HEIF lease or download.
+// No queue: a disconnected/timed-out caller does not free capacity while its provider
+// still owns a buffer or a late-write cleanup is pending.
+let heifPreparationActive = false;
+const acquireHeifPreparation = () => {
+  if (heifPreparationActive) throw new HeifConversionError('HEIF_CONVERTER_BUSY', 'Image preparation is busy. Please retry.', 429, 1);
+  heifPreparationActive = true;
+  let pending = 0, closed = false, released = false;
+  const releaseIfSettled = () => {
+    if (closed && pending === 0 && !released) { released = true; heifPreparationActive = false; }
+  };
+  const track = <T>(operation: Promise<T>): Promise<T> => {
+    pending++;
+    const settled = () => { pending--; releaseIfSettled(); };
+    void operation.then(settled, settled);
+    return operation;
+  };
+  const wait = async <T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> => {
+    track(operation);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
+    try {
+      return await new Promise<T>((resolve, reject) => {
+        onAbort = () => reject(new MediaValidationError('MEDIA_PROCESSING_CANCELLED', 'Image preparation was cancelled.', 409));
+        timer = setTimeout(() => reject(new MediaValidationError('MEDIA_OPERATION_TIMEOUT', 'Image processing timed out. Please try again.', 503)), MEDIA_OPERATION_TIMEOUT_MS);
+        signal?.addEventListener('abort', onAbort, { once: true });
+        operation.then(resolve, reject);
+        if (signal?.aborted) onAbort();
+      });
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (onAbort) signal?.removeEventListener('abort', onAbort);
+    }
+  };
+  // The converter intentionally races cancellation against fetch/body operations.
+  // Observe their actual settlement here without changing its readiness/deadline policy.
+  const trackedFetch: typeof fetch = (input, init) => track((async () => {
+    const response = await fetch(input, init);
+    if (!response.body) return response;
+    const reader = response.body.getReader();
+    let finishBody!: () => void;
+    track(new Promise<void>(resolve => { finishBody = resolve; }));
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        try {
+          const result = await track(reader.read());
+          if (result.done) { finishBody(); reader.releaseLock(); controller.close(); }
+          else controller.enqueue(result.value);
+        } catch (error) { finishBody(); controller.error(error); }
+      },
+      async cancel(reason) {
+        try { await track(reader.cancel(reason)); }
+        finally { finishBody(); reader.releaseLock(); }
+      }
+    }, { highWaterMark: 0 });
+    return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+  })());
+  return { track, wait, fetch: trackedFetch, close: () => { closed = true; releaseIfSettled(); } };
 };
 
 const variantKey = (asset: Pick<MediaAsset, 'id' | 'ownerId'>, visibility: 'private' | 'public', width: number): string =>
@@ -187,7 +247,8 @@ export const getMediaConfigResponse = async () => {
   allowedMimeTypes: heifServerPreparationEnabled
     ? [...MEDIA_CONFIG.allowedMimeTypes, ...MEDIA_CONFIG.heifMimeTypes]
     : [...MEDIA_CONFIG.allowedMimeTypes],
-  heifServerPreparationEnabled
+  heifServerPreparationEnabled,
+  heifServerPreparationConfigured: isHeifConversionConfigured()
   };
 };
 
@@ -294,7 +355,13 @@ const validatePreparedWebp = async (buffer: Buffer): Promise<{ width: number; he
   }
 };
 
-export const prepareMediaUpload = async (ownerId: string, assetId: string, authorize?: AuthorizeMediaWrite) => {
+export const prepareMediaUpload = async (ownerId: string, assetId: string, authorize?: AuthorizeMediaWrite, signal?: AbortSignal) => {
+  const assertNotCancelled = () => {
+    if (signal?.aborted) throw new MediaValidationError('MEDIA_PROCESSING_CANCELLED', 'Image preparation was cancelled.', 409);
+  };
+  assertNotCancelled();
+  let admission: ReturnType<typeof acquireHeifPreparation> | undefined;
+  try {
   const lease = `HEIF_PREPARING:${randomUUID()}`;
   const deadline = Date.now() + PROCESSING_LEASE_MS;
   const claimed = await prisma.$transaction(async tx => {
@@ -303,6 +370,8 @@ export const prepareMediaUpload = async (ownerId: string, assetId: string, autho
     if (!asset || asset.ownerId !== ownerId || asset.deletedAt) throw new MediaValidationError('MEDIA_NOT_FOUND', 'Media asset was not found.', 404);
     if (!asset.sourceMime || !isHeifMediaMime(asset.sourceMime)) throw new MediaValidationError('MEDIA_PREPARATION_NOT_REQUIRED', 'This image does not require preparation.', 409);
     if (!['TEMPORARY', 'FAILED'].includes(asset.status)) throw new MediaValidationError('MEDIA_BUSY', 'This image cannot be prepared in its current state.', 409);
+    assertNotCancelled();
+    admission = acquireHeifPreparation();
     if (asset.checksum && asset.sourceWidth && asset.sourceHeight) return { asset, alreadyPrepared: true };
     // A failed attempt may still have a late provider write. Retry with a fresh
     // upload/asset instead of allowing two writers to share the prepared key.
@@ -315,9 +384,11 @@ export const prepareMediaUpload = async (ownerId: string, assetId: string, autho
     if (result.count !== 1) throw new MediaValidationError('MEDIA_BUSY', 'This image is already being prepared.', 409);
     return { asset, alreadyPrepared: false };
   });
+  const preparation = admission!;
   const { asset } = claimed;
   const bucket = MEDIA_CONFIG.buckets.originals, key = preparedKey(asset);
   const assertPreparation = async (tx: Prisma.TransactionClient) => {
+    assertNotCancelled();
     await assertMediaWriter(tx, ownerId, authorize);
     const current = await tx.mediaAsset.findUnique({ where: { id: asset.id }, select: { status: true, errorCode: true, deletedAt: true } });
     if (current?.status !== 'PROCESSING' || current.errorCode !== lease || current.deletedAt || Date.now() >= deadline) {
@@ -327,21 +398,25 @@ export const prepareMediaUpload = async (ownerId: string, assetId: string, autho
   let width = asset.sourceWidth || 0, height = asset.sourceHeight || 0;
   if (!claimed.alreadyPrepared) {
     try {
-      if (!(await verifyHeifConversionReadiness())) throw new MediaValidationError('HEIF_CONVERTER_UNAVAILABLE', 'HEIC/HEIF preparation is temporarily unavailable.', 503);
-      const source = await boundedMediaOperation(getMediaStorage().download(asset.uploadBucket!, asset.uploadKey!));
+      const ready = await verifyHeifConversionReadiness(false, preparation.fetch, { signal });
+      assertNotCancelled();
+      if (!ready) throw new MediaValidationError('HEIF_CONVERTER_UNAVAILABLE', 'HEIC/HEIF preparation is temporarily unavailable.', 503);
+      const source = await preparation.wait(getMediaStorage().download(asset.uploadBucket!, asset.uploadKey!), signal);
+      assertNotCancelled();
       if (source.length !== asset.sourceByteSize || source.length > maxInputBytesForPurpose(asset.purpose)) throw new MediaValidationError('INVALID_FILE_SIZE', 'The source image size does not match the upload.');
       inspectHeifBuffer(source);
-      const converted = await convertHeifRemotely(source, asset.sourceMime as 'image/heic' | 'image/heif');
+      const converted = await convertHeifRemotely(source, asset.sourceMime as 'image/heic' | 'image/heif', preparation.fetch, signal);
       ({ width, height } = await validatePreparedWebp(converted));
       const record = { mediaAssetId: asset.id, kind: 'MASTER' as const, storageBucket: bucket, storageKey: key, width, height, mime: 'image/webp', byteSize: converted.length, isPublic: false };
       await prisma.$transaction(async tx => {
         await assertPreparation(tx);
         await tx.mediaVariant.create({ data: record });
       });
+      assertNotCancelled();
       const upload = getMediaStorage().upload(bucket, key, converted, 'image/webp', '0');
-      try { await boundedMediaOperation(upload); }
+      try { await preparation.wait(upload, signal); }
       catch (error) {
-        void upload.then(() => getMediaStorage().remove(bucket, [key])).catch(() => undefined);
+        void preparation.track(upload.then(() => getMediaStorage().remove(bucket, [key])).catch(() => undefined));
         throw error;
       }
       await prisma.$transaction(async tx => {
@@ -353,9 +428,9 @@ export const prepareMediaUpload = async (ownerId: string, assetId: string, autho
       });
       // Preserve the original key in the durable ledger until the signed
       // upload capability expires, even after removing the original bytes.
-      await getMediaStorage().remove(asset.uploadBucket!, [asset.uploadKey!]).catch(() => undefined);
+      await preparation.wait(getMediaStorage().remove(asset.uploadBucket!, [asset.uploadKey!])).catch(() => undefined);
     } catch (error) {
-      await getMediaStorage().remove(bucket, [key]).catch(() => undefined);
+      await preparation.wait(getMediaStorage().remove(bucket, [key])).catch(() => undefined);
       await prisma.mediaAsset.updateMany({
         where: { id: asset.id, status: 'PROCESSING', errorCode: lease, deletedAt: null },
         data: { status: 'FAILED', errorCode: error instanceof MediaValidationError ? error.code : 'HEIF_CONVERSION_FAILED' }
@@ -364,14 +439,18 @@ export const prepareMediaUpload = async (ownerId: string, assetId: string, autho
     }
   }
   // A session can be revoked or its account deleted while the converter runs.
-  const src = await boundedMediaOperation(getMediaStorage().createSignedReadUrl(bucket, key, MEDIA_CONFIG.privateUrlLifetimeSeconds));
+  assertNotCancelled();
+  const src = await preparation.wait(getMediaStorage().createSignedReadUrl(bucket, key, MEDIA_CONFIG.privateUrlLifetimeSeconds), signal);
   await prisma.$transaction(async tx => {
+    assertNotCancelled();
     await assertMediaWriter(tx, ownerId, authorize);
     const current = await tx.mediaAsset.findUnique({ where: { id: asset.id }, select: { status: true, checksum: true, deletedAt: true } });
     if (!current || current.deletedAt || !current.checksum || !['TEMPORARY', 'FAILED'].includes(current.status)) throw new MediaValidationError('MEDIA_NOT_FOUND', 'Media asset was removed.', 404);
   });
+  assertNotCancelled();
   return { id: asset.id, status: 'TEMPORARY' as const, sourceMime: asset.sourceMime as 'image/heic' | 'image/heif',
     preview: { src, mime: 'image/webp' as const, width, height, aspectRatio: width / height, expiresInSeconds: MEDIA_CONFIG.privateUrlLifetimeSeconds } };
+  } finally { admission?.close(); }
 };
 
 export const finalizeMediaUpload = async (ownerId: string, assetId: string, request: MediaCropRequest, authorize?: AuthorizeMediaWrite) => {

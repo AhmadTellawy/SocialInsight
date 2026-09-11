@@ -25,65 +25,136 @@ export const isHeifConversionConfigured = (): boolean =>
   && Buffer.byteLength(process.env.HEIF_CONVERTER_SECRET?.trim() || '', 'utf8') >= 32;
 
 let readinessCache: { ready: boolean; expiresAt: number; configuration: string } | undefined;
+let readinessGeneration = 0;
+let readinessSuccessSequence = 0;
+let readinessConfiguration: string | undefined;
+const readinessRequests = new Map<string, Promise<boolean>>();
 
-export const verifyHeifConversionReadiness = async (
-  force = false,
-  fetchImpl: FetchLike = fetch
-): Promise<boolean> => {
-  if (!isHeifConversionConfigured()) return false;
-  const configuration = `${configuredUrl()}|${createHash('sha256').update(process.env.HEIF_CONVERTER_SECRET || '').digest('hex')}`;
-  if (!force && readinessCache?.configuration === configuration && readinessCache.expiresAt > Date.now()) return readinessCache.ready;
-  const baseUrl = configuredUrl();
-  if (!baseUrl) return false;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 3_000);
-  let ready = false;
-  try {
-    const response = await fetchImpl(new URL('/health/ready', baseUrl), {
-      method: 'GET',
-      redirect: 'error',
-      signal: controller.signal
+const configurationKey = (): string | undefined => isHeifConversionConfigured()
+  ? `${configuredUrl()}|${createHash('sha256').update(process.env.HEIF_CONVERTER_SECRET!.trim()).digest('hex')}`
+  : undefined;
+
+const synchronizeReadinessConfiguration = (): string | undefined => {
+  const configuration = configurationKey();
+  if (configuration !== readinessConfiguration) {
+    readinessConfiguration = configuration;
+    readinessCache = undefined;
+    readinessRequests.clear();
+    readinessGeneration++;
+  }
+  return configuration;
+};
+
+const abortError = (): DOMException => new DOMException('Image preparation canceled.', 'AbortError');
+
+// Also bound a stalled response body. Fetch's abort alone is not sufficient for
+// a custom stream that has already delivered its response headers.
+const abortable = <T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> => {
+  if (!signal) return operation;
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => { signal.removeEventListener('abort', onAbort); reject(abortError()); };
+    signal.addEventListener('abort', onAbort, { once: true });
+    operation.then(value => { signal.removeEventListener('abort', onAbort); resolve(value); }, error => {
+      signal.removeEventListener('abort', onAbort); reject(error);
     });
-    if (response.ok) {
-      const body = JSON.parse((await readBoundedBody(response, 8 * 1024)).toString('utf8')) as {
-        status?: unknown;
-        service?: unknown;
-        versions?: { libheif?: unknown; libde265?: unknown; sharp?: unknown };
-      };
-      ready = body.status === 'ready'
-        && body.service === 'heif-converter'
-        && body.versions?.libheif === '1.23.3'
-        && body.versions?.libde265 === '1.1.1'
-        && body.versions?.sharp === '0.35.4';
-    } else {
-      await discardResponse(response);
-    }
+    if (signal.aborted) onAbort();
+  });
+};
+
+const fetchBounded = (fetchImpl: FetchLike, url: URL, init: RequestInit & { signal: AbortSignal }): Promise<Response> =>
+  abortable(fetchImpl(url, init).then(response => {
+    if (init.signal.aborted) { discardResponse(response); throw abortError(); }
+    return response;
+  }), init.signal);
+
+const probeReadiness = async (baseUrl: URL, fetchImpl: FetchLike, timeoutMs: number): Promise<boolean> => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchBounded(fetchImpl, new URL('/health/ready', baseUrl), {
+      method: 'GET', redirect: 'error', signal: controller.signal
+    });
+    if (!response.ok) { discardResponse(response); return false; }
+    const body = JSON.parse((await readBoundedBody(response, 8 * 1024, controller.signal)).toString('utf8'));
+    return body?.status === 'ready'
+      && body.service === 'heif-converter'
+      && body.protocolVersion === 2
+      && body.capabilities?.wholeWorkerIsolation === 'landlock-seccomp-v1'
+      && body.capabilities?.supervisor === 'subreaper-v1'
+      && body.capabilities?.failurePolicy === 'fail-closed-v1'
+      && body.limits?.inputBytes === MEDIA_CONFIG.maxInputBytes
+      && body.limits?.outputBytes === MEDIA_CONFIG.maxPreparedOutputBytes
+      && body.limits?.maxPixels === MEDIA_CONFIG.maxDecodedPixels
+      && body.limits?.wholeWorkerMs === MEDIA_CONFIG.heifWholeWorkerTimeoutMs
+      && body.versions?.libheif === '1.23.3'
+      && body.versions?.libde265 === '1.1.1'
+      && body.versions?.sharp === '0.35.4';
   } catch {
-    ready = false;
+    return false;
   } finally {
     clearTimeout(timeout);
   }
-  readinessCache = {
-    ready,
-    configuration,
-    expiresAt: Date.now() + (ready ? 60_000 : 10_000)
-  };
-  return ready;
+};
+
+export const verifyHeifConversionReadiness = async (
+  force = false,
+  fetchImpl: FetchLike = fetch,
+  options: { warmup?: boolean; signal?: AbortSignal } = {}
+): Promise<boolean> => {
+  const configuration = synchronizeReadinessConfiguration();
+  if (!configuration || options.signal?.aborted) return false;
+  if (!force && readinessCache?.configuration === configuration && readinessCache.expiresAt > Date.now()
+    && (!options.warmup || readinessCache.ready)) return readinessCache.ready;
+  const baseUrl = configuredUrl();
+  if (!baseUrl) return false;
+  const generation = readinessGeneration;
+  // Quick configuration calls never inherit a cold-start wait. Each mode has
+  // one shared request; disconnecting a subscriber cannot cancel other users.
+  const requestKey = `${generation}:${options.warmup ? 'warmup' : 'quick'}`;
+  let request = readinessRequests.get(requestKey);
+  if (!request) {
+    const successAtStart = readinessSuccessSequence;
+    request = probeReadiness(baseUrl, fetchImpl, options.warmup ? MEDIA_CONFIG.heifWarmupTimeoutMs : MEDIA_CONFIG.heifReadinessTimeoutMs).then(ready => {
+      if (synchronizeReadinessConfiguration() !== configuration || readinessGeneration !== generation) return false;
+      // A probe already pending when another mode verifies readiness cannot
+      // revoke that newer success with an old failure or its shorter timeout.
+      if (!ready && successAtStart !== readinessSuccessSequence) {
+        return Boolean(readinessCache?.ready && readinessCache.expiresAt > Date.now());
+      }
+      if (!ready && readinessCache?.ready) {
+        // This probe began after the current success: its failure is new.
+        // Invalidate older pending successes as well as the cached readiness.
+        readinessGeneration++;
+        readinessRequests.clear();
+      }
+      if (ready) readinessSuccessSequence++;
+      readinessCache = { ready, configuration, expiresAt: Date.now() + (ready ? 60_000 : 10_000) };
+      return ready;
+    });
+    readinessRequests.set(requestKey, request);
+    void request.finally(() => { if (readinessRequests.get(requestKey) === request) readinessRequests.delete(requestKey); });
+  }
+  try { return await abortable(request, options.signal); }
+  catch { return false; }
 };
 
 export const resetHeifReadinessForTests = (): void => {
   readinessCache = undefined;
+  readinessConfiguration = undefined;
+  readinessRequests.clear();
+  readinessGeneration++;
+  readinessSuccessSequence = 0;
 };
 
-const discardResponse = async (response: Response): Promise<void> => {
-  try { await response.body?.cancel(); }
-  catch { /* Preserve the original HTTP failure if the stream is already aborted. */ }
+const discardResponse = (response: Response): void => {
+  // Cancellation may itself stall; it must not extend the operation deadline.
+  void response.body?.cancel().catch(() => undefined);
 };
 
-const readBoundedBody = async (response: Response, maxBytes = MEDIA_CONFIG.maxPreparedOutputBytes): Promise<Buffer> => {
+const readBoundedBody = async (response: Response, maxBytes: number = MEDIA_CONFIG.maxPreparedOutputBytes, signal?: AbortSignal): Promise<Buffer> => {
   const declaredLength = Number(response.headers.get('content-length') || 0);
   if (declaredLength > maxBytes) {
-    await discardResponse(response);
+    discardResponse(response);
     throw new MediaValidationError('HEIF_OUTPUT_TOO_LARGE', 'The converted image exceeds the safe output limit.');
   }
   if (!response.body) throw new MediaValidationError('HEIF_CONVERSION_FAILED', 'The conversion service returned no image.');
@@ -92,15 +163,17 @@ const readBoundedBody = async (response: Response, maxBytes = MEDIA_CONFIG.maxPr
   let total = 0;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await abortable(reader.read(), signal);
       if (done) break;
       total += value.byteLength;
       if (total > maxBytes) {
-        await reader.cancel();
         throw new MediaValidationError('HEIF_OUTPUT_TOO_LARGE', 'The converted image exceeds the safe output limit.');
       }
       chunks.push(Buffer.from(value));
     }
+  } catch (error) {
+    void reader.cancel().catch(() => undefined);
+    throw error;
   } finally {
     reader.releaseLock();
   }
@@ -108,17 +181,26 @@ const readBoundedBody = async (response: Response, maxBytes = MEDIA_CONFIG.maxPr
   return Buffer.concat(chunks, total);
 };
 
-const retryDelayFor = (response: Response): number | null => {
+export class HeifConversionError extends MediaValidationError {
+  constructor(code: string, message: string, statusCode: number, public readonly retryAfterSeconds?: number) {
+    super(code, message, statusCode);
+  }
+}
+
+const retryDelayFor = (response: Response): { delayMs: number | null; retryAfterSeconds?: number } => {
   const retryAfter = response.headers.get('retry-after')?.trim();
   let delayMs = 1_000;
   if (retryAfter) {
     const requested = /^\d+$/.test(retryAfter) ? Number(retryAfter) * 1_000 : Date.parse(retryAfter) - Date.now();
     // A longer Retry-After is respected by leaving the retry to the caller,
     // rather than retrying earlier than the server requested.
-    if (requested > 3_000) return null;
+    if (requested > 3_000) return {
+      delayMs: null,
+      retryAfterSeconds: Number.isFinite(requested) && requested <= 86_400_000 ? Math.ceil(requested / 1000) : undefined
+    };
     if (Number.isFinite(requested)) delayMs = Math.max(delayMs, requested);
   }
-  return delayMs;
+  return { delayMs, retryAfterSeconds: Math.ceil(delayMs / 1000) };
 };
 
 const waitForRetry = (signal: AbortSignal, delayMs: number): Promise<void> => new Promise((resolve, reject) => {
@@ -137,28 +219,39 @@ const waitForRetry = (signal: AbortSignal, delayMs: number): Promise<void> => ne
 export const convertHeifRemotely = async (
   input: Buffer,
   sourceMime: 'image/heic' | 'image/heif',
-  fetchImpl: FetchLike = fetch
+  fetchImpl: FetchLike = fetch,
+  signal?: AbortSignal
 ): Promise<Buffer> => {
   const baseUrl = configuredUrl();
   const secret = process.env.HEIF_CONVERTER_SECRET?.trim();
   if (!isHeifConversionConfigured() || !baseUrl || !secret) {
     throw new MediaValidationError('HEIF_CONVERTER_UNAVAILABLE', 'HEIC/HEIF conversion is temporarily unavailable.', 503);
   }
+  if (signal?.aborted) throw new MediaValidationError('MEDIA_PROCESSING_CANCELLED', 'Image preparation was cancelled.', 409);
+  if (!input.length || input.length > MEDIA_CONFIG.maxInputBytes) {
+    throw new MediaValidationError('INVALID_FILE_SIZE', 'The source image exceeds the safe input limit.');
+  }
+  if (sourceMime !== 'image/heic' && sourceMime !== 'image/heif') {
+    throw new MediaValidationError('UNSUPPORTED_MEDIA_TYPE', 'The source image must be HEIC or HEIF.');
+  }
   const endpoint = new URL('/v1/convert', baseUrl);
   const bodyHash = createHash('sha256').update(input).digest('hex');
   const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  signal?.addEventListener('abort', onAbort, { once: true });
   const deadline = Date.now() + MEDIA_CONFIG.heifConversionTimeoutMs;
   const timeout = setTimeout(() => controller.abort(), MEDIA_CONFIG.heifConversionTimeoutMs);
   try {
     let response: Response | undefined;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       if (controller.signal.aborted) throw new DOMException('Conversion canceled.', 'AbortError');
+      if (attempt > 0 && deadline - Date.now() < MEDIA_CONFIG.heifWholeWorkerTimeoutMs) break;
       const timestamp = Math.floor(Date.now() / 1000).toString();
       const requestId = randomUUID();
       const signature = `v1=${createHmac('sha256', secret)
         .update(`v1\n${timestamp}\n${requestId}\n${bodyHash}`)
         .digest('hex')}`;
-      response = await fetchImpl(endpoint, {
+      response = await fetchBounded(fetchImpl, endpoint, {
         method: 'POST',
         redirect: 'error',
         headers: {
@@ -173,25 +266,34 @@ export const convertHeifRemotely = async (
         signal: controller.signal
       });
       if (response.status !== 429 || attempt === 1) break;
-      const retryDelayMs = retryDelayFor(response);
-      await discardResponse(response);
-      if (retryDelayMs === null || retryDelayMs >= deadline - Date.now()) break;
+      const { delayMs: retryDelayMs } = retryDelayFor(response);
+      discardResponse(response);
+      if (retryDelayMs === null || retryDelayMs + MEDIA_CONFIG.heifWholeWorkerTimeoutMs > deadline - Date.now()) break;
       await waitForRetry(controller.signal, retryDelayMs);
     }
     if (!response) throw new Error('converter response unavailable');
     if (!response.ok || response.headers.get('content-type')?.split(';', 1)[0] !== 'image/webp') {
-      await discardResponse(response);
-      throw new MediaValidationError(
-        response.status === 429 ? 'HEIF_CONVERTER_BUSY' : 'HEIF_CONVERSION_FAILED',
-        response.status === 429 ? 'Image conversion is busy. Please retry.' : 'The HEIC/HEIF image could not be converted.',
-        response.status === 429 ? 429 : 422
-      );
+      discardResponse(response);
+      if (response.status === 429) throw new HeifConversionError('HEIF_CONVERTER_BUSY', 'Image conversion is busy. Please retry.', 429, retryDelayFor(response).retryAfterSeconds);
+      if (response.status >= 500 || [401, 403, 404].includes(response.status)) {
+        throw new HeifConversionError('HEIF_CONVERTER_UNAVAILABLE', 'HEIC/HEIF conversion is temporarily unavailable.', 503);
+      }
+      throw new MediaValidationError('HEIF_CONVERSION_FAILED', 'The HEIC/HEIF image could not be converted.', 422);
     }
-    return await readBoundedBody(response);
+    return await readBoundedBody(response, MEDIA_CONFIG.maxPreparedOutputBytes, controller.signal);
   } catch (error) {
+    if (signal?.aborted) throw new MediaValidationError('MEDIA_PROCESSING_CANCELLED', 'Image preparation was cancelled.', 409);
+    if (!(error instanceof MediaValidationError) || error.code === 'HEIF_CONVERTER_UNAVAILABLE') {
+      // A failing service must not remain advertised through a cached success;
+      // an older in-flight probe cannot republish it after this failure.
+      readinessCache = undefined;
+      readinessRequests.clear();
+      readinessGeneration++;
+    }
     if (error instanceof MediaValidationError) throw error;
     throw new MediaValidationError('HEIF_CONVERTER_UNAVAILABLE', 'HEIC/HEIF conversion is temporarily unavailable.', 503);
   } finally {
     clearTimeout(timeout);
+    signal?.removeEventListener('abort', onAbort);
   }
 };

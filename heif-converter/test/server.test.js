@@ -18,7 +18,7 @@ const config = {
 async function withServer(converter, callback) {
   const server = createConverterServer({
     config,
-    converter,
+    converter: { isReady: () => true, ...converter },
     healthEvidence: { status: 'ready', versions: { libheif: '1.23.3', libde265: '1.1.1', sharp: '0.35.4' } },
     clock: { now: () => nowMs },
     logger: { error() {} },
@@ -97,7 +97,7 @@ test('returns 429 instead of queueing bodies when conversion capacity is full', 
   const blocked = new Promise((resolve) => { unblock = resolve; });
   const server = createConverterServer({
     config: oneAtATime,
-    converter: { convert: async () => blocked },
+    converter: { isReady: () => true, convert: async () => blocked },
     healthEvidence: { status: 'ready' },
     clock: { now: () => nowMs },
     logger: { error() {} },

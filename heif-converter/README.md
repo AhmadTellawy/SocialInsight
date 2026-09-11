@@ -1,14 +1,10 @@
-# Social Insight HEIF converter
+# خدمة تحويل HEIF
 
-خدمة داخلية صغيرة ومعزولة لتحويل صورة HEIC/HEIF مفردة إلى WebP. لا تستقبل multipart أو JSON، ولا تحفظ الملف بعد الطلب.
+تحوّل خدمة داخلية صورة HEIC/HEIF مفردة إلى WebP داخل عامل Linux جديد لكل طلب. العقد الجاهز للاستهلاك هو الإصدار2؛ ما زال مسار الطلب وتوقيع HMAC بالإصدار1.
 
-## عقد HTTP
+## الطلب والجاهزية
 
-`POST /v1/convert` يستقبل `application/octet-stream` مع `Content-Length` إلزامي بحد أقصى 15 MiB. الرؤوس المطلوبة:
-
-- `X-SI-Timestamp`: Unix timestamp بالثواني، ضمن نافذة 300 ثانية افتراضيًا.
-- `X-SI-Request-Id`: قيمة فريدة من 16–128 حرفًا (`A-Z a-z 0-9 _ -`).
-- `X-SI-Signature`: ‏`v1=<hex>` محسوبة كالآتي:
+`POST /v1/convert` يقبل `application/octet-stream` مع `Content-Length`، حتى15MiB، دون multipart/JSON أو نقل chunked. الرؤوس: `X-SI-Timestamp` بالثواني، و`X-SI-Request-Id` فريد16–128 حرفًا من `A-Z a-z 0-9 _ -`، و`X-SI-Body-SHA256`، و`X-SI-Signature`:
 
 ```text
 bodyDigest = SHA256(rawBodyBytes).hex
@@ -16,60 +12,52 @@ canonical = "v1\n" + timestamp + "\n" + requestId + "\n" + bodyDigest
 signature = "v1=" + HMAC_SHA256(HEIF_CONVERTER_HMAC_SECRET, canonical).hex
 ```
 
-النجاح يعيد `image/webp` ورؤوس `X-Image-Width` و`X-Image-Height` و`X-SI-Request-Id`. معرّف الطلب أحادي الاستخدام داخل النسخة خلال نافذة التوقيع. في النشر متعدد النسخ يجب تنفيذ replay store مشترك عند الـgateway، أو توجيه request ID بثبات إلى نسخة واحدة.
+يُفحص التوقيع قبل قراءة الجسم وحجز عامل التحويل. النجاح يعيد `image/webp` ورؤوس الأبعاد ومعرّف الطلب. منع إعادة الطلب محلي للنسخة خلال نافذة التوقيع؛ لا يُدّعى منع موزّع عبر نسخ متعددة.
 
-## التحقق والمعالجة
+`GET /health/live` يدل على حياة خادم HTTP فقط. لا يعيد `/health/ready` نجاحًا إلا بعد فحص البيئة والعزل بعامل فعلي والتحقق من نسخة المكتبات والبناء. يتضمن:
 
-- رفض body أكبر من 15 MiB، ورفض النقل chunked.
-- فحص ISO-BMFF فعليًا؛ لا ثقة بالامتداد أو MIME القادم.
-- قبول HEVC single-image فقط (`heic`/`heix` أو `mif1` العام عند وجود `hvcC`) ورفض AVIF وsequence/collection brands.
-- إثبات `ispe` dimensions قبل decode ورفض المجموع الأكبر من 40 MP.
-- تشغيل `heif-convert` عبر `prlimit` دون shell، ببيئة مصغرة لا ترث الأسرار، وحدود CPU/address-space/file/tasks، وtimeout 15 ثانية، وحد 8 KiB للمخرجات التشخيصية. حد المهام 32 للمستخدم داخل الحاوية لأن Linux يحتسب خيوط Node ضمنه؛ يعمل فك HEVC بخيط عمل واحد دون فك متوازٍ للبلاطات. حد الذاكرة الفعلي للحاوية مستقل عن حد فضاء العناوين للعملية.
-- مجلد خاص `0700` لكل عملية، ثم حذف مضمون في `finally`.
-- تحويل PNG الوسيط بواسطة Sharp 0.35.4 إلى WebP بجودة 92 و`alphaQuality=100`، وبحد أقصى 2400px للحافة. لا تُنسخ metadata، ويعاد فحص MIME والأبعاد بعد encode.
-- رفض ناتج WebP الأكبر من 12 MiB حتى يطابق حد وسائط التطبيق.
-
-## البناء والتشغيل المقيد
-
-```bash
-docker build --pull -t social-insight/heif-converter:1.0.0 ./heif-converter
-docker run --rm \
-  --read-only \
-  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777 \
-  --cap-drop ALL \
-  --security-opt no-new-privileges:true \
-  --pids-limit 64 \
-  --memory 1g \
-  --cpus 2 \
-  --network social-insight-internal \
-  -e HEIF_CONVERTER_HMAC_SECRET='<secret-manager-reference>' \
-  social-insight/heif-converter:1.0.0
+```json
+{
+  "status":"ready", "service":"heif-converter", "protocolVersion":2,
+  "capabilities":{"wholeWorkerIsolation":"landlock-seccomp-v1","supervisor":"subreaper-v1","failurePolicy":"fail-closed-v1"},
+  "limits":{"inputBytes":15728640,"outputBytes":12582912,"maxPixels":40000000,"wholeWorkerMs":45000}
+}
 ```
 
-لا تضع السر في image أو source أو logs؛ احقنه من secret manager. التطبيق يتطلب 32 byte على الأقل. الخدمة لا تحتاج إنترنت وقت التشغيل، لذا امنع egress، واسمح بالاتصال فقط من API الرئيسي عبر شبكة داخلية، وأضف mTLS أو network policy بينهما.
+تضاف إصدارات Node/Sharp/libvips/libheif/libde265 ومعلومات البناء. لا تكفي إصدارات المكتبات وحدها لإعلان الجاهزية. خدمة التطبيق تستخدم فحصًا قصيرًا للصيغ العادية، وطلب تسخين مصادقًا عند اختيار HEIF، مع مهلة90ثانية. مهلة تحويل التطبيق55ثانية؛ مهلة العامل45ثانية.
 
-صورة Docker متعددة المراحل وتبني `libheif v1.23.3` مع `libde265 v1.1.1` فقط؛ AV1/JPEG/OpenH264/FFmpeg/x265 والـplugin loading والـencoders معطلة. `/health/ready` يفشل بدء التشغيل إذا لم يطابق runtime إصدار libheif/Sharp أو SHA-256 للـbinary والـmanifest المثبت، ويعرض الإصدارات وcommit الفعلي وdigest لتدقيق النسخة.
+## حدود المعالجة
 
-## متغيرات التشغيل والحدود
+- فحص ISO-BMFF والحجم والأبعاد فعليًا. قبول HEVC لصورة مفردة حتى40MP؛ رفض AVIF والمجموعات/التتابعات والترميز غير المدعوم.
+- المشغّل C يضبط `no_new_privs` وحد العمليات128 قبل تشغيل وسيط HTTP، ويعمل subreaper دون إعادة تشغيل الوسيط داخل الحاوية المتسخة.
+- تشغيل العامل الجديد ونواة HEVC وSharp داخل Landlock ABI>=3 وseccomp. لا وصول للشبكة أو الأسرار أو `/proc` من العامل، وتُغلق الواصفات الموروثة قبل بدء Node.
+- حد العامل: مهلة كلية45ثانية، heap96MiB،32عملية/خيط بحسب UID. فك HEVC بخيط واحد، مهلة30ثانية، CPU12ثانية، address-space768MiB. هذه الحدود مستقلة عن سقف ذاكرة الحاوية512MiB.
+- مجلد ثابت خاص `/tmp/heif-converter` ووظيفة عشوائية داخله بملفين فقط: إدخال حتى15MiB وPNG حتى128MiB. تُمنع عمليات إنشاء الملفات وتغيير بياناتها الوصفية و`fallocate` من العامل. المساحة الحرة160MiB شرط توافر، وليست حصة تخزين مستقلة.
+- Sharp0.35.4 يعيد الاتجاه وsRGB ويصغّر الحافة إلى2400px، ثم WebP بجودة92 وalphaQuality100 دون نسخ EXIF/XMP/IPTC/ICC. المخرج حتى12MiB؛ stdout مؤطر ومحدود وstderr حتى2048byte.
+- سعة واحدة تشمل استقبال الجسم ثم التحويل ثم إنهاء المجموعة وإثبات زوالها وحذف ملفاتها. الإلغاء/انقطاع الاتصال يوقفان المجموعة. الجسم محدود بمهلة كلية20ثانية مستقلة.
+- `429` مع `Retry-After: 1` عند الانشغال؛ تكرار محدود فقط ضمن ميزانية الطلب. أخطاء الصورة422 لا تعني عطل العزل.
 
-| المتغير | الافتراضي | الحد المسموح |
-|---|---:|---:|
-| `PORT` | `8080` | 1–65535 |
-| `MAX_BODY_BYTES` | 15 MiB | حتى 15 MiB |
-| `MAX_AGGREGATE_PIXELS` | 40,000,000 | حتى 40 MP |
-| `MAX_CONCURRENCY` | 1 | 1 فقط؛ لا تشغّل أكثر من تحويل داخل النسخة |
-| `CONVERSION_TIMEOUT_MS` | 15,000 | 1,000–30,000 |
-| `SIGNATURE_WINDOW_SECONDS` | 300 | 30–900 |
+## التشغيل والفشل
 
-لا ترفع الحدود دون اختبار load/security مستقل. تعيد الخدمة `429 CONVERTER_BUSY` مباشرة عند امتلاء السعة، وعلى المستدعي retry محدودًا مع jitter، وألا يعيد المحاولة لأخطاء 4xx الأخرى.
+يشغّل Docker افتراضيًا `/usr/local/bin/si-heif-confine --supervise`. لا تشغّل `node src/index.js` مباشرة. الكود والمكتبات والملفات التنفيذية مملوكةroot وغير قابلة للكتابة بواسطة UID/GID10001. يجب أن تكون capabilities الفعالة/المسموحة/الموروثة/ambient صفرًا.
 
-## الاختبارات والنشر
+يتحقق بدء التشغيل من cgroup v2 وحدود فعلية: ذاكرة256–512MiB، swap0، سقف PIDs محدود لا يتجاوز512، وCPU محدود لا يقل عن0.1. يجب أن يكون المجلد الخاص موجودًا وصحيح المالك والوضع0700 وفارغًا دون symlink. الغياب أو المعلومات غير القابلة للتحقق تمنع الجاهزية؛ لا تُرفع الحدود تلقائيًا.
+
+مثال تحقق محلي، مع سر محقون مسبقًا في البيئة دون وضع قيمته في المصدر:
 
 ```bash
-cd heif-converter
-npm test
-docker build --pull -t social-insight/heif-converter:1.0.0 .
-docker run --rm --entrypoint /usr/local/bin/heif-convert social-insight/heif-converter:1.0.0 --version
+docker build -t si-heif-converter ./heif-converter
+docker run --rm --cap-drop ALL --security-opt no-new-privileges \
+  --memory 512m --memory-swap 512m --cpus 0.1 --pids-limit 512 \
+  -e HEIF_CONVERTER_HMAC_SECRET si-heif-converter
 ```
 
-اختبارات Node تستخدم converter مزيفًا ولا تحتاج Docker أو native codec. قبل الإنتاج يجب إجراء build clean مع SBOM وفحص image، corpus سليم/خبيث حقيقي، اختبار موارد وتزامن، smoke عبر API الرئيسي، ثم بوابات E03/E04/E01 المستقلة. انشر canary أولًا وراقب `429` و`4xx` و`5xx` وtimeout وlatency p95/p99 وRSS واستخدام tmp. rollback هو إعادة API الرئيسي إلى رفض HEIF الآمن وتعطيل مسار الخدمة، ثم سحب نسخة الحاوية.
+السر32byte على الأقل. يضبط منفذ الخدمة بـ`PORT`، وحجم/أبعاد الطلب يمكن خفضها فقط؛ التطبيق لن يفعّل الخدمة إذا خالفت حدود العقد المتفق عليها. مهلة العامل والمسارات ثابتة. يجب حماية الاتصال بين API والخدمة بوسيلة النقل/الشبكة المعتمدة للبيئة.
+
+فشل العزل أو إنهاء العمليات أو إزالة الملفات يثبت حالة غير جاهزة ورفض503 داخل العملية. لا يوجد وعد بحذف مضمون بعد قتل الوسيط أو فقد الجهاز. المشغّل يقتل التوابع ويجمعها؛ إذا بقيت ملفات، يرفض بدء التشغيل عليها. لا ينشئ مسارًا بديلًا ولا يمسح بقايا غير مثبتة الملكية/الحالة. يحتاج المشغّل إلى إثبات توقف العمليات والتعامل المصرح مع الحالة أو استبدال حاوية مؤقتة وفق بيئة التشغيل؛ التخزين المؤقت لا يثبت محوًا ماديًا أو موعد محو لدى المزوّد.
+
+## التحقق والنشر
+
+اختبارات Node تغطي العقد وحالات الخدمة مع اعتمادات بديلة؛ لا تثبت Linux. فرع التحقق المعزول يشغّل corpus حقيقيًا وصور12/40MP وحد15MiB والإلغاء واستهلاك العمليات وفشل التنظيف، ثم HTTP بالمشغّل الافتراضي. راجع سجل المهمة لنسخة كل نتيجة؛ النتائج التاريخية لا تثبت إعدادات المزوّد أو النسخة الحالية.
+
+قبل التفعيل الفعلي يلزم تطابق حدود المضيف والعزل، ثم اختبار API والواجهة في Staging والمراجعات المستقلة. لا تُعلن الخدمة منشورة من نجاح CI. راقب الجاهزية503 والانشغال429 والمهلات والذاكرة وبقايا الملفات. تعطيل مسار HEIF مؤقتًا ممكن عند التراجع، لكنه لا يحقق معيار إغلاق الميزة في طلب المؤسس.

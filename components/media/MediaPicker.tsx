@@ -1,4 +1,4 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useId, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
   DragEndEvent,
@@ -82,9 +82,11 @@ type SortableTileProps = {
   onEdit: () => void;
   onRetry: () => void;
   onRemove: () => void;
+  retryDisabled: boolean;
+  retryDescriptionId?: string;
 };
 
-const SortableTile: React.FC<SortableTileProps> = ({ draft, index, sortable, onEdit, onRetry, onRemove }) => {
+const SortableTile: React.FC<SortableTileProps> = ({ draft, index, sortable, onEdit, onRetry, onRemove, retryDisabled, retryDescriptionId }) => {
   const { t } = useTranslation();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: draft.clientId, disabled: !sortable });
   return (
@@ -110,7 +112,7 @@ const SortableTile: React.FC<SortableTileProps> = ({ draft, index, sortable, onE
       )}
       <div className="absolute bottom-1 end-1 flex gap-1">
         {draft.status === 'error' ? (
-          <button type="button" onClick={onRetry} className="flex h-7 w-7 items-center justify-center rounded-full bg-white text-red-600 shadow" aria-label={t('common.retry', { defaultValue: 'Retry' })} title={t('common.retry', { defaultValue: 'Retry' })}><RefreshCw size={15} /></button>
+          <button type="button" onClick={onRetry} disabled={retryDisabled} aria-describedby={retryDescriptionId} className="flex h-7 w-7 items-center justify-center rounded-full bg-white text-red-600 shadow disabled:opacity-50" aria-label={t('common.retry', { defaultValue: 'Retry' })} title={t('common.retry', { defaultValue: 'Retry' })}><RefreshCw size={15} /></button>
         ) : (
           <button type="button" onClick={onEdit} disabled={!draft.file || ['uploading', 'processing', 'queued'].includes(draft.status)} className="flex h-7 w-7 items-center justify-center rounded-full bg-white text-gray-700 shadow disabled:hidden" aria-label={t('common.edit', { defaultValue: 'Edit' })} title={t('common.edit', { defaultValue: 'Edit' })}><Pencil size={14} /></button>
         )}
@@ -135,6 +137,8 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
 }, ref) => {
   const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement>(null);
+  const customContentRef = useRef<HTMLDivElement>(null);
+  const preparingStatusId = useId();
   const mountedRef = useRef(true);
   const valuesRef = useRef(value);
   const previewUrls = useRef(new Set<string>());
@@ -267,16 +271,16 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
     });
   };
 
-  const addFiles = async (files: File[]): Promise<void> => {
+  const addFiles = async (files: File[], retryDraft?: MediaDraft): Promise<void> => {
     if (preparingRef.current) return;
     preparingRef.current = true;
     setIsPreparing(true);
     try {
       setValidationError(null);
-      const replacementTarget = replacementTargetId
+      const replacementTarget = !retryDraft && replacementTargetId
         ? valuesRef.current.find((draft) => draft.clientId === replacementTargetId)
         : undefined;
-      const capacity = replacementTarget
+      const capacity = retryDraft ? 1 : replacementTarget
         ? (multiple ? Math.max(1, maxFiles - valuesRef.current.length + 1) : 1)
         : multiple ? Math.max(0, maxFiles - valuesRef.current.length) : 1;
       if (files.length > capacity) {
@@ -286,16 +290,20 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
       if (selected.length === 0) return;
       const initialRatio = fixedRatioForPurpose(purpose) || aspectRatio || valuesRef.current[0]?.aspectRatio || 1;
       const provisional = selected.map((sourceFile): MediaDraft => ({
-        clientId: crypto.randomUUID(),
+        ...retryDraft,
+        clientId: retryDraft?.clientId || crypto.randomUUID(),
         file: sourceFile,
         previewUrl: '',
         purpose,
         status: 'processing',
         progress: 0,
-        aspectRatio: initialRatio
+        aspectRatio: retryDraft?.aspectRatio || initialRatio,
+        error: undefined
       }));
 
-      if (replacementTarget) {
+      if (retryDraft) {
+        publish(valuesRef.current.map((draft) => draft.clientId === retryDraft.clientId ? provisional[0] : draft));
+      } else if (replacementTarget) {
         provisional[0].replacesClientId = replacementTarget.clientId;
         provisional[0].replacedDraft = replacementTarget;
         pendingReplacements.current.set(provisional[0].clientId, replacementTarget);
@@ -323,27 +331,49 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
       let establishedPostRatio = aspectRatio || valuesRef.current.find((draft) =>
         !provisional.some((candidate) => candidate.clientId === draft.clientId)
       )?.aspectRatio;
-      for (let index = 0; index < provisional.length; index += 1) {
-        const draft = provisional[index];
-        const sourceFile = selected[index];
-        if (!valuesRef.current.some((item) => item.clientId === draft.clientId)) continue;
-        let previewUrl: string | undefined;
-        let preparedAssetId: string | undefined;
+      // Validate in bounded sequence, then open ordinary images before waiting
+      // for HEIF readiness. Keep the selected order and first-image ratio.
+      const validations: Array<Awaited<ReturnType<typeof validateAndNormalizeImageFile>> | Error> = [];
+      for (const sourceFile of selected) {
         try {
-          const validated = await validateAndNormalizeImageFile(sourceFile, {
+          validations.push(await validateAndNormalizeImageFile(sourceFile, {
             maxInputBytes: purpose === 'PROFILE_COVER'
               ? PROFILE_COVER_MAX_INPUT_BYTES
               : DEFAULT_MEDIA_MAX_INPUT_BYTES,
             maxDecodedPixels: DEFAULT_MEDIA_MAX_DECODED_PIXELS,
             heifHandling: 'server'
-          });
+          }));
+        } catch (error) {
+          validations.push(error instanceof Error ? error : new MediaFileValidationError('INVALID_IMAGE'));
+        }
+        if (!mountedRef.current) return;
+      }
+      const firstValid = validations.find((result) => !(result instanceof Error));
+      if (purpose === 'POST' && !establishedPostRatio && firstValid && !(firstValid instanceof Error)) {
+        establishedPostRatio = Math.min(1.91, Math.max(0.8, firstValid.width / firstValid.height));
+        onAspectRatioChange?.(establishedPostRatio);
+      }
+      const preparationOrder = provisional.map((_, index) => index).sort((left, right) => {
+        const a = validations[left];
+        const b = validations[right];
+        return Number(!(a instanceof Error) && a.requiresServerPreparation)
+          - Number(!(b instanceof Error) && b.requiresServerPreparation);
+      });
+      for (const index of preparationOrder) {
+        const draft = provisional[index];
+        if (!valuesRef.current.some((item) => item.clientId === draft.clientId)) continue;
+        let previewUrl: string | undefined;
+        let preparedAssetId: string | undefined;
+        try {
+          const validated = validations[index];
+          if (validated instanceof Error) throw validated;
           if (!mountedRef.current) return;
           if (!valuesRef.current.some((item) => item.clientId === draft.clientId)) continue;
           const file = validated.file;
           let sourceRatio: number;
           if (validated.requiresServerPreparation) {
             const controller = mediaUploadRegistry.create(draft.clientId);
-            patchDraft(draft.clientId, { status: 'uploading' });
+            patchDraft(draft.clientId, { status: 'processing', serverPrepared: true });
             try {
               const prepared = await mediaApi.uploadAndPrepare(file, purpose, (progress) => {
                 if (mountedRef.current && mediaUploadRegistry.isActive(draft.clientId, controller)) {
@@ -389,6 +419,7 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
             assetId: preparedAssetId,
             serverPrepared: validated.requiresServerPreparation
           });
+          setActiveEditorId((current) => current || draft.clientId);
         } catch (error) {
           if (preparedAssetId) void mediaApi.cancel(preparedAssetId).catch(() => undefined);
           if (previewUrl?.startsWith('blob:')) {
@@ -397,6 +428,14 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
           }
           if (!mountedRef.current) return;
           if (error instanceof DOMException && error.name === 'AbortError') continue;
+          if (!valuesRef.current.some((item) => item.clientId === draft.clientId)) continue;
+          if (error instanceof MediaUploadError && error.phase === 'preparation') {
+            patchDraft(draft.clientId, {
+              status: 'error', progress: 0, assetId: undefined, previewUrl: '',
+              error: t('media.heifPreparationFailed', { defaultValue: 'We could not prepare this image right now. Try again or remove it.' })
+            });
+            continue;
+          }
           if (valuesRef.current.some((item) => item.clientId === draft.clientId)) removeDraft(draft, true);
           if (error instanceof MediaFileValidationError) {
             if (error.code === 'FILE_TOO_LARGE') {
@@ -415,17 +454,11 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
             } else {
               setValidationError(t('media.invalidType', { defaultValue: 'Use a JPEG, PNG, WebP, HEIC, or HEIF image.' }));
             }
-          } else if (error instanceof MediaUploadError && error.phase === 'preparation') {
-            setValidationError(t('media.heifPreparationFailed', { defaultValue: 'HEIC/HEIF preparation is temporarily unavailable. Please retry.' }));
           } else {
             setValidationError(t('media.invalidImage', { defaultValue: 'This image could not be opened.' }));
           }
         }
       }
-      const nextEditor = provisional.find((candidate) => (
-        valuesRef.current.some((draft) => draft.clientId === candidate.clientId && draft.status === 'editing')
-      ));
-      if (nextEditor) setActiveEditorId(nextEditor.clientId);
     } finally {
       preparingRef.current = false;
       if (mountedRef.current) setIsPreparing(false);
@@ -451,6 +484,10 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
 
   const retry = (draft: MediaDraft): void => {
     if (!draft.crop) {
+      if (draft.status === 'error' && draft.file && !draft.previewUrl) {
+        void addFiles([draft.file], draft);
+        return;
+      }
       setActiveEditorId(draft.clientId);
       return;
     }
@@ -483,6 +520,13 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
   };
 
   const activeDraft = useMemo(() => value.find((draft) => draft.clientId === activeEditorId), [value, activeEditorId]);
+  // An ordinary image can be finalized while the first HEIF is still warming.
+  // Once any peer crop has been submitted, preserve that frame even before its
+  // finalize response arrives. READY persisted peers also establish the frame.
+  const framedPeer = purpose === 'POST' && activeDraft
+    ? value.find((draft) => draft.clientId !== activeDraft.clientId && (draft.crop || draft.status === 'ready'))
+    : undefined;
+  const peerFrameRatio = framedPeer?.crop?.aspectRatio ?? framedPeer?.aspectRatio;
   const canAdd = !disabled && !isPreparing && value.length < maxFiles;
   const canSelect = !disabled && !isPreparing && (multiple ? value.length < maxFiles : true);
   const controls: MediaPickerControls = {
@@ -522,8 +566,16 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
 
   return (
     <div className={className}>
-      {isPreparing && <span role="status" className="sr-only">{t('media.processing', { defaultValue: 'Preparing image' })}</span>}
-      {renderContent ? renderContent(controls) : (value.length > 0 || (showAddButton && canAdd)) ? (
+      {isPreparing && (
+        <div className="mb-2 flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+          <p id={preparingStatusId} role="status" className="flex-1">{t('media.preparingWait', { defaultValue: 'Preparing your images. This may take a moment. You can remove an image to cancel.' })}</p>
+          <button type="button" className="min-h-11 shrink-0 rounded-md px-3 text-blue-700 underline dark:text-blue-300" onClick={() => {
+            valuesRef.current.filter((draft) => !draft.previewUrl && ['processing', 'uploading', 'queued'].includes(draft.status))
+              .forEach((draft) => removeDraft(draft, true));
+          }}>{t('media.cancelPreparation', { defaultValue: 'Cancel preparation' })}</button>
+        </div>
+      )}
+      {renderContent ? <div ref={customContentRef} className="contents">{renderContent(controls)}</div> : (value.length > 0 || (showAddButton && canAdd)) ? (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={value.map((draft) => draft.clientId)} strategy={horizontalListSortingStrategy}>
             <div className="flex min-h-28 gap-2 overflow-x-auto pb-1">
@@ -536,6 +588,8 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
                   onEdit={() => setActiveEditorId(draft.clientId)}
                   onRetry={() => retry(draft)}
                   onRemove={() => removeDraft(draft)}
+                  retryDisabled={isPreparing}
+                  retryDescriptionId={isPreparing ? preparingStatusId : undefined}
                 />
               ))}
               {showAddButton && canAdd && (
@@ -555,6 +609,20 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
           <span>{value.find((draft) => draft.status === 'error' && draft.error)?.error}</span>
         </div>
       )}
+      {renderContent && value.filter((draft) => draft.status === 'error').map((draft) => (
+        <button
+          key={draft.clientId}
+          type="button"
+          disabled={disabled}
+          className="mt-1 min-h-11 min-w-11 max-w-full rounded-md px-3 text-sm text-blue-700 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 disabled:opacity-50 dark:text-blue-300"
+          onClick={() => {
+            controls.remove(draft.clientId);
+            requestAnimationFrame(() => {
+              customContentRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+            });
+          }}
+        >{t('media.discardFailedSelection', { defaultValue: 'Discard image change' })}</button>
+      ))}
       <input
         ref={inputRef}
         type="file"
@@ -575,7 +643,11 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
           imageSrc={activeDraft.previewUrl}
           purpose={purpose}
           initialAspectRatio={activeDraft.aspectRatio}
-          lockedAspectRatio={purpose === 'POST' && (activeDraft.clientId !== value[0]?.clientId || activeDraft.status !== 'editing') ? aspectRatio : undefined}
+          lockedAspectRatio={purpose === 'POST'
+            ? peerFrameRatio ?? ((activeDraft.clientId !== value[0]?.clientId || activeDraft.status !== 'editing')
+              ? aspectRatio ?? activeDraft.aspectRatio
+              : undefined)
+            : undefined}
           initialCrop={activeDraft.crop}
           onCancel={() => {
             if (activeDraft.status === 'editing' && !activeDraft.crop) removeDraft(activeDraft, true);

@@ -11,6 +11,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
+COPY native/confine.c /build/confine.c
+RUN cc -O2 -pthread -Wall -Wextra -Werror -Wno-sign-compare -o /native-confine /build/confine.c
 RUN git init libde265 \
     && git -C libde265 remote add origin https://github.com/strukturag/libde265.git \
     && git -C libde265 fetch --depth 1 origin "${LIBDE265_COMMIT}" \
@@ -90,12 +92,14 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 converter \
     && useradd --system --uid 10001 --gid converter --home-dir /nonexistent --shell /usr/sbin/nologin converter \
-    && install -d -o converter -g converter -m 0700 /tmp/heif-converter /opt/heif-converter
+    && install -d -o converter -g converter -m 0700 /tmp/heif-converter \
+    && install -d -o root -g root -m 0755 /opt/heif-converter
 
 WORKDIR /app
-COPY --from=node-dependencies --chown=converter:converter /app/node_modules ./node_modules
-COPY --chown=converter:converter package.json ./
-COPY --chown=converter:converter src ./src
+COPY --from=node-dependencies --chown=root:root /app/node_modules ./node_modules
+COPY --chown=root:root package.json ./
+COPY --chown=root:root src ./src
+COPY --from=native-builder /native-confine /usr/local/bin/si-heif-confine
 COPY --from=native-builder /native/heif-convert /usr/local/bin/heif-convert
 COPY --from=native-builder /native/heif-convert.sha256 /tmp/heif-convert.sha256
 COPY --from=native-builder /native/libheif.commit /tmp/libheif.commit
@@ -119,5 +123,5 @@ ENV NODE_ENV=production \
 USER 10001:10001
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:8080/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
-CMD ["node", "src/index.js"]
+  CMD ["/usr/bin/env", "UV_THREADPOOL_SIZE=1", "node", "--v8-pool-size=1", "-e", "fetch('http://127.0.0.1:'+process.env.PORT+'/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+CMD ["/usr/local/bin/si-heif-confine", "--supervise"]

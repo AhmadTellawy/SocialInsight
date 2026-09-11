@@ -305,6 +305,74 @@ const openEditProfile = async (page: Page): Promise<void> => {
 
 const settingsState = (): MockApiState => ({ profile: makeProfile(), links: [], mediaPurposeById: new Map(), mediaSequence: 0, linkCreateCalls: 0, profileSaveCalls: 0, failPrivateProfileLoads: false, failNextProfileSave: false });
 
+for (const language of ['en', 'ar'] as const) {
+  test.describe(`HEIF profile ${language}`, () => {
+  test.use({
+    viewport: language === 'en' ? { width: 390, height: 844 } : { width: 1440, height: 1000 },
+    isMobile: language === 'en',
+    hasTouch: language === 'en',
+    deviceScaleFactor: 1,
+  });
+  test(`HEIF avatar recovery preserves profile edits and the previous image (${language})`, async ({ page }, testInfo) => {
+    test.setTimeout(90_000);
+    const state = settingsState();
+    state.profile.language = language;
+    state.profile.avatar = '/pwa-192x192.png';
+    state.profile.avatarMediaId = 'previous-avatar';
+    state.profile.avatarMedia = { id: 'previous-avatar', access: 'PUBLIC', width: 192, height: 192, aspectRatio: 1, src: '/pwa-192x192.png' };
+    await installAuthenticatedMockApi(page, state);
+    await page.addInitScript(lang => localStorage.setItem('i18nextLng', lang), language);
+    let warmups = 0;
+    await page.route('**/api/media/config', route => json(route, { heifServerPreparationConfigured: true, heifServerPreparationEnabled: false }));
+    await page.route('**/api/media/heif/warmup', route => { warmups++; return json(route, { heifServerPreparationEnabled: false }); });
+    await page.goto('/settings/profile/edit-profile');
+    const bio = page.getByLabel(language === 'ar' ? 'النبذة التعريفية' : 'Bio', { exact: true });
+    await expect(bio).toBeVisible({ timeout: 30_000 });
+    await bio.fill('Unsaved profile text stays here');
+    const save = page.getByRole('button', { name: language === 'ar' ? 'حفظ' : 'Save', exact: true });
+    await expect(save).toBeEnabled();
+    const bytes = Buffer.alloc(57);
+    bytes.writeUInt32BE(20, 0); bytes.write('ftyp', 4); bytes.write('heic', 8); bytes.write('heic', 16);
+    bytes.writeUInt32BE(8, 20); bytes.write('hvcC', 24); bytes.writeUInt32BE(20, 28); bytes.write('ispe', 32);
+    bytes.writeUInt32BE(640, 40); bytes.writeUInt32BE(480, 44); bytes.writeUInt32BE(9, 48); bytes.write('mdat', 52); bytes[56] = 1;
+    const input = page.locator('input[type=file][data-media-purpose=PROFILE_AVATAR]');
+    await input.setInputFiles({ name: 'avatar.heic', mimeType: 'image/heic', buffer: bytes });
+    await expect.poll(() => warmups).toBe(1);
+    await expect(page.getByRole('alert').filter({ hasText: language === 'ar' ? 'الصورة' : 'image' })).toBeVisible();
+    await expect(save).toBeDisabled();
+    const discard = page.getByRole('button', { name: language === 'ar' ? 'إلغاء تغيير الصورة' : 'Discard image change', exact: true });
+    await expect(discard).toBeVisible();
+    const box = await discard.boundingBox();
+    expect(box && box.height >= 44 && box.width >= 44).toBeTruthy();
+    await page.getByRole('button', { name: language === 'ar' ? 'إعادة المحاولة' : 'Retry', exact: true }).focus();
+    await page.keyboard.press('Tab');
+    await expect(discard).toBeFocused();
+    const focusShadow = await discard.evaluate(element => getComputedStyle(element).boxShadow);
+    expect(focusShadow).not.toBe('none');
+    await testInfo.attach(`discard-control-${language}`, { body: JSON.stringify({ viewport: page.viewportSize(), box, focusShadow }), contentType: 'application/json' });
+    await page.screenshot({ path: testInfo.outputPath(`avatar-failed-${language}.png`), fullPage: true, timeout: 30_000 });
+    await page.keyboard.press('Enter');
+    await expect(discard).toHaveCount(0);
+    await expect(bio).toHaveValue('Unsaved profile text stays here');
+    await expect(save).toBeEnabled();
+    const change = page.getByRole('button', { name: language === 'ar' ? 'تغيير الصورة الشخصية' : 'Change profile photo', exact: true });
+    await expect(change).toBeFocused();
+    await expect(page.getByRole('img', { name: 'Profile E2E User', exact: true }).first()).toHaveAttribute('src', /pwa-192x192\.png/);
+    await page.screenshot({ path: testInfo.outputPath(`avatar-recovered-${language}.png`), fullPage: true, timeout: 30_000 });
+    await save.click();
+    await expect.poll(() => state.profile.bio).toBe('Unsaved profile text stays here');
+    expect(state.profile.avatarMediaId).toBe('previous-avatar');
+    await page.goto('/settings/profile/edit-profile');
+    await expect(bio).toBeVisible({ timeout: 30_000 });
+    await input.setInputFiles(fixtureImage);
+    await expect(page.getByTestId('media-crop-editor')).toBeVisible();
+    expect(warmups).toBe(1);
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('media-crop-editor')).toHaveCount(0);
+  });
+  });
+}
+
 test.describe('settings critical acceptance', () => {
   test('notifications save explicitly, ignore stale local cache and preserve failed draft', async ({ page }) => {
     const state = settingsState(); state.failNotificationSave = true;
