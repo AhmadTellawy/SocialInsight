@@ -1,4 +1,5 @@
 import prisma from '../prisma';
+import { buildVisiblePublishedPostWhere } from './postVisibilityService';
 import { GROUP_ROLES, MEMBERSHIP_STATUS, POSTING_PERMISSIONS, POST_STATUS, JOIN_POLICIES } from '../utils/constants';
 
 export class GroupPermissionService {
@@ -118,6 +119,7 @@ export class GroupPermissionService {
                 status: true,
                 isDeleted: true,
                 authorId: true,
+                author: { select: { status: true } },
                 groupId: true,
                 targetAudience: true,
                 group: { select: { id: true, isPublic: true, isDeleted: true } },
@@ -125,7 +127,11 @@ export class GroupPermissionService {
             }
         });
 
-        if (!post || post.isDeleted) return false;
+        if (!post || post.isDeleted || post.author.status !== 'ACTIVE') return false;
+
+        if (post.targetAudience === 'ProfileAndGroups' && post.status === POST_STATUS.PUBLISHED) {
+            return (await prisma.post.count({ where: { id: postId, ...buildVisiblePublishedPostWhere(userId) } })) > 0;
+        }
 
         const linkedGroups = [
             ...(post.group ? [post.group] : []),

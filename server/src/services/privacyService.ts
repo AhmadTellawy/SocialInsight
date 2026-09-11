@@ -2,23 +2,30 @@ import { PrismaClient } from '@prisma/client';
 import prisma from '../prisma';
 
 export class PrivacyService {
+  static getDiscoverableUserWhere(viewerId?: string | null): any {
+    return {
+      status: 'ACTIVE', searchVisibility: true,
+      ...(viewerId ? { NOT: [{ blockedBy: { some: { blockerId: viewerId } } }, { blocking: { some: { blockedId: viewerId } } }] } : {})
+    };
+  }
   /**
    * Central authorization logic to determine if `viewerId` can view `ownerId`'s content.
    */
-  static async canViewUserContent(viewerId: string | undefined | null, ownerId: string): Promise<boolean> {
+  static async canViewUserContent(viewerId: string | undefined | null, ownerId: string, db: any = prisma): Promise<boolean> {
     if (!viewerId) {
-      const owner = await prisma.user.findUnique({
+      const owner = await db.user.findUnique({
         where: { id: ownerId },
-        select: { isPrivate: true, mediaPrivacyTarget: true }
+        select: { isPrivate: true, mediaPrivacyTarget: true, status: true }
       });
-      return owner !== null && !(owner.isPrivate || owner.mediaPrivacyTarget === true);
+      return owner !== null && owner.status === 'ACTIVE' && !(owner.isPrivate || owner.mediaPrivacyTarget === true);
     }
 
     if (viewerId === ownerId) {
-      return true; 
+      const owner = await db.user.findUnique({ where: { id: ownerId }, select: { status: true } });
+      return owner?.status === 'ACTIVE';
     }
 
-    const blockRecord = await prisma.userBlock.findFirst({
+    const blockRecord = await db.userBlock.findFirst({
       where: {
         OR: [
           { blockerId: viewerId, blockedId: ownerId },
@@ -31,12 +38,12 @@ export class PrivacyService {
       return false; 
     }
 
-    const owner = await prisma.user.findUnique({
+    const owner = await db.user.findUnique({
       where: { id: ownerId },
-      select: { isPrivate: true, mediaPrivacyTarget: true }
+      select: { isPrivate: true, mediaPrivacyTarget: true, status: true }
     });
 
-    if (!owner) {
+    if (!owner || owner.status !== 'ACTIVE') {
       return false; 
     }
 
@@ -44,7 +51,7 @@ export class PrivacyService {
       return true; 
     }
 
-    const followRecord = await prisma.follow.findUnique({
+    const followRecord = await db.follow.findUnique({
       where: {
         followerId_followingId: {
           followerId: viewerId,
@@ -71,23 +78,29 @@ export class PrivacyService {
    *   }
    * })
    */
-  static getPostPrivacyWhereClause(viewerId?: string | null): any {
+  static getPostPrivacyWhereClause(viewerId?: string | null, includeUnsetMediaPrivacy = false): any {
+    // SQL NOT true excludes NULL. The additive profile destination follows
+    // canViewUserContent, where an unset transition flag is not private.
+    // Keep the legacy query shape unless the new destination opts in.
+    const mediaPrivacyWhere = { OR: [{ mediaPrivacyTarget: false }, { mediaPrivacyTarget: null }] };
     if (!viewerId) {
       // Guests only see public content
       return {
         author: {
+          status: 'ACTIVE',
           isPrivate: false,
-          NOT: { mediaPrivacyTarget: true }
+          ...mediaPrivacyWhere
         }
       };
     }
 
     return {
       AND: [
+        { author: { status: 'ACTIVE' } },
         {
           OR: [
             { authorId: viewerId },
-            { author: { isPrivate: false, NOT: { mediaPrivacyTarget: true } } },
+            { author: { isPrivate: false, ...mediaPrivacyWhere } },
             { author: { following: { some: { followerId: viewerId, status: 'ACTIVE' } } } }
           ]
         },

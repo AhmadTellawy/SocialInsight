@@ -1,9 +1,15 @@
+import { recordConfirmedVote } from '../services/confirmedAnalyticsService';
+import { prepareGuestParticipationProof, readGuestParticipationHash, guestProofMatches, writeGuestParticipationCookie } from '../services/guestParticipationService';
+import { AggregateResults } from '../services/aggregateResults';
 import { Request, Response } from 'express';
+import { lockAccountSecurity, AccountSecurityError } from '../services/mfaService';
+import { assertActiveAccountSession } from '../services/accountSecurityPolicy';
 import { MentionState, MentionSurface, PeopleTagStatus, Prisma } from '@prisma/client';
 import prisma from '../prisma';
 import { dispatchNotificationIds, notify } from '../services/notificationService';
 import { processBase64Image } from '../utils/imageProcessor';
 import { PrivacyService } from '../services/privacyService';
+import { isProfileAndGroups, validateProfileAndGroupsInput, canInteractWithProfileAndGroups } from '../services/postAudienceService';
 import { GroupPermissionService } from '../services/groupPermissionService';
 import { POST_STATUS, MEMBERSHIP_STATUS, GROUP_ROLES } from '../utils/constants';
 import {
@@ -219,6 +225,7 @@ const mapVisibleFeedGroupId = (post: any, viewerId?: string): string | null => {
     const groupId = typeof post?.groupId === 'string' ? post.groupId : null;
     if (!groupId || post?.authorId === viewerId) return groupId;
     const visibleTargetGroupIds = mapTargetGroups(post);
+    if (isProfileAndGroups(post?.targetAudience)) return visibleTargetGroupIds.includes(groupId) ? groupId : null;
     return visibleTargetGroupIds.length === 0 || visibleTargetGroupIds.includes(groupId)
         ? groupId
         : null;
@@ -352,6 +359,7 @@ const resolveInteractionTarget = async (postId: string, type: 'like' | 'comment'
 export const getPosts = async (req: Request, res: Response) => {
     const userId = req.user?.userId;
     const guestId = typeof req.query.guestId === 'string' ? req.query.guestId : undefined;
+    const guestProofHash = readGuestParticipationHash(req);
     const authorId = typeof req.query.authorId === 'string' ? req.query.authorId : undefined;
     const authorHandle = typeof req.query.authorHandle === 'string' ? req.query.authorHandle : undefined;
     const groupId = typeof req.query.groupId === 'string' ? req.query.groupId : undefined;
@@ -439,7 +447,8 @@ export const getPosts = async (req: Request, res: Response) => {
                 tx,
                 relationPostIds,
                 userId,
-                guestId
+                guestId,
+                guestProofHash
             );
             for (const post of posts) {
                 post.sharedFrom = post.sharedFromId
@@ -462,7 +471,7 @@ export const getPosts = async (req: Request, res: Response) => {
 
         attachFeedContentRelations(posts, relationBundle);
         attachFeedViewerState(posts, {
-            hasResponseIdentity: Boolean(userId || guestId),
+            hasResponseIdentity: Boolean(userId || guestProofHash),
             userId,
             responses: relationBundle.responses,
             answers: relationBundle.answers,
@@ -472,7 +481,7 @@ export const getPosts = async (req: Request, res: Response) => {
             follows: relationBundle.follows
         });
 
-        const mappedPosts = posts.map((post) => mapPostForClient(post, userId, guestId));
+        const mappedPosts = posts.map((post) => mapPostForClient(post, userId, guestProofHash || undefined));
 
         const lastPageRef = visiblePageRefs[visiblePageRefs.length - 1];
         const nextCursor = hasMore && lastPageRef
@@ -613,6 +622,7 @@ export const getPostById = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const userId = req.user?.userId;
     const guestId = typeof req.query.guestId === 'string' ? req.query.guestId : undefined;
+    const guestProofHash = readGuestParticipationHash(req);
     try {
         const detail = await prisma.$transaction(async (tx) => {
             const post = await tx.post.findFirst({
@@ -634,7 +644,8 @@ export const getPostById = async (req: Request, res: Response) => {
                 tx,
                 [post.id, ...(sharedFrom ? [sharedFrom.id] : [])],
                 userId,
-                guestId
+                guestId,
+                guestProofHash
             );
             return { post, relationBundle };
         }, {
@@ -650,7 +661,7 @@ export const getPostById = async (req: Request, res: Response) => {
 
         attachFeedContentRelations([detail.post], detail.relationBundle);
         attachFeedViewerState([detail.post], {
-            hasResponseIdentity: Boolean(userId || guestId),
+            hasResponseIdentity: Boolean(userId || guestProofHash),
             userId,
             responses: detail.relationBundle.responses,
             answers: detail.relationBundle.answers,
@@ -659,7 +670,7 @@ export const getPostById = async (req: Request, res: Response) => {
             savedPosts: detail.relationBundle.savedPosts,
             follows: detail.relationBundle.follows
         });
-        res.json(mapPostForClient(detail.post, userId, guestId));
+        res.json(mapPostForClient(detail.post, userId, guestProofHash || undefined));
     } catch (error) {
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2028') {
             res.status(503).json({ error: 'Post is temporarily unavailable', code: 'POST_READ_TIMEOUT' });
@@ -682,6 +693,11 @@ export const createPost = async (req: Request, res: Response) => {
     try {
         const authorId = req.user!.userId;
         const postMediaAssetIds = getPostMediaAssetIds(data);
+        const audienceError = validateProfileAndGroupsInput(data.targetAudience, data.targetGroups, data.status === 'DRAFT');
+        if (audienceError) {
+            res.status(400).json({ error: audienceError, code: 'INVALID_POST_AUDIENCE' });
+            return;
+        }
 
         if (data.status !== 'DRAFT' && !validateMentionRecipientLimit(`${data.title || ''} ${data.description || ''}`, res, 'post')) {
             return;
@@ -718,8 +734,12 @@ export const createPost = async (req: Request, res: Response) => {
             for (const groupId of data.targetGroups) {
                 const group = await prisma.group.findUnique({
                     where: { id: groupId },
-                    select: { postingPermissions: true }
+                    select: { postingPermissions: true, isDeleted: true }
                 });
+                if (isProfileAndGroups(data.targetAudience) && (!group || group.isDeleted)) {
+                    res.status(403).json({ error: 'A selected group is unavailable.' });
+                    return;
+                }
                 if (group) {
                     const membership = await prisma.groupMember.findUnique({
                         where: { userId_groupId: { userId: authorId, groupId } }
@@ -749,7 +769,9 @@ export const createPost = async (req: Request, res: Response) => {
 
         const targetGroupIds = Array.isArray(data.targetGroups) ? data.targetGroups : [];
         const postData: any = {
-            title: data.title || "Untitled",
+            title: normalizePostType(data.type) === 'Quiz'
+                ? (typeof data.title === 'string' ? data.title.trim() : '')
+                : (data.title || "Untitled"),
             description: data.description || "",
             type: normalizePostType(data.type) || "Post",
             authorId: authorId,
@@ -778,7 +800,9 @@ export const createPost = async (req: Request, res: Response) => {
             demographics: normalizeDemographicFilters(data.demographics),
             allowAnonymous: parseBoolean(data.allowAnonymous),
             forceAnonymous: data.forceAnonymous !== undefined ? parseBoolean(data.forceAnonymous) : false,
-            status: needsApproval ? POST_STATUS.PENDING_APPROVAL : (data.status === 'DRAFT' ? POST_STATUS.DRAFT : POST_STATUS.PUBLISHED)
+            status: isProfileAndGroups(data.targetAudience) && data.status === 'DRAFT'
+                ? POST_STATUS.DRAFT
+                : needsApproval ? POST_STATUS.PENDING_APPROVAL : (data.status === 'DRAFT' ? POST_STATUS.DRAFT : POST_STATUS.PUBLISHED)
         };
 
         if (postData.status !== POST_STATUS.DRAFT) {
@@ -801,6 +825,8 @@ export const createPost = async (req: Request, res: Response) => {
                 postData.image = (await getStoredMediaPresentation(postMediaAssetIds[0]))?.src || null;
             }
             transactionResult = await prisma.$transaction(async (tx) => {
+            await lockAccountSecurity(tx, req.user!.userId);
+            await assertActiveAccountSession(tx, req, false);
             const newPost = await tx.post.create({
                 data: postData,
                 include: {
@@ -978,6 +1004,7 @@ export const createPost = async (req: Request, res: Response) => {
         res.json(mappedPost);
     } catch (error) {
         logPostRequestFailure(req, 'post_create_failed', error);
+        if (error instanceof AccountSecurityError) return void res.status(error.status).json({ code: error.code, error: 'Sign in again to create a post.' });
         if (error instanceof MediaValidationError) {
             res.status(error.statusCode).json({ error: error.message, code: error.code });
             return;
@@ -1106,15 +1133,25 @@ export const updatePost = async (req: Request, res: Response) => {
             ...existingPost.targetedGroups.map((group) => group.id)
         ].filter((groupId): groupId is string => typeof groupId === 'string' && groupId.length > 0)));
         const effectiveTargetGroups = submittedTargetGroups !== undefined ? submittedTargetGroups : existingTargetGroups;
-        const shouldValidateGroupPosting = submittedTargetGroups !== undefined || data.status === 'PUBLISHED' || existingPost.status === POST_STATUS.DRAFT || existingPost.status === POST_STATUS.REJECTED;
+        const effectiveAudience = data.targetAudience !== undefined ? data.targetAudience : existingPost.targetAudience;
+        const audienceError = validateProfileAndGroupsInput(effectiveAudience, data.targetGroups !== undefined ? data.targetGroups : effectiveTargetGroups, (data.status ?? existingPost.status) === 'DRAFT');
+        if (audienceError) {
+            res.status(400).json({ error: audienceError, code: 'INVALID_POST_AUDIENCE' });
+            return;
+        }
+        const shouldValidateGroupPosting = isProfileAndGroups(effectiveAudience) || submittedTargetGroups !== undefined || data.status === 'PUBLISHED' || existingPost.status === POST_STATUS.DRAFT || existingPost.status === POST_STATUS.REJECTED;
 
         let needsApproval = false;
         if (shouldValidateGroupPosting && effectiveTargetGroups.length > 0) {
             for (const groupId of effectiveTargetGroups) {
                 const group = await prisma.group.findUnique({
                     where: { id: groupId },
-                    select: { postingPermissions: true }
+                    select: { postingPermissions: true, isDeleted: true }
                 });
+                if (isProfileAndGroups(effectiveAudience) && (!group || group.isDeleted)) {
+                    res.status(403).json({ error: 'A selected group is unavailable.' });
+                    return;
+                }
                 if (!group) continue;
 
                 const membership = await prisma.groupMember.findUnique({
@@ -1196,6 +1233,15 @@ export const updatePost = async (req: Request, res: Response) => {
             }
         }
 
+        if (isProfileAndGroups(effectiveAudience) && needsApproval && (data.status ?? existingPost.status) !== POST_STATUS.DRAFT) {
+            updateData.status = POST_STATUS.PENDING_APPROVAL;
+            updateData.approvedById = null;
+            updateData.approvedAt = null;
+            updateData.rejectedById = null;
+            updateData.rejectedAt = null;
+            updateData.rejectionReason = null;
+        }
+
         const oldRequirements: MediaAttachmentRequirement[] = [
             ...existingPost.media.map(({ mediaAssetId }) => ({ id: mediaAssetId, purpose: 'POST' as const })),
             ...existingPost.questions.flatMap((question) => [
@@ -1267,6 +1313,8 @@ export const updatePost = async (req: Request, res: Response) => {
         let transactionResult;
         try {
             transactionResult = await prisma.$transaction(async (tx) => {
+                await lockAccountSecurity(tx, req.user!.userId);
+                await assertActiveAccountSession(tx, req, false);
                 const post = await tx.post.update({
                     where: { id },
                     data: updateData,
@@ -1473,6 +1521,7 @@ export const updatePost = async (req: Request, res: Response) => {
         res.json(mappedPost);
     } catch (error) {
         logPostRequestFailure(req, 'post_update_failed', error);
+        if (error instanceof AccountSecurityError) return void res.status(error.status).json({ code: error.code, error: 'Sign in again to update this post.' });
         if (error instanceof MediaValidationError) {
             res.status(error.statusCode).json({ error: error.message, code: error.code });
             return;
@@ -1644,19 +1693,32 @@ export const getSavedPosts = async (req: Request, res: Response) => {
     }
 };
 
+export const initializeGuestParticipation = async (req: Request, res: Response) => {
+    if (!req.user) writeGuestParticipationCookie(res, prepareGuestParticipationProof(req));
+    res.set('Cache-Control', 'private, no-store').json({ success: true });
+};
+
 export const votePost = async (req: Request, res: Response) => {
     const rawId = req.params.id as string;
-    const { guestId, optionId, optionIds, isAnonymous, newOption, followUpAnswers = {}, answers = [] } = req.body;
+    const { guestId, optionId, optionIds, isAnonymous, newOption, followUpAnswers = {}, answers = [] } = req.body || {};
     try {
+        if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)
+            || (optionIds !== undefined && (!Array.isArray(optionIds) || optionIds.length > 100 || optionIds.some((v: unknown) => typeof v !== 'string' || !v || v.length > 128)))
+            || (optionId !== undefined && (typeof optionId !== 'string' || !optionId || optionId.length > 128))
+            || !Array.isArray(answers) || answers.length > 100
+            || answers.some((a: any) => !a || typeof a.questionId !== 'string' || !a.questionId || a.questionId.length > 128 || (a.optionId != null && (typeof a.optionId !== 'string' || a.optionId.length > 128)) || (a.textValue != null && (typeof a.textValue !== 'string' || a.textValue.length > 10000)))) {
+            return void res.status(400).json({ error: 'Invalid vote payload' });
+        }
         const id = await resolveInteractionTarget(rawId, 'vote');
         const guestIp = req.ip || req.socket?.remoteAddress;
         const actorUserId = req.user?.userId || null;
-        if (!actorUserId && !guestId) {
+        const proof = actorUserId ? null : prepareGuestParticipationProof(req);
+        if (!actorUserId && (typeof guestId !== 'string' || guestId.length < 8 || guestId.length > 128)) {
             res.status(400).json({ error: 'Authentication or Guest ID is required' });
             return;
         }
 
-        const post = await prisma.post.findUnique({
+        let post = await prisma.post.findUnique({
             where: { id },
             select: {
                 allowAnonymous: true,
@@ -1666,6 +1728,7 @@ export const votePost = async (req: Request, res: Response) => {
                 allowUserOptions: true,
                 type: true,
                 targetAudience: true,
+                groupId: true,
                 targetedGroups: { select: { id: true } },
                 status: true,
                 isDeleted: true,
@@ -1678,14 +1741,20 @@ export const votePost = async (req: Request, res: Response) => {
             return;
         }
 
+        if (!(await prisma.post.count({ where: { id, ...buildVisiblePublishedPostWhere(actorUserId) } }))) return res.status(403).json({ error: 'Forbidden' });
+
         if (post.expiresAt && post.expiresAt.getTime() <= Date.now()) {
             res.status(400).json({ error: 'This post has ended' });
             return;
         }
 
         const isAuthor = !!actorUserId && post.authorId === actorUserId;
-        const targetGroupIds = mapTargetGroups(post);
-        if (!isAuthor && (post.targetAudience === 'Groups' || targetGroupIds.length > 0)) {
+        const targetGroupIds = Array.from(new Set([post.groupId, ...mapTargetGroups(post)].filter((id): id is string => Boolean(id))));
+        if (isProfileAndGroups(post.targetAudience) && !(await canInteractWithProfileAndGroups(id, post.authorId, actorUserId, targetGroupIds))) {
+            res.status(403).json({ error: 'Forbidden' });
+            return;
+        }
+        if (!isProfileAndGroups(post.targetAudience) && !isAuthor && (post.targetAudience === 'Groups' || targetGroupIds.length > 0)) {
             if (!actorUserId) {
                 res.status(403).json({ error: 'Forbidden' });
                 return;
@@ -1707,7 +1776,7 @@ export const votePost = async (req: Request, res: Response) => {
             const follow = await prisma.follow.findUnique({
                 where: { followerId_followingId: { followerId: actorUserId, followingId: post.authorId } }
             });
-            if (!follow) {
+            if (follow?.status !== 'ACTIVE') {
                 res.status(403).json({ error: 'Forbidden' });
                 return;
             }
@@ -1742,6 +1811,26 @@ export const votePost = async (req: Request, res: Response) => {
         let notificationOptionId = optionsToProcess[0];
 
         await prisma.$transaction(async (tx) => {
+            if (actorUserId) {
+                await lockAccountSecurity(tx, actorUserId);
+                await assertActiveAccountSession(tx, req, false);
+            }
+            if (proof) {
+                for (const key of [`guest-id:${id}:${guestId}`, `guest-proof:${id}:${proof.hash}`].sort()) await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
+            }
+            // Serialize this post, then reread eligibility after any wait. No stale pre-lock decision writes votes.
+            await tx.$queryRaw(Prisma.sql`SELECT id FROM "Post" WHERE id = ${id} FOR UPDATE`);
+            const currentPost = await tx.post.findFirst({ where: { id, ...buildVisiblePublishedPostWhere(actorUserId) }, include: { targetedGroups: { select: { id: true } } } });
+            if (!currentPost) throw Object.assign(new Error('Post is no longer available'), { statusCode: 403 });
+            if (currentPost.expiresAt && currentPost.expiresAt.getTime() <= Date.now()) throw Object.assign(new Error('This post has ended'), { statusCode: 400 });
+            post = currentPost;
+            const currentGroups = Array.from(new Set([currentPost.groupId, ...mapTargetGroups(currentPost)].filter((id): id is string => Boolean(id))));
+            if (isProfileAndGroups(currentPost.targetAudience)) {
+                if (!(await canInteractWithProfileAndGroups(id, currentPost.authorId, actorUserId, currentGroups, tx))) throw Object.assign(new Error('Forbidden'), { statusCode: 403 });
+            } else if (actorUserId !== currentPost.authorId && (currentPost.targetAudience === 'Groups' || currentGroups.length)) {
+                if (!actorUserId || !(await tx.groupMember.findFirst({ where: { userId: actorUserId, groupId: { in: currentGroups }, status: 'JOINED', group: { isDeleted: false } } }))) throw Object.assign(new Error('Forbidden'), { statusCode: 403 });
+            }
+            finalIsAnonymous = currentPost.forceAnonymous || parseBoolean(isAnonymous);
             const customClientId = typeof newOption?.id === 'string' ? newOption.id : undefined;
             const customText = typeof newOption?.text === 'string' ? newOption.text.trim() : '';
             let resolvedOptionIds = [...optionsToProcess];
@@ -1766,7 +1855,7 @@ export const votePost = async (req: Request, res: Response) => {
                     select: { order: true }
                 });
 
-                createdCustomOption = await tx.option.create({
+                createdCustomOption = await tx.option.findFirst({ where: { questionId: question.id, text: customText, isUserAdded: true, ...(actorUserId ? { addedByUserId: actorUserId } : { addedByGuestId: guestId }) } }) || await tx.option.create({
                     data: {
                         text: customText,
                         questionId: question.id,
@@ -1787,15 +1876,19 @@ export const votePost = async (req: Request, res: Response) => {
 
             const whereClause: any = { postId: id };
             if (actorUserId) whereClause.userId = actorUserId;
-            else if (guestId) whereClause.guestId = guestId;
+            else whereClause.OR = [{ guestId }, { guestProofHash: proof!.hash, guestProofExpiresAt: { gt: new Date() } }];
 
             const existingResponse = await tx.response.findFirst({ where: whereClause });
+            if (existingResponse && proof && !guestProofMatches(existingResponse, readGuestParticipationHash(req))) {
+                throw Object.assign(new Error('This guest response belongs to another or expired browser session. Sign in to continue with a new response.'), { statusCode: 403, code: 'GUEST_PARTICIPATION_PROOF_REQUIRED' });
+            }
 
             const response = existingResponse || await tx.response.create({
                 data: {
                     postId: id,
                     userId: actorUserId || null,
-                    guestId: guestId || null,
+                    guestId: actorUserId ? null : guestId,
+                    ...(proof ? { guestProofHash: proof.hash, guestProofExpiresAt: proof.expiresAt } : {}),
                     ipAddress: guestIp || null,
                     isAnonymous: finalIsAnonymous
                 }
@@ -1807,9 +1900,10 @@ export const votePost = async (req: Request, res: Response) => {
                 const questionIds = Array.from(new Set(structuredAnswers.map((answer: any) => answer.questionId)));
                 const questions = await tx.question.findMany({
                     where: { id: { in: questionIds }, postId: id },
-                    select: { id: true }
+                    select: { id: true, type: true }
                 });
                 const validQuestionIds = new Set(questions.map(q => q.id));
+                const questionTypes = new Map(questions.map(q => [q.id, q.type]));
 
                 if (validQuestionIds.size !== questionIds.length) {
                     throw Object.assign(new Error('Invalid questions for this post'), { statusCode: 400 });
@@ -1827,6 +1921,8 @@ export const votePost = async (req: Request, res: Response) => {
 
                 const uniqueAnswers = new Map<string, any>();
                 for (const answer of structuredAnswers) {
+                    const isText = questionTypes.get(answer.questionId) === 'text';
+                    if (isText ? Boolean(answer.optionId) || !answer.textValue : !answer.optionId) throw Object.assign(new Error('Answer does not match the question type'), { statusCode: 400 });
                     if (answer.optionId) {
                         const option = optionsById.get(answer.optionId);
                         if (!option || option.questionId !== answer.questionId) {
@@ -1836,7 +1932,17 @@ export const votePost = async (req: Request, res: Response) => {
                     uniqueAnswers.set(`${answer.questionId}:${answer.optionId || 'text'}`, answer);
                 }
 
+                const perQuestion = new Map<string, number>();
+                for (const answer of uniqueAnswers.values()) perQuestion.set(answer.questionId, (perQuestion.get(answer.questionId) || 0) + 1);
+                if (!post!.allowMultipleSelection && [...perQuestion.values()].some(count => count > 1)) throw Object.assign(new Error('This question accepts one answer only'), { statusCode: 400 });
                 for (const answer of uniqueAnswers.values()) {
+                    if (!post!.allowMultipleSelection) {
+                        const prior = await tx.answer.findFirst({ where: { responseId: response.id, questionId: answer.questionId } });
+                        if (prior) {
+                            if (prior.optionId !== (answer.optionId || null) || (prior.textValue || null) !== (answer.textValue || null)) throw Object.assign(new Error('This answer has already been recorded'), { statusCode: 409 });
+                            continue;
+                        }
+                    }
                     const existingAnswer = await tx.answer.findFirst({
                         where: {
                             responseId: response.id,
@@ -1879,11 +1985,15 @@ export const votePost = async (req: Request, res: Response) => {
                 }
 
                 for (const opt of dbOptions) {
-                    if (!post.allowMultipleSelection) {
+                    if (opt.question.type === 'text') throw Object.assign(new Error('This question requires text'), { statusCode: 400 });
+                    if (!post!.allowMultipleSelection) {
                         const existingQuestionAnswer = await tx.answer.findFirst({
-                            where: { responseId: response.id, questionId: opt.question.id, optionId: { not: null } }
+                            where: { responseId: response.id, questionId: opt.question.id }
                         });
-                        if (existingQuestionAnswer) continue;
+                        if (existingQuestionAnswer) {
+                            if (existingQuestionAnswer.optionId !== opt.id) throw Object.assign(new Error('This answer has already been recorded'), { statusCode: 409 });
+                            continue;
+                        }
                     }
 
                     const existingAnswer = await tx.answer.findFirst({
@@ -1906,21 +2016,25 @@ export const votePost = async (req: Request, res: Response) => {
             }
 
             if (!existingResponse) {
+                await recordConfirmedVote(tx, response.id, id, actorUserId);
                 await tx.post.update({
                     where: { id },
                     data: { responseCount: { increment: 1 } }
                 });
             }
-        });
+        }, { maxWait: 10000, timeout: 10000 });
 
         if (actorUserId && shouldNotify && !finalIsAnonymous && post.authorId) {
             await notify(actorUserId, post.authorId as string, 'vote', 'voted on your post', 'survey', id, { optionId: notificationOptionId });
         }
 
+        if (proof) writeGuestParticipationCookie(res, proof);
         res.json({ success: true, newOption: createdCustomOption });
     } catch (error: any) {
-        console.error(error);
-        res.status(error?.statusCode || 500).json({ error: error?.statusCode ? error.message : 'Failed to vote' });
+        if (['P2028', 'P2034'].includes(error?.code)) return void res.status(503).set('Retry-After', '1').json({ error: 'Voting is busy. Retry this request.', code: 'VOTE_RETRY_REQUIRED' });
+        if (!error?.statusCode && !(error instanceof AccountSecurityError)) console.error('Vote write failed', { code: typeof error?.code === 'string' ? error.code : 'UNKNOWN' });
+        if (error instanceof AccountSecurityError) return void res.status(error.status).json({ code: error.code, error: 'Sign in again to respond.' });
+        res.status(error?.statusCode || 500).json({ error: error?.statusCode ? error.message : 'Failed to vote', ...(error?.code === 'GUEST_PARTICIPATION_PROOF_REQUIRED' ? { code: error.code } : {}) });
     }
 };
 
@@ -1998,7 +2112,7 @@ export const getPostResults = async (req: Request, res: Response) => {
     try {
         const id = await resolveInteractionTarget(rawId, 'vote');
         const currentUserId = req.user?.userId;
-        const guestId = req.query.guestId as string | undefined;
+        const guestProofHash = readGuestParticipationHash(req);
         const post = await prisma.post.findFirst({
             where: { id, ...buildVisiblePublishedPostWhere(currentUserId) },
             select: {
@@ -2015,7 +2129,7 @@ export const getPostResults = async (req: Request, res: Response) => {
         }
 
         const isAuthor = !!currentUserId && post.authorId === currentUserId;
-        const responseIdentity = currentUserId ? { userId: currentUserId } : guestId ? { guestId } : null;
+        const responseIdentity = currentUserId ? { userId: currentUserId } : guestProofHash ? { guestProofHash, guestProofExpiresAt: { gt: new Date() } } : null;
         const [follow, viewerResponse] = await Promise.all([
             !isAuthor && post.resultsWho === 'Followers' && currentUserId
                 ? prisma.follow.findUnique({
@@ -2057,42 +2171,23 @@ export const getPostResults = async (req: Request, res: Response) => {
             return;
         }
 
-        const responses = await prisma.response.findMany({
-            where: { postId: id },
-            include: {
-                answers: true,
-                user: {
-                    // Used only to derive the age band below. The DOB itself is
-                    // never copied into the results DTO.
-                    select: {
-                        birthday: true,
-                        country: true,
-                        demographics: true
-                    }
-                }
-            }
+        const questions = await prisma.question.findMany({
+            where: { OR: [{ postId: id }, { section: { postId: id } }] },
+            select: { id: true, options: { where: { isCorrect: true }, select: { id: true } } }
         });
-
-        const results = responses.map(r => ({
-            id: r.id,
-            isAnonymous: r.isAnonymous,
-            answers: r.answers.map(a => ({
-                questionId: a.questionId,
-                optionId: a.optionId,
-                textValue: a.textValue
-            })),
-            demographics: {
-                age: calculateAgeGroupFromDate(r.user?.birthday) || 'Unknown',
-                gender: r.user?.demographics?.gender || 'Unknown',
-                country: r.user?.country || 'Unknown',
-                education: r.user?.demographics?.educationLevel || 'Unknown',
-                employment: r.user?.demographics?.employmentType || 'Unknown',
-                industry: r.user?.demographics?.industry || 'Unknown',
-                sector: r.user?.demographics?.employmentSector || 'Unknown'
-            }
-        }));
-
-        res.json(results);
+        const correct = new Map(questions.filter(question => question.options.length > 0).map(question => [question.id, new Set(question.options.map(option => option.id))]));
+        const aggregate = new AggregateResults(correct);
+        let cursor: string | undefined;
+        do {
+            const page = await prisma.response.findMany({ where: { postId: id }, take: 500, orderBy: { id: 'asc' },
+                ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+                select: { id: true, answers: { select: { questionId: true, optionId: true, textValue: true } },
+                    user: { select: { birthday: true, country: true, demographics: true } } } });
+            page.forEach(response => aggregate.add(response));
+            cursor = page.length === 500 ? page[page.length - 1].id : undefined;
+        } while (cursor);
+        res.setHeader('Cache-Control', 'private, no-store');
+        res.json(aggregate.toJSON());
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Failed to fetch post results' });
@@ -2218,7 +2313,11 @@ export const createComment = async (req: Request, res: Response) => {
 
         const isAuthor = commentTarget.authorId === userId;
         const targetGroupIds = mapTargetGroups(commentTarget);
-        if (!isAuthor && (commentTarget.targetAudience === 'Groups' || targetGroupIds.length > 0)) {
+        if (isProfileAndGroups(commentTarget.targetAudience) && !(await canInteractWithProfileAndGroups(id, commentTarget.authorId, userId, targetGroupIds))) {
+            res.status(403).json({ error: 'Forbidden' });
+            return;
+        }
+        if (!isProfileAndGroups(commentTarget.targetAudience) && !isAuthor && (commentTarget.targetAudience === 'Groups' || targetGroupIds.length > 0)) {
             const membership = await prisma.groupMember.findFirst({
                 where: { userId, groupId: { in: targetGroupIds }, status: 'JOINED' }
             });
@@ -2329,9 +2428,11 @@ export const likePost = async (req: Request, res: Response) => {
     const userId = req.user!.userId;
     try {
         const id = await resolveInteractionTarget(rawId, 'like');
-        const targetPostCheck = await prisma.post.findUnique({ where: { id }, select: { authorId: true } });
+        const targetPostCheck = await prisma.post.findUnique({ where: { id }, select: { authorId: true, targetAudience: true } });
         if (targetPostCheck && targetPostCheck.authorId) {
-            const canView = await PrivacyService.canViewUserContent(userId, targetPostCheck.authorId);
+            const canView = isProfileAndGroups(targetPostCheck.targetAudience)
+                ? await GroupPermissionService.canViewPost(id, userId)
+                : await PrivacyService.canViewUserContent(userId, targetPostCheck.authorId);
             if (!canView) {
                 res.status(403).json({ error: 'Forbidden' });
                 return;
@@ -2651,19 +2752,26 @@ export const sharePost = async (req: Request, res: Response) => {
 
             if (existingRepost) {
                 // Un-repost!
-                await prisma.$transaction([
-                    prisma.post.delete({ where: { id: existingRepost.id } }),
-                    prisma.post.update({
-                        where: { id: actualSharedFromId },
-                        data: { sharesCount: { decrement: 1 } }
-                    })
-                ]);
+                await prisma.$transaction(async tx => {
+                    await lockAccountSecurity(tx, userId);
+                    await assertActiveAccountSession(tx, req, false);
+                    const removed = await tx.post.deleteMany({ where: { id: existingRepost.id, authorId: userId } });
+                    if (removed.count) await tx.post.updateMany({ where: { id: actualSharedFromId, sharesCount: { gt: 0 } }, data: { sharesCount: { decrement: 1 } } });
+                });
                 res.json({ success: true, action: 'unshared' });
                 return;
             }
         }
 
         const transactionResult = await prisma.$transaction(async (tx) => {
+            const canonical = await tx.post.findUnique({ where: { id: actualSharedFromId }, select: { authorId: true } });
+            if (!canonical) throw new Error('SHARING_UNAVAILABLE');
+            const actorAndAuthor = Array.from(new Set([userId, canonical.authorId])).sort();
+            for (const userId of actorAndAuthor) await lockAccountSecurity(tx, userId);
+            await tx.$queryRaw(Prisma.sql`SELECT id FROM users WHERE id IN (${Prisma.join(actorAndAuthor)}) ORDER BY id FOR UPDATE`);
+            await assertActiveAccountSession(tx, req, false);
+            const author = await tx.user.findUnique({ where: { id: canonical.authorId }, select: { status: true, allowSharing: true, isPrivate: true, mediaPrivacyTarget: true } });
+            if (!author || author.status !== 'ACTIVE' || !author.allowSharing || author.isPrivate || author.mediaPrivacyTarget === true) throw new Error('SHARING_UNAVAILABLE');
             const newPost = await tx.post.create({
                 data: {
                     title: originalPost.title,
@@ -2711,6 +2819,8 @@ export const sharePost = async (req: Request, res: Response) => {
         });
         await dispatchNotificationIds(transactionResult.notificationIds);
         const newPost = transactionResult.newPost;
+        const originalAuthor = await prisma.post.findUnique({ where: { id: actualSharedFromId }, select: { authorId: true } });
+        if (originalAuthor) await notify(userId, originalAuthor.authorId, 'share', 'Shared your post', 'post', actualSharedFromId);
 
         const createdPost = await prisma.post.findUnique({
             where: { id: newPost.id },
@@ -2795,6 +2905,8 @@ export const sharePost = async (req: Request, res: Response) => {
 
         res.json(mappedPost);
     } catch (error) {
+        if (error instanceof Error && error.message === 'SHARING_UNAVAILABLE') return res.status(403).json({ error: 'Sharing is unavailable for this post.', code: 'SHARING_UNAVAILABLE' });
+        if (error instanceof AccountSecurityError) return res.status(error.status).json({ code: error.code, error: 'Sign in again to share.' });
         if (error instanceof MentionLimitError || error instanceof HashtagLimitError || error instanceof PeopleTagValidationError) {
             res.status(400).json({
                 error: error.message,

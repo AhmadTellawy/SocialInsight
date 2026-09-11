@@ -1,15 +1,21 @@
-import { MediaCropSelection, MediaPresentation, MediaPurpose } from '../types';
-import { authFetch } from './api';
+import type { MediaCropSelection, MediaPresentation, MediaPurpose } from '../types.ts';
+import { authFetch, getAuthSessionIdentity } from './api.ts';
+
+export const MEDIA_PROCESSING_TIMEOUT_MS = 120_000;
+export const HEIF_WARMUP_TIMEOUT_MS = 100_000;
 
 export type MediaConfig = {
   enabled: boolean;
   maxPostImages: number;
   maxInputBytes: number;
+  maxCoverInputBytes: number;
   maxDecodedPixels: number;
   maxUploadConcurrency: number;
   minAspectRatio: number;
   maxAspectRatio: number;
   allowedMimeTypes: string[];
+  heifServerPreparationConfigured: boolean;
+  heifServerPreparationEnabled: boolean;
 };
 
 type SignedUploadSession = {
@@ -22,26 +28,96 @@ type SignedUploadSession = {
 };
 
 export class MediaUploadError extends Error {
-  constructor(message: string, public readonly assetId?: string, public readonly phase?: 'upload' | 'processing') {
+  constructor(message: string, public readonly assetId?: string, public readonly phase?: 'upload' | 'preparation' | 'processing') {
     super(message);
     this.name = 'MediaUploadError';
   }
 }
 
+export type PreparedMediaUpload = {
+  id: string;
+  status: 'TEMPORARY';
+  sourceMime: 'image/heic' | 'image/heif';
+  preview: {
+    src: string;
+    mime: 'image/webp';
+    width: number;
+    height: number;
+    aspectRatio: number;
+    expiresInSeconds: number;
+  };
+};
+
 const presentationCache = new Map<string, { value: MediaPresentation; expiresAt: number }>();
 const presentationRequests = new Map<string, Promise<MediaPresentation>>();
+type HeifWarmupRequest = { controller: AbortController; result: Promise<boolean>; waiters: number };
+const heifWarmupRequests = new Map<string | null, HeifWarmupRequest>();
+
+const canceledUpload = (): DOMException => new DOMException('Upload canceled.', 'AbortError');
+
+// Only in-flight work is shared. A false result must never prevent a later retry,
+// and a canceled selection must not cancel another selection's readiness wait.
+const waitForHeifWarmup = async (signal?: AbortSignal): Promise<boolean> => {
+  if (signal?.aborted) throw canceledUpload();
+  const identity = getAuthSessionIdentity();
+  let request = heifWarmupRequests.get(identity);
+  if (!request) {
+    const controller = new AbortController();
+    const result = (async () => {
+      const response = await authFetch('/api/media/heif/warmup', {
+        method: 'POST', signal: controller.signal, timeoutMs: HEIF_WARMUP_TIMEOUT_MS
+      });
+      if (!response.ok) throw await parseError(response, 'Image preparation is temporarily unavailable.');
+      const payload = await response.json();
+      return payload?.heifServerPreparationEnabled === true;
+    })();
+    request = { controller, result, waiters: 0 };
+    heifWarmupRequests.set(identity, request);
+    const current = request;
+    const remove = () => {
+      if (heifWarmupRequests.get(identity) === current) heifWarmupRequests.delete(identity);
+    };
+    void result.then(remove, remove);
+  }
+  const current = request;
+  current.waiters += 1;
+  return new Promise<boolean>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', abort);
+      current.waiters -= 1;
+      if (current.waiters === 0) {
+        if (heifWarmupRequests.get(identity) === current) heifWarmupRequests.delete(identity);
+        current.controller.abort();
+      }
+      callback();
+    };
+    const abort = () => finish(() => reject(canceledUpload()));
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+    void current.result.then(
+      (enabled) => finish(() => getAuthSessionIdentity() === identity ? resolve(enabled) : reject(canceledUpload())),
+      (error) => finish(() => reject(error))
+    );
+  });
+};
 const PRESENTATION_CACHE_LIMIT = 200;
 const PUBLIC_PRESENTATION_TTL_MS = 10 * 60 * 1000;
 const RESTRICTED_PRESENTATION_TTL_MS = 4 * 60 * 1000;
-let presentationCacheAuthToken: string | null | undefined;
+let presentationCacheAuthIdentity: string | null | undefined;
+let presentationCacheGeneration = 0;
 
-const synchronizePresentationCacheIdentity = (): void => {
-  const authToken = typeof localStorage === 'undefined' ? null : localStorage.getItem('si_token');
-  if (presentationCacheAuthToken !== undefined && presentationCacheAuthToken !== authToken) {
+const synchronizePresentationCacheIdentity = (): number => {
+  const authIdentity = getAuthSessionIdentity();
+  if (presentationCacheAuthIdentity !== undefined && presentationCacheAuthIdentity !== authIdentity) {
     presentationCache.clear();
     presentationRequests.clear();
+    presentationCacheGeneration += 1;
   }
-  presentationCacheAuthToken = authToken;
+  presentationCacheAuthIdentity = authIdentity;
+  return presentationCacheGeneration;
 };
 
 const cachePresentation = (assetId: string, value: MediaPresentation): void => {
@@ -95,10 +171,21 @@ const uploadToSignedUrl = (
 });
 
 export const mediaApi = {
-  getConfig: async (): Promise<MediaConfig> => {
-    const response = await authFetch('/api/media/config');
+  getConfig: async (signal?: AbortSignal): Promise<MediaConfig> => {
+    const response = await authFetch('/api/media/config', { signal });
     if (!response.ok) throw await parseError(response, 'Failed to load media configuration.');
     return response.json();
+  },
+
+  ensureHeifReady: async (signal?: AbortSignal): Promise<void> => {
+    if (signal?.aborted) throw canceledUpload();
+    const identity = getAuthSessionIdentity();
+    const config = await mediaApi.getConfig(signal);
+    if (signal?.aborted || getAuthSessionIdentity() !== identity) throw canceledUpload();
+    if (config.heifServerPreparationEnabled === true) return;
+    if (config.heifServerPreparationConfigured !== true || !await waitForHeifWarmup(signal)) {
+      throw new MediaUploadError('Image preparation is temporarily unavailable. Please retry.', undefined, 'preparation');
+    }
   },
 
   startUpload: async (file: File, purpose: MediaPurpose, altText?: string): Promise<SignedUploadSession> => {
@@ -113,10 +200,49 @@ export const mediaApi = {
   finalize: async (assetId: string, crop: MediaCropSelection): Promise<{ id: string; aspectRatio: number; width: number; height: number }> => {
     const response = await authFetch(`/api/media/${assetId}/finalize`, {
       method: 'POST',
-      body: JSON.stringify(crop)
+      body: JSON.stringify(crop),
+      timeoutMs: MEDIA_PROCESSING_TIMEOUT_MS
     });
     if (!response.ok) throw await parseError(response, 'Could not process image.');
     return response.json();
+  },
+
+  prepare: async (assetId: string, signal?: AbortSignal): Promise<PreparedMediaUpload> => {
+    const response = await authFetch(`/api/media/${assetId}/prepare`, {
+      method: 'POST',
+      signal,
+      timeoutMs: MEDIA_PROCESSING_TIMEOUT_MS
+    });
+    if (!response.ok) throw await parseError(response, 'Could not prepare HEIC/HEIF image.');
+    return response.json();
+  },
+
+  uploadAndPrepare: async (
+    file: File,
+    purpose: MediaPurpose,
+    onProgress: (progress: number) => void,
+    signal?: AbortSignal
+  ): Promise<PreparedMediaUpload> => {
+    if (signal?.aborted) throw new DOMException('Upload canceled.', 'AbortError');
+    let session: SignedUploadSession | undefined;
+    try {
+      await mediaApi.ensureHeifReady(signal);
+      if (signal?.aborted) throw canceledUpload();
+      session = await mediaApi.startUpload(file, purpose);
+      if (signal?.aborted) throw new DOMException('Upload canceled.', 'AbortError');
+      await uploadToSignedUrl(session, file, onProgress, signal);
+      if (signal?.aborted) throw new DOMException('Upload canceled.', 'AbortError');
+      onProgress(100);
+      return await mediaApi.prepare(session.assetId, signal);
+    } catch (error) {
+      if (session) await mediaApi.cancel(session.assetId).catch(() => undefined);
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      throw new MediaUploadError(
+        error instanceof Error ? error.message : 'HEIC/HEIF image preparation failed.',
+        undefined,
+        'preparation'
+      );
+    }
   },
 
   upload: async (
@@ -149,10 +275,11 @@ export const mediaApi = {
   retryFinalize: (assetId: string, crop: MediaCropSelection) => mediaApi.finalize(assetId, crop),
 
   get: async (assetId: string, forceRefresh = false): Promise<MediaPresentation> => {
-    synchronizePresentationCacheIdentity();
+    const requestGeneration = synchronizePresentationCacheIdentity();
+    const requestKey = `${requestGeneration}:${assetId}`;
     const cached = presentationCache.get(assetId);
     if (!forceRefresh && cached && cached.expiresAt > Date.now()) return cached.value;
-    const inFlight = presentationRequests.get(assetId);
+    const inFlight = presentationRequests.get(requestKey);
     if (!forceRefresh && inFlight) return inFlight;
 
     presentationCache.delete(assetId);
@@ -160,15 +287,20 @@ export const mediaApi = {
       const response = await authFetch(`/api/media/${assetId}`);
       if (!response.ok) throw await parseError(response, 'Image is unavailable.');
       const presentation = await response.json() as MediaPresentation;
-      cachePresentation(assetId, presentation);
+      // A request started by a previous signed-in identity may finish after
+      // logout/account switching. It can resolve for its original caller, but
+      // must never repopulate the shared cache for the new identity.
+      if (synchronizePresentationCacheIdentity() === requestGeneration) {
+        cachePresentation(assetId, presentation);
+      }
       return presentation;
     })();
 
-    if (!forceRefresh) presentationRequests.set(assetId, request);
+    if (!forceRefresh) presentationRequests.set(requestKey, request);
     try {
       return await request;
     } finally {
-      if (presentationRequests.get(assetId) === request) presentationRequests.delete(assetId);
+      if (presentationRequests.get(requestKey) === request) presentationRequests.delete(requestKey);
     }
   },
 

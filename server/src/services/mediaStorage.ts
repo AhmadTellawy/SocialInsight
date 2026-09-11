@@ -37,7 +37,12 @@ export class SupabaseMediaStorage implements MediaStorage {
       requireEnvironment('SUPABASE_URL'),
       requireEnvironment('SUPABASE_SERVICE_ROLE_KEY'),
       {
-        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+        global: {
+          fetch: (input, init) => fetch(input, { ...init,
+            signal: AbortSignal.any([AbortSignal.timeout(60_000), ...(init?.signal ? [init.signal] : [])])
+          })
+        }
       }
     );
   }
@@ -97,7 +102,9 @@ export class SupabaseMediaStorage implements MediaStorage {
       const options = {
         public: definition.public,
         fileSizeLimit: MEDIA_CONFIG.maxInputBytes,
-        allowedMimeTypes: [...MEDIA_CONFIG.allowedMimeTypes]
+        allowedMimeTypes: definition.id === MEDIA_CONFIG.buckets.originals
+          ? [...MEDIA_CONFIG.allowedMimeTypes, ...MEDIA_CONFIG.heifMimeTypes]
+          : [...MEDIA_CONFIG.allowedMimeTypes]
       };
       const { data: existing } = await this.client.storage.getBucket(definition.id);
       const operation = existing

@@ -64,12 +64,14 @@ const groupRecord = (id: string, name: string) => ({
 });
 
 test('getUserGroups hydrates filtered counts in the membership relation load', async () => {
+    const originalUserFindUnique = prisma.user.findUnique;
     const originalMembershipFindMany = prisma.groupMember.findMany;
     const originalMembershipGroupBy = prisma.groupMember.groupBy;
     const originalGroupFindMany = prisma.group.findMany;
     let membershipQuery: any;
 
     try {
+        (prisma.user as any).findUnique = async () => ({ status: 'ACTIVE', groupPrivacy: 'Public', isPrivate: false, mediaPrivacyTarget: null });
         (prisma.groupMember as any).findMany = async (args: any) => {
             membershipQuery = args;
             return [
@@ -77,13 +79,13 @@ test('getUserGroups hydrates filtered counts in the membership relation load', a
                     groupId: 'group-1',
                     role: 'Member',
                     status: 'JOINED',
-                    group: { ...groupRecord('group-1', 'One'), _count: { members: 8, targetedPosts: 5 } }
+                    group: { ...groupRecord('group-1', 'One'), members: [{ role: 'Member', status: 'JOINED' }], _count: { members: 8, targetedPosts: 5 } }
                 },
                 {
                     groupId: 'group-2',
                     role: 'Admin',
                     status: 'JOINED',
-                    group: { ...groupRecord('group-2', 'Two'), _count: { members: 3, targetedPosts: 2 } }
+                    group: { ...groupRecord('group-2', 'Two'), members: [{ role: 'Admin', status: 'JOINED' }], _count: { members: 3, targetedPosts: 2 } }
                 }
             ];
         };
@@ -107,6 +109,7 @@ test('getUserGroups hydrates filtered counts in the membership relation load', a
         ]);
         assert.equal(state.body.every((group: any) => !('_count' in group)), true);
     } finally {
+        (prisma.user as any).findUnique = originalUserFindUnique;
         (prisma.groupMember as any).findMany = originalMembershipFindMany;
         (prisma.groupMember as any).groupBy = originalMembershipGroupBy;
         (prisma.group as any).findMany = originalGroupFindMany;

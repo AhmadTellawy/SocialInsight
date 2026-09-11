@@ -25,6 +25,7 @@ interface ShareSheetProps {
   userProfile?: UserProfile;
   onAuthorClick?: (author: { name: string; avatar: string }) => void;
   sourceSurface?: string;
+  positionInFeed?: number;
   initialStep?: 'menu' | 'contacts' | 'feed' | 'repost-editor';
 }
 
@@ -53,7 +54,7 @@ const waitForCaptureAssets = async (root: HTMLElement, timeoutMs = 5000): Promis
   await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
 };
 
-export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShareToFeed, userProfile, sourceSurface = 'FEED', initialStep = 'menu' }) => {
+export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShareToFeed, userProfile, sourceSurface = 'FEED', positionInFeed, initialStep = 'menu' }) => {
   const { t } = useTranslation();
   const [step, setStep] = useState<'menu' | 'contacts' | 'feed' | 'repost-editor'>(initialStep);
   const [sentTo, setSentTo] = useState<string[]>([]);
@@ -77,21 +78,18 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
     setIsReposting(true);
     await new Promise(resolve => setTimeout(resolve, 600));
     onShareToFeed(survey, repostCaption);
-    Analytics.track({
-      event_type: 'SHARE_OR_COPY_LINK',
-      post_id: survey.id,
-      method: 'REPOST',
-      actor_user_id: userProfile?.id,
-      source_surface: sourceSurface
-    });
     setIsReposting(false);
     setStep('feed');
     setTimeout(() => onClose(), 1200);
   };
 
+  const recordShare = (method: 'COPY_LINK' | 'NATIVE_SHARE') => {
+    Analytics.track({ event_type: 'SHARE_OR_COPY_LINK', post_id: survey.id, method, source_surface: sourceSurface, ...(sourceSurface === 'FEED' ? { position_in_feed: positionInFeed } : {}) });
+  };
   const handleCopyLink = async () => {
     try {
       await navigator.clipboard.writeText(postUrl);
+      recordShare('COPY_LINK');
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
@@ -136,10 +134,10 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
       const blob = await new Promise<Blob | null>((resolve) => outputCanvas.toBlob(resolve, 'image/png', 1.0));
 
       if (blob && navigator.share) {
-        const file = new File([blob], `SocialInsight_${shareCardModel.badge}.png`, { type: 'image/png' });
+        const file = new File([blob], `Opiniup_${shareCardModel.badge}.png`, { type: 'image/png' });
 
         const shareData: ShareData = {
-          title: `SocialInsight - ${survey.title}`,
+          title: `Opiniup - ${survey.title}`,
           text: shareText,
           url: postUrl
         };
@@ -152,44 +150,43 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
 
         try {
           await navigator.share(shareData);
+          recordShare('NATIVE_SHARE');
           onClose();
         } catch (shareError) {
+          if ((shareError as { name?: string })?.name === 'AbortError') return;
           console.warn('Share error:', shareError);
           await navigator.share({
-            title: `SocialInsight - ${survey.title}`,
+            title: `Opiniup - ${survey.title}`,
             text: shareText,
             url: postUrl
           });
+          recordShare('NATIVE_SHARE');
           onClose();
         }
       } else if (blob) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `socialinsight-post.png`;
+        a.download = `opiniup-post.png`;
         a.click();
         URL.revokeObjectURL(url);
-        handleCopyLink();
+        await handleCopyLink();
       }
     } catch (err) {
+      if ((err as { name?: string })?.name === 'AbortError') return;
       console.error('Share failure:', err);
       if (navigator.share) {
-        await navigator.share({
-          title: `SocialInsight`,
+        try { await navigator.share({
+          title: `Opiniup`,
           text: shareText,
           url: postUrl
         });
-        onClose();
+        recordShare('NATIVE_SHARE');
+        onClose(); } catch { /* Cancelled or unavailable: no success event. */ }
       }
     } finally {
       setIsGeneratingImage(false);
-      Analytics.track({
-        event_type: 'SHARE_OR_COPY_LINK',
-        post_id: survey.id,
-        method: 'SHARE_SHEET',
-        actor_user_id: userProfile?.id,
-        source_surface: sourceSurface
-      });
+
     }
   };
 

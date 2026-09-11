@@ -77,6 +77,7 @@ export interface PeopleTag {
 }
 
 export interface MediaDraft {
+  serverPrepared?: boolean;
   clientId: string;
   file: File | null;
   previewUrl: string;
@@ -109,6 +110,7 @@ export interface UserProfile {
   handle: string;
   avatar: string;
   avatarMediaId?: string;
+  hasLegacyAvatar?: boolean;
   avatarMedia?: MediaPresentation;
   coverMediaId?: string | null;
   coverMedia?: MediaPresentation | null;
@@ -116,7 +118,8 @@ export interface UserProfile {
   bio: string;
   location: string;
   website: string;
-  email: string;
+  email: string | null;
+  emailVerifiedAt?: string | null;
   phone: string;
   language: string;
   birthday?: string | null;
@@ -124,8 +127,13 @@ export interface UserProfile {
   updatedAt?: string;
   country?: string;
   isPrivate?: boolean;
+  mediaPrivacyTarget?: boolean | null;
   isFollowing?: boolean;
   groupPrivacy?: 'Public' | 'Followers' | 'Off';
+  searchVisibility?: boolean;
+  allowSharing?: boolean;
+  groupInvites?: boolean;
+  theme?: 'system' | 'light' | 'dark';
   peopleTagPermission?: 'EVERYONE' | 'FOLLOWING' | 'NO_ONE';
   bioMentions?: MentionReference[];
   followStatus?: 'ACTIVE' | 'PENDING' | 'REJECTED' | 'NONE';
@@ -333,7 +341,7 @@ export interface Survey {
   media?: MediaPresentation[];
   mediaAssetIds?: string[];
   mediaAspectRatio?: number;
-  targetAudience?: 'Public' | 'Followers' | 'Groups' | 'Custom Audience' | 'Custom Domain';
+  targetAudience?: 'Public' | 'Followers' | 'Groups' | 'ProfileAndGroups' | 'Custom Audience' | 'Custom Domain';
   targetGroups?: string[]; // IDs of groups if 'Groups' is selected
   visibility?: 'PUBLIC' | 'PRIVATE' | string;
 

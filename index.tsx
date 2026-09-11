@@ -4,6 +4,7 @@ import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import App from './App';
 import { registerSW } from 'virtual:pwa-register';
 import './i18n';
+import './styles/theme.css';
 
 // Register the PWA service worker
 registerSW({ 

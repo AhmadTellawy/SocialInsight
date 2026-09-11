@@ -1,0 +1,28 @@
+name: HEIF active conversion shutdown
+on:
+  push:
+    branches: [codex/heif-linux-validation]
+permissions:
+  contents: read
+jobs:
+  active-shutdown:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Read exact public source without stored credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git init .
+          git remote add origin https://github.com/AhmadTellawy/SocialInsight.git
+          git fetch --depth 1 origin "$GITHUB_SHA"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Build unchanged pinned runtime
+        run: docker build --progress=plain -t si-heif-confined heif-converter
+      - name: Signal default supervisor during one actual camera conversion
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo "$(command -v node)" tests/media-native/linux-active-shutdown.mjs "$GITHUB_SHA"

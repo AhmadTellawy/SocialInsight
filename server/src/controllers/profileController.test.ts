@@ -81,7 +81,7 @@ test('public profile DTO never exposes DOB/contact fields and hides private link
     assert.deepEqual(state.body.profileLinks, []);
     assert.equal(state.body.coverMedia, null);
     assert.equal(demographicReads, 0);
-    assert.deepEqual(state.body.demographics, {});
+    assert.equal('demographics' in state.body, false);
     for (const key of ['birthday', 'email', 'phone', 'passwordHash', 'mediaPrivacyTarget']) {
       assert.equal(Object.prototype.hasOwnProperty.call(state.body, key), false, key);
     }
@@ -220,7 +220,7 @@ test('profile updates reject a different JWT owner before touching Prisma', asyn
   }
 });
 
-test('DOB and editable demographics update atomically while client ageGroup is ignored', async () => {
+test('versioned DOB and editable demographics update atomically while age is server-derived', async () => {
   const originals = {
     userFindUnique: prisma.user.findUnique,
     userFindUniqueOrThrow: prisma.user.findUniqueOrThrow,
@@ -244,8 +244,11 @@ test('DOB and editable demographics update atomically while client ageGroup is i
     });
     (prisma.userDemographics as any).upsert = async () => { outsideTransactionUpserts += 1; };
     (prisma as any).$transaction = async (callback: (tx: any) => Promise<unknown>) => callback({
+      $executeRaw: async () => 1,
+      authSession: { findFirst: async () => ({ id: 'session', createdAt: new Date() }) },
       user: {
         update: async () => ({}),
+        updateMany: async () => ({ count: 1 }),
         findUniqueOrThrow: async () => ({ bio: 'Bio' })
       },
       userDemographics: {
@@ -265,10 +268,12 @@ test('DOB and editable demographics update atomically while client ageGroup is i
     const { response, state } = createResponse();
     await updateUser({
       params: { id: 'profile-1' },
-      user: { userId: 'profile-1' },
+      user: { userId: 'profile-1', authMode: 'session' },
+      authSession: { id: 'session', userId: 'profile-1' },
       body: {
         birthday: '1990-09-01',
-        demographics: { gender: 'Female', ageGroup: '18-24' }
+        expectedUpdatedAt: '2026-08-31T00:00:00.000Z',
+        demographics: { gender: 'Female' }
       }
     } as any, response);
 
@@ -288,5 +293,45 @@ test('DOB and editable demographics update atomically while client ageGroup is i
     (prisma.userDemographics as any).upsert = originals.globalDemographicsUpsert;
     (prisma.post as any).count = originals.postCount;
     (prisma.response as any).count = originals.responseCount;
+  }
+});
+
+test('username rename requires fresh reauthentication, reserves aliases and preserves the user id', async () => {
+  const original = { find: prisma.user.findUnique, final: prisma.user.findUniqueOrThrow, transaction: prisma.$transaction, posts: prisma.post.count, responses: prisma.response.count };
+  try {
+    for (const recent of [false, true]) {
+      let current: any = { ...profileRecord(false), birthday: null, emailVerifiedAt: new Date() };
+      const claims = new Map<string, string>();
+      let queued: any[] = [];
+      (prisma.user as any).findUnique = async () => current;
+      (prisma.user as any).findUniqueOrThrow = async () => current;
+      (prisma.post as any).count = async () => 0;
+      (prisma.response as any).count = async () => 0;
+      (prisma as any).$transaction = async (work: any) => work({
+        $executeRaw: async () => {},
+        authSession: { findFirst: async () => ({id: 'session', createdAt: new Date(recent ? Date.now() : 0)}) },
+        handleAlias: {findUnique: async ({where}: any) => claims.has(where.handle) ? {userId: claims.get(where.handle)} : null, create: async ({data}: any) => { claims.set(data.handle, data.userId); }},
+        user: {findFirst: async () => null, updateMany: async ({data}: any) => { current = {...current,...data}; return {count: 1}; }, findUniqueOrThrow: async () => current},
+        mention: {findMany: async () => []},
+        securityEmailOutbox: {createMany: async ({data}: any) => { queued = data; return {count: data.length}; }}
+      });
+      const {response,state} = createResponse();
+      await updateUser({params:{id:'profile-1'}, user:{userId:'profile-1',authMode:'session'}, authSession:{id:'session',userId:'profile-1'}, body:{handle:'New.Name',expectedUpdatedAt:'2026-08-31T00:00:00.000Z'}} as any,response);
+      assert.equal(state.statusCode, recent ? 200 : 401);
+      assert.equal(claims.size, recent ? 2 : 0);
+      if (recent) {
+        assert.equal(state.body.id, 'profile-1');
+        assert.equal(state.body.handle, 'new.name');
+        assert.equal(claims.get('profile_user'), 'profile-1');
+        assert.equal(claims.get('new.name'), 'profile-1');
+        assert.equal(queued[0].kind, 'USERNAME_CHANGED');
+      } else assert.equal(state.body.code, 'REAUTHENTICATION_REQUIRED');
+    }
+  } finally {
+    (prisma.user as any).findUnique = original.find;
+    (prisma.user as any).findUniqueOrThrow = original.final;
+    (prisma as any).$transaction = original.transaction;
+    (prisma.post as any).count = original.posts;
+    (prisma.response as any).count = original.responses;
   }
 });

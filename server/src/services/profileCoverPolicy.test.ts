@@ -18,6 +18,7 @@ test('restricted profile covers are readable only by the owner or an active unbl
     (prisma.mediaAsset as any).findUnique = async () => ({
       id: 'cover-1',
       ownerId: 'owner-1',
+      owner: { status: 'ACTIVE' },
       purpose: 'PROFILE_COVER',
       status: 'ATTACHED',
       accessScope: 'RESTRICTED',
@@ -39,7 +40,7 @@ test('restricted profile covers are readable only by the owner or an active unbl
       questionFor: null,
       optionFor: null
     });
-    (prisma.user as any).findUnique = async () => ({ isPrivate: true, mediaPrivacyTarget: null });
+    (prisma.user as any).findUnique = async () => ({ status: 'ACTIVE', isPrivate: true, mediaPrivacyTarget: null });
     (prisma.userBlock as any).findFirst = async () => blocked ? ({ blockerId: 'owner-1' }) : null;
     (prisma.follow as any).findUnique = async () => activeFollower ? ({ status: 'ACTIVE' }) : null;
     setMediaStorageForTests({
@@ -77,5 +78,19 @@ test('restricted profile covers are readable only by the owner or an active unbl
     (prisma.userBlock as any).findFirst = originals.blockFindFirst;
     (prisma.follow as any).findUnique = originals.followFindUnique;
     setMediaStorageForTests(undefined);
+  }
+});
+
+test('an attached PUBLIC post asset cannot mint a fresh public URL during account restriction', async () => {
+  const originals = { media: prisma.mediaAsset.findUnique, post: prisma.post.findUnique, user: prisma.user.findUnique, follow: prisma.follow.findUnique };
+  try {
+    (prisma.mediaAsset as any).findUnique = async () => ({ id: 'asset', ownerId: 'owner', owner: { status: 'ACTIVE' }, status: 'ATTACHED', accessScope: 'PUBLIC', aspectRatio: 1, coverFor: null, avatarFor: null, postAttachment: { post: { id: 'post', authorId: 'owner', groupId: null, targetedGroups: [] } }, variants: [] });
+    (prisma.post as any).findUnique = async () => ({ id: 'post', status: 'PUBLISHED', isDeleted: false, authorId: 'owner', author: { status: 'ACTIVE' }, targetAudience: 'Public', group: null, groupId: null, targetedGroups: [] });
+    (prisma.user as any).findUnique = async () => ({ status: 'ACTIVE', isPrivate: false, mediaPrivacyTarget: true });
+    (prisma.follow as any).findUnique = async () => null;
+    await assert.rejects(() => getMediaReadPresentation('asset'), (error: unknown) => error instanceof MediaValidationError && error.statusCode === 404);
+  } finally {
+    (prisma.mediaAsset as any).findUnique = originals.media; (prisma.post as any).findUnique = originals.post;
+    (prisma.user as any).findUnique = originals.user; (prisma.follow as any).findUnique = originals.follow;
   }
 });

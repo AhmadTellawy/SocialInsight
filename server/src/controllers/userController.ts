@@ -2,6 +2,12 @@ import { Request, Response } from 'express';
 import { PeopleTagPermission, Prisma } from '@prisma/client';
 import prisma from '../prisma';
 import { PrivacyService } from '../services/privacyService';
+import { parseSettingsChanges, requireProfileVersion, validateDemographics } from '../utils/accountSettingsValidation';
+import { protectDistribution } from '../services/aggregateResults';
+import { lockAccountSecurity, AccountSecurityError } from '../services/mfaService';
+import { assertActiveAccountSession } from '../services/accountSecurityPolicy';
+import { HandleError, normalizeHandle, reserveRenamedHandle, resolveHandleUserId } from '../services/handleService';
+import { enqueueSecurityNotification } from '../services/securityNotificationService';
 import { notify } from '../services/notificationService';
 import { processBase64Image } from '../utils/imageProcessor';
 import { GroupPermissionService } from '../services/groupPermissionService';
@@ -11,6 +17,8 @@ import {
     getMediaReadPresentation,
     getStoredMediaPresentation,
     PUBLIC_AVATAR_MEDIA_SELECT,
+    PUBLIC_USER_CARD_SELECT,
+    serializePublicUserCard,
     PUBLIC_GROUP_MEDIA_INCLUDE,
     prepareMediaAttachments,
     rollbackPreparedMedia,
@@ -20,6 +28,7 @@ import {
 } from '../services/mediaService';
 import type { PreparedMediaAttachment } from '../services/mediaService';
 import { requestMediaPrivacyTransition } from '../services/mediaPrivacyTransitionService';
+import { acceptPendingPublicFollowers } from '../services/publicFollowAcceptanceService';
 import { MediaValidationError } from '../services/mediaProcessor';
 import { withNotificationDeepLink } from '../utils/notificationTarget';
 import { buildMentionSearchWhere, MENTION_SUGGESTION_LIMIT, MENTION_USER_SELECT } from '../utils/mentionSearch';
@@ -59,6 +68,7 @@ const SAFE_USER_SELECT = {
     language: true,
     status: true
 };
+const PRIVATE_SETTINGS_SELECT = { searchVisibility: true, allowSharing: true, groupInvites: true, theme: true } as const;
 
 const logUserRequestFailure = (req: Request, event: string, error: unknown): void => {
     const errorCode = typeof error === 'object' && error !== null && 'code' in error
@@ -127,10 +137,12 @@ const boundedPositiveInteger = (value: unknown, fallback: number, maximum: numbe
 export const getUsers = async (req: Request, res: Response) => {
     try {
         const users = await prisma.user.findMany({
+            where: PrivacyService.getDiscoverableUserWhere(req.user?.userId),
             take: 20,
-            select: SAFE_USER_SELECT
+            orderBy: [{ followersCount: 'desc' }, { id: 'asc' }],
+            select: PUBLIC_USER_CARD_SELECT
         });
-        res.json(users.map((user) => serializeUserMediaRecord(user)));
+        res.json(users.map(serializePublicUserCard));
     } catch (error) {
         logUserRequestFailure(req, 'users_list_failed', error);
         res.status(500).json({ error: 'Failed to fetch users' });
@@ -177,7 +189,7 @@ export const searchUsers = async (req: Request, res: Response) => {
             select: MENTION_USER_SELECT
         });
 
-        res.json(users.map((user) => serializeUserMediaRecord(user)));
+        res.json(users.map(serializePublicUserCard));
     } catch (error) {
         logUserRequestFailure(req, 'users_search_failed', error);
         res.status(500).json({ error: 'Failed to search users' });
@@ -193,14 +205,7 @@ const PROFILE_READ_SELECT = {
     profileMentions: ACTIVE_MENTION_REFERENCE_INCLUDE
 } as const;
 
-type EditableDemographics = {
-    gender?: string;
-    maritalStatus?: string;
-    educationLevel?: string;
-    employmentType?: string;
-    industry?: string;
-    employmentSector?: string;
-};
+type EditableDemographics = Record<string, string | null>;
 
 const parseEditableDemographics = (value: unknown): EditableDemographics | undefined => {
     if (value === undefined || value === null) return undefined;
@@ -217,27 +222,13 @@ const parseEditableDemographics = (value: unknown): EditableDemographics | undef
         throw new ProfileValidationError('INVALID_DEMOGRAPHICS', 'Demographics must be an object.');
     }
 
-    const source = parsed as Record<string, unknown>;
-    const stringField = (...keys: string[]): string | undefined => {
-        for (const key of keys) {
-            if (typeof source[key] === 'string') return source[key] as string;
-        }
-        return undefined;
-    };
-
-    // ageGroup is deliberately excluded: it is a cache derived from the private DOB.
-    return {
-        gender: stringField('gender'),
-        maritalStatus: stringField('maritalStatus'),
-        educationLevel: stringField('educationLevel', 'education'),
-        employmentType: stringField('employmentType', 'employment'),
-        industry: stringField('industry'),
-        employmentSector: stringField('employmentSector', 'sector')
-    };
+    return validateDemographics(parsed as Record<string, unknown>);
 };
 
 const sendPublicProfile = async (req: Request, res: Response, user: any): Promise<void> => {
-    const viewerId = req.user?.userId;
+    const visitorPreview = req.query?.viewAs === 'visitor' || req.query?.view === 'visitor';
+    const viewerId = visitorPreview ? undefined : req.user?.userId;
+    if (user.status !== 'ACTIVE') { res.status(404).json({ error: 'User not found' }); return; }
     let followStatus = 'NONE';
     let isBlocked = false;
     if (viewerId && viewerId !== user.id) {
@@ -280,17 +271,19 @@ const sendPublicProfile = async (req: Request, res: Response, user: any): Promis
         canViewPrivateDetails ? profileCoverForViewer(user.coverMediaId, viewerId) : Promise.resolve(null)
     ]);
     const serializedUser = publicUserPayload(serializeUserMediaRecord(user) as any);
+    res.setHeader('Cache-Control', 'private, no-store');
     res.json({
         ...serializedUser,
+        ...(canViewPrivateDetails ? {} : { bio: '', location: null, website: null, country: null, avatar: '', avatarMedia: null, avatarMediaId: null }),
         coverMediaId: coverMedia?.id || null,
         coverMedia,
         profileLinks,
-        bioMentions: serializeMentionReferences(user.profileMentions),
+        bioMentions: canViewPrivateDetails ? serializeMentionReferences(user.profileMentions) : [],
+        viewAs: visitorPreview ? 'visitor' : undefined,
         followStatus,
         isFollowing: followStatus === 'ACTIVE',
         // Demographics are private survey attributes used only for aggregate
         // analysis. Never attach them to a publicly addressable user DTO.
-        demographics: {},
         stats: {
             followers: user.followersCount,
             following: user.followingCount,
@@ -313,8 +306,8 @@ export const getUser = async (req: Request, res: Response) => {
 
 export const getUserByHandle = async (req: Request, res: Response) => {
     try {
-        const cleanHandle = (req.params.handle as string).replace(/^@/, '');
-        const user = await prisma.user.findUnique({ where: { handle: cleanHandle }, select: PROFILE_READ_SELECT });
+        const userId = await resolveHandleUserId(prisma, req.params.handle);
+        const user = userId ? await prisma.user.findUnique({ where: { id: userId }, select: PROFILE_READ_SELECT }) : null;
         if (!user) return res.status(404).json({ error: 'User not found' });
         await sendPublicProfile(req, res, user);
     } catch (error) {
@@ -329,6 +322,7 @@ export const getMe = async (req: Request, res: Response) => {
             where: { id: req.user!.userId },
             select: {
                 ...PROFILE_READ_SELECT,
+                ...PRIVATE_SETTINGS_SELECT,
                 profileLinks: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], select: PROFILE_LINK_SELECT }
             }
         });
@@ -343,6 +337,8 @@ export const getMe = async (req: Request, res: Response) => {
         res.setHeader('Cache-Control', 'private, no-store');
         res.json({
             ...serializedUser,
+            hasLegacyAvatar: Boolean(user.avatar && !user.avatarMediaId),
+            mediaPrivacyTarget: user.mediaPrivacyTarget,
             birthday: formatDateOnly(user.birthday),
             coverMediaId: coverMedia?.id || null,
             coverMedia,
@@ -377,6 +373,7 @@ export const updateUser = async (req: Request, res: Response) => {
             where: { id },
             select: {
                 avatar: true,
+                handle: true,
                 avatarMediaId: true,
                 coverMediaId: true,
                 birthday: true,
@@ -386,6 +383,8 @@ export const updateUser = async (req: Request, res: Response) => {
             }
         });
         if (!currentUser) return res.status(404).json({ error: 'User not found' });
+        const nextHandle = data.handle === undefined || data.handle === currentUser.handle ? currentUser.handle : normalizeHandle(data.handle);
+        const handleChanged = nextHandle !== currentUser.handle;
 
         const expectedUpdatedAtValue = data.expectedUpdatedAt ?? data.updatedAt;
         let expectedUpdatedAt: Date | undefined;
@@ -395,9 +394,10 @@ export const updateUser = async (req: Request, res: Response) => {
                 throw new ProfileValidationError('INVALID_PROFILE_VERSION', 'The profile version is invalid.');
             }
         }
-        if (data.coverMediaId !== undefined && !expectedUpdatedAt) {
-            throw new ProfileValidationError('PROFILE_VERSION_REQUIRED', 'The current profile version is required to change the cover photo.', 428);
+        if (!expectedUpdatedAt) {
+            throw new ProfileValidationError('PROFILE_VERSION_REQUIRED', 'The current profile version is required.', 428);
         }
+        if (data.isPrivate !== undefined && typeof data.isPrivate !== 'boolean') throw new ProfileValidationError('INVALID_SETTINGS', 'Account privacy must be a boolean.');
 
         const hasBirthday = Object.prototype.hasOwnProperty.call(data, 'birthday') || Object.prototype.hasOwnProperty.call(data, 'dateOfBirth');
         if (data.birthday !== undefined && data.dateOfBirth !== undefined && data.birthday !== data.dateOfBirth) {
@@ -413,10 +413,14 @@ export const updateUser = async (req: Request, res: Response) => {
         const authoritativeBirthday = hasBirthday ? parsedBirthday : currentUser.birthday;
         const calculatedAgeGroup = calculateAgeGroupFromDate(authoritativeBirthday) || null;
         const editableDemographics = parseEditableDemographics(data.demographics);
+        if (editableDemographics?.employmentType === 'Unemployed' || editableDemographics?.employmentType === 'Homemaker') {
+            editableDemographics.industry = 'Not Applicable';
+            editableDemographics.employmentSector = 'Not Applicable';
+        }
         const shouldPersistDemographics = editableDemographics !== undefined || hasBirthday || Boolean(authoritativeBirthday);
 
         if (data.avatar && data.avatarMediaId === undefined) {
-            data.avatar = await processBase64Image(data.avatar, currentUser?.avatar);
+            throw new ProfileValidationError('MEDIA_UPLOAD_REQUIRED', 'Use the secure profile image uploader to replace your avatar.');
         }
 
         const allowedFields = ['name', 'handle', 'avatar', 'bio', 'location', 'website', 'language', 'country', 'groupPrivacy'];
@@ -424,6 +428,18 @@ export const updateUser = async (req: Request, res: Response) => {
         allowedFields.forEach(field => {
             if (data[field] !== undefined) updateData[field] = data[field];
         });
+        for (const key of ['name', 'handle', 'bio', 'location', 'website', 'country']) {
+            if (updateData[key] === undefined) continue;
+            const maximum = key === 'bio' ? 1000 : key === 'website' ? 2048 : key === 'handle' ? 30 : 100;
+            if (updateData[key] !== null && (typeof updateData[key] !== 'string' || updateData[key].length > maximum)) throw new ProfileValidationError('INVALID_PROFILE_FIELD', `Invalid ${key}.`);
+        }
+        if (updateData.handle !== undefined) updateData.handle = nextHandle;
+        if (updateData.name !== undefined && (typeof updateData.name !== 'string' || !updateData.name.trim())) throw new ProfileValidationError('INVALID_NAME', 'Name is required.');
+        if (updateData.website) {
+            try { const url = new URL(updateData.website); if (!['https:', 'http:'].includes(url.protocol)) throw new Error(); }
+            catch { throw new ProfileValidationError('INVALID_WEBSITE', 'Website must be an HTTP or HTTPS URL.'); }
+        }
+        for (const key of ['language', 'groupPrivacy']) if (updateData[key] !== undefined) parseSettingsChanges({ [key]: updateData[key] });
         if (hasBirthday) updateData.birthday = parsedBirthday;
         updateData.updatedAt = new Date();
         if (data.peopleTagPermission !== undefined) {
@@ -440,15 +456,18 @@ export const updateUser = async (req: Request, res: Response) => {
         try {
             if (data.avatarMediaId !== undefined) {
                 oldAvatarMediaId = currentUser?.avatarMediaId;
-                if (data.avatarMediaId === null) {
+                if (data.avatarMediaId !== null && data.avatarMediaId === currentUser.avatarMediaId) {
+                    // An unchanged persisted image does not need reattachment.
+                } else if (data.avatarMediaId === null) {
                     updateData.avatarMediaId = null;
                     updateData.avatar = null;
                 } else {
-                    avatarPrepared = await prepareMediaAttachments(id, [{ id: data.avatarMediaId, purpose: 'PROFILE_AVATAR' }], 'PUBLIC');
+                    const targetIsPrivate = typeof data.isPrivate === 'boolean' ? data.isPrivate : (currentUser.mediaPrivacyTarget ?? currentUser.isPrivate);
+                    avatarPrepared = await prepareMediaAttachments(id, [{ id: data.avatarMediaId, purpose: 'PROFILE_AVATAR' }], targetIsPrivate ? 'RESTRICTED' : 'PUBLIC');
                     const presentation = await getStoredMediaPresentation(data.avatarMediaId);
-                    if (!presentation?.src) throw new MediaValidationError('MEDIA_NOT_READY', 'Avatar variants are unavailable.', 409);
+                    if (!presentation) throw new MediaValidationError('MEDIA_NOT_READY', 'Avatar variants are unavailable.', 409);
                     updateData.avatarMediaId = data.avatarMediaId;
-                    updateData.avatar = presentation.src;
+                    updateData.avatar = presentation.src || null;
                 }
             }
 
@@ -478,6 +497,9 @@ export const updateUser = async (req: Request, res: Response) => {
             }
 
             await prisma.$transaction(async (tx) => {
+                await lockAccountSecurity(tx, id);
+                await assertActiveAccountSession(tx, req, handleChanged);
+                if (handleChanged) await reserveRenamedHandle(tx, id, currentUser.handle, nextHandle);
                 if (expectedUpdatedAt) {
                     const versionedUpdate = await tx.user.updateMany({
                         where: { id, updatedAt: expectedUpdatedAt },
@@ -490,6 +512,7 @@ export const updateUser = async (req: Request, res: Response) => {
                     await tx.user.update({ where: { id }, data: updateData });
                 }
                 const updated = await tx.user.findUniqueOrThrow({ where: { id } });
+                if (handleChanged && updated.email && updated.emailVerifiedAt) await enqueueSecurityNotification(tx, id, 'USERNAME_CHANGED', [updated.email]);
                 await reconcileProfileMentions(tx, {
                     profileUserId: id,
                     actorUserId: id,
@@ -504,6 +527,9 @@ export const updateUser = async (req: Request, res: Response) => {
                     });
                 }
                 if (avatarPrepared) await commitPreparedMedia(tx, avatarPrepared);
+                if (oldAvatarMediaId && oldAvatarMediaId !== data.avatarMediaId) {
+                    await tx.mediaAsset.updateMany({ where: { id: oldAvatarMediaId, ownerId: id, status: 'ATTACHED' }, data: { status: 'PENDING_DELETE' } });
+                }
                 if (coverPrepared) await commitPreparedMedia(tx, coverPrepared);
                 if (oldCoverMediaId && oldCoverMediaId !== data.coverMediaId) {
                     await tx.mediaAsset.updateMany({
@@ -526,34 +552,13 @@ export const updateUser = async (req: Request, res: Response) => {
         }
 
         if (typeof data.isPrivate === 'boolean') {
-            await requestMediaPrivacyTransition(id, data.isPrivate);
+            await requestMediaPrivacyTransition(id, data.isPrivate, tx => assertActiveAccountSession(tx, req, false));
         }
 
-        // Auto-accept pending requests when switching to Public
+        // Preserve acceptance behavior while serializing against blocking and
+        // concurrent request cancellation, so counters reflect actual transitions.
         if (data.isPrivate === false) {
-            const pendingRequests = await prisma.follow.findMany({
-                where: { followingId: id as string, status: 'PENDING' }
-            });
-
-            if (pendingRequests.length > 0) {
-                await prisma.follow.updateMany({
-                    where: { followingId: id as string, status: 'PENDING' },
-                    data: { status: 'ACTIVE', approvedAt: new Date() }
-                });
-
-                await prisma.user.update({
-                    where: { id: id as string },
-                    data: { followersCount: { increment: pendingRequests.length } }
-                });
-
-                for (const req of pendingRequests) {
-                    await prisma.user.update({
-                        where: { id: req.followerId },
-                        data: { followingCount: { increment: 1 } }
-                    });
-                    await notify(id as string, req.followerId, 'follow_accept', 'Automatically accepted your follow request', 'profile', id as string);
-                }
-            }
+            await acceptPendingPublicFollowers(id, tx => assertActiveAccountSession(tx, req, false));
         }
 
         const [postsCount, responsesCount] = await Promise.all([
@@ -569,6 +574,7 @@ export const updateUser = async (req: Request, res: Response) => {
             where: { id },
             select: {
                 ...SAFE_USER_SELECT,
+                ...PRIVATE_SETTINGS_SELECT,
                 coverMediaId: true,
                 birthday: true,
                 demographics: true,
@@ -581,6 +587,8 @@ export const updateUser = async (req: Request, res: Response) => {
         res.setHeader('Cache-Control', 'private, no-store');
         res.json({
             ...serializedUser,
+            hasLegacyAvatar: Boolean(user.avatar && !user.avatarMediaId),
+            mediaPrivacyTarget: user.mediaPrivacyTarget,
             birthday: formatDateOnly(user.birthday),
             coverMediaId: coverMedia?.id || null,
             coverMedia,
@@ -608,6 +616,9 @@ export const updateUser = async (req: Request, res: Response) => {
         if (error instanceof Error && error.message.includes('privacy transition')) {
             return res.status(409).json({ error: error.message, code: 'PRIVACY_TRANSITION_IN_PROGRESS' });
         }
+        if (error instanceof HandleError) return res.status(error.status).json({ error: 'Username is invalid or unavailable.', code: error.code });
+        if ((error as any)?.code === 'P2002' && data.handle !== undefined) return res.status(409).json({ error: 'Username is unavailable.', code: 'HANDLE_UNAVAILABLE' });
+        if (error instanceof AccountSecurityError) return res.status(error.status).json({ error: 'Sign in again to save changes.', code: error.code });
         logUserRequestFailure(req, 'profile_update_failed', error);
         res.status(500).json({ error: 'Failed to update user' });
     }
@@ -616,6 +627,7 @@ export const updateUser = async (req: Request, res: Response) => {
 export const getUserAnalytics = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const currentUserId = req.user?.userId;
+    if (currentUserId !== id) { return res.status(403).json({ error: 'Detailed profile analytics are available only to the account owner.' }); }
     try {
         if (currentUserId) {
             const canView = await PrivacyService.canViewUserContent(currentUserId, id);
@@ -631,16 +643,10 @@ export const getUserAnalytics = async (req: Request, res: Response) => {
             }
         }
         const rows = await prisma.$queryRaw<Array<{
-            type: string | null;
-            country: string | null;
-            gender: string | null;
-            ageGroup: string | null;
-            count: bigint;
+            dimension: string; category: string; count: bigint; participants: bigint;
         }>>(Prisma.sql`
-            SELECT
-                post."type",
-                viewer."country",
-                demographics."gender",
+          WITH responses AS (
+            SELECT post."type", response."userId", viewer."country", demographics."gender",
                 CASE
                     WHEN viewer."birthday" IS NULL THEN NULL
                     WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) < 18 THEN 'Under 18'
@@ -649,8 +655,7 @@ export const getUserAnalytics = async (req: Request, res: Response) => {
                     WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) <= 44 THEN '35-44'
                     WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) <= 54 THEN '45-54'
                     ELSE '55+'
-                END AS "ageGroup",
-                COUNT(*)::bigint AS "count"
+                END AS "ageGroup"
             FROM "Response" response
             INNER JOIN "Post" post ON post."id" = response."postId"
             LEFT JOIN "users" viewer ON viewer."id" = response."userId"
@@ -659,7 +664,17 @@ export const getUserAnalytics = async (req: Request, res: Response) => {
               AND post."isDeleted" = FALSE
               AND post."status" = 'PUBLISHED'
               AND post."sharedFromId" IS NULL
-            GROUP BY 1, 2, 3, 4
+          )
+          SELECT dimensions.dimension, dimensions.category,
+                 COUNT(*)::bigint AS count, COUNT(DISTINCT responses."userId")::bigint AS participants
+          FROM responses
+          CROSS JOIN LATERAL (VALUES
+            ('type', COALESCE(responses.type, 'Survey')),
+            ('country', COALESCE(NULLIF(responses.country, ''), 'Unknown')),
+            ('gender', COALESCE(NULLIF(responses.gender, ''), 'Unknown')),
+            ('age', COALESCE(responses."ageGroup", 'Unknown'))
+          ) AS dimensions(dimension, category)
+          GROUP BY dimensions.dimension, dimensions.category
         `);
 
         let totalResponses = 0;
@@ -667,21 +682,30 @@ export const getUserAnalytics = async (req: Request, res: Response) => {
         const byCountry: Record<string, number> = {};
         const byGender: Record<string, number> = {};
         const byAge: Record<string, number> = {};
+        const support: Record<string, Record<string, number>> = { country: {}, gender: {}, age: {} };
 
         ['Poll', 'Survey', 'Quiz', 'Challenge'].forEach(k => byType[k] = 0);
         ['Male', 'Female'].forEach(k => byGender[k] = 0);
 
         rows.forEach(row => {
             const count = Number(row.count);
-            const type = row.type || 'Survey';
-            totalResponses += count;
-            byType[type] = (byType[type] || 0) + count;
-            if (row.country) byCountry[row.country] = (byCountry[row.country] || 0) + count;
-            if (row.gender) byGender[row.gender] = (byGender[row.gender] || 0) + count;
-            if (row.ageGroup) byAge[row.ageGroup] = (byAge[row.ageGroup] || 0) + count;
+            if (row.dimension === 'type') {
+                totalResponses += count;
+                byType[row.category] = count;
+            } else {
+                const counts = row.dimension === 'country' ? byCountry : row.dimension === 'gender' ? byGender : byAge;
+                counts[row.category] = count;
+                support[row.dimension][row.category] = Number(row.participants);
+            }
         });
 
-        res.json({ totalResponses, byType, byCountry, byGender, byAge });
+        res.setHeader('Cache-Control', 'private, no-store');
+        const protectPeople = (counts: Record<string, number>, dimension: string) =>
+            Object.entries(counts).some(([category, count]) => count > 0 && (support[dimension][category] || 0) < 5)
+                ? { counts: {}, suppressionReason: 'SMALL_CELLS' as const }
+                : protectDistribution(counts, totalResponses);
+        res.json({ version: 2, totalResponses, byType,
+            byCountry: protectPeople(byCountry, 'country'), byGender: protectPeople(byGender, 'gender'), byAge: protectPeople(byAge, 'age') });
     } catch (error) {
         logUserRequestFailure(req, 'profile_analytics_read_failed', error);
         res.status(500).json({ error: 'Failed to fetch analytics' });
@@ -701,14 +725,14 @@ export const getUserFollowers = async (req: Request, res: Response) => {
         }
 
         const followers = await prisma.follow.findMany({
-            where: { followingId: id as string, status: 'ACTIVE' },
+            where: { followingId: id as string, status: 'ACTIVE', follower: { status: 'ACTIVE', ...(currentUserId ? { NOT: [{ blockedBy: { some: { blockerId: currentUserId } } }, { blocking: { some: { blockedId: currentUserId } } }] } : {}) } },
             take: limit + 1,
             ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
             orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
             include: {
                 follower: {
                     select: {
-                        ...SAFE_USER_SELECT,
+                        ...PUBLIC_USER_CARD_SELECT,
                         following: currentUserId ? {
                             where: { followerId: currentUserId },
                             select: { status: true }
@@ -725,7 +749,7 @@ export const getUserFollowers = async (req: Request, res: Response) => {
         }
 
         const mapped = (followers as any[]).map(f => {
-            const follower = serializeUserMediaRecord(f.follower)!;
+            const follower = serializePublicUserCard(f.follower);
             return {
                 ...follower,
                 followStatus: currentUserId ? (f.follower.following && f.follower.following.length > 0 ? f.follower.following[0].status : 'NONE') : 'NONE'
@@ -752,14 +776,14 @@ export const getUserFollowing = async (req: Request, res: Response) => {
         }
 
         const following = await prisma.follow.findMany({
-            where: { followerId: id as string, status: 'ACTIVE' },
+            where: { followerId: id as string, status: 'ACTIVE', following: { status: 'ACTIVE', ...(currentUserId ? { NOT: [{ blockedBy: { some: { blockerId: currentUserId } } }, { blocking: { some: { blockedId: currentUserId } } }] } : {}) } },
             take: limit + 1,
             ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
             orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
             include: {
                 following: {
                     select: {
-                        ...SAFE_USER_SELECT,
+                        ...PUBLIC_USER_CARD_SELECT,
                         following: currentUserId ? {
                             where: { followerId: currentUserId },
                             select: { status: true }
@@ -776,7 +800,7 @@ export const getUserFollowing = async (req: Request, res: Response) => {
         }
 
         const mapped = (following as any[]).map(f => {
-            const followedUser = serializeUserMediaRecord(f.following)!;
+            const followedUser = serializePublicUserCard(f.following);
             return {
                 ...followedUser,
                 followStatus: currentUserId ? (f.following.following && f.following.following.length > 0 ? f.following.following[0].status : 'NONE') : 'NONE'
@@ -933,66 +957,36 @@ export const markSingleNotificationRead = async (req: Request, res: Response) =>
 };
 
 export const getUserGroups = async (req: Request, res: Response) => {
-    const { id } = req.params;
-    const currentUserId = req.user?.userId;
+    const id = req.params.id as string;
+    const viewerId = req.query?.viewAs === 'visitor' ? undefined : req.user?.userId;
     try {
-        if (currentUserId) {
-            const canView = await PrivacyService.canViewUserContent(currentUserId, id as string);
-            if (!canView) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-        } else {
-            const targetUser = await prisma.user.findUnique({ where: { id: id as string }, select: { isPrivate: true } });
-            if (targetUser?.isPrivate) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
+        const owner = await prisma.user.findUnique({ where: { id }, select: { status: true, groupPrivacy: true } });
+        if (!owner || owner.status !== 'ACTIVE') return res.status(404).json({ error: 'User not found' });
+        if (!(await PrivacyService.canViewUserContent(viewerId, id))) return res.status(403).json({ error: 'Forbidden' });
+        if (viewerId !== id) {
+            if (owner.groupPrivacy === 'Off') return res.json([]);
+            if (owner.groupPrivacy === 'Followers') {
+                const follow = viewerId ? await prisma.follow.findUnique({ where: { followerId_followingId: { followerId: viewerId, followingId: id } }, select: { status: true } }) : null;
+                if (follow?.status !== 'ACTIVE') return res.json([]);
             }
         }
         const memberships = await prisma.groupMember.findMany({
-            where: {
-                userId: id as string,
-                status: MEMBERSHIP_STATUS.JOINED,
-                group: { isDeleted: false }
-            },
-            include: {
-                group: {
-                    include: {
-                        ...PUBLIC_GROUP_MEDIA_INCLUDE,
-                        _count: {
-                            select: {
-                                members: {
-                                    where: { status: MEMBERSHIP_STATUS.JOINED }
-                                },
-                                targetedPosts: {
-                                    where: {
-                                        isDeleted: false,
-                                        status: POST_STATUS.PUBLISHED
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            where: { userId: id, status: MEMBERSHIP_STATUS.JOINED, group: { isDeleted: false,
+                ...(viewerId === id ? {} : { OR: [{ isPublic: true }, ...(viewerId ? [{ members: { some: { userId: viewerId, status: MEMBERSHIP_STATUS.JOINED } } }] : [])] }) } },
+            include: { group: { include: { ...PUBLIC_GROUP_MEDIA_INCLUDE,
+                members: { where: { userId: viewerId || '', status: MEMBERSHIP_STATUS.JOINED }, select: { role: true, status: true } },
+                _count: { select: { members: { where: { status: MEMBERSHIP_STATUS.JOINED } }, targetedPosts: { where: { isDeleted: false, status: POST_STATUS.PUBLISHED } } } }
+            } } }
         });
-
-        const groups = memberships.map((membership) => {
-            const { _count, ...group } = membership.group;
-            return {
-                ...serializeGroupMediaRecord(group),
-                memberCount: _count.members,
-                postsCount: _count.targetedPosts,
-                permissions: GroupPermissionService.calculatePermissions(group, membership.role, membership.status),
-                role: membership.role
-            };
-        });
-
-        res.json(groups);
-    } catch (error) {
-        logUserRequestFailure(req, 'user_groups_read_failed', error);
-        res.status(500).json({ error: 'Failed to fetch user groups' });
-    }
+        res.setHeader('Cache-Control', 'private, no-store');
+        return res.json(memberships.map(membership => {
+            const { _count, members, ...group } = membership.group;
+            const viewerMembership = members[0];
+            return { ...serializeGroupMediaRecord(group), memberCount: _count.members, postsCount: _count.targetedPosts,
+                permissions: GroupPermissionService.calculatePermissions(group, viewerMembership?.role || null, viewerMembership?.status || null),
+                role: viewerMembership?.role || null };
+        }));
+    } catch (error) { logUserRequestFailure(req, 'user_groups_read_failed', error); return res.status(500).json({ error: 'Failed to fetch user groups' }); }
 };
 
 export const getSuggestedUsers = async (req: Request, res: Response) => {
@@ -1037,15 +1031,17 @@ export const getSuggestedUsers = async (req: Request, res: Response) => {
                 where: {
                     id: { in: interactedAuthorIds, not: viewerId },
                     status: 'ACTIVE',
+                    searchVisibility: true,
+                    NOT: [{ blockedBy: { some: { blockerId: viewerId } } }, { blocking: { some: { blockedId: viewerId } } }],
                     following: { none: { followerId: viewerId } }
                 },
                 take: INTERACTION_SUGGESTION_LIMIT,
-                select: SAFE_USER_SELECT
+                select: PUBLIC_USER_CARD_SELECT
             })
             : [];
 
         const suggestedList = interactionSuggestions.map(u => ({
-            ...serializeUserMediaRecord(u)!,
+            ...serializePublicUserCard(u),
             suggestionReason: 'Recently interacted'
         }));
 
@@ -1055,15 +1051,17 @@ export const getSuggestedUsers = async (req: Request, res: Response) => {
                 where: {
                     id: { notIn: currentIds },
                     status: 'ACTIVE',
+                    searchVisibility: true,
+                    NOT: [{ blockedBy: { some: { blockerId: viewerId } } }, { blocking: { some: { blockedId: viewerId } } }],
                     following: { none: { followerId: viewerId } }
                 },
                 orderBy: [{ followersCount: 'desc' }, { id: 'asc' }],
                 take: SUGGESTION_LIMIT - suggestedList.length,
-                select: SAFE_USER_SELECT
+                select: PUBLIC_USER_CARD_SELECT
             });
 
             suggestedList.push(...popularSuggestions.map(u => ({
-                ...serializeUserMediaRecord(u)!,
+                ...serializePublicUserCard(u),
                 suggestionReason: 'Suggested for you'
             })));
         }
@@ -1073,6 +1071,75 @@ export const getSuggestedUsers = async (req: Request, res: Response) => {
         logUserRequestFailure(req, 'suggested_users_read_failed', error);
         res.status(500).json({ error: 'Failed to fetch suggested users' });
     }
+};
+
+export const updateAccountSettings = async (req: Request, res: Response) => {
+    try {
+        const changes = parseSettingsChanges(req.body?.changes);
+        const version = requireProfileVersion(req.body?.expectedUpdatedAt);
+        const result = await prisma.$transaction(async tx => {
+            await lockAccountSecurity(tx, req.user!.userId);
+            await assertActiveAccountSession(tx, req, false);
+            return tx.user.updateMany({ where: { id: req.user!.userId, status: 'ACTIVE', updatedAt: version }, data: { ...changes, updatedAt: new Date() } });
+        });
+        if (result.count !== 1) return res.status(409).json({ code: 'PROFILE_UPDATE_CONFLICT', error: 'Your settings changed elsewhere. Reload and try again.' });
+        return getMe(req, res);
+    } catch (error) {
+        if (error instanceof ProfileValidationError) return res.status(error.statusCode).json({ error: error.message, code: error.code });
+        if (error instanceof AccountSecurityError) return res.status(error.status).json({ error: 'Sign in again to save changes.', code: error.code });
+        logUserRequestFailure(req, 'settings_update_failed', error);
+        return res.status(500).json({ error: 'Failed to save settings.' });
+    }
+};
+
+export const getBlockedAccounts = async (req: Request, res: Response) => {
+    try {
+        const cursor = firstQueryValue(req.query.cursor);
+        const limit = boundedPositiveInteger(req.query.limit, 30, 100);
+        const rows = await prisma.userBlock.findMany({ where: { blockerId: req.user!.userId },
+            take: limit + 1, orderBy: { id: 'asc' }, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+            select: { id: true, createdAt: true, blocked: { select: { id: true, name: true, handle: true } } } });
+        const more = rows.length > limit;
+        if (more) rows.pop();
+        res.setHeader('Cache-Control', 'private, no-store');
+        return res.json({ items: rows.map(row => ({ ...row.blocked, blockedAt: row.createdAt })), nextCursor: more ? rows[rows.length - 1]?.id : null });
+    } catch (error) { logUserRequestFailure(req, 'blocks_read_failed', error); return res.status(500).json({ error: 'Failed to load blocked accounts.' }); }
+};
+
+export const blockAccount = async (req: Request, res: Response) => {
+    const blockerId = req.user!.userId;
+    const blockedId = req.body?.blockedId;
+    if (typeof blockedId !== 'string' || !blockedId || blockedId === blockerId) return res.status(400).json({ error: 'Invalid account.' });
+    try {
+        await prisma.$transaction(async tx => {
+            // Lock both users in a stable order; follow/invitation writers use this
+            // same order so a concurrent action cannot survive the block.
+            for (const id of [blockerId, blockedId].sort()) await lockAccountSecurity(tx, id);
+            await tx.$queryRaw(Prisma.sql`SELECT id FROM users WHERE id IN (${blockerId}, ${blockedId}) ORDER BY id FOR UPDATE`);
+            await assertActiveAccountSession(tx, req, false);
+            const target = await tx.user.findUnique({ where: { id: blockedId }, select: { status: true } });
+            if (!target || target.status !== 'ACTIVE') throw new ProfileValidationError('ACCOUNT_NOT_FOUND', 'Account not found.', 404);
+            await tx.userBlock.upsert({ where: { blockerId_blockedId: { blockerId, blockedId } }, create: { blockerId, blockedId }, update: {} });
+            const follows = await tx.follow.findMany({ where: { OR: [{ followerId: blockerId, followingId: blockedId }, { followerId: blockedId, followingId: blockerId }] }, select: { id: true, followerId: true, followingId: true, status: true } });
+            await tx.follow.deleteMany({ where: { id: { in: follows.map(follow => follow.id) } } });
+            for (const follow of follows.filter(follow => follow.status === 'ACTIVE')) {
+                await tx.user.updateMany({ where: { id: follow.followerId, followingCount: { gt: 0 } }, data: { followingCount: { decrement: 1 } } });
+                await tx.user.updateMany({ where: { id: follow.followingId, followersCount: { gt: 0 } }, data: { followersCount: { decrement: 1 } } });
+            }
+        });
+        return res.json({ success: true });
+    } catch (error) {
+        if (error instanceof ProfileValidationError) return res.status(error.statusCode).json({ error: error.message, code: error.code });
+        if (error instanceof AccountSecurityError) return res.status(error.status).json({ error: 'Sign in again to continue.', code: error.code });
+        logUserRequestFailure(req, 'account_block_failed', error); return res.status(500).json({ error: 'Failed to block account.' });
+    }
+};
+
+export const unblockAccount = async (req: Request, res: Response) => {
+    try {
+        await prisma.userBlock.deleteMany({ where: { blockerId: req.user!.userId, blockedId: req.params.blockedId as string } });
+        return res.json({ success: true });
+    } catch (error) { logUserRequestFailure(req, 'account_unblock_failed', error); return res.status(500).json({ error: 'Failed to unblock account.' }); }
 };
 
 export const deleteAccount = async (req: Request, res: Response) => {

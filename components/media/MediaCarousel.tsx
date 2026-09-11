@@ -16,7 +16,7 @@ export const MediaCarousel: React.FC<MediaCarouselProps> = ({ media, className =
   const containerRef = useRef<HTMLDivElement>(null);
   const [index, setIndex] = useState(0);
   const items = media.slice(0, 8);
-  const aspectRatio = Math.max(0.8, Math.min(1.91, items[0]?.aspectRatio || 1));
+  const aspectRatio = (items[0]?.aspectRatio || (items[0]?.width && items[0]?.height ? items[0].width / items[0].height : 1));
 
   useEffect(() => {
     setIndex((current) => Math.min(current, Math.max(0, items.length - 1)));
@@ -34,7 +34,7 @@ export const MediaCarousel: React.FC<MediaCarouselProps> = ({ media, className =
   return (
     <div
       className={`group relative w-full overflow-hidden bg-gray-100 ${className}`}
-      style={{ aspectRatio }}
+      style={{ aspectRatio, borderRadius: 0 }}
       onClick={onClick}
       onKeyDown={(event) => {
         const rtl = document.documentElement.dir === 'rtl';
@@ -77,13 +77,14 @@ export const MediaCarousel: React.FC<MediaCarouselProps> = ({ media, className =
       >
         {items.map((item, itemIndex) => (
           <div key={item.id} className="h-full w-full shrink-0 snap-start" role="group" aria-roledescription="slide" aria-label={`${itemIndex + 1} / ${items.length}`}>
-            <MediaImage media={item} eager={eager && itemIndex === 0} sizes="(max-width: 768px) 100vw, 680px" className="h-full w-full object-cover" alt={item.altText || ''} />
+            <MediaImage media={item} eager={eager && itemIndex === 0} sizes="(max-width: 768px) 100vw, 680px" className="h-full w-full object-contain" alt={item.altText || ''} />
           </div>
         ))}
       </div>
 
       {items.length > 1 && (
         <>
+          <div dir="ltr" className="absolute end-3 top-3 rounded-full bg-black/60 px-2.5 py-1 text-xs font-medium text-white tabular-nums" role="status" aria-live="polite" aria-atomic="true">{index + 1}/{items.length}</div>
           <button type="button" onClick={(event) => { event.stopPropagation(); goTo(index - 1); }} disabled={index === 0} className="absolute start-3 top-1/2 hidden h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white opacity-0 transition-opacity hover:bg-black/70 disabled:hidden group-hover:opacity-100 sm:flex" aria-label={t('media.carousel.previous', { defaultValue: 'Previous image' })} title={t('media.carousel.previous', { defaultValue: 'Previous image' })}>
             <ChevronLeft className="rtl:rotate-180" size={20} />
           </button>

@@ -6,9 +6,13 @@ import {
   deleteMediaAsset,
   finalizeMediaUpload,
   getMediaConfigResponse,
-  getMediaReadPresentation
+  getMediaReadPresentation,
+  prepareMediaUpload
 } from '../services/mediaService';
 import { MediaValidationError } from '../services/mediaProcessor';
+import { assertActiveAccountSession } from '../services/accountSecurityPolicy';
+import { AccountSecurityError } from '../services/mfaService';
+import { HeifConversionError, verifyHeifConversionReadiness } from '../services/heifConversionClient';
 
 const uploadSchema = z.object({
   purpose: z.nativeEnum(MediaPurpose),
@@ -33,11 +37,18 @@ const finalizeSchema = z.object({
 });
 
 const respondWithMediaError = (req: Request, res: Response, error: unknown): void => {
+  if (error instanceof AccountSecurityError) {
+    res.status(error.status).json({ code: error.code, error: 'Sign in again to continue.' });
+    return;
+  }
   if (error instanceof z.ZodError) {
     res.status(400).json({ error: 'Invalid media request.', code: 'INVALID_MEDIA_REQUEST' });
     return;
   }
   if (error instanceof MediaValidationError) {
+    if (error instanceof HeifConversionError && error.retryAfterSeconds !== undefined) {
+      res.setHeader('Retry-After', String(error.retryAfterSeconds));
+    }
     res.status(error.statusCode).json({ error: error.message, code: error.code });
     return;
   }
@@ -53,15 +64,54 @@ const respondWithMediaError = (req: Request, res: Response, error: unknown): voi
   });
 };
 
-export const getMediaConfig = (_req: Request, res: Response): void => {
-  res.json(getMediaConfigResponse());
+export const getMediaConfig = async (req: Request, res: Response): Promise<void> => {
+  try {
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json(await getMediaConfigResponse());
+  }
+  catch (error) { respondWithMediaError(req, res, error); }
+};
+
+const mediaRequestCancellation = (req: Request, res: Response) => {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  const onClose = () => { if (!res.writableEnded) controller.abort(); };
+  req.once('aborted', onAbort);
+  res.once('close', onClose);
+  if (req.aborted || res.destroyed) controller.abort();
+  return {
+    signal: controller.signal,
+    dispose() { req.removeListener('aborted', onAbort); res.removeListener('close', onClose); }
+  };
+};
+
+export const warmupHeif = async (req: Request, res: Response): Promise<void> => {
+  const cancellation = mediaRequestCancellation(req, res);
+  try {
+    res.setHeader('Cache-Control', 'private, no-store');
+    const heifServerPreparationEnabled = await verifyHeifConversionReadiness(false, fetch, { warmup: true, signal: cancellation.signal });
+    if (!cancellation.signal.aborted) res.json({ heifServerPreparationEnabled });
+  } catch (error) {
+    if (!cancellation.signal.aborted) respondWithMediaError(req, res, error);
+  } finally { cancellation.dispose(); }
+};
+
+export const prepareMedia = async (req: Request, res: Response): Promise<void> => {
+  const cancellation = mediaRequestCancellation(req, res);
+  try {
+    res.setHeader('Cache-Control', 'private, no-store');
+    const result = await prepareMediaUpload(req.user!.userId, req.params.id as string, tx => assertActiveAccountSession(tx, req, false), cancellation.signal);
+    if (!cancellation.signal.aborted) res.json(result);
+  } catch (error) {
+    if (!cancellation.signal.aborted) respondWithMediaError(req, res, error);
+  } finally { cancellation.dispose(); }
 };
 
 export const startMediaUpload = async (req: Request, res: Response): Promise<void> => {
   try {
     const ownerId = req.user!.userId;
     const input = uploadSchema.parse(req.body);
-    const upload = await createMediaUpload(ownerId, input.purpose, input.mime, input.size, input.altText);
+    const upload = await createMediaUpload(ownerId, input.purpose, input.mime, input.size, input.altText, tx => assertActiveAccountSession(tx, req, false));
     res.status(201).json(upload);
   } catch (error) {
     respondWithMediaError(req, res, error);
@@ -71,7 +121,7 @@ export const startMediaUpload = async (req: Request, res: Response): Promise<voi
 export const finalizeMedia = async (req: Request, res: Response): Promise<void> => {
   try {
     const input = finalizeSchema.parse(req.body);
-    const result = await finalizeMediaUpload(req.user!.userId, req.params.id as string, input);
+    const result = await finalizeMediaUpload(req.user!.userId, req.params.id as string, input, tx => assertActiveAccountSession(tx, req, false));
     res.json(result);
   } catch (error) {
     respondWithMediaError(req, res, error);

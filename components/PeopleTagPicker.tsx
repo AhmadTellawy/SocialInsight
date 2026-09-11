@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, ChevronRight, Search, Tag, X } from 'lucide-react';
+import { Check, ChevronRight, Search, Tag, Users, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../services/api';
 import { createMentionSearchScheduler, MentionSearchScheduler } from '../utils/mentionAutocomplete';
@@ -22,6 +22,7 @@ interface PeopleTagPickerProps {
   selectedPeople: PeopleTagPerson[];
   onChange: (people: PeopleTagPerson[]) => void;
   accent?: 'blue' | 'purple' | 'amber';
+  variant?: 'default' | 'chip';
 }
 
 const accentClasses = {
@@ -33,7 +34,8 @@ const accentClasses = {
 export const PeopleTagPicker: React.FC<PeopleTagPickerProps> = ({
   selectedPeople,
   onChange,
-  accent = 'blue'
+  accent = 'blue',
+  variant = 'default'
 }) => {
   const { t, i18n } = useTranslation();
   const isRtl = ['ar', 'ur'].includes(i18n.language?.split('-')[0]);
@@ -96,13 +98,13 @@ export const PeopleTagPicker: React.FC<PeopleTagPickerProps> = ({
       <button
         type="button"
         onClick={() => setIsOpen(true)}
-        className="w-full flex items-center justify-between p-3.5 bg-gray-50 hover:bg-gray-100/70 rounded-xl transition-all border border-gray-100"
+        className={variant === 'chip' ? 'inline-flex items-center gap-2 px-3 py-2 min-h-[40px] bg-white hover:bg-gray-50 rounded-full border border-gray-300 text-[12px] font-bold text-gray-800' : 'w-full flex items-center justify-between p-3.5 bg-gray-50 hover:bg-gray-100/70 rounded-xl transition-all border border-gray-100'}
         aria-label={t('peopleTags.openLabel', { count: selectedPeople.length })}
       >
-        <span className="flex items-center gap-2 text-xs font-bold text-gray-800"><Tag size={14} /> {t('peopleTags.tagPeople')}</span>
+        <span className="flex items-center gap-2 text-xs font-bold text-gray-800">{variant === 'chip' ? <Users size={15} /> : <Tag size={14} />} {t('peopleTags.tagPeople')}</span>
         <span className={`flex items-center gap-1 text-xs font-black ${colors.text}`}>
-          {selectedPeople.length > 0 ? selectedPeople.length : t('peopleTags.none')}
-          <ChevronRight size={14} className={isRtl ? 'rotate-180' : ''} />
+          {selectedPeople.length > 0 ? selectedPeople.length : variant === 'chip' ? null : t('peopleTags.none')}
+          {variant !== 'chip' && <ChevronRight size={14} className={isRtl ? 'rotate-180' : ''} />}
         </span>
       </button>
 

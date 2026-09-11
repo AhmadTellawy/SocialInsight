@@ -158,7 +158,7 @@ export const buildShareCardViewModel = (
     ? source.author.avatarMedia
     : undefined;
   const author = {
-    name: source.author?.name?.trim() || 'SocialInsight member',
+    name: source.author?.name?.trim() || 'Opiniup member',
     avatarMedia: privacyMode === 'public' ? publicAvatarMedia : undefined,
     avatarMediaId: privacyMode === 'public' && publicAvatarMedia ? source.author.avatarMediaId : undefined,
     avatarFallbackSrc: privacyMode === 'public'

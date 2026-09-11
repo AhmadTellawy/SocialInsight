@@ -49,7 +49,7 @@ export const ShareBrandHeader: React.FC<{ canonicalHost: string }> = ({ canonica
         loading="eager"
         fetchPriority="high"
       />
-      <span className="text-[30px] font-semibold text-[#102a43]">SocialInsight</span>
+      <span className="text-[30px] font-semibold text-[#102a43]">Opiniup</span>
     </div>
     <span data-testid="share-card-domain" className="max-w-[390px] truncate text-right text-[22px] font-medium text-gray-500">{canonicalHost}</span>
   </header>

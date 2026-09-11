@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { WelcomeStep, BasicInfoStep, PasswordStep, HandleStep, OTPStep, NotificationStep } from './SignUpSteps';
-import { api } from '../services/api';
+import { api, ApiError } from '../services/api';
 
 interface SignUpFlowProps {
     onComplete: (user: any) => void;
@@ -8,6 +9,7 @@ interface SignUpFlowProps {
 }
 
 export const SignUpFlow: React.FC<SignUpFlowProps> = ({ onComplete, onCancel }) => {
+    const { t } = useTranslation();
     const [step, setStep] = useState(1);
     const [loading, setLoading] = useState(false);
     const [pendingId, setPendingId] = useState<string | null>(null);
@@ -39,14 +41,18 @@ export const SignUpFlow: React.FC<SignUpFlowProps> = ({ onComplete, onCancel }) 
                     await api.reserveHandle(pendingId, stepData.handle);
                     setCollectedData({ ...collectedData, ...stepData });
 
-                    // Securely request OTP and transition to OTP verification screen (Step 5)
-                    await api.sendRegistrationOTP(pendingId);
+                    const otpResponse = await api.sendRegistrationOTP(pendingId);
+                    setCollectedData((current: any) => ({
+                        ...current,
+                        ...stepData,
+                        resendCooldownUntil: otpResponse?.cooldownUntil
+                    }));
                     setStep(5);
                 }
             } else if (step === 5) {
                 if (pendingId) {
                     const res = await api.completeRegistration(pendingId, stepData.code);
-                    setCollectedData({ ...collectedData, user: res.user, token: res.token });
+                    setCollectedData({ ...collectedData, user: res.user });
                     if ('Notification' in window && Notification.permission !== 'default') {
                         onComplete(res.user);
                     } else {
@@ -58,10 +64,18 @@ export const SignUpFlow: React.FC<SignUpFlowProps> = ({ onComplete, onCancel }) 
             }
         } catch (err: any) {
             console.error(err);
-            setError(err.message || "An error occurred. Please try again.");
+            const code = err instanceof ApiError ? err.code : undefined;
+            setError(code && ['OTP_COOLDOWN', 'REQUEST_TIMEOUT', 'NETWORK_ERROR'].includes(code)
+                ? t(`auth.errors.${code}`)
+                : t('auth.signup.genericError'));
         } finally {
             setLoading(false);
         }
+    };
+
+    const handleResendRegistrationOTP = async () => {
+        if (!pendingId) throw new Error(t('auth.signup.sessionUnavailable'));
+        return api.sendRegistrationOTP(pendingId);
     };
 
     const handleBack = () => {
@@ -80,7 +94,7 @@ export const SignUpFlow: React.FC<SignUpFlowProps> = ({ onComplete, onCancel }) 
             case 2: return <BasicInfoStep onNext={handleNext} onBack={handleBack} isLoading={loading} />;
             case 3: return <PasswordStep onNext={handleNext} onBack={handleBack} isLoading={loading} />;
             case 4: return <HandleStep onNext={handleNext} onBack={handleBack} isLoading={loading} />;
-            case 5: return <OTPStep onNext={handleNext} data={collectedData} isLoading={loading} />;
+            case 5: return <OTPStep onNext={handleNext} onResend={handleResendRegistrationOTP} data={collectedData} isLoading={loading} />;
             case 6: return <NotificationStep onNext={handleNext} isLoading={loading} />;
             default: return null;
         }
@@ -89,9 +103,9 @@ export const SignUpFlow: React.FC<SignUpFlowProps> = ({ onComplete, onCancel }) 
     return (
         <div className="w-full h-full bg-white relative">
             {error && (
-                <div className="absolute top-0 left-0 right-0 p-4 bg-red-50 text-red-600 text-sm font-bold text-center z-50 animate-pulse">
+                <div role="alert" className="absolute top-0 left-0 right-0 p-4 bg-red-50 text-red-700 text-sm font-bold text-center z-50">
                     {error}
-                    <button onClick={() => setError(null)} className="ml-2 underline">Dismiss</button>
+                    <button type="button" aria-label={t('auth.signup.dismiss')} onClick={() => setError(null)} className="ms-2 underline">{t('auth.signup.dismiss')}</button>
                 </div>
             )}
             {renderStep()}

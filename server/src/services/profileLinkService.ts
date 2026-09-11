@@ -7,6 +7,7 @@ import {
 } from '../utils/profileValidation';
 
 type ProfileLinkClient = Pick<PrismaClient, 'profileLink' | '$transaction'>;
+type AuthorizeMutation = (tx: Prisma.TransactionClient) => Promise<void>;
 
 const duplicateError = (error: unknown): boolean =>
   Boolean(error && typeof error === 'object' && 'code' in error && (error as { code?: string }).code === 'P2002');
@@ -29,11 +30,13 @@ export const listProfileLinks = async (userId: string, client: ProfileLinkClient
 export const createProfileLink = async (
   userId: string,
   input: { title?: unknown; url?: unknown },
-  client: ProfileLinkClient = prisma
+  client: ProfileLinkClient = prisma,
+  authorize?: AuthorizeMutation
 ) => {
   const normalized = normalizeProfileLinkInput(input.title, input.url);
   try {
     const link = await client.$transaction(async (tx) => {
+      await authorize?.(tx);
       const lockedUsers = await tx.$queryRaw<Array<{ id: string }>>(
         Prisma.sql`SELECT "id" FROM "users" WHERE "id" = ${userId} FOR UPDATE`
       );
@@ -68,11 +71,13 @@ export const updateProfileLink = async (
   userId: string,
   linkId: string,
   input: { title?: unknown; url?: unknown },
-  client: ProfileLinkClient = prisma
+  client: ProfileLinkClient = prisma,
+  authorize?: AuthorizeMutation
 ) => {
   const normalized = normalizeProfileLinkInput(input.title, input.url);
   try {
     return await client.$transaction(async (tx) => {
+      await authorize?.(tx);
       const result = await tx.profileLink.updateMany({
         where: { id: linkId, userId },
         data: normalized
@@ -94,10 +99,12 @@ export const updateProfileLink = async (
 export const deleteProfileLink = async (
   userId: string,
   linkId: string,
-  client: ProfileLinkClient = prisma
+  client: ProfileLinkClient = prisma,
+  authorize?: AuthorizeMutation
 ): Promise<void> => {
-  const result = await client.profileLink.deleteMany({ where: { id: linkId, userId } });
-  if (result.count !== 1) {
-    throw new ProfileValidationError('PROFILE_LINK_NOT_FOUND', 'Profile link was not found.', 404);
-  }
+  await client.$transaction(async tx => {
+    await authorize?.(tx);
+    const result = await tx.profileLink.deleteMany({ where: { id: linkId, userId } });
+    if (result.count !== 1) throw new ProfileValidationError('PROFILE_LINK_NOT_FOUND', 'Profile link was not found.', 404);
+  });
 };

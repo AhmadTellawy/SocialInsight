@@ -11,6 +11,7 @@ type MediaCropEditorProps = {
   initialAspectRatio?: number;
   lockedAspectRatio?: number;
   initialCrop?: MediaCropSelection;
+  initialAltText?: string;
   onApply: (selection: MediaCropSelection) => void;
   onCancel: () => void;
 };
@@ -29,6 +30,7 @@ export const MediaCropEditor: React.FC<MediaCropEditorProps> = ({
   initialAspectRatio,
   lockedAspectRatio,
   initialCrop,
+  initialAltText,
   onApply,
   onCancel
 }) => {
@@ -42,7 +44,7 @@ export const MediaCropEditor: React.FC<MediaCropEditorProps> = ({
   const [zoom, setZoom] = useState(1);
   const [sourceRatio, setSourceRatio] = useState<number | null>(null);
   const [aspectRatio, setAspectRatio] = useState(fixedRatio || initialAspectRatio || 1);
-  const [altText, setAltText] = useState(initialCrop?.altText || '');
+  const [altText, setAltText] = useState(initialCrop?.altText ?? initialAltText ?? '');
   const [croppedArea, setCroppedArea] = useState<Area | null>(initialCrop ? {
     x: initialCrop.crop.x * 100,
     y: initialCrop.crop.y * 100,
@@ -218,7 +220,7 @@ export const MediaCropEditor: React.FC<MediaCropEditorProps> = ({
               key={preset.id}
               type="button"
               onClick={() => setAspectRatio(preset.ratio)}
-              className={`h-9 rounded-md border px-3 text-xs font-medium ${Math.abs(aspectRatio - preset.ratio) < 0.001 ? 'border-white bg-white text-black' : 'border-white/25 text-gray-300 hover:border-white/60'}`}
+              className={`h-9 rounded-md border px-3 text-xs font-medium ${Math.abs(aspectRatio - preset.ratio) < 0.001 ? 'border-blue-600 bg-blue-600 text-white' : 'border-white/25 text-gray-300 hover:border-white/60'}`}
               aria-pressed={Math.abs(aspectRatio - preset.ratio) < 0.001}
             >
               {preset.label}

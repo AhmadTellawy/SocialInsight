@@ -16,6 +16,7 @@ export const buildMentionSearchWhere = (query: string, userId: string) => ({
         { name: { contains: query, mode: 'insensitive' as const } }
     ],
     status: 'ACTIVE',
+    searchVisibility: true,
     NOT: [
         { id: userId },
         { blockedBy: { some: { blockerId: userId } } },

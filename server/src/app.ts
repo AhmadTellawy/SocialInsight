@@ -11,6 +11,7 @@ import postRoutes from './routes/postRoutes';
 import userRoutes from './routes/userRoutes';
 import groupRoutes from './routes/groupRoutes';
 import authRoutes from './routes/authRoutes';
+import accountLifecycleRoutes from './routes/accountLifecycleRoutes';
 import otpRoutes from './routes/otpRoutes';
 import analyticsRoutes from './routes/analyticsRoutes';
 import pushRoutes from './routes/pushRoutes';
@@ -18,22 +19,51 @@ import searchRoutes from './routes/searchRoutes';
 import mediaRoutes from './routes/mediaRoutes';
 import hashtagRoutes from './routes/hashtagRoutes';
 import { requireAuth } from './middleware/authMiddleware';
-import { getNotificationSettings, updateNotificationSettings } from './controllers/userController';
+import { getNotificationSettings, updateNotificationSettings } from './controllers/notificationSettingsController';
 import { initCronJobs } from './services/cronService';
 import { initSocket } from './services/socketService';
 import { isMediaStorageConfigured } from './services/mediaStorage';
 import prisma from './prisma';
 import { requestContext } from './middleware/requestContext';
+import { readRestoreMaintenance } from './config/maintenance';
 
 const app = express();
+const restoreMaintenance = readRestoreMaintenance();
+// This startup guard supplements an external restore fence. It cannot stop an
+// older deployment or prevent direct access to previously public storage URLs.
+app.use((_req, res, next) => {
+    if (!restoreMaintenance) return next();
+    res.set({ 'Cache-Control': 'no-store', 'Retry-After': '60' })
+        .status(503).json({ status: 'maintenance' });
+});
+// Render terminates TLS and supplies the client address through one trusted proxy.
+// Express needs this for secure-cookie behavior and accurate IP rate limiting.
+app.set('trust proxy', 1);
 const httpServer = createServer(app);
-initSocket(httpServer);
+if (!restoreMaintenance) initSocket(httpServer);
 
 const PORT = process.env.PORT || 3001;
 
-const corsOptions = {
-    origin: process.env.CLIENT_URL || 'http://localhost:3000',
+const allowedOrigins = new Set(
+    (process.env.AUTH_ALLOWED_ORIGINS || process.env.CLIENT_URL || 'http://localhost:3000,http://localhost:5173')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .map((value) => {
+            try { return new URL(value).origin; } catch { return ''; }
+        })
+        .filter(Boolean)
+);
+
+const corsOptions: cors.CorsOptions = {
+    origin: (origin, callback) => {
+        // Non-browser callers do not send Origin; browser origins are exact-match only.
+        if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+        callback(new Error('Origin is not allowed'));
+    },
     credentials: true,
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'X-CSRF-Token', 'Authorization'],
     exposedHeaders: ['X-Next-Cursor', 'X-Request-Id'],
 };
 app.use(requestContext);
@@ -81,15 +111,10 @@ const apiLimiter = rateLimit({
     limit: 500,
     standardHeaders: true,
     legacyHeaders: false,
-    message: 'Too many requests from this IP, please try again after 15 minutes'
-});
-
-const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    limit: 10,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: 'Too many authentication attempts, please try again after 15 minutes'
+    message: 'Too many requests from this IP, please try again after 15 minutes',
+    // Authentication has durable, identity-aware database throttles. Avoid a
+    // second proxy-IP MemoryStore bucket that could aggregate all Vercel users.
+    skip: (req) => req.path.startsWith('/auth') || req.path.startsWith('/otp')
 });
 
 app.use('/api/', apiLimiter);
@@ -97,8 +122,9 @@ app.use('/api/', apiLimiter);
 app.use('/api/posts', postRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/groups', groupRoutes);
-app.use('/api/auth', authLimiter, authRoutes);
-app.use('/api/otp', authLimiter, otpRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/account', accountLifecycleRoutes);
+app.use('/api/otp', otpRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/push', pushRoutes);
 app.use('/api/search', searchRoutes);
@@ -150,7 +176,7 @@ app.get('/', (req, res) => {
 });
 
 // Initialize scheduled jobs
-initCronJobs();
+if (!restoreMaintenance) initCronJobs();
 
 if (require.main === module) {
     httpServer.listen(PORT, () => {

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import type { Survey } from '../types.ts';
 import {
   SHARE_CARD_SIZE,
@@ -11,7 +12,7 @@ import {
   resolveCanonicalOrigin
 } from './shareCard.ts';
 
-const origin = 'https://socialinsightapp.com';
+const origin = 'https://opiniup.com';
 
 const createSurvey = (overrides: Partial<Survey> = {}): Survey => ({
   id: 'post-id',
@@ -42,7 +43,7 @@ test('uses a fixed square output contract and canonical post URL', () => {
   assert.equal(SHARE_CARD_SIZE, 1080);
   const canonicalOrigin = resolveCanonicalOrigin(origin, 'http://127.0.0.1:5173');
   assert.equal(buildCanonicalPostUrl('post/id', canonicalOrigin), `${origin}/post/post%2Fid`);
-  assert.equal(getCanonicalHost(canonicalOrigin), 'socialinsightapp.com');
+  assert.equal(getCanonicalHost(canonicalOrigin), 'opiniup.com');
 });
 
 test('maps a public poll without engagement counts or viewer-specific state', () => {
@@ -68,6 +69,28 @@ test('maps a public poll without engagement counts or viewer-specific state', ()
   assert.equal(model.totalParticipation, 6);
   assert.equal(JSON.stringify(model).includes('userSelectedOptions'), false);
   assert.equal(JSON.stringify(model).includes('commentsCount'), false);
+});
+
+test('uses the Opiniup member fallback without changing supplied author names', () => {
+  const unnamed = createSurvey({ author: { id: 'author-id', name: '   ', avatar: '', isPrivate: false } });
+  assert.equal(buildShareCardViewModel(unnamed, origin).author.name, 'Opiniup member');
+  assert.equal(buildShareCardViewModel(createSurvey(), origin).author.name, 'Ahmad Tellawy');
+});
+
+test('uses Opiniup share copy in Arabic and English with the existing interpolation contract', () => {
+  for (const locale of ['ar', 'en']) {
+    const translations = JSON.parse(readFileSync(new URL(`../locales/${locale}/translation.json`, import.meta.url), 'utf8'));
+    assert.match(translations.shareCard.openToView, /Opiniup/);
+    assert.match(translations.shareCard.shareText, /Opiniup/);
+    assert.match(translations.shareCard.shareText, /\{\{type\}\}/);
+    assert.doesNotMatch(translations.shareCard.openToView + translations.shareCard.shareText, /Social\s?Insight/i);
+  }
+});
+
+test('keeps share destinations environment-derived rather than forcing the new domain', () => {
+  const previewOrigin = 'https://preview.example.test';
+  assert.equal(resolveCanonicalOrigin(undefined, previewOrigin), previewOrigin);
+  assert.equal(buildCanonicalPostUrl('post-id', previewOrigin), `${previewOrigin}/post/post-id`);
 });
 
 test('uses a neutral rating representation', () => {

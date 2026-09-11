@@ -24,16 +24,16 @@ export const Header: React.FC<HeaderProps> = ({ onProfileClick, userProfile, onL
         <div className="relative w-12 h-12 shrink-0 transform active:scale-90 transition-transform cursor-pointer">
           <img
             src="/logo.png"
-            alt="SocialInsight Logo"
+            alt="Opiniup Logo"
             className="w-full h-full object-contain"
           />
         </div>
 
         {/* App Name */}
         <div className="flex flex-col justify-center">
-          <h1 className="text-xl font-black tracking-tighter leading-none">
-            <span style={{ color: BRAND_BLUE }}>Social</span>
-            <span style={{ color: BRAND_GREEN }}>Insight</span>
+          <h1 dir="ltr" className="text-xl font-black tracking-tighter leading-none">
+            <span style={{ color: BRAND_BLUE }}>Opini</span>
+            <span style={{ color: BRAND_GREEN }}>up</span>
           </h1>
         </div>
       </div>

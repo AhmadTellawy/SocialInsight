@@ -6,6 +6,11 @@ export const MEDIA_CONFIG = {
   maxCoverInputBytes: 10 * 1024 * 1024,
   maxCoverOutputBytes: 3 * 1024 * 1024,
   maxDecodedPixels: 40_000_000,
+  maxPreparedOutputBytes: 12 * 1024 * 1024,
+  heifWholeWorkerTimeoutMs: 45_000,
+  heifConversionTimeoutMs: 55_000,
+  heifReadinessTimeoutMs: 3_000,
+  heifWarmupTimeoutMs: 90_000,
   maxMasterEdge: 2400,
   maxUploadConcurrency: 3,
   minAspectRatio: 0.8,
@@ -13,6 +18,7 @@ export const MEDIA_CONFIG = {
   temporaryLifetimeHours: 24,
   privateUrlLifetimeSeconds: 300,
   allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp'] as const,
+  heifMimeTypes: ['image/heic', 'image/heif'] as const,
   buckets: {
     originals: 'media-originals',
     public: 'media-public',
@@ -81,6 +87,11 @@ export const MEDIA_PURPOSE_CONFIG: Record<MediaPurpose, PurposeConfig> = {
 
 export const isAllowedMediaMime = (value: string): value is AllowedMediaMime =>
   MEDIA_CONFIG.allowedMimeTypes.includes(value as AllowedMediaMime);
+
+export const isHeifMediaMime = (value: string): value is 'image/heic' | 'image/heif' =>
+  value === 'image/heic' || value === 'image/heif';
+
+export const isSupportedSourceMime = (value: string): boolean => isAllowedMediaMime(value) || isHeifMediaMime(value);
 
 export const maxInputBytesForPurpose = (purpose: MediaPurpose): number =>
   MEDIA_PURPOSE_CONFIG[purpose].maxInputBytes || MEDIA_CONFIG.maxInputBytes;

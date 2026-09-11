@@ -1,9 +1,10 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { X, Plus, Trash2, Globe, Users, ChevronDown, Clock, Calendar, Type, ListChecks, ImageIcon, Settings, Info, ArrowRight, Camera, Lock, AlertCircle, ChevronRight, ChevronLeft, MoreVertical, Layout, Terminal, Navigation, Sparkles, GripVertical, Save, FileText, BarChart3, UserCircle, Heart, Fingerprint, MapPin, Briefcase, Check, GraduationCap, Home, Smile, Building2, User, MessageSquare, ShieldCheck, Link2, Target, MoreHorizontal, ArrowUp, ArrowDown, Star, List, LayoutGrid, CornerDownRight, PowerOff } from 'lucide-react';
+import { Tag, X, Plus, Trash2, Globe, Users, ChevronDown, Clock, Calendar, Type, ListChecks, ImageIcon, Settings, Info, ArrowRight, Camera, Lock, AlertCircle, ChevronRight, ChevronLeft, MoreVertical, Layout, Terminal, Navigation, Sparkles, GripVertical, Save, FileText, BarChart3, UserCircle, Heart, Fingerprint, MapPin, Briefcase, Check, GraduationCap, Home, Smile, Building2, User, MessageSquare, ShieldCheck, Link2, Target, MoreHorizontal, ArrowUp, ArrowDown, Star, List, GalleryHorizontalEnd, CornerDownRight, PowerOff } from 'lucide-react';
 import { Survey, SurveyType, UserProfile, Group, MediaDraft } from '../types';
 import { useTranslation } from 'react-i18next';
 import { BottomSheet } from './BottomSheet';
+import { PostVisibilitySection } from './PostVisibilitySection';
 import { RichMentionInput } from './RichMentionInput';
 import { api } from '../services/api';
 import { MediaPicker, MediaPickerHandle } from './media/MediaPicker';
@@ -72,7 +73,7 @@ const INITIAL_SECTIONS: SurveySectionDraft[] = [
   }
 ];
 
-type VisibilityType = 'Public' | 'Followers' | 'Groups' | 'Custom Audience' | 'Custom Domain';
+type VisibilityType = '' | 'Public' | 'Followers' | 'Groups' | 'Custom Audience' | 'Custom Domain' | 'ProfileAndGroups';
 
 const createSurveyOption = (): SurveyOptionDraft => ({
   id: `o-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
@@ -95,11 +96,11 @@ const createSurveyRatingOptions = (): SurveyOptionDraft[] => [5, 4, 3, 2, 1].map
 export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, onClose, onSubmit, onSaveDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
   const { t } = useTranslation();
   const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
-  const [isVisibilitySheetOpen, setIsVisibilitySheetOpen] = useState(false);
   const [isResultVisibilitySheetOpen, setIsResultVisibilitySheetOpen] = useState(false);
   const [isCategorySheetOpen, setIsCategorySheetOpen] = useState(false);
   const [isDurationSheetOpen, setIsDurationSheetOpen] = useState(false);
   const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
+  const [composerStep, setComposerStep] = useState<1 | 2>(1);
 
   // New Detailed Visibility State
   const [resultsWho, setResultsWho] = useState<'Public' | 'Followers' | 'Participants' | 'OnlyMe'>('Public');
@@ -238,21 +239,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
 
   const isVerified = (userProfile?.stats?.followers || 0) > 1000;
 
-  const postableGroups = useMemo(() => {
-    return userGroups.filter(group => {
-      const isAdminOrOwner = group.role === 'Owner' || group.role === 'Admin';
-      const hasExplicitPermission = group.postingPermissions === 'AllMembers' || group.postingPermissions === 'ApprovalNeeded';
-      return isAdminOrOwner || hasExplicitPermission;
-    });
-  }, [userGroups]);
 
-  const visibilityOptions = [
-    { id: 'Public', label: 'Public', desc: 'Visible to all users on the platform.', icon: Globe, allowed: true },
-    { id: 'Followers', label: 'Followers', desc: 'Visible only to users who follow you.', icon: UserCircle, allowed: true },
-    { id: 'Groups', label: 'Selected groups', desc: 'Visible only within selected groups.', icon: Users, allowed: true },
-    { id: 'Custom Audience', label: 'Custom audience', desc: 'Specific targeted audience.', icon: Target, allowed: isVerified, premium: true },
-    { id: 'Custom Domain', label: 'Custom domain', desc: 'Private branded link.', icon: Link2, allowed: false, premium: true },
-  ];
 
   useEffect(() => {
     if (scrollContainerRef.current) {
@@ -305,7 +292,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
     }
   };
 
-  const validateSurvey = (mode: 'publish' | 'draft' = 'publish') => {
+  const validateSurvey = (mode: 'publish' | 'draft' | 'content' = 'publish') => {
     const newErrors: { [key: string]: boolean | string } = {};
     const errorList: string[] = [];
 
@@ -327,12 +314,12 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
       newErrors.title = true;
     }
 
-    if (!category) {
-      errorList.push("Survey Category is required.");
-      newErrors.category = true;
-    }
 
-    if (visibility === 'Groups' && selectedGroups.length === 0) {
+    if (mode === 'publish' && !visibility) {
+      newErrors.visibility = 'Select at least one destination.';
+      errorList.push('Select at least one destination.');
+    }
+    if (mode === 'publish' && (visibility === 'Groups' || visibility === 'ProfileAndGroups') && selectedGroups.length === 0) {
       errorList.push("Please select at least one group for Group visibility.");
       newErrors.visibility = "Please select at least one group.";
     }
@@ -390,11 +377,10 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
   };
 
   const errorInfo = useMemo(() => {
-    return validateSurvey('publish');
-  }, [userProfile, title, category, visibility, selectedGroups, sections, totalQuestions]);
+    return validateSurvey(composerStep === 1 ? 'content' : 'publish');
+  }, [userProfile, title, category, visibility, selectedGroups, sections, totalQuestions, composerStep]);
   const allMediaDrafts = useMemo(() => [...postMedia, ...collectSectionMedia(sections)], [postMedia, sections]);
   const mediaReady = mediaDraftsAreReady(allMediaDrafts) && !mediaDraftsHaveErrors(allMediaDrafts);
-  const canPublish = errorInfo.isValid && mediaReady && !isSubmitting;
 
   const getExpiresAt = () => {
     const now = new Date();
@@ -437,7 +423,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
       mediaAssetIds: readyMediaAssetIds(postMedia),
       mediaAspectRatio: postMedia.length > 0 ? mediaAspectRatio : undefined,
       targetAudience: visibility as any,
-      targetGroups: visibility === 'Groups' ? selectedGroups : undefined,
+      targetGroups: (visibility === 'Groups' || visibility === 'ProfileAndGroups') ? selectedGroups : [],
       taggedUserIds: taggedPeople.map((person) => person.id),
       resultsWho,
       resultsTiming,
@@ -604,11 +590,6 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
     );
   };
 
-  const handleGroupToggle = (groupId: string) => {
-    setSelectedGroups(prev =>
-      prev.includes(groupId) ? prev.filter(id => id !== groupId) : [...prev, groupId]
-    );
-  };
 
   const selectedOptionForSettings = useMemo(() => {
     if (!settingsOptionId) return null;
@@ -639,7 +620,6 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
   }, [settingsOptionId, allQuestionsFlat]);
 
   const durationLabel = durationOptions.find(o => o.value === duration)?.label || 'None';
-  const audienceLabel = visibility === 'Groups' && selectedGroups.length > 0 ? `${selectedGroups.length} Groups` : visibility;
   const resultsLabel = resultsWho === 'OnlyMe' ? 'Only Me' : resultsWho;
 
   const renderSettingField = (
@@ -675,13 +655,23 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
     </button>
   );
 
+  const handleNext = () => {
+    const validation = validateSurvey('content');
+    setHasAttemptedSubmit(true);
+    setErrors(validation.newErrors);
+    if (!validation.isValid || !mediaReady || isSubmitting) return;
+    setComposerStep(2);
+    setHasAttemptedSubmit(false);
+    scrollContainerRef.current?.scrollTo({ top: 0 });
+  };
+
   return (
     <div className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-bottom duration-300">
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white/95 backdrop-blur-md sticky top-0 z-40 safe-top shrink-0">
-        <button onClick={handleClose} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500"><X size={24} /></button>
+        <button aria-label={composerStep === 2 ? 'Back' : 'Close'} onClick={() => { if (composerStep === 2) { setComposerStep(1); setHasAttemptedSubmit(false); scrollContainerRef.current?.scrollTo({ top: 0 }); } else handleClose(); }} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">{composerStep === 2 ? <ChevronLeft size={24} /> : <X size={24} />}</button>
         <div className="flex flex-col items-center flex-1 mx-2">
-          <h1 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">New Survey</h1>
-          <span className="text-[9px] font-extrabold text-blue-600 uppercase tracking-wider">Survey Composer</span>
+          <h1 className="text-[12px] font-bold text-gray-800 mb-0.5">New Survey</h1>
+          <span className="text-[9px] font-extrabold text-blue-600 uppercase tracking-wider">Step {composerStep} of 2</span>
         </div>
         <div className="w-10 h-10 flex items-center justify-center shrink-0" />
       </div>
@@ -695,6 +685,19 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
             </div>
           )}
 
+          <div hidden={composerStep !== 1} className="space-y-6">
+          <div className="flex flex-wrap items-center gap-2" aria-label="Post details">
+            <button
+              type="button"
+              onClick={() => setIsCategorySheetOpen(true)}
+              className={`min-h-10 inline-flex items-center gap-2 rounded-full border bg-white px-3 text-[12px] font-bold text-gray-700 ${errors.category ? 'border-red-300' : 'border-gray-200'}`}
+            >
+              <Tag size={14} />
+              <span>{category || 'Category'}</span>
+              <ChevronDown size={14} />
+            </button>
+            <PeopleTagPicker variant="chip" selectedPeople={taggedPeople} onChange={setTaggedPeople} accent="blue" />
+          </div>
           {/* Survey Header Section */}
           <section className={`space-y-3 rounded-[1.5rem] border p-3.5 relative transition-colors ${
             errors.title ? 'border-red-200 bg-red-50/40' : 'border-gray-100 bg-white'
@@ -736,7 +739,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                value={title}
                onChange={(val) => { setTitle(val); setErrors(prev => ({ ...prev, title: false })); }}
                placeholder="Survey Title"
-               className={`text-sm font-semibold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-500 min-h-[44px] ${errors.title ? 'text-red-500 border-red-300' : 'text-gray-900'}`}
+               className={`text-[12px] leading-relaxed text-start font-normal bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-500 min-h-[44px] ${errors.title ? 'text-red-500 border-red-300' : 'text-gray-900'}`}
                minRows={1}
                autoFocus
              />
@@ -744,25 +747,9 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                value={description}
                onChange={(val) => setDescription(val)}
                placeholder="Describe what this survey is about..."
-                className="mt-1.5 text-[11px] text-gray-500 bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[32px]"
+                className="mt-1.5 text-[12px] leading-relaxed text-start font-normal text-gray-500 bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[32px]"
                 minRows={1}
               />
-             <div className="grid grid-cols-4 gap-1.5 pt-1">
-               {renderSettingField('Category', category || 'Select', () => setIsCategorySheetOpen(true), {
-                 invalid: !!errors.category,
-                 active: !!category
-               })}
-               {renderSettingField('Audience', audienceLabel, () => setIsVisibilitySheetOpen(true), {
-                 invalid: !!errors.visibility,
-                 active: visibility !== 'Public' || selectedGroups.length > 0
-               })}
-               {renderSettingField('Results', resultsLabel, () => setIsResultVisibilitySheetOpen(true), {
-                 active: resultsWho !== 'Public' || resultsTiming !== 'AnyTime'
-               })}
-               {renderSettingField('Timer', durationLabel, () => setIsDurationSheetOpen(true), {
-                 active: duration !== 'none'
-               })}
-             </div>
            </section>
 
           {/* Section & Question Builder */}
@@ -798,12 +785,12 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                 {/* Section Title Input - only show if sections > 1 */}
                 {sections.length > 1 && (
                   <div className="px-1 flex items-start gap-2">
-                    <textarea
+                    <textarea dir="auto"
                       rows={1}
                       value={activeSection.title}
                       onChange={(e) => setSections(sections.map(s => s.id === activeSection.id ? { ...s, title: e.target.value } : s))}
                       placeholder={`Section ${activeSectionIndex + 1} Title`}
-                      className="flex-1 text-base font-bold bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all p-0 pb-2 placeholder-gray-400 resize-none min-h-[40px]"
+                      className="flex-1 text-[12px] leading-relaxed text-start font-normal bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all p-0 pb-2 placeholder-gray-400 resize-none min-h-[40px]"
                     />
                     <button
                       onClick={() => setIsSectionSettingsSheetOpen(true)}
@@ -878,7 +865,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                     : resolveOptionPresentation(q.optionPresentation, q.options);
 
                   return (
-                    <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-4 shadow-sm">
+                    <div className="space-y-4">
                       <div className="flex items-start gap-2">
                         <div className="flex-1 flex flex-col gap-2">
                           {(q.image || q.mediaDrafts.length > 0) && (
@@ -929,11 +916,11 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                 );
                               }}
                             />
-                            <textarea
+                            <textarea dir="auto"
                               value={q.text}
                               onChange={(e) => updateQuestion(activeSection.id, q.id, { text: e.target.value })}
                               placeholder="Question Text"
-                              className="flex-1 text-sm font-semibold text-gray-900 border-b border-gray-100 focus:outline-none focus:border-blue-500 pt-0.5 pb-1.5 resize-none min-h-[44px] placeholder-gray-400 bg-transparent"
+                              className="flex-1 text-[12px] leading-relaxed text-start font-normal text-gray-900 border-b border-gray-100 focus:outline-none focus:border-blue-500 pt-0.5 pb-1.5 resize-none min-h-[44px] placeholder-gray-400 bg-transparent"
                             />
                           </div>
                         </div>
@@ -956,14 +943,14 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                         />
                       </div>
 
-                      {q.type === 'multiple_choice' && !isRating && (
+                      {q.type === 'multiple_choice' && !isRating && currentChoiceType === 'image' && (
                         <div className="space-y-2 px-1 pt-2">
                           <div className="flex items-center justify-between">
                             <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest">Options layout</label>
                             <div className="flex gap-1.5">
                               {[
                                 { id: 'vertical', label: 'List', icon: List },
-                                { id: 'horizontal', label: 'Grid', icon: LayoutGrid }
+                                { id: 'horizontal', label: 'Grid', icon: GalleryHorizontalEnd }
                               ].map((layout) => (
                                 <button
                                   key={layout.id}
@@ -980,7 +967,6 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                               ))}
                             </div>
                           </div>
-                          <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wide italic">Applies only if images are added to options.</p>
                         </div>
                       )}
 
@@ -999,8 +985,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                             createOption={createSurveyOption}
                           >
                             {(controls) => (
-                              <div className="space-y-3 border-t border-gray-50 pt-3">
-                                <p className="px-1 text-[10px] font-medium leading-relaxed text-gray-600">{t('answerType.imageHelper')}</p>
+                              <div className="space-y-3">
                                 {!q.options?.some(draftOptionHasImage) && (
                                   <button type="button" onClick={controls.openBulk} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-blue-300 bg-blue-50/50 px-3 text-xs font-bold text-blue-700">
                                     <ImageIcon size={16} aria-hidden="true" /> {t('answerType.addImages')}
@@ -1009,9 +994,10 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                 {q.options?.map((opt, oIdx) => (
                                   <div key={opt.id} className="flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-1 duration-200">
                                     <div className="flex items-center gap-2">
-                                      <div className="flex min-h-[58px] flex-1 items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-2 py-1 transition-all focus-within:border-blue-300 focus-within:bg-white">
+                                      <span className="w-4 shrink-0 text-center text-xs font-black text-gray-400">{oIdx + 1}</span>
+                                      <div className="min-w-0 flex min-h-[58px] flex-1 items-center gap-2 rounded-xl border border-gray-200 bg-gray-55/5 px-2 py-1 focus-within:border-blue-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100 transition-all shadow-xs">
                                         <OptionImageThumbnail optionId={opt.id} optionIndex={oIdx} draft={opt.mediaDrafts[0]} legacyImage={opt.image} controls={controls} />
-                                        <input
+                                        <input dir="auto"
                                           type="text"
                                           value={opt.text}
                                           maxLength={80}
@@ -1020,11 +1006,11 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                           onBlur={() => focusedOptionId === opt.id && setFocusedOptionId(null)}
                                           placeholder={t('answerType.optionName', { number: oIdx + 1 })}
                                           aria-label={t('answerType.optionName', { number: oIdx + 1 })}
-                                          className="min-w-0 flex-1 bg-transparent p-2 text-xs font-semibold placeholder-gray-500 focus:outline-none"
+                                          className="min-w-0 flex-1 bg-transparent px-1 py-1.5 text-[12px] leading-relaxed text-start font-normal text-gray-900 placeholder-gray-500 focus:outline-none"
                                         />
-                                        <span className="whitespace-nowrap text-[9px] text-gray-500">{opt.text.length}/80</span>
-                                        <button onClick={() => setSettingsOptionId({ secId: activeSection.id, qId: q.id, optId: opt.id })} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-gray-500" aria-label={`Option ${oIdx + 1} menu`}><MoreHorizontal size={18} /></button>
+                                        <span className="me-1.5 whitespace-nowrap text-[9px] text-gray-500">{opt.text.length}/80</span>
                                       </div>
+                                        <button onClick={() => setSettingsOptionId({ secId: activeSection.id, qId: q.id, optId: opt.id })} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-gray-500 hover:text-gray-700" aria-label={`Option ${oIdx + 1} menu`}><MoreHorizontal size={18} /></button>
                                     </div>
                                     <div className="flex flex-wrap gap-2 ms-2">
                                       {opt.withFollowUp && <div className="flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-2 py-1 text-[9px]"><MessageSquare size={10} className="text-blue-500" /><span className="truncate font-bold text-blue-700">Follow-up: {opt.followUpLabel || "Please explain..."}</span></div>}
@@ -1036,29 +1022,29 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                     </div>
                                   </div>
                                 ))}
+                            <div className="flex items-center gap-2 opacity-60 transition-opacity hover:opacity-90 focus-within:opacity-100">
+                              <span className="w-4 shrink-0 text-center text-xs font-black text-gray-400">{(q.options?.length || 0) + 1}</span>
+                              <div className="flex-1 rounded-xl border border-dashed border-gray-200 bg-gray-50/30 px-2 py-0.5">
+                                <input dir="auto" type="text" placeholder="Add option..." className="w-full cursor-pointer bg-transparent px-2.5 py-1.5 text-[12px] leading-relaxed text-start font-normal text-gray-600 placeholder-gray-500 focus:outline-none" onFocus={() => handleAddSurveyOption(activeSection.id, q.id)} />
+                              </div>
+                              <span className="h-10 w-10 shrink-0" />
+                            </div>
+
                                 {q.options?.some(draftOptionHasImage) && (
                                   <button type="button" onClick={controls.openBulk} className="flex min-h-11 items-center gap-2 px-1 text-xs font-bold text-blue-600"><Plus size={15} aria-hidden="true" />{t('answerType.addMoreImages')}</button>
                                 )}
-                                <button
-                                  type="button"
-                                  role="switch"
-                                  aria-checked={q.showOptionNames !== false}
-                                  onClick={() => updateQuestion(activeSection.id, q.id, { showOptionNames: q.showOptionNames === false })}
-                                  className="flex min-h-11 w-full items-center justify-between gap-3 border-t border-gray-100 px-1 pt-3 text-left"
-                                >
-                                  <span className="text-xs font-semibold text-gray-700">{t('answerType.showNames')}</span>
-                                  <span className={`relative h-6 w-11 shrink-0 rounded-full ${q.showOptionNames !== false ? 'bg-blue-600' : 'bg-gray-300'}`} aria-hidden="true"><span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm ${q.showOptionNames !== false ? 'start-6' : 'start-1'}`} /></span>
-                                </button>
+
                               </div>
                             )}
                           </OptionImagePicker>
                         ) : (
-                          <div className="space-y-3 border-t border-gray-50 pt-2">
+                          <div className="space-y-3">
                             {q.options?.map((opt, oIdx) => (
                               <div key={opt.id} className="flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-1 duration-200">
                                 <div className="flex items-center gap-2">
-                                  <div className="flex flex-1 items-center rounded-xl border border-transparent bg-gray-50 px-1 py-1 shadow-sm transition-all focus-within:border-blue-200 focus-within:bg-white">
-                                    <input
+                                  <span className="w-4 shrink-0 text-center text-xs font-black text-gray-400">{oIdx + 1}</span>
+                                  <div className="min-w-0 flex flex-1 items-center rounded-xl border border-gray-200 bg-gray-55/5 px-2 py-0.5 shadow-xs transition-all focus-within:border-blue-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100">
+                                    <input dir="auto"
                                       type="text"
                                       value={opt.text}
                                       maxLength={80}
@@ -1072,11 +1058,11 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                                       }}
                                       onBlur={() => focusedOptionId === opt.id && setFocusedOptionId(null)}
                                       placeholder={`Option ${oIdx + 1}`}
-                                      className="min-w-0 flex-1 bg-transparent p-2 text-xs font-semibold placeholder-gray-500 focus:outline-none"
+                                      className="min-w-0 flex-1 bg-transparent px-2.5 py-1.5 text-[12px] leading-relaxed text-start font-normal text-gray-900 placeholder-gray-500 focus:outline-none"
                                     />
-                                    <span className="whitespace-nowrap text-[9px] text-gray-500">{opt.text.length}/80</span>
-                                    <button onClick={() => setSettingsOptionId({ secId: activeSection.id, qId: q.id, optId: opt.id })} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-gray-500" aria-label={`Option ${oIdx + 1} menu`}><MoreHorizontal size={18} /></button>
+                                    <span className="me-1.5 whitespace-nowrap text-[9px] text-gray-500">{opt.text.length}/80</span>
                                   </div>
+                                    <button onClick={() => setSettingsOptionId({ secId: activeSection.id, qId: q.id, optId: opt.id })} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-gray-500 hover:text-gray-700" aria-label={`Option ${oIdx + 1} menu`}><MoreHorizontal size={18} /></button>
                                 </div>
                                 <div className="flex flex-wrap gap-2 ms-2">
                                   {opt.withFollowUp && <div className="flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-2 py-1 text-[9px]"><MessageSquare size={10} className="text-blue-500" /><span className="truncate font-bold text-blue-700">Follow-up: {opt.followUpLabel || "Please explain..."}</span></div>}
@@ -1089,9 +1075,11 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                               </div>
                             ))}
                             <div className="flex items-center gap-2 opacity-60 transition-opacity hover:opacity-90 focus-within:opacity-100">
-                              <div className="flex-1 rounded-xl border border-dashed border-gray-200 bg-gray-50/50 px-1 py-1">
-                                <input type="text" placeholder="Add option..." className="w-full cursor-pointer bg-transparent p-2 text-xs font-semibold text-gray-600 placeholder-gray-500 focus:outline-none" onFocus={() => handleAddSurveyOption(activeSection.id, q.id)} />
+                              <span className="w-4 shrink-0 text-center text-xs font-black text-gray-400">{(q.options?.length || 0) + 1}</span>
+                              <div className="flex-1 rounded-xl border border-dashed border-gray-200 bg-gray-50/30 px-2 py-0.5">
+                                <input dir="auto" type="text" placeholder="Add option..." className="w-full cursor-pointer bg-transparent px-2.5 py-1.5 text-[12px] leading-relaxed text-start font-normal text-gray-600 placeholder-gray-500 focus:outline-none" onFocus={() => handleAddSurveyOption(activeSection.id, q.id)} />
                               </div>
+                              <span className="h-10 w-10 shrink-0" />
                             </div>
                           </div>
                         )
@@ -1109,6 +1097,20 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
             )}
           </div>
 
+          </div>
+          <div hidden={composerStep !== 2} className="space-y-6">
+          <PostVisibilitySection
+            value={visibility}
+            onChange={value => { setVisibility(value); setErrors(previous => ({ ...previous, visibility: false })); }}
+            selectedGroupIds={selectedGroups}
+            onGroupsChange={ids => { setSelectedGroups(ids); setErrors(previous => ({ ...previous, visibility: false })); }}
+            groups={userGroups}
+            allowCustomAudience={isVerified}
+            allowCustomDomain={false}
+            error={typeof errors.visibility === 'string' ? errors.visibility : false}
+            accent="blue"
+          />
+          <section aria-label="Advanced settings" className="space-y-3"><h2 className="text-xs font-bold text-gray-800">Advanced Settings</h2><div className="grid grid-cols-2 gap-2">{renderSettingField('Results', resultsLabel, () => setIsResultVisibilitySheetOpen(true))}{renderSettingField('Timer', durationLabel, () => setIsDurationSheetOpen(true))}</div></section>
           {/* Demographics Card Inline */}
           <section className="border-t border-gray-100 pt-4 mt-6 space-y-3">
             <div className="flex items-center gap-1.5 px-1">
@@ -1204,7 +1206,6 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
           {/* Engagement Settings */}
           <div className="border-t border-gray-100 pt-4 mt-6 space-y-3">
             <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest px-1">Engagement Settings</label>
-            <PeopleTagPicker selectedPeople={taggedPeople} onChange={setTaggedPeople} accent="blue" />
             <div className="bg-gray-50 rounded-2xl p-4 space-y-4 border border-gray-100">
               <button onClick={() => setAllowComments(!allowComments)} className="w-full flex items-center justify-between py-1 group">
                 <div className="flex flex-col text-left">
@@ -1227,12 +1228,13 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
             </div>
           </div>
 
+          </div>
           {/* Unified Validation Error Display */}
           {hasAttemptedSubmit && !errorInfo.isValid && (
             <div className="p-4 bg-red-50 text-red-600 border border-red-200 rounded-2xl text-xs font-semibold flex flex-col gap-2 mt-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <div className="flex items-center gap-2 font-bold text-red-800">
                 <AlertCircle size={16} />
-                <span>Please correct the following errors to publish:</span>
+                <span>Please correct the following errors to {composerStep === 1 ? 'continue' : 'post'}:</span>
               </div>
               <ul className="list-disc pl-5 space-y-1">
                 {errorInfo.errors.map((err, idx) => (
@@ -1254,118 +1256,19 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
           Save Draft
         </button>
         <button
-          onClick={() => handlePost(false)}
-          disabled={!canPublish}
-          aria-disabled={!canPublish}
-          className={`flex-1 py-3 text-white rounded-2xl font-black uppercase tracking-wider text-[11px] transition-all ${
-            canPublish
+          onClick={() => composerStep === 1 ? handleNext() : handlePost(false)}
+          disabled={!mediaReady || isSubmitting}
+          aria-disabled={!mediaReady || isSubmitting}
+          className={`flex-1 py-3 text-white rounded-2xl font-bold uppercase tracking-wider text-[12px] transition-all ${
+            mediaReady && !isSubmitting
               ? 'bg-blue-600 hover:bg-blue-700 active:scale-[0.98] shadow-lg shadow-blue-200'
               : 'bg-gray-300 shadow-none cursor-not-allowed'
           }`}
         >
-          Publish Survey
+          {composerStep === 1 ? 'Next' : 'Post'}
         </button>
       </div>
 
-      <BottomSheet
-        isOpen={isVisibilitySheetOpen}
-        onClose={() => setIsVisibilitySheetOpen(false)}
-        title="Post visibility"
-      >
-        <div className="space-y-2 py-2">
-          {visibilityOptions.map((option) => {
-            const Icon = option.icon;
-            const isSelected = visibility === option.id;
-            return (
-              <button
-                key={option.id}
-                onClick={() => {
-                  if (option.allowed) {
-                    setVisibility(option.id as VisibilityType);
-                    if (option.id !== 'Groups') setIsVisibilitySheetOpen(false);
-                  }
-                }}
-                className={`w-full flex items-center gap-4 p-4 rounded-2xl border transition-all text-left group ${!option.allowed ? 'opacity-40 cursor-not-allowed grayscale' : 'hover:bg-gray-50'
-                  } ${isSelected ? 'border-blue-500 bg-blue-50/50 ring-1 ring-blue-500/20' : 'border-transparent'}`}
-              >
-                <div className={`p-2.5 rounded-xl transition-colors ${isSelected ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-100 text-gray-500 group-hover:bg-gray-200'}`}>
-                  <Icon size={20} />
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <h4 className={`font-bold text-sm ${isSelected ? 'text-blue-700' : 'text-gray-900'}`}>{option.label}</h4>
-                    {option.premium && (
-                      <span className="text-[8px] font-black bg-gradient-to-r from-amber-400 to-orange-500 text-white px-1.5 py-0.5 rounded-md uppercase tracking-wider">PRO</span>
-                    )}
-                  </div>
-                  <p className="text-[10px] text-gray-500 leading-tight mt-0.5">{option.desc}</p>
-                </div>
-                {isSelected && (
-                  <div className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-sm animate-in zoom-in">
-                    <Check size={14} strokeWidth={3} />
-                  </div>
-                )}
-              </button>
-            );
-          })}
-
-          {visibility === 'Groups' && (
-            <div className="mt-4 p-4 bg-gray-50 rounded-2xl animate-in slide-in-from-top-2">
-              <div className="flex items-center justify-between mb-3 px-1">
-                <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Select target groups</h5>
-                <span className="text-[9px] font-bold text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded uppercase">Postable</span>
-              </div>
-
-              {postableGroups.length > 0 ? (
-                <div className="space-y-2 max-h-[250px] overflow-y-auto no-scrollbar">
-                  {postableGroups.map(group => {
-                    const isGroupSelected = selectedGroups.includes(group.id);
-                    return (
-                      <button
-                        key={group.id}
-                        onClick={() => handleGroupToggle(group.id)}
-                        className={`w-full flex items-center gap-3 p-2 rounded-xl transition-all border ${isGroupSelected
-                          ? 'bg-white border-blue-200 shadow-sm ring-1 ring-blue-500/5'
-                          : 'bg-transparent border-transparent hover:bg-white/50'
-                          }`}
-                      >
-                        <img src={group.image} className="w-10 h-10 rounded-lg object-cover border border-gray-200 shadow-xs" alt="" />
-                        <div className="flex-1 text-left min-w-0">
-                          <p className="text-xs font-bold text-gray-800 truncate">{group.name}</p>
-                          <p className="text-[10px] text-gray-400">{(group.memberCount || 0).toLocaleString()} members</p>
-                        </div>
-                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${isGroupSelected ? 'bg-blue-600 border-blue-600' : 'border-gray-200'
-                          }`}>
-                          {isGroupSelected && <Check size={12} className="text-white" strokeWidth={3} />}
-                        </div>
-                      </button>
-                    );
-                  })}
-
-                  <button
-                    onClick={() => {
-                      setIsVisibilitySheetOpen(false);
-                      setErrors(prev => ({ ...prev, visibility: false }));
-                    }}
-                    className="w-full mt-4 py-2.5 bg-blue-600 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-200 active:scale-95 transition-all"
-                  >
-                    Confirm {selectedGroups.length > 0 ? `(${selectedGroups.length})` : ''}
-                  </button>
-                </div>
-              ) : (
-                <div className="py-6 text-center">
-                  <Users size={32} className="mx-auto text-gray-300 mb-2 opacity-30" />
-                  <p className="text-xs text-gray-500 font-medium leading-relaxed px-4">
-                    You don't have permission to post in any groups.
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </BottomSheet>
-
-      {/* Result Visibility Bottom Sheet */}
       <BottomSheet
         isOpen={isResultVisibilitySheetOpen}
         onClose={() => setIsResultVisibilitySheetOpen(false)}
@@ -1448,6 +1351,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
         title="Select Category"
       >
         <div className="flex flex-wrap gap-2 py-2">
+          <button type="button" onClick={() => { setCategory(''); setIsCategorySheetOpen(false); }} className="px-4 py-2 rounded-full text-xs font-bold border border-gray-200 bg-white text-gray-600">Clear category</button>
           {SURVEY_CATEGORIES.map(cat => (
             <button
               key={cat}
@@ -1642,7 +1546,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
               {selectedOptionForSettings.withFollowUp && (
                 <div className="animate-in fade-in slide-in-from-top-1">
                   <label className="block text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1.5 px-1">Follow-up Question Text</label>
-                  <input
+                  <input dir="auto"
                     type="text"
                     value={selectedOptionForSettings.followUpLabel}
                     onChange={(e) => {
@@ -1661,7 +1565,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                       }));
                     }}
                     placeholder="e.g. Please explain your choice..."
-                    className="w-full bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-sm focus:outline-none focus:bg-white focus:border-blue-500 transition-all font-bold"
+                    className="w-full bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-[12px] leading-relaxed text-start focus:outline-none focus:bg-white focus:border-blue-500 transition-all font-normal"
                     autoFocus
                   />
                 </div>

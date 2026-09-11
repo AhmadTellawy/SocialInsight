@@ -62,7 +62,7 @@ test('age-group cache refresh is scheduled daily and uses an atomic set-based up
   const source = readFileSync(resolve(__dirname, '../services/cronService.ts'), 'utf8');
   assert.match(source, /cron\.schedule\('0 0 \* \* \*'/);
   assert.doesNotMatch(source, /cron\.schedule\('0 0 1 \* \*'/);
-  assert.match(source, /prisma\.\$executeRaw`[\s\S]*ON CONFLICT \("user_id"\) DO UPDATE/);
+  assert.match(source, /tx\.\$executeRaw`[\s\S]*ON CONFLICT \("user_id"\) DO UPDATE/);
   assert.match(source, /WHERE "birthday" IS NOT NULL/);
 });
 

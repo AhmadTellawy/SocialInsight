@@ -24,8 +24,8 @@ export default defineConfig(() => {
         },
         includeAssets: ['favicon.ico', 'apple-touch-icon-180x180.png'],
         manifest: {
-          name: 'SocialInsight',
-          short_name: 'SocialInsight',
+          name: 'Opiniup',
+          short_name: 'Opiniup',
           description: 'AI Studio App',
           theme_color: '#ffffff',
           icons: [
