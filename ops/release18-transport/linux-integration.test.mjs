@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { CLI_SHA256, ENGINE_SHA256, CA_SHA256, FROZEN_BINDING, SERVICE, TARGET, sourceSnapshot, frozenPackage, readRegular, directory, sha256, cleanEnvironment } from './contract.mjs';
+import { CLI_SHA256, ENGINE_SHA256, CA_SHA256, FROZEN_BINDING, SERVICE, TARGET, sourceSnapshot, frozenPackage, readRegular, directory, sha256, cleanEnvironment, environmentGuard } from './contract.mjs';
 import { ensurePrivate } from './capture.mjs';
 import { cacheBase, dependencyFiles, saveCache, materializeCache } from './cache.mjs';
 
@@ -277,6 +277,11 @@ caseTest('actual runCapture parent retains UNKNOWN lock after SIGTERM with expli
   const approvalFile = path.join(root, 'synthetic-approval.json'), approvalBytes = JSON.stringify(approved);
   fs.writeFileSync(approvalFile, approvalBytes, { flag: 'wx', mode: 0o600 });
   const invocationEnv = { ...cleanEnvironment(process.env), RENDER_SERVICE_ID: SERVICE, RENDER_GIT_COMMIT: opsRevision, RELEASE18_TRANSPORT_APPROVED_CONFIG_SHA256: sha256(approvalBytes), RELEASE18_DB_ADMIN_PASSWORD: PASSWORD };
+  // cleanEnvironment supplies an outbound child-only Prisma flag. The capture entry point
+  // correctly rejects that flag as ambient configuration; the fixture must honor its guard.
+  rejects(() => environmentGuard(invocationEnv), { code: 'AMBIENT_CONFIGURATION_FORBIDDEN' }, 'child-only Prisma flag rejected by actual capture entry guard');
+  delete invocationEnv.PRISMA_HIDE_UPDATE_MESSAGE;
+  assertions++; assert.doesNotThrow(() => environmentGuard(invocationEnv), 'synthetic invocation passes unchanged capture entry guard');
   const workerFile = path.join(root, 'capture-worker.mjs');
   // No production code or signal handler is changed. Existing DI replaces Git/cache fixtures and
   // translates the already-validated fixed URL only inside this test adapter. It appends a test
@@ -319,7 +324,13 @@ caseTest('actual runCapture parent retains UNKNOWN lock after SIGTERM with expli
       }
       await wait(50);
     }
-    eq(targetValidated, true, 'production fixed-target URL passed before explicit test-only local substitution');
+    record.captureStartup = {
+      fixedTargetValidatedBeforeTestSubstitution: targetValidated,
+      resultStatus: ['PASSED', 'REJECTED', 'FAILED_OR_UNKNOWN'].includes(result?.status) ? result.status : 'NOT_RETURNED',
+      failureCode: /^[A-Z0-9_]{1,80}$/.test(result?.failureCode ?? '') ? result.failureCode : 'NOT_RETURNED',
+      workerExited: exited, workerError, workerExitCode: Number.isInteger(exitCode) ? exitCode : null
+    };
+    eq(targetValidated, true, 'production fixed-target URL passed before explicit test-only local substitution; capture failureCode=' + record.captureStartup.failureCode);
     check(!workerError && Number.isInteger(group) && group > 1 && group !== process.pid && engine && backend, 'capture actual native CLI and tagged SQL active before signal');
     eq(sha256(fs.readFileSync(`/proc/${engine.pid}/exe`)), ENGINE_SHA256, 'capture adapter runs actual pinned native engine');
     record.signalSentAt = new Date().toISOString(); const signalTime = Date.now();
