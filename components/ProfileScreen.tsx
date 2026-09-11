@@ -24,7 +24,7 @@ interface ProfileScreenProps {
   user?: Partial<UserProfile> & { id?: string; name: string; avatar: string; handle?: string; isFollowing?: boolean; followStatus?: string; isPrivate?: boolean };
   onBack?: () => void;
   onAuthorClick?: (author: { id: string; name: string; avatar: string; handle?: string }) => void;
-  onShareToFeed?: (survey: Survey, caption: string) => void;
+  onShareToFeed?: (survey: Survey, caption: string) => Promise<'shared' | 'unshared'>;
   contextGroups?: any[];
   onSettingsClick?: () => void;
   onEditProfileClick?: () => void;
@@ -104,7 +104,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
   const viewUserId = (!user?.id || user.id === userProfile.id) ? userProfile.id : (user as any)?.id;
   const initialFollowStatus = (user as any)?.followStatus || ((user as any)?.isFollowing ? 'ACTIVE' : 'NONE');
-  const [isFollowing, setLocalFollowingState] = useFollowState(viewUserId, (user as any)?.isFollowing === true || initialFollowStatus === 'ACTIVE');
+  const [isFollowing, setLocalFollowingState] = useFollowState(viewUserId, (user as any)?.isFollowing === true || initialFollowStatus === 'ACTIVE', userProfile?.id);
   const [followStatus, setFollowStatus] = useState<string>(initialFollowStatus);
 
   const [drafts, setDrafts] = useState<Survey[]>([]);

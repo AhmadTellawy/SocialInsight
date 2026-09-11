@@ -1,3 +1,4 @@
+import { usePostSaveFeedback } from '../hooks/usePostSaveFeedback';
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { X, Plus, Trash2, Globe, Users, ChevronDown, Clock, Calendar, Type, ListChecks, ImageIcon, Settings, Info, ArrowRight, Camera, Lock, AlertCircle, ChevronRight, ChevronLeft, MoreHorizontal, Layout, Terminal, Navigation, Sparkles, GripVertical, Save, FileText, BarChart3, UserCircle, Heart, Fingerprint, MapPin, Briefcase, Check, GraduationCap, Home, Smile, Building2, User, MessageSquare, ShieldCheck, Link2, Target, MoreHorizontal as MoreHorizontalIcon, ArrowUp, ArrowDown, Star, List, GalleryHorizontalEnd, CornerDownRight, PowerOff, CheckCircle2, ArrowLeft, Tag } from 'lucide-react';
@@ -80,8 +81,9 @@ const createQuizOption = (): SurveyOptionDraft => ({
   mediaDrafts: []
 });
 
-export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClose, onSubmit, onSaveDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
+export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClose, onSubmit: persistPost, onSaveDraft: persistDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
   const { t } = useTranslation();
+  const { error: submissionError, isSaving, onSubmit, onSaveDraft } = usePostSaveFeedback(persistPost, persistDraft, t);
   const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
   const [isResultVisibilitySheetOpen, setIsResultVisibilitySheetOpen] = useState(false);
   const [isCategorySheetOpen, setIsCategorySheetOpen] = useState(false);
@@ -257,6 +259,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
   ];
 
   const handleClose = () => {
+    if (isSaving) return;
     if (hasChanges) {
       setShowExitConfirm(true);
     } else {
@@ -347,7 +350,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
   };
 
   const handleSaveDraft = async () => {
-    if (isSubmitting) return;
+    if (isSaving || isSubmitting) return;
     if (!userProfile?.id) {
       onClose();
       return;
@@ -390,8 +393,8 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
         await cancelTemporaryMediaDrafts(collectInactiveSectionMedia(sections));
         onClose();
       } catch (error) {
+        setShowExitConfirm(false);
         console.error('Failed to save quiz draft:', error);
-        alert('Failed to save quiz draft. Please try again.');
       } finally {
         setIsSubmitting(false);
       }
@@ -410,7 +413,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
   };
 
   const handlePost = async () => {
-    if (isSubmitting) return;
+    if (isSaving || isSubmitting) return;
     setHasAttemptedSubmit(true);
     const { isValid, newErrors } = validateQuiz();
     setErrors(newErrors);
@@ -450,7 +453,6 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
       onClose();
     } catch (error) {
       console.error('Failed to publish quiz:', error);
-      alert('Failed to publish quiz. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -558,7 +560,10 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
   };
 
   return (
-    <div className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-bottom duration-300">
+    <>
+      {(isSaving || isSubmitting) && <div role="status" className="fixed inset-x-4 top-4 z-[200] rounded-xl bg-gray-900 p-3 text-center text-sm text-white">{t('postOptions.saving')}</div>}
+      <div inert={isSaving || isSubmitting} aria-busy={isSaving || isSubmitting} className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-bottom duration-300">
+      {submissionError && <p role="alert" className="shrink-0 border-b border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">{submissionError}</p>}
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white/95 backdrop-blur-md sticky top-0 z-40 safe-top shrink-0">
         <button aria-label={composerStep === 2 ? 'Back' : 'Close'} onClick={() => { if (composerStep === 2) { setComposerStep(1); setHasAttemptedSubmit(false); scrollContainerRef.current?.scrollTo({ top: 0 }); } else handleClose(); }} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">
@@ -568,15 +573,15 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
         <div className="flex items-center gap-2">
           <button
             onClick={handleSaveDraft}
-            disabled={!mediaReady || isSubmitting}
+            disabled={!mediaReady || isSaving || isSubmitting}
             className="text-purple-600 border border-purple-200 font-black text-[9px] px-3.5 py-2 rounded-full bg-purple-50 hover:bg-purple-100 transition-all uppercase tracking-widest active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Save Draft
           </button>
           <button
             onClick={() => composerStep === 1 ? handleNext() : handlePost()}
-            disabled={!mediaReady || isSubmitting}
-            aria-disabled={!mediaReady || isSubmitting}
+            disabled={!mediaReady || isSaving || isSubmitting}
+            aria-disabled={!mediaReady || isSaving || isSubmitting}
             className={`text-white font-bold text-[12px] px-4 py-2 rounded-full transition-all uppercase tracking-widest ${
               mediaReady && !isSubmitting
                 ? 'bg-purple-600 hover:bg-purple-700 shadow-md active:scale-95 shadow-purple-200/50'
@@ -1360,14 +1365,15 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
             <h3 className="text-lg font-bold text-gray-900 mb-2">Discard changes?</h3>
             <p className="text-sm text-gray-500 mb-6 leading-relaxed">You have unsaved work. If you exit now, your changes will be lost.</p>
             <div className="flex flex-col gap-2">
-              <button onClick={handleDiscard} className="w-full py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-colors">Discard and Exit</button>
-              <button onClick={handleSaveDraft} className="w-full py-3 bg-purple-50 text-purple-600 rounded-xl font-bold text-sm hover:bg-purple-100 transition-colors">Save as Draft</button>
-              <button onClick={() => setShowExitConfirm(false)} className="w-full py-3 bg-gray-100 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-200 transition-colors">Keep Editing</button>
+              <button onClick={handleDiscard} disabled={isSaving || isSubmitting} className="w-full py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-colors">Discard and Exit</button>
+              <button onClick={handleSaveDraft} disabled={isSaving || isSubmitting} className="w-full py-3 bg-purple-50 text-purple-600 rounded-xl font-bold text-sm hover:bg-purple-100 transition-colors">Save as Draft</button>
+              <button onClick={() => setShowExitConfirm(false)} disabled={isSaving || isSubmitting} className="w-full py-3 bg-gray-100 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-200 transition-colors">Keep Editing</button>
             </div>
           </div>
         </div>
       )}
 
     </div>
+    </>
   );
 };

@@ -1054,6 +1054,18 @@ export const updatePost = async (req: Request, res: Response) => {
             return;
         }
 
+        if (data.status !== undefined && data.status !== POST_STATUS.DRAFT && data.status !== POST_STATUS.PUBLISHED) {
+            res.status(400).json({ error: 'Status must be DRAFT or PUBLISHED.', code: 'INVALID_POST_STATUS' });
+            return;
+        }
+
+        if (data.targetGroups !== undefined && (!Array.isArray(data.targetGroups)
+            || data.targetGroups.some((groupId: unknown) => typeof groupId !== 'string' || !groupId.trim())
+            || new Set(data.targetGroups).size !== data.targetGroups.length)) {
+            res.status(400).json({ error: 'Select valid, unique target groups.', code: 'INVALID_POST_AUDIENCE' });
+            return;
+        }
+
         if (existingPost.status === 'PUBLISHED' && Date.now() - existingPost.createdAt.getTime() > EDIT_WINDOW_MS) {
             res.status(403).json({ error: 'Published posts can only be edited within 5 minutes.' });
             return;
@@ -1127,21 +1139,18 @@ export const updatePost = async (req: Request, res: Response) => {
             res.status(400).json({ error: audienceError, code: 'INVALID_POST_AUDIENCE' });
             return;
         }
-        const shouldValidateGroupPosting = isProfileAndGroups(effectiveAudience) || submittedTargetGroups !== undefined || data.status === 'PUBLISHED' || existingPost.status === POST_STATUS.DRAFT || existingPost.status === POST_STATUS.REJECTED;
-
         let needsApproval = false;
-        if (shouldValidateGroupPosting && effectiveTargetGroups.length > 0) {
+        // Content edits and target changes must respect the current group policy too.
+        if (effectiveTargetGroups.length > 0) {
             for (const groupId of effectiveTargetGroups) {
                 const group = await prisma.group.findUnique({
                     where: { id: groupId },
                     select: { postingPermissions: true, isDeleted: true }
                 });
-                if (isProfileAndGroups(effectiveAudience) && (!group || group.isDeleted)) {
+                if (!group || group.isDeleted) {
                     res.status(403).json({ error: 'A selected group is unavailable.' });
                     return;
                 }
-                if (!group) continue;
-
                 const membership = await prisma.groupMember.findUnique({
                     where: { userId_groupId: { userId: trustedUserId, groupId } }
                 });
@@ -1221,7 +1230,8 @@ export const updatePost = async (req: Request, res: Response) => {
             }
         }
 
-        if (isProfileAndGroups(effectiveAudience) && needsApproval && (data.status ?? existingPost.status) !== POST_STATUS.DRAFT) {
+        const requestedStatus = data.status ?? existingPost.status;
+        if (needsApproval && (requestedStatus === POST_STATUS.PUBLISHED || requestedStatus === POST_STATUS.PENDING_APPROVAL)) {
             updateData.status = POST_STATUS.PENDING_APPROVAL;
             updateData.approvedById = null;
             updateData.approvedAt = null;

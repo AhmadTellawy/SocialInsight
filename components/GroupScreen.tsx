@@ -28,7 +28,7 @@ interface GroupScreenProps {
   onSurveyProgress?: (surveyId: string, progress: any) => void;
   onSettingsClick?: () => void;
   onCreatePost?: (type: 'Poll' | 'Survey' | 'Quiz' | 'Challenge') => void;
-  onShareToFeed?: (survey: Survey, caption: string) => void;
+  onShareToFeed?: (survey: Survey, caption: string) => Promise<'shared' | 'unshared'>;
   onUpdateDemographics?: (demographics: Partial<NonNullable<UserProfile['demographics']>>) => void;
   getGroupShareUrl?: (groupId: string) => string;
   onLike?: (surveyId: string, isLiked: boolean) => void;

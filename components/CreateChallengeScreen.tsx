@@ -1,3 +1,4 @@
+import { usePostSaveFeedback } from '../hooks/usePostSaveFeedback';
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
@@ -78,8 +79,9 @@ const createChallengeOption = (): ChallengeDraftOption => ({
   mediaDrafts: []
 });
 
-export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ onClose, onSubmit, onSaveDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
+export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ onClose, onSubmit: persistPost, onSaveDraft: persistDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
   const { t } = useTranslation();
+  const { error: submissionError, isSaving, onSubmit, onSaveDraft } = usePostSaveFeedback(persistPost, persistDraft, t);
   const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
   const [isAdvancedSheetOpen, setIsAdvancedSheetOpen] = useState(false);
   const [advancedSheetView, setAdvancedSheetView] = useState<'main' | 'results'>('main');
@@ -99,6 +101,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleExit = () => {
+    if (isSaving) return;
     if (title.trim() || options.some(o => o.text.trim()) || postMedia.length > 0 || legacyCoverImage) {
       setShowExitConfirm(true);
     } else {
@@ -173,7 +176,12 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
         isDraft: true,
         currentStep: 1
       };
-      await onSaveDraft(draftData);
+      try {
+        await onSaveDraft(draftData);
+      } catch {
+        setShowExitConfirm(false);
+        return;
+      }
       if (optionPresentation === 'text') {
         await cancelTemporaryMediaDrafts(options.flatMap((option) => option.mediaDrafts));
       }
@@ -379,7 +387,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   };
 
   const handleFinalPost = async () => {
-    if (isSubmitting) return;
+    if (isSaving || isSubmitting) return;
     if (!userProfile?.id) {
       alert('Please log in to create a post');
       onClose();
@@ -428,7 +436,6 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
       onClose();
     } catch (error) {
       console.error('Failed to create challenge:', error);
-      alert('Failed to create challenge. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -446,7 +453,10 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
   };
 
   return (
-    <div className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-right duration-350">
+    <>
+      {(isSaving || isSubmitting) && <div role="status" className="fixed inset-x-4 top-4 z-[200] rounded-xl bg-gray-900 p-3 text-center text-sm text-white">{t('postOptions.saving')}</div>}
+      <div inert={isSaving || isSubmitting} aria-busy={isSaving || isSubmitting} className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-right duration-350">
+      {submissionError && <p role="alert" className="shrink-0 border-b border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">{submissionError}</p>}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white/95 backdrop-blur-md sticky top-0 z-40 safe-top shrink-0">
         <button aria-label={composerStep === 2 ? 'Back' : 'Close'} onClick={() => { if (composerStep === 2) { setComposerStep(1); setHasAttemptedSubmit(false); scrollContainerRef.current?.scrollTo({ top: 0 }); } else handleExit(); }} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">
           <ArrowLeft size={24} />
@@ -454,8 +464,8 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
         <div className="text-center"><h1 className="text-[12px] font-bold text-gray-800">New Challenge</h1><p className="text-xs text-gray-500">Step {composerStep} of 2</p></div>
         <button
           onClick={() => composerStep === 1 ? handleNext() : handleFinalPost()}
-          disabled={isSubmitting}
-          aria-disabled={isSubmitting}
+          disabled={isSaving || isSubmitting}
+          aria-disabled={isSaving || isSubmitting}
           className={`text-white font-bold text-[12px] px-5 py-2.5 rounded-full transition-all uppercase tracking-widest ${
             !isSubmitting
               ? 'bg-amber-600 hover:bg-amber-700 shadow-md active:scale-95 shadow-amber-200/50'
@@ -1084,13 +1094,14 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
             <h3 className="text-lg font-bold text-gray-900 mb-2">Discard changes?</h3>
             <p className="text-sm text-gray-500 mb-6 leading-relaxed">You have unsaved work. If you exit now, your changes will be lost.</p>
             <div className="flex flex-col gap-2">
-              <button onClick={handleDiscard} className="w-full py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-colors">Discard and Exit</button>
-              <button onClick={handleSaveDraft} className="w-full py-3 bg-amber-50 text-amber-600 rounded-xl font-bold text-sm hover:bg-amber-100 transition-colors">Save as Draft</button>
-              <button onClick={() => setShowExitConfirm(false)} className="w-full py-3 bg-gray-100 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-200 transition-colors">Keep Editing</button>
+              <button onClick={handleDiscard} disabled={isSaving || isSubmitting} className="w-full py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-colors">Discard and Exit</button>
+              <button onClick={handleSaveDraft} disabled={isSaving || isSubmitting} className="w-full py-3 bg-amber-50 text-amber-600 rounded-xl font-bold text-sm hover:bg-amber-100 transition-colors">Save as Draft</button>
+              <button onClick={() => setShowExitConfirm(false)} disabled={isSaving || isSubmitting} className="w-full py-3 bg-gray-100 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-200 transition-colors">Keep Editing</button>
             </div>
           </div>
         </div>
       )}
     </div>
+    </>
   );
 };

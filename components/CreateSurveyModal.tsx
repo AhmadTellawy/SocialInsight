@@ -1,3 +1,4 @@
+import { usePostSaveFeedback } from '../hooks/usePostSaveFeedback';
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Tag, X, Plus, Trash2, Globe, Users, ChevronDown, Clock, Calendar, Type, ListChecks, ImageIcon, Settings, Info, ArrowRight, Camera, Lock, AlertCircle, ChevronRight, ChevronLeft, MoreVertical, Layout, Terminal, Navigation, Sparkles, GripVertical, Save, FileText, BarChart3, UserCircle, Heart, Fingerprint, MapPin, Briefcase, Check, GraduationCap, Home, Smile, Building2, User, MessageSquare, ShieldCheck, Link2, Target, MoreHorizontal, ArrowUp, ArrowDown, Star, List, GalleryHorizontalEnd, CornerDownRight, PowerOff } from 'lucide-react';
@@ -93,8 +94,9 @@ const createSurveyRatingOptions = (): SurveyOptionDraft[] => [5, 4, 3, 2, 1].map
   ratingValue
 }));
 
-export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, onClose, onSubmit, onSaveDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
+export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, onClose, onSubmit: persistPost, onSaveDraft: persistDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
   const { t } = useTranslation();
+  const { error: submissionError, isSaving, onSubmit, onSaveDraft } = usePostSaveFeedback(persistPost, persistDraft, t);
   const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
   const [isResultVisibilitySheetOpen, setIsResultVisibilitySheetOpen] = useState(false);
   const [isCategorySheetOpen, setIsCategorySheetOpen] = useState(false);
@@ -285,6 +287,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
   ];
 
   const handleClose = () => {
+    if (isSaving) return;
     if (hasChanges) {
       setShowExitConfirm(true);
     } else {
@@ -392,7 +395,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
   };
 
   const handlePost = async (isDraft: boolean = false) => {
-    if (isSubmitting) return;
+    if (isSaving || isSubmitting) return;
     if (!userProfile?.id) {
       onClose();
       return;
@@ -449,7 +452,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
       onClose();
     } catch (error) {
       console.error('Failed to save survey:', error);
-      alert('Failed to save survey. Please try again.');
+      setShowExitConfirm(false);
     } finally {
       setIsSubmitting(false);
     }
@@ -666,7 +669,10 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
   };
 
   return (
-    <div className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-bottom duration-300">
+    <>
+      {(isSaving || isSubmitting) && <div role="status" className="fixed inset-x-4 top-4 z-[200] rounded-xl bg-gray-900 p-3 text-center text-sm text-white">{t('postOptions.saving')}</div>}
+      <div inert={isSaving || isSubmitting} aria-busy={isSaving || isSubmitting} className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-bottom duration-300">
+      {submissionError && <p role="alert" className="shrink-0 border-b border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">{submissionError}</p>}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white/95 backdrop-blur-md sticky top-0 z-40 safe-top shrink-0">
         <button aria-label={composerStep === 2 ? 'Back' : 'Close'} onClick={() => { if (composerStep === 2) { setComposerStep(1); setHasAttemptedSubmit(false); scrollContainerRef.current?.scrollTo({ top: 0 }); } else handleClose(); }} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">{composerStep === 2 ? <ChevronLeft size={24} /> : <X size={24} />}</button>
         <div className="flex flex-col items-center flex-1 mx-2">
@@ -1250,15 +1256,15 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
       <div className="border-t border-gray-100 bg-white/95 backdrop-blur-md px-4 py-3 sticky bottom-0 z-40 safe-bottom shrink-0 flex gap-3">
         <button
           onClick={() => handlePost(true)}
-          disabled={!mediaReady || isSubmitting}
+          disabled={!mediaReady || isSaving || isSubmitting}
           className="flex-1 py-3 bg-gray-100 text-gray-700 rounded-2xl font-black uppercase tracking-wider text-[11px] hover:bg-gray-200 transition-all active:scale-[0.98]"
         >
           Save Draft
         </button>
         <button
           onClick={() => composerStep === 1 ? handleNext() : handlePost(false)}
-          disabled={!mediaReady || isSubmitting}
-          aria-disabled={!mediaReady || isSubmitting}
+          disabled={!mediaReady || isSaving || isSubmitting}
+          aria-disabled={!mediaReady || isSaving || isSubmitting}
           className={`flex-1 py-3 text-white rounded-2xl font-bold uppercase tracking-wider text-[12px] transition-all ${
             mediaReady && !isSubmitting
               ? 'bg-blue-600 hover:bg-blue-700 active:scale-[0.98] shadow-lg shadow-blue-200'
@@ -1816,14 +1822,15 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
             <h3 className="text-lg font-bold text-gray-900 mb-2">Discard changes?</h3>
             <p className="text-sm text-gray-500 mb-6 leading-relaxed">You have unsaved work. If you exit now, your changes will be lost.</p>
             <div className="flex flex-col gap-2">
-              <button onClick={handleDiscard} className="w-full py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-colors">Discard and Exit</button>
+              <button onClick={handleDiscard} disabled={isSaving || isSubmitting} className="w-full py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-colors">Discard and Exit</button>
               <button onClick={() => handlePost(true)} className="w-full py-3 bg-blue-50 text-blue-600 rounded-xl font-bold text-sm hover:bg-blue-100 transition-colors">Save as Draft</button>
-              <button onClick={() => setShowExitConfirm(false)} className="w-full py-3 bg-gray-100 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-200 transition-colors">Keep Editing</button>
+              <button onClick={() => setShowExitConfirm(false)} disabled={isSaving || isSubmitting} className="w-full py-3 bg-gray-100 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-200 transition-colors">Keep Editing</button>
             </div>
           </div>
         </div>
       )}
 
     </div>
+    </>
   );
 };
