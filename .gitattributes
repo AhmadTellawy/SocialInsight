@@ -1,0 +1,4 @@
+# Preserve reviewed release-package bytes, including the explicit PROD_10 overlay.
+server/scripts/release-db-18/** -text
+ops/run-release18-verify.mjs -text
+ops/run-release18-verify.test.mjs -text

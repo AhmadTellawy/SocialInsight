@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Independent F01 release-18 execution configuration",
+  "description": "Trust is established by a separately installed approved SHA-256. This schema does not grant release authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion","authority","application","sourceBindingSha256","opsRevision","command","runId","profile","project","host","port","database","user","transport","serviceId","validFrom","expiresAt","gates","prismaTransportProof","applicationDeployment","unknownRunPolicy"],
+  "properties": {
+    "schemaVersion": {"const":1},
+    "authority": {"const":"F01_INDEPENDENT_RELEASE_REVIEW"},
+    "application": {"const":"9a8a3aeea6b614fbd58421d0fc1f1c01b36eb4ef"},
+    "sourceBindingSha256": {"$ref":"#/$defs/hash"},
+    "opsRevision": {"type":"string","pattern":"^[a-f0-9]{40}$","minLength":40,"maxLength":40},
+    "command": {"enum":["preflight","deploy"]},
+    "runId": {"type":"string","pattern":"^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$","minLength":36,"maxLength":36},
+    "profile": {"enum":["STAGE_EMPTY","STAGE_15","PROD_10"]},
+    "project": {"enum":["mnfiixtgnlzmduunfryt","jlanmsxfggpnbwoowejy"]},
+    "host": {"enum":["db.mnfiixtgnlzmduunfryt.supabase.co","aws-0-ap-southeast-1.pooler.supabase.com","db.jlanmsxfggpnbwoowejy.supabase.co"]},
+    "port": {"const":5432}, "database":{"const":"postgres"},
+    "user": {"enum":["postgres","postgres.mnfiixtgnlzmduunfryt"]},
+    "transport": {"enum":["direct","session"]},
+    "serviceId": {"type":"string","pattern":"^srv-[a-z0-9]+$","maxLength":100},
+    "validFrom": {"$ref":"#/$defs/utc"}, "expiresAt":{"$ref":"#/$defs/utc"},
+    "gates": {"type":"array","minItems":5,"maxItems":5,"items":{"type":"object","additionalProperties":false,"required":["role","status","evidenceSha256","sourceBindingSha256"],"properties":{"role":{"enum":["E03","E04","E01","D04","F01"]},"status":{"const":"PASSED"},"evidenceSha256":{"$ref":"#/$defs/hash"},"sourceBindingSha256":{"$ref":"#/$defs/hash"}}}},
+    "prismaTransportProof": {"$ref":"#/$defs/prismaProof"},
+    "applicationDeployment": {"const":false},
+    "unknownRunPolicy": {"const":"STOP_AND_INSPECT_NO_AUTOMATIC_RETRY"},
+    "fence": {"$ref":"#/$defs/fence"},
+    "backup": {"$ref":"#/$defs/backup"},
+    "runtimeJournalAclPlanReviewed": {"const":true},
+    "runtimeJournalAclEvidenceSha256": {"$ref":"#/$defs/hash"},
+    "stageAcceptanceEvidenceSha256": {"$ref":"#/$defs/hash"},
+    "baselineCaptureApproved": {"const":true}
+  },
+  "allOf": [
+    {"if":{"properties":{"command":{"const":"deploy"}}},"then":{"required":["fence","backup","runtimeJournalAclPlanReviewed","runtimeJournalAclEvidenceSha256","baselineCaptureApproved"]}},
+    {"if":{"properties":{"command":{"const":"deploy"},"profile":{"const":"PROD_10"}}},"then":{"required":["stageAcceptanceEvidenceSha256"]}},
+    {"if":{"properties":{"profile":{"const":"PROD_10"}}},"then":{"properties":{"project":{"const":"jlanmsxfggpnbwoowejy"},"host":{"const":"db.jlanmsxfggpnbwoowejy.supabase.co"},"transport":{"const":"direct"},"user":{"const":"postgres"}}}}
+  ],
+  "$defs": {
+    "hash": {"type":"string","pattern":"^[a-f0-9]{64}$","minLength":64,"maxLength":64},
+    "utc": {"type":"string","format":"date-time","pattern":"^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$","minLength":24,"maxLength":24},
+    "fence": {"type":"object","additionalProperties":false,"required":["active","project","allApplicationWritersStopped","cronStopped","socketStopped","mediaWritersStopped","evidenceSha256","observedAt","expiresAt"],"properties":{"active":{"const":true},"project":{"type":"string"},"allApplicationWritersStopped":{"const":true},"cronStopped":{"const":true},"socketStopped":{"const":true},"mediaWritersStopped":{"const":true},"evidenceSha256":{"$ref":"#/$defs/hash"},"observedAt":{"$ref":"#/$defs/utc"},"expiresAt":{"$ref":"#/$defs/utc"}}},
+    "backup": {"type":"object","additionalProperties":false,"required":["project","verified","restoreVerified","journalCoverageVerified","evidenceSha256","completedAt"],"properties":{"project":{"type":"string"},"verified":{"const":true},"restoreVerified":{"const":true},"journalCoverageVerified":{"const":true},"evidenceSha256":{"$ref":"#/$defs/hash"},"completedAt":{"$ref":"#/$defs/utc"}}},
+    "prismaProof": {"type":"object","additionalProperties":false,"required":["status","evidenceSha256","sourceBindingSha256","contractSha256","project","host","transport","nodePlatform","prismaVersion","cliSha256","engineSha256","caSha256","validPeer","wrongCaRejectedBeforeCredentials","wrongHostnameRejectedBeforeCredentials","noTlsRejectedBeforeCredentials","noPlaintextFallback","databaseTls","timezone","lockTimeoutMs","statementTimeoutMs","observedAt"],"properties":{
+      "status":{"const":"PASSED"},"evidenceSha256":{"$ref":"#/$defs/hash"},"sourceBindingSha256":{"$ref":"#/$defs/hash"},"contractSha256":{"$ref":"#/$defs/hash"},"project":{"type":"string"},"host":{"type":"string"},"transport":{"enum":["direct","session"]},"nodePlatform":{"const":"linux"},"prismaVersion":{"const":"6.19.2"},"cliSha256":{"const":"69a2bd6412521259b90c653aff9822b6d2fc63a17f9c46d46d07d319ea0dbb3e"},"engineSha256":{"const":"5d42b181631fd20bb0ecc5abcdba72575e7f467a0d52f4d5ef1ff28f0c74e6e9"},"caSha256":{"const":"700723581420dd1ac98fd7e9ac529f0ef210eadcaf87fc868a3ad7d114c2f3b7"},"validPeer":{"const":true},"wrongCaRejectedBeforeCredentials":{"const":true},"wrongHostnameRejectedBeforeCredentials":{"const":true},"noTlsRejectedBeforeCredentials":{"const":true},"noPlaintextFallback":{"const":true},"databaseTls":{"const":true},"timezone":{"const":"UTC"},"lockTimeoutMs":{"const":5000},"statementTimeoutMs":{"const":120000},"observedAt":{"$ref":"#/$defs/utc"}
+    }}
+  }
+}

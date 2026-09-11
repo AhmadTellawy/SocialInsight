@@ -1,0 +1,4 @@
+IF (SELECT count(*) FROM pg_index WHERE indexrelid IN (to_regclass('public.users_email_key'),to_regclass('public.users_handle_key'),to_regclass('public."PendingRegistration_email_key"')) AND indisunique AND indisvalid AND indisready)<>3 THEN RAISE EXCEPTION 'LEGACY_UNIQUE_INDEX_MISSING'; END IF;
+IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND ((table_name='users' AND column_name IN ('auth_invalidated_at','theme','search_visibility')) OR (table_name='Response' AND column_name IN ('guest_proof_hash','guest_proof_expires_at')) OR (table_name='MediaAsset' AND column_name='storageCleanupNotBefore') OR (table_name='PendingRegistration' AND column_name='browserSecretHash')))
+ OR EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname='public' AND t.typname IN ('OAuthStateMode','OtpDeliveryStatus'))
+THEN RAISE EXCEPTION 'PARTIAL_FUTURE_AUTH_SCHEMA'; END IF;
