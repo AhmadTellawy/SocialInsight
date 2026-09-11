@@ -1,6 +1,7 @@
 // Targeted real-conversion shutdown. Host observer runs outside UID10001/cgroup.
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -72,11 +73,17 @@ try{
   const beforeSignal=proc(native.pid);
   assert.ok(beforeSignal&&beforeSignal.state!=='Z'&&beforeSignal.start===members.find(m=>m.pid===native.pid).start);
   const signalAt=new Date().toISOString(),signalStart=performance.now();
+  emit({kind:'ACTIVE_BEFORE_SIGNAL',signalAt,members,leafEvents:events(path.join(groupPath,'memory.events'))});
   docker('kill','--signal','TERM',name);
   const afterSignalRequest=request(camera,5000),activeResult=await pending;
   assert.ok(activeResult.error||activeResult.status>=400,'Active conversion must not succeed after shutdown');
   assert.notEqual(activeResult.error,'TimeoutError','Server must terminate the request before client deadline');
-  const exit=Number(docker('wait',name)),shutdownMs=Math.round(performance.now()-signalStart);
+  // Keep the host client's event loop running while Docker waits; blocking it
+  // would prevent outstanding HTTP socket events from being serviced.
+  const waited=await promisify(execFile)('docker',['wait',name],{encoding:'utf8',timeout:15000});
+  const exit=Number(waited.stdout.trim()),shutdownMs=Math.round(performance.now()-signalStart);
+  emit({kind:'ACTIVE_AFTER_EXIT',exit,shutdownMs,activeResult,postSignalRequest:await afterSignalRequest,
+    jobEntries:fs.readdirSync(jobRoot),membersAfter:members.map(m=>proc(m.pid)),ancestorEvents:events(parentEventsPath)});
   assert.equal(exit,0);assert.ok(shutdownMs<10000,'Must exit before supervisor hard grace');
   const post=await afterSignalRequest;assert.ok(post.error||post.status>=400,'No successful admission after signal');
   const state=JSON.parse(docker('inspect',name))[0].State;assert.equal(state.Running,false);assert.equal(state.OOMKilled,false);
