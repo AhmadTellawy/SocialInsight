@@ -37,6 +37,7 @@ export const verifyHeifConversionReadiness = async (
   try {
     const response = await fetchImpl(new URL('/health/ready', baseUrl), {
       method: 'GET',
+      redirect: 'error',
       signal: controller.signal
     });
     if (response.ok) {
@@ -44,12 +45,53 @@ export const verifyHeifConversionReadiness = async (
         status?: unknown;
         service?: unknown;
         versions?: { libheif?: unknown; libde265?: unknown; sharp?: unknown };
+        nativeBuild?: { libheifRef?: unknown; libde265Ref?: unknown; libheifCommit?: unknown; libde265Commit?: unknown };
+        nativeProbe?: {
+          schemaVersion?: unknown;
+          status?: unknown;
+          fixtureSet?: unknown;
+          cases?: Array<{
+            id?: unknown;
+            fixtureSha256?: unknown;
+            inputMime?: unknown;
+            outputMime?: unknown;
+            width?: unknown;
+            height?: unknown;
+            hasAlpha?: unknown;
+          }>;
+        };
       };
+      const nativeCases = body.nativeProbe?.cases;
+      const expectedCases = [
+        ['rainbow-heic', '4b2ce727f093944975f143ba2b39c4c64511b766d94552f8d51a755916e7f983', 'image/heic', 451, 461, false],
+        ['rainbow-generic-heif', '536badaba808ef5e5bf51f80611ab112440474dacc4cb3f99cb05a284d0a8391', 'image/heif', 451, 461, false],
+        ['alpha-heic', 'dac399d3bf1019baaf5f88eef8b277087d0643e735db947c42355237bb9d0221', 'image/heic', 512, 512, true],
+      ] as const;
+      const nativeCasesVerified = Array.isArray(nativeCases)
+        && nativeCases.length === expectedCases.length
+        && expectedCases.every(([id, fixtureSha256, inputMime, width, height, hasAlpha], index) => {
+          const item = nativeCases[index];
+          return item?.id === id
+            && item.fixtureSha256 === fixtureSha256
+            && item.inputMime === inputMime
+            && item.outputMime === 'image/webp'
+            && item.width === width
+            && item.height === height
+            && item.hasAlpha === hasAlpha;
+        });
       ready = body.status === 'ready'
         && body.service === 'heif-converter'
-        && body.versions?.libheif === '1.23.3'
+        && body.versions?.libheif === '1.23.4'
         && body.versions?.libde265 === '1.1.1'
-        && body.versions?.sharp === '0.35.4';
+        && body.versions?.sharp === '0.35.4'
+        && body.nativeBuild?.libheifRef === 'v1.23.4'
+        && body.nativeBuild?.libde265Ref === 'v1.1.1'
+        && body.nativeBuild?.libheifCommit === '4e14f5942c1732ace9611b9522cc991501445463'
+        && body.nativeBuild?.libde265Commit === '4dd701fffac01632ffd5cabc5ef10deb56accba1'
+        && body.nativeProbe?.schemaVersion === 1
+        && body.nativeProbe?.status === 'passed'
+        && body.nativeProbe?.fixtureSet === 'native-still-v1'
+        && nativeCasesVerified;
     }
   } catch {
     ready = false;
@@ -138,6 +180,7 @@ export const convertHeifRemotely = async (
           'x-si-signature': signature
         },
         body: Uint8Array.from(input).buffer,
+        redirect: 'error',
         signal: controller.signal
       });
       if (response.status !== 429 || attempt === 1) break;

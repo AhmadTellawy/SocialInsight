@@ -31,10 +31,14 @@ export async function loadHealthEvidence(config, dependencies = {}) {
   const converterBinary = await read(config.converterPath);
   const converterSha256 = createHash('sha256').update(converterBinary).digest('hex');
   const runtime = await probe(config.converterPath, ['--version']);
-  const verified = manifest.libheif === '1.23.3'
+  const verified = manifest.libheif === '1.23.4'
     && manifest.libde265 === '1.1.1'
+    && manifest.libheifRef === 'v1.23.4'
+    && manifest.libde265Ref === 'v1.1.1'
+    && manifest.libheifCommit === '4e14f5942c1732ace9611b9522cc991501445463'
+    && manifest.libde265Commit === '4dd701fffac01632ffd5cabc5ef10deb56accba1'
     && sharpVersions.sharp === '0.35.4'
-    && runtime.includes('1.23.3')
+    && runtime.includes('1.23.4')
     && converterSha256 === manifest.heifConvertSha256;
   if (!verified) throw new Error('Native or Sharp runtime version does not match the approved build');
   return Object.freeze({

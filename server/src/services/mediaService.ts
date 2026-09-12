@@ -6,7 +6,7 @@ import {
   Prisma
 } from '@prisma/client';
 import { createHash, randomUUID } from 'crypto';
-import sharp from 'sharp';
+import sharp from '../config/sharp';
 import prisma from '../prisma';
 import {
   MEDIA_CONFIG,

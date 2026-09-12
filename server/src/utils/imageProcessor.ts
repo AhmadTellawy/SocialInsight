@@ -1,4 +1,4 @@
-import sharp from 'sharp';
+import sharp from '../config/sharp';
 import { MediaValidationError } from '../services/mediaProcessor';
 
 /**

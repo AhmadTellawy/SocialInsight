@@ -31,5 +31,6 @@ export function loadConfig(env = process.env) {
     converterPath: env.HEIF_CONVERT_PATH ?? '/usr/local/bin/heif-convert',
     prlimitPath: env.PRLIMIT_PATH ?? '/usr/bin/prlimit',
     versionManifestPath: env.NATIVE_VERSION_MANIFEST ?? '/opt/heif-converter/native-versions.json',
+    nativeProbeFixtureRoot: env.NATIVE_PROBE_FIXTURE_ROOT ?? '/opt/heif-converter/self-test',
   });
 }

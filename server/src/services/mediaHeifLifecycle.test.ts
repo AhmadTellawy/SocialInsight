@@ -15,6 +15,24 @@ const originalEnv = {
   supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY
 };
 
+const nativeProbe = {
+  schemaVersion: 1,
+  status: 'passed',
+  fixtureSet: 'native-still-v1',
+  cases: [
+    { id: 'rainbow-heic', fixtureSha256: '4b2ce727f093944975f143ba2b39c4c64511b766d94552f8d51a755916e7f983', inputMime: 'image/heic', outputMime: 'image/webp', width: 451, height: 461, hasAlpha: false },
+    { id: 'rainbow-generic-heif', fixtureSha256: '536badaba808ef5e5bf51f80611ab112440474dacc4cb3f99cb05a284d0a8391', inputMime: 'image/heif', outputMime: 'image/webp', width: 451, height: 461, hasAlpha: false },
+    { id: 'alpha-heic', fixtureSha256: 'dac399d3bf1019baaf5f88eef8b277087d0643e735db947c42355237bb9d0221', inputMime: 'image/heic', outputMime: 'image/webp', width: 512, height: 512, hasAlpha: true },
+  ],
+};
+
+const nativeBuild = {
+  libheifRef: 'v1.23.4',
+  libde265Ref: 'v1.1.1',
+  libheifCommit: '4e14f5942c1732ace9611b9522cc991501445463',
+  libde265Commit: '4dd701fffac01632ffd5cabc5ef10deb56accba1',
+};
+
 test.afterEach(() => {
   globalThis.fetch = originalFetch;
   if (originalEnv.enabled === undefined) delete process.env.MEDIA_HEIF_SERVER_ENABLED;
@@ -63,7 +81,9 @@ test('prepares a verified HEIC upload once and stores only a private WebP master
       return Response.json({
         status: 'ready',
         service: 'heif-converter',
-        versions: { libheif: '1.23.3', libde265: '1.1.1', sharp: '0.35.4' }
+        versions: { libheif: '1.23.4', libde265: '1.1.1', sharp: '0.35.4' },
+        nativeBuild,
+        nativeProbe
       });
     }
     return new Response(Uint8Array.from(converted).buffer, { status: 200, headers: { 'content-type': 'image/webp' } });
@@ -150,7 +170,9 @@ test('a recovered HEIF attempt cannot delete the newer attempt output when it fi
     if (String(input).endsWith('/health/ready')) {
       return Response.json({
         status: 'ready', service: 'heif-converter',
-        versions: { libheif: '1.23.3', libde265: '1.1.1', sharp: '0.35.4' }
+        versions: { libheif: '1.23.4', libde265: '1.1.1', sharp: '0.35.4' },
+        nativeBuild,
+        nativeProbe
       });
     }
     conversions += 1;
@@ -245,7 +267,9 @@ test('an ambiguous prepared upload is removed before the processing lease become
     String(input).endsWith('/health/ready')
       ? Response.json({
           status: 'ready', service: 'heif-converter',
-          versions: { libheif: '1.23.3', libde265: '1.1.1', sharp: '0.35.4' }
+          versions: { libheif: '1.23.4', libde265: '1.1.1', sharp: '0.35.4' },
+          nativeBuild,
+          nativeProbe
         })
       : new Response(Uint8Array.from(converted).buffer, {
           status: 200,

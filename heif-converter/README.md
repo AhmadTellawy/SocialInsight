@@ -48,7 +48,11 @@ docker run --rm \
 
 لا تضع السر في image أو source أو logs؛ احقنه من secret manager. التطبيق يتطلب 32 byte على الأقل. الخدمة لا تحتاج إنترنت وقت التشغيل، لذا امنع egress، واسمح بالاتصال فقط من API الرئيسي عبر شبكة داخلية، وأضف mTLS أو network policy بينهما.
 
-صورة Docker متعددة المراحل وتبني `libheif v1.23.3` مع `libde265 v1.1.1` فقط؛ AV1/JPEG/OpenH264/FFmpeg/x265 والـplugin loading والـencoders معطلة. `/health/ready` يفشل بدء التشغيل إذا لم يطابق runtime إصدار libheif/Sharp أو SHA-256 للـbinary والـmanifest المثبت، ويعرض الإصدارات وcommit الفعلي وdigest لتدقيق النسخة.
+صورة Docker متعددة المراحل وتبني `libheif v1.23.4` مع `libde265 v1.1.1` فقط؛ AV1/JPEG/OpenH264/FFmpeg/x265 والـplugin loading والـencoders معطلة. `/health/ready` يفشل بدء التشغيل إذا لم يطابق runtime إصدار libheif/Sharp أو SHA-256 للـbinary والـmanifest المثبت، ويعرض الإصدارات وcommit الفعلي وdigest لتدقيق النسخة.
+
+قبل فتح منفذ الخدمة، تنفذ كل نسخة فحصًا أصليًا مرة واحدة على corpus صغير مثبت البصمة: صورة HEIC أحادية، نسخة HEIF عامة مشتقة حتميًا منها، وصورة HEIC تحتوي قناة شفافية. يمر الفحص عبر parser و`prlimit` و`heif-convert` وSharp الفعلية، ويتحقق من WebP والأبعاد وإزالة metadata الموجودة في عينة المصدر ووجود قناة شفافية غير فارغة وتنظيف الملفات المؤقتة. لا يدّعي الفحص تطابق قناع alpha بكسلًا ببكسل. لا تتكرر عملية decode عند طلب `/health/ready`؛ يعرض المسار دليل الفحص غير الحساس والمجمد فقط، ويمنع الخادم الرئيسي قبول خدمة قديمة لا تحمل `native-still-v1`.
+
+العينتان مأخوذتان دون تعديل من corpus الرسمي لـlibheif (`tests/data/rainbow-451x461.heic` و`tests/data/with-alpha-512x512.heic`). تُخزنان Base64 كملفات root-owned للقراءة فقط، مع طول وSHA-256 ثابتين داخل الشيفرة. لا تُسجّل المدخلات أو المخرجات أو سر HMAC؛ يسجل بدء التشغيل معرفات الحالات والبصمات والأبعاد ونسخة Git الخاصة بـRender فقط.
 
 ## متغيرات التشغيل والحدود
 
@@ -72,4 +76,4 @@ docker build --pull -t social-insight/heif-converter:1.0.0 .
 docker run --rm --entrypoint /usr/local/bin/heif-convert social-insight/heif-converter:1.0.0 --version
 ```
 
-اختبارات Node تستخدم converter مزيفًا ولا تحتاج Docker أو native codec. قبل الإنتاج يجب إجراء build clean مع SBOM وفحص image، corpus سليم/خبيث حقيقي، اختبار موارد وتزامن، smoke عبر API الرئيسي، ثم بوابات E03/E04/E01 المستقلة. انشر canary أولًا وراقب `429` و`4xx` و`5xx` وtimeout وlatency p95/p99 وRSS واستخدام tmp. rollback هو إعادة API الرئيسي إلى رفض HEIF الآمن وتعطيل مسار الخدمة، ثم سحب نسخة الحاوية.
+اختبارات Node تستخدم converter مزيفًا ولا تحتاج Docker أو native codec، بينما فحص بدء الحاوية يستخدم decoder الحقيقي ويفشل قبل الاستماع إذا لم ينجح. قبل الإنتاج يجب إجراء build clean مع SBOM وفحص image، corpus سليم/خبيث أوسع، اختبار موارد وتزامن، smoke عبر API الرئيسي، ثم بوابات E03/E04/E01 المستقلة. انشر canary أولًا وراقب `429` و`4xx` و`5xx` وtimeout وlatency p95/p99 وRSS واستخدام tmp. rollback هو إعادة API الرئيسي إلى رفض HEIF الآمن وتعطيل مسار الخدمة، ثم سحب نسخة الحاوية.

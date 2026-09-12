@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
-import sharp from 'sharp';
+import type { Metadata, OutputInfo } from 'sharp';
+import sharp from '../config/sharp';
 import { MediaPurpose, MediaVariantKind } from '@prisma/client';
 import {
   AllowedMediaMime,
@@ -60,6 +61,17 @@ const FORMAT_MIME: Partial<Record<string, AllowedMediaMime>> = {
   jpeg: 'image/jpeg',
   png: 'image/png',
   webp: 'image/webp'
+};
+
+const detectSupportedRasterMime = (input: Buffer): AllowedMediaMime | undefined => {
+  if (input.length >= 3 && input[0] === 0xff && input[1] === 0xd8 && input[2] === 0xff) return 'image/jpeg';
+  if (input.length >= 8 && input.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return 'image/png';
+  }
+  if (input.length >= 12 && input.toString('ascii', 0, 4) === 'RIFF' && input.toString('ascii', 8, 12) === 'WEBP') {
+    return 'image/webp';
+  }
+  return undefined;
 };
 
 const withinUnitInterval = (value: number): boolean => Number.isFinite(value) && value >= 0 && value <= 1;
@@ -145,8 +157,15 @@ export const processMediaBuffer = async (
   if (!isAllowedMediaMime(declaredMime)) {
     throw new MediaValidationError('UNSUPPORTED_MEDIA_TYPE', 'Only JPEG, PNG, and WebP images are supported.');
   }
+  const byteDetectedMime = detectSupportedRasterMime(input);
+  if (!byteDetectedMime) {
+    throw new MediaValidationError('INVALID_IMAGE', 'The selected file is not a supported JPEG, PNG, or WebP image.');
+  }
+  if (byteDetectedMime !== declaredMime) {
+    throw new MediaValidationError('MIME_MISMATCH', 'The image content does not match its declared file type.');
+  }
 
-  let metadata: sharp.Metadata;
+  let metadata: Metadata;
   try {
     metadata = await sharp(input, {
       failOn: 'error',
@@ -157,11 +176,11 @@ export const processMediaBuffer = async (
   }
 
   const detectedMime = metadata.format ? FORMAT_MIME[metadata.format] : undefined;
-  if (!detectedMime || detectedMime !== declaredMime) {
+  if (!detectedMime || detectedMime !== byteDetectedMime) {
     throw new MediaValidationError('MIME_MISMATCH', 'The image content does not match its declared file type.');
   }
 
-  let normalized: { data: Buffer; info: sharp.OutputInfo };
+  let normalized: { data: Buffer; info: OutputInfo };
   try {
     normalized = await sharp(input, {
       failOn: 'error',

@@ -13,12 +13,23 @@ const config = {
   maxAggregatePixels: 40_000_000,
   maxConcurrency: 2,
 };
+const healthEvidence = {
+  status: 'ready',
+  service: 'heif-converter',
+  versions: { libheif: '1.23.4', libde265: '1.1.1', sharp: '0.35.4' },
+  nativeBuild: {
+    libheifRef: 'v1.23.4', libde265Ref: 'v1.1.1',
+    libheifCommit: '4e14f5942c1732ace9611b9522cc991501445463',
+    libde265Commit: '4dd701fffac01632ffd5cabc5ef10deb56accba1',
+  },
+  nativeProbe: { schemaVersion: 1, status: 'passed', fixtureSet: 'native-still-v1', cases: [{}, {}, {}] },
+};
 
 async function withServer(converter, callback) {
   const server = createConverterServer({
     config,
     converter,
-    healthEvidence: { status: 'ready', versions: { libheif: '1.23.3', libde265: '1.1.1', sharp: '0.35.4' } },
+    healthEvidence,
     clock: { now: () => nowMs },
     logger: { error() {} },
   });
@@ -85,7 +96,7 @@ test('health endpoints expose pinned runtime evidence', async () => {
     const ready = await fetch(`${url}/health/ready`);
     assert.equal(live.status, 200);
     assert.equal(ready.status, 200);
-    assert.equal((await ready.json()).versions.libheif, '1.23.3');
+    assert.deepEqual(await ready.json(), healthEvidence);
   });
 });
 

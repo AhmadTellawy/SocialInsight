@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { Prisma } from '@prisma/client';
-import sharp from 'sharp';
+import sharp from '../config/sharp';
 import prisma from '../prisma';
 import { getMediaStorage, isMediaStorageConfigured } from '../services/mediaStorage';
 import {

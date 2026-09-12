@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 import sharp from 'sharp';
 import { MEDIA_CONFIG } from '../config/media';
@@ -136,10 +138,31 @@ test('rejects unsupported and corrupt input before persistence', async () => {
     () => processMediaBuffer(Buffer.from('not-an-image'), 'POST', 'image/jpeg', {}),
     (error: unknown) => error instanceof MediaValidationError && error.code === 'INVALID_IMAGE'
   );
+  const disguisedHeif = Buffer.concat([
+    Buffer.from([0, 0, 0, 24]),
+    Buffer.from('ftypheic', 'ascii'),
+    Buffer.alloc(12),
+  ]);
+  await assert.rejects(
+    () => processMediaBuffer(disguisedHeif, 'POST', 'image/jpeg', {}),
+    (error: unknown) => error instanceof MediaValidationError && error.code === 'INVALID_IMAGE'
+  );
   await assert.rejects(
     () => processMediaBuffer(Buffer.alloc(MEDIA_CONFIG.maxInputBytes + 1), 'POST', 'image/jpeg', {}),
     (error: unknown) => error instanceof MediaValidationError && error.code === 'INVALID_FILE_SIZE'
   );
+});
+
+test('rejects real HEIC bytes before Sharp and keeps its HEIF loader blocked', async () => {
+  const heic = Buffer.from(
+    readFileSync(path.resolve(process.cwd(), '../tests/media-e2e/fixtures/heic-sample.base64'), 'utf8').trim(),
+    'base64'
+  );
+  await assert.rejects(
+    () => processMediaBuffer(heic, 'POST', 'image/jpeg', {}),
+    (error: unknown) => error instanceof MediaValidationError && error.code === 'INVALID_IMAGE'
+  );
+  await assert.rejects(() => sharp(heic).metadata(), /unsupported image format/i);
 });
 
 test('rejects crop coordinates that extend beyond the image', async () => {
