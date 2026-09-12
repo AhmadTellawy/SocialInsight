@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { signRequest } from '../src/auth.js';
+import { bodySha256, signRequest } from '../src/auth.js';
 import { createConverterServer } from '../src/server.js';
 import { heifFixture } from './fixtures.js';
 
@@ -28,7 +28,7 @@ const healthEvidence = {
 async function withServer(converter, callback) {
   const server = createConverterServer({
     config,
-    converter,
+    converter: { isReady: () => true, ...converter },
     healthEvidence,
     clock: { now: () => nowMs },
     logger: { error() {} },
@@ -49,6 +49,7 @@ function signedHeaders(body, requestId = 'request_0123456789abcdef') {
     'content-length': String(body.length),
     'x-si-timestamp': timestamp,
     'x-si-request-id': requestId,
+    'x-si-body-sha256': bodySha256(body),
     'x-si-signature': signRequest({ secret, timestamp, requestId, body }),
   };
 }
@@ -106,7 +107,7 @@ test('returns 429 instead of queueing bodies when conversion capacity is full', 
   const blocked = new Promise((resolve) => { unblock = resolve; });
   const server = createConverterServer({
     config: oneAtATime,
-    converter: { convert: async () => blocked },
+    converter: { isReady: () => true, convert: async () => blocked },
     healthEvidence: { status: 'ready' },
     clock: { now: () => nowMs },
     logger: { error() {} },

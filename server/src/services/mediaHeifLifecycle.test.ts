@@ -33,6 +33,14 @@ const nativeBuild = {
   libde265Commit: '4dd701fffac01632ffd5cabc5ef10deb56accba1',
 };
 
+const confinement = {
+  schemaVersion: 1,
+  status: 'passed',
+  checks: Array.from({ length: 19 }, (_, index) => `check-${index}`),
+  syscallReport: { negativeSyscalls: 31, limitsVerified: 5 },
+  envelope: { uid: 10001, noNewPrivileges: true, swapBytes: 0 },
+};
+
 test.afterEach(() => {
   globalThis.fetch = originalFetch;
   if (originalEnv.enabled === undefined) delete process.env.MEDIA_HEIF_SERVER_ENABLED;
@@ -83,7 +91,8 @@ test('prepares a verified HEIC upload once and stores only a private WebP master
         service: 'heif-converter',
         versions: { libheif: '1.23.4', libde265: '1.1.1', sharp: '0.35.4' },
         nativeBuild,
-        nativeProbe
+        nativeProbe,
+        confinement
       });
     }
     return new Response(Uint8Array.from(converted).buffer, { status: 200, headers: { 'content-type': 'image/webp' } });
@@ -172,7 +181,8 @@ test('a recovered HEIF attempt cannot delete the newer attempt output when it fi
         status: 'ready', service: 'heif-converter',
         versions: { libheif: '1.23.4', libde265: '1.1.1', sharp: '0.35.4' },
         nativeBuild,
-        nativeProbe
+        nativeProbe,
+        confinement
       });
     }
     conversions += 1;
@@ -269,7 +279,8 @@ test('an ambiguous prepared upload is removed before the processing lease become
           status: 'ready', service: 'heif-converter',
           versions: { libheif: '1.23.4', libde265: '1.1.1', sharp: '0.35.4' },
           nativeBuild,
-          nativeProbe
+          nativeProbe,
+          confinement
         })
       : new Response(Uint8Array.from(converted).buffer, {
           status: 200,

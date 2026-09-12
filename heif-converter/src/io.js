@@ -19,17 +19,25 @@ export async function readFixedBinaryBody(request, maxBodyBytes) {
 
   const chunks = [];
   let received = 0;
-  for await (const chunk of request) {
-    received += chunk.length;
-    if (received > contentLength || received > maxBodyBytes) {
+  const timer = setTimeout(
+    () => request.destroy(new ServiceError(408, 'BODY_TIMEOUT', 'Image upload timed out')),
+    20_000,
+  );
+  try {
+    for await (const chunk of request) {
+      received += chunk.length;
+      if (received > contentLength || received > maxBodyBytes) {
+        throw new ServiceError(400, 'CONTENT_LENGTH_MISMATCH', 'The received body does not match Content-Length');
+      }
+      chunks.push(chunk);
+    }
+    if (received !== contentLength) {
       throw new ServiceError(400, 'CONTENT_LENGTH_MISMATCH', 'The received body does not match Content-Length');
     }
-    chunks.push(chunk);
+    return Buffer.concat(chunks, received);
+  } finally {
+    clearTimeout(timer);
   }
-  if (received !== contentLength) {
-    throw new ServiceError(400, 'CONTENT_LENGTH_MISMATCH', 'The received body does not match Content-Length');
-  }
-  return Buffer.concat(chunks, received);
 }
 
 export class AdmissionGate {

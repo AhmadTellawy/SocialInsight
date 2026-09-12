@@ -9,7 +9,16 @@ const configuredUrl = (): URL | null => {
   if (!raw) return null;
   try {
     const url = new URL(raw);
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) return null;
+    const privateHttpHost = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(url.hostname);
+    if (
+      !['http:', 'https:'].includes(url.protocol)
+      || (url.protocol === 'http:' && !privateHttpHost)
+      || url.username
+      || url.password
+      || url.search
+      || url.hash
+      || url.pathname !== '/'
+    ) return null;
     return url;
   } catch {
     return null;
@@ -19,7 +28,7 @@ const configuredUrl = (): URL | null => {
 export const isHeifConversionConfigured = (): boolean =>
   process.env.MEDIA_HEIF_SERVER_ENABLED === 'true'
   && Boolean(configuredUrl())
-  && Boolean(process.env.HEIF_CONVERTER_SECRET?.trim());
+  && Buffer.byteLength(process.env.HEIF_CONVERTER_SECRET?.trim() ?? '', 'utf8') >= 32;
 
 let readinessCache: { ready: boolean; expiresAt: number } | undefined;
 
@@ -60,6 +69,13 @@ export const verifyHeifConversionReadiness = async (
             hasAlpha?: unknown;
           }>;
         };
+        confinement?: {
+          schemaVersion?: unknown;
+          status?: unknown;
+          checks?: unknown[];
+          syscallReport?: { negativeSyscalls?: unknown; limitsVerified?: unknown };
+          envelope?: { uid?: unknown; noNewPrivileges?: unknown; swapBytes?: unknown };
+        };
       };
       const nativeCases = body.nativeProbe?.cases;
       const expectedCases = [
@@ -91,6 +107,14 @@ export const verifyHeifConversionReadiness = async (
         && body.nativeProbe?.schemaVersion === 1
         && body.nativeProbe?.status === 'passed'
         && body.nativeProbe?.fixtureSet === 'native-still-v1'
+        && body.confinement?.schemaVersion === 1
+        && body.confinement?.status === 'passed'
+        && body.confinement?.checks?.length === 19
+        && body.confinement?.syscallReport?.negativeSyscalls === 31
+        && body.confinement?.syscallReport?.limitsVerified === 5
+        && body.confinement?.envelope?.uid === 10001
+        && body.confinement?.envelope?.noNewPrivileges === true
+        && body.confinement?.envelope?.swapBytes === 0
         && nativeCasesVerified;
     }
   } catch {
@@ -177,6 +201,7 @@ export const convertHeifRemotely = async (
           'content-length': String(input.length),
           'x-si-timestamp': timestamp,
           'x-si-request-id': requestId,
+          'x-si-body-sha256': bodyHash,
           'x-si-signature': signature
         },
         body: Uint8Array.from(input).buffer,

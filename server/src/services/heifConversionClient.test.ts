@@ -34,6 +34,14 @@ const nativeBuild = {
   libde265Commit: '4dd701fffac01632ffd5cabc5ef10deb56accba1',
 };
 
+const confinement = {
+  schemaVersion: 1,
+  status: 'passed',
+  checks: Array.from({ length: 19 }, (_, index) => `check-${index}`),
+  syscallReport: { negativeSyscalls: 31, limitsVerified: 5 },
+  envelope: { uid: 10001, noNewPrivileges: true, swapBytes: 0 },
+};
+
 test.afterEach(() => {
   resetHeifReadinessForTests();
   if (originalEnv.enabled === undefined) delete process.env.MEDIA_HEIF_SERVER_ENABLED;
@@ -51,7 +59,8 @@ test('advertises readiness only for the pinned converter runtime', async () => {
     service: 'heif-converter',
     versions: { libheif: '1.23.4', libde265: '1.1.1', sharp: '0.35.4' },
     nativeBuild,
-    nativeProbe
+    nativeProbe,
+    confinement
   }));
   assert.equal(ready, true);
   resetHeifReadinessForTests();
@@ -76,7 +85,7 @@ test('advertises readiness only for the pinned converter runtime', async () => {
 const configure = () => {
   process.env.MEDIA_HEIF_SERVER_ENABLED = 'true';
   process.env.HEIF_CONVERTER_URL = 'http://heif-converter:10000';
-  process.env.HEIF_CONVERTER_SECRET = 'unit-test-secret';
+  process.env.HEIF_CONVERTER_SECRET = 'unit-test-secret-at-least-32-bytes';
 };
 
 test('fails closed unless the feature flag, URL, and secret are all valid', async () => {
@@ -88,6 +97,13 @@ test('fails closed unless the feature flag, URL, and secret are all valid', asyn
     () => convertHeifRemotely(Buffer.from('x'), 'image/heic'),
     (error: unknown) => error instanceof MediaValidationError && error.code === 'HEIF_CONVERTER_UNAVAILABLE'
   );
+  process.env.MEDIA_HEIF_SERVER_ENABLED = 'true';
+  process.env.HEIF_CONVERTER_SECRET = 'unit-test-secret-at-least-32-bytes';
+  process.env.HEIF_CONVERTER_URL = 'http://converter.example.com';
+  assert.equal(isHeifConversionConfigured(), false);
+  process.env.HEIF_CONVERTER_URL = 'http://heif-converter:10000';
+  process.env.HEIF_CONVERTER_SECRET = 'too-short';
+  assert.equal(isHeifConversionConfigured(), false);
 });
 
 test('signs the exact body and accepts only bounded WebP output', async () => {
@@ -102,8 +118,9 @@ test('signs the exact body and accepts only bounded WebP output', async () => {
     assert.match(requestId, /^[a-f0-9-]{36}$/);
     assert.equal(
       headers.get('x-si-signature'),
-      `v1=${createHmac('sha256', 'unit-test-secret').update(`v1\n${timestamp}\n${requestId}\n${hash}`).digest('hex')}`
+      `v1=${createHmac('sha256', 'unit-test-secret-at-least-32-bytes').update(`v1\n${timestamp}\n${requestId}\n${hash}`).digest('hex')}`
     );
+    assert.equal(headers.get('x-si-body-sha256'), hash);
     assert.equal(headers.get('content-type'), 'application/octet-stream');
     return new Response(output, { status: 200, headers: { 'content-type': 'image/webp', 'content-length': String(output.length) } });
   };

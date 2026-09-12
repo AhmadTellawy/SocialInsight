@@ -36,16 +36,19 @@ export class ReplayGuard {
   }
 }
 
-export function authenticateRequest({ headers, body, secret, nowMs, windowSeconds, replayGuard }) {
+export function authenticateHeaders({ headers, secret, nowMs, windowSeconds, replayGuard }) {
   const timestamp = headers['x-si-timestamp'];
   const requestId = headers['x-si-request-id'];
   const presented = headers['x-si-signature'];
+  const digest = headers['x-si-body-sha256'];
   const timestampSeconds = typeof timestamp === 'string' && /^\d{10,13}$/.test(timestamp)
     ? Number.parseInt(timestamp, 10)
     : Number.NaN;
 
   if (
-    !Number.isSafeInteger(timestampSeconds)
+    typeof digest !== 'string'
+    || !/^[a-f0-9]{64}$/.test(digest)
+    || !Number.isSafeInteger(timestampSeconds)
     || typeof requestId !== 'string'
     || !REQUEST_ID_PATTERN.test(requestId)
     || typeof presented !== 'string'
@@ -59,16 +62,37 @@ export function authenticateRequest({ headers, body, secret, nowMs, windowSecond
     throw new ServiceError(401, 'INVALID_SIGNATURE', 'Request authentication failed');
   }
 
-  const expected = signRequest({ secret, timestamp, requestId, body });
+  const expected = `v1=${createHmac('sha256', secret)
+    .update(canonicalSignaturePayload(timestamp, requestId, digest))
+    .digest('hex')}`;
   const expectedBytes = Buffer.from(expected, 'ascii');
   const presentedBytes = Buffer.from(presented, 'ascii');
   if (expectedBytes.length !== presentedBytes.length || !timingSafeEqual(expectedBytes, presentedBytes)) {
     throw new ServiceError(401, 'INVALID_SIGNATURE', 'Request authentication failed');
   }
 
-  const expiresAtMs = (timestampSeconds + windowSeconds) * 1000;
+  const expiresAtMs = (timestampSeconds + windowSeconds + 1) * 1000;
   if (!replayGuard.consume(requestId, expiresAtMs, nowMs)) {
     throw new ServiceError(409, 'REPLAYED_REQUEST', 'This signed request has already been consumed');
   }
+  return requestId;
+}
+
+export function verifyBodyDigest(body, digest) {
+  const actual = Buffer.from(bodySha256(body), 'hex');
+  const expected = Buffer.from(digest, 'hex');
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+    throw new ServiceError(401, 'INVALID_SIGNATURE', 'Request authentication failed');
+  }
+}
+
+// Retained for bounded-body callers and unit tests.
+export function authenticateRequest({ headers, body, ...options }) {
+  const authenticatedHeaders = {
+    ...headers,
+    'x-si-body-sha256': headers['x-si-body-sha256'] || bodySha256(body),
+  };
+  const requestId = authenticateHeaders({ headers: authenticatedHeaders, ...options });
+  verifyBodyDigest(body, authenticatedHeaders['x-si-body-sha256']);
   return requestId;
 }

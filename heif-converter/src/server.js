@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { authenticateRequest, ReplayGuard } from './auth.js';
+import { authenticateHeaders, verifyBodyDigest, ReplayGuard } from './auth.js';
 import { inspectHeif } from './bmff.js';
 import { ServiceError } from './errors.js';
 import { AdmissionGate } from './io.js';
@@ -14,6 +14,7 @@ const SECURITY_HEADERS = Object.freeze({
 });
 
 function json(response, status, value, extraHeaders = {}) {
+  if (response.destroyed || response.writableEnded) return;
   const body = Buffer.from(JSON.stringify(value));
   response.writeHead(status, {
     ...SECURITY_HEADERS,
@@ -34,7 +35,8 @@ export function createConverterServer({ config, converter, healthEvidence, clock
       return;
     }
     if (request.method === 'GET' && request.url === '/health/ready') {
-      json(response, 200, healthEvidence);
+      if (converter.isReady?.() === true) json(response, 200, healthEvidence);
+      else json(response, 503, { status: 'unavailable' });
       return;
     }
     if (request.method !== 'POST' || request.url !== '/v1/convert') {
@@ -42,30 +44,37 @@ export function createConverterServer({ config, converter, healthEvidence, clock
       return;
     }
 
-    const release = gate.tryAcquire();
-    if (!release) {
-      json(
-        response,
-        429,
-        { error: { code: 'CONVERTER_BUSY', message: 'Converter concurrency limit reached' } },
-        { 'retry-after': '1' },
-      );
-      return;
-    }
-
     let requestId;
+    let release;
+    const cancellation = new AbortController();
+    const abort = () => cancellation.abort();
+    const disconnected = () => { if (!response.writableFinished) abort(); };
+    request.once('aborted', abort);
+    response.once('close', disconnected);
     try {
-      const body = await readFixedBinaryBody(request, config.maxBodyBytes);
-      requestId = authenticateRequest({
+      requestId = authenticateHeaders({
         headers: request.headers,
-        body,
         secret: config.hmacSecret,
         nowMs: clock.now(),
         windowSeconds: config.signatureWindowSeconds,
         replayGuard,
       });
+      if (converter.isReady?.() !== true) {
+        throw new ServiceError(503, 'CONVERTER_UNAVAILABLE', 'Image processing is unavailable');
+      }
+      release = gate.tryAcquire();
+      if (!release) {
+        json(response, 429, { error: { code: 'CONVERTER_BUSY', message: 'Converter concurrency limit reached' } }, {
+          'retry-after': '1',
+          connection: 'close',
+        });
+        return;
+      }
+      const body = await readFixedBinaryBody(request, config.maxBodyBytes);
+      verifyBodyDigest(body, request.headers['x-si-body-sha256']);
       inspectHeif(body, { maxAggregatePixels: config.maxAggregatePixels });
-      const converted = await converter.convert(body);
+      const converted = await converter.convert(body, { signal: cancellation.signal });
+      if (response.destroyed || response.writableEnded) return;
       response.writeHead(200, {
         ...SECURITY_HEADERS,
         'content-type': converted.mime,
@@ -76,7 +85,6 @@ export function createConverterServer({ config, converter, healthEvidence, clock
       });
       response.end(converted.data);
     } catch (error) {
-      if (!request.readableEnded) request.resume();
       const serviceError = error instanceof ServiceError
         ? error
         : new ServiceError(500, 'INTERNAL_ERROR', 'The conversion request could not be completed');
@@ -87,10 +95,15 @@ export function createConverterServer({ config, converter, healthEvidence, clock
         response,
         serviceError.status,
         { error: { code: serviceError.code, message: serviceError.message } },
-        serviceError.retryAfterSeconds ? { 'retry-after': String(serviceError.retryAfterSeconds) } : {},
+        {
+          ...(serviceError.retryAfterSeconds ? { 'retry-after': String(serviceError.retryAfterSeconds) } : {}),
+          ...(!request.readableEnded ? { connection: 'close' } : {}),
+        },
       );
     } finally {
-      release();
+      request.removeListener('aborted', abort);
+      response.removeListener('close', disconnected);
+      release?.();
     }
   });
 
@@ -98,5 +111,7 @@ export function createConverterServer({ config, converter, healthEvidence, clock
   server.requestTimeout = 20_000;
   server.keepAliveTimeout = 5_000;
   server.maxRequestsPerSocket = 100;
+  server.maxConnections = 64;
+  server.maxHeadersCount = 32;
   return server;
 }
