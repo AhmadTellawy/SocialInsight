@@ -45,10 +45,16 @@ const runUpdate = async (body: any, overrides: any = {}, groups: Record<string, 
             return fixture?.membership === null ? null : { status: 'JOINED', role: 'Member', ...fixture?.membership };
         });
         stubPrisma(prisma.groupMember, 'findMany', async () => []);
-        stubPrisma(prisma, '$transaction', async (callback: any) => callback({ post: { update: async ({ data }: any) => {
-            state.saved = data;
-            return { ...existing, ...data, targetedGroups: existing.targetedGroups };
-        } }, option: { findMany: async () => [] }, section: { findMany: async () => [] } }));
+        stubPrisma(prisma, '$transaction', async (callback: any) => callback({
+            $executeRaw: async () => 1,
+            authSession: { findFirst: async () => ({ id: 'session-1', createdAt: new Date() }) },
+            post: { update: async ({ data }: any) => {
+                state.saved = data;
+                return { ...existing, ...data, targetedGroups: existing.targetedGroups };
+            } },
+            option: { findMany: async () => [] },
+            section: { findMany: async () => [] }
+        }));
         for (const name of ['prepareMediaAttachments', 'prepareMediaScopeChange']) mock.method(media, name, async () => []);
         for (const name of ['commitPreparedMedia', 'commitMediaScopeChange', 'finalizeMediaScopeChange', 'scheduleMediaDeletion', 'rollbackPreparedMedia', 'rollbackMediaScopeChange']) mock.method(media, name, async () => {});
         mock.method(media, 'resolvePostMediaScope', async () => 'PRIVATE');
@@ -59,7 +65,11 @@ const runUpdate = async (body: any, overrides: any = {}, groups: Record<string, 
         mock.method(tags, 'getCurrentPeopleTagUserIds', async () => []);
         mock.method(tags, 'reconcilePeopleTags', async () => ({ notificationIds: [] }));
         mock.method(notifications, 'dispatchNotificationIds', async () => {});
-        await updatePost({ params: { id: 'post-1' }, body, user: { userId: 'author-1' } }, response);
+        await updatePost({
+            params: { id: 'post-1' }, body,
+            user: { userId: 'author-1', authMode: 'session' },
+            authSession: { id: 'session-1', userId: 'author-1' }
+        }, response);
         return state;
     } finally {
         mock.restoreAll();
