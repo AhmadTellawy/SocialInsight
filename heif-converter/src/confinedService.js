@@ -24,7 +24,12 @@ export class ConfinedHeifConverter {
       await this.checkRoot();
       if(this.#state!=='starting'||this.#shutdown.signal.aborted)throw unavailable();
       this.#state='ready';return {probe:this.probe,envelope:this.envelope};
-    } catch {this.markUnhealthy();throw unavailable();}
+    } catch(error) {
+      this.markUnhealthy();
+      const phases=['IDENTITY','CAPABILITIES','PROCESS_LIMIT','SUPERVISOR','STORAGE','RESOURCES','CGROUP_LAYOUT','MEMORY_LIMIT','SWAP_LIMIT','PIDS_LIMIT','CPU_LIMIT'];
+      this.onDiagnostic(phases.includes(error?.phase)?`STARTUP_${error.phase}`:'STARTUP_PROBE');
+      throw unavailable();
+    }
   }
   async convert(input,{signal}={}) {
     if(!this.isReady())throw unavailable();

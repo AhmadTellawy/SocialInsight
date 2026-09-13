@@ -3,7 +3,7 @@ import path from 'node:path';
 import { ServiceError } from './errors.js';
 
 export const TEMP_ROOT = '/tmp/heif-converter';
-const unavailable = () => new ServiceError(503, 'CONFINEMENT_UNAVAILABLE', 'Image processing is unavailable');
+const unavailable = (phase) => Object.assign(new ServiceError(503, 'CONFINEMENT_UNAVAILABLE', 'Image processing is unavailable'), phase ? { phase } : {});
 const positive = value => /^[1-9][0-9]*$/.test(value) && Number.isSafeInteger(Number(value));
 
 export async function verifyTempRoot(io = fs, { empty = true } = {}) {
@@ -23,7 +23,7 @@ export async function verifyResourceEnvelope(io = fs) {
   const memberships = (await io.readFile('/proc/self/cgroup', 'utf8')).trim().split('\n');
   const membership = memberships.find(line => line.startsWith('0::'))?.slice(3);
   const mounts = (await io.readFile('/proc/self/mountinfo', 'utf8')).trim().split('\n').filter(line => line.includes(' - cgroup2 '));
-  if (!membership || mounts.length !== 1) throw unavailable();
+  if (!membership || mounts.length !== 1) throw unavailable('CGROUP_LAYOUT');
   const fields = mounts[0].split(' ');
   const root = fields[3];
   const mount = fields[4];
@@ -60,8 +60,10 @@ export async function verifyResourceEnvelope(io = fs) {
     if (parent === current || !parent.startsWith(mount)) throw unavailable();
     current = parent;
   }
-  if (!Number.isFinite(memory) || memory > 512 * 1024 * 1024 || memory < 256 * 1024 * 1024
-    || swap !== 0 || !Number.isFinite(pids) || pids > 512 || !Number.isFinite(cpu) || cpu < 0.1) throw unavailable();
+  if (!Number.isFinite(memory) || memory > 512 * 1024 * 1024 || memory < 256 * 1024 * 1024) throw unavailable('MEMORY_LIMIT');
+  if (swap !== 0) throw unavailable('SWAP_LIMIT');
+  if (!Number.isFinite(pids) || pids > 512) throw unavailable('PIDS_LIMIT');
+  if (!Number.isFinite(cpu) || cpu < 0.1) throw unavailable('CPU_LIMIT');
   const eventsPath = path.posix.join(mount, relative, 'memory.events');
   const events = Object.fromEntries((await io.readFile(eventsPath, 'utf8')).trim().split('\n').map(line => line.split(/\s+/)));
   if (!/^[0-9]+$/.test(events.oom) || !/^[0-9]+$/.test(events.oom_kill)) throw unavailable();
@@ -101,9 +103,10 @@ export async function verifyBootstrap({ io = fs, supervisorMode = '--supervise' 
     const resources = await verifyResourceEnvelope(io);
     if (process.ppid !== parent) throw unavailable();
     return Object.freeze({ storage, resources });
-  } catch {
+  } catch (cause) {
     const error = unavailable();
-    error.phase = phase;
+    const resourcePhases = ['CGROUP_LAYOUT', 'MEMORY_LIMIT', 'SWAP_LIMIT', 'PIDS_LIMIT', 'CPU_LIMIT'];
+    error.phase = resourcePhases.includes(cause?.phase) ? cause.phase : phase;
     throw error;
   }
 }

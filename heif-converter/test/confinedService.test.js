@@ -19,6 +19,19 @@ function fixture(overrides={}) {
   });
 }
 
+test('startup diagnostics expose only approved phase codes and keep admission closed',async()=>{
+  for(const phase of ['SWAP_LIMIT','PIDS_LIMIT','MEMORY_LIMIT','CGROUP_LAYOUT','secret-value\nprivate-path']) {
+    const diagnostics=[];let calls=0;
+    const service=fixture({
+      bootstrap:async()=>{throw Object.assign(new Error('secret-value'),{phase});},
+      runJob:async()=>{calls++;},onDiagnostic:code=>diagnostics.push(code),
+    });
+    await assert.rejects(service.initialize(),e=>e.status===503 && e.message==='Image processing is unavailable');
+    assert.deepEqual(diagnostics,[phase.startsWith('secret')?'STARTUP_PROBE':`STARTUP_${phase}`]);
+    assert.equal(service.isReady(),false);assert.equal(calls,0);
+  }
+});
+
 test('readiness requires a completed confined probe and refuses stale startup without spawning',async()=>{
   let calls=0;const service=fixture({bootstrap:async()=>{throw unavailable();},runJob:async()=>{calls++;}});
   assert.equal(service.isReady(),false);
