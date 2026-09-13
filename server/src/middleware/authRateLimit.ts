@@ -53,9 +53,9 @@ const identitiesFor = (req: Request, fields: string[]): string[] => {
     return [...new Set(identities)];
 };
 
-const increment = async (scope: string, dimension: string, nowMs: number): Promise<number> => {
-    const windowStartedAt = new Date(Math.floor(nowMs / WINDOW_MS) * WINDOW_MS);
-    const expiresAt = new Date(windowStartedAt.getTime() + WINDOW_MS * 2);
+const increment = async (scope: string, dimension: string, nowMs: number, windowMs = WINDOW_MS): Promise<number> => {
+    const windowStartedAt = new Date(Math.floor(nowMs / windowMs) * windowMs);
+    const expiresAt = new Date(windowStartedAt.getTime() + windowMs * 2);
     const keyHash = hashSessionSecret(`auth-rate:${scope}:${windowStartedAt.toISOString()}:${dimension}`);
     const row = await db.authRateLimit.upsert({
         where: { keyHash },
@@ -92,5 +92,41 @@ export const authRateLimit = (scope: string, limit: number, identityFields: stri
             next();
         } catch {
             res.status(503).json({ error: 'Authentication is temporarily unavailable', code: 'AUTH_RATE_LIMIT_UNAVAILABLE' });
+        }
+    };
+
+type DurableRateLimitOptions = {
+    windowMs: number;
+    userLimit?: number;
+    networkLimit?: number;
+    code?: string;
+    message?: string;
+};
+
+export const durableRateLimit = (scope: string, options: DurableRateLimitOptions) =>
+    async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+        const retryAfterSeconds = Math.ceil(options.windowMs / 1000);
+        try {
+            const now = Date.now();
+            const observedHop = normalizedValue(req.ip || req.socket.remoteAddress || 'unknown');
+            const dimensions = [`network:${observedHop}`];
+            if (req.user?.userId) dimensions.push(`user:${req.user.userId}`);
+            const counts = await Promise.all(dimensions.map((dimension) =>
+                increment(scope, dimension, now, options.windowMs)));
+            const networkLimit = options.networkLimit ?? Math.max(500, (options.userLimit ?? 10) * 50);
+            const userLimited = options.userLimit !== undefined
+                && counts.slice(1).some((count) => count > options.userLimit!);
+            if (counts[0] > networkLimit || userLimited) {
+                res.setHeader('Retry-After', String(retryAfterSeconds));
+                res.status(429).json({
+                    error: options.message || 'Too many requests. Please try again later.',
+                    code: options.code || 'RATE_LIMITED'
+                });
+                return;
+            }
+            next();
+        } catch {
+            res.setHeader('Retry-After', String(retryAfterSeconds));
+            res.status(503).json({ error: 'Request limits are temporarily unavailable.', code: 'RATE_LIMIT_UNAVAILABLE' });
         }
     };

@@ -5,7 +5,7 @@ import test from 'node:test';
 import { EventEmitter } from 'node:events';
 import express from 'express';
 import { HeifConversionError } from '../services/heifConversionClient';
-import { getMediaConfig, prepareMedia, warmupHeif } from './mediaController';
+import { getMedia, getMediaConfig, prepareMedia, warmupHeif } from './mediaController';
 
 const mediaService = require('../services/mediaService') as typeof import('../services/mediaService');
 const heifClient = require('../services/heifConversionClient') as typeof import('../services/heifConversionClient');
@@ -87,6 +87,36 @@ test('configuration explicitly prevents caching a temporary HEIF readiness failu
   t.mock.method(mediaService, 'getMediaConfigResponse', async () => config as any);
   await getMediaConfig(request, response);
   assert.equal(response.headers['Cache-Control'], 'private, no-store'); assert.deepEqual(response.bodies, [config]);
+});
+
+test('private media metadata and concealed read failures are never cacheable', async t => {
+  const privateResponse = requestResponse();
+  const readable = t.mock.method(mediaService, 'getMediaReadPresentation', async () => ({
+    id: 'synthetic-asset', access: 'RESTRICTED', aspectRatio: 1, focalX: 0.5, focalY: 0.5,
+    altText: null, width: 100, height: 100, src: 'https://private.invalid/signed'
+  }));
+  await getMedia(privateResponse.request, privateResponse.response);
+  assert.equal(privateResponse.response.headers['Cache-Control'], 'private, no-store');
+
+  readable.mock.restore();
+  t.mock.method(mediaService, 'getMediaReadPresentation', async () => {
+    throw new (require('../services/mediaProcessor').MediaValidationError)('MEDIA_NOT_FOUND', 'Media asset was not found.', 404);
+  });
+  const concealedResponse = requestResponse();
+  await getMedia(concealedResponse.request, concealedResponse.response);
+  assert.equal(concealedResponse.response.statusCode, 404);
+  assert.equal(concealedResponse.response.headers['Cache-Control'], 'private, no-store');
+});
+
+test('public media metadata uses the same bounded cache lifetime as public storage', async t => {
+  const { request, response } = requestResponse();
+  t.mock.method(mediaService, 'getMediaReadPresentation', async () => ({
+    id: 'synthetic-asset', access: 'PUBLIC', aspectRatio: 1, focalX: 0.5, focalY: 0.5,
+    altText: null, width: 100, height: 100, src: 'https://public.invalid/image.webp'
+  }));
+  await getMedia(request, response);
+  assert.equal(response.headers['Cache-Control'], `public, max-age=${mediaService.PUBLIC_MEDIA_CACHE_SECONDS}`);
+  assert.ok(mediaService.PUBLIC_MEDIA_CACHE_SECONDS > 0 && mediaService.PUBLIC_MEDIA_CACHE_SECONDS <= 300);
 });
 
 test('the actual warmup route rejects an unauthenticated HTTP request before probing', { timeout: 10000 }, async t => {

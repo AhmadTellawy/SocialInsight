@@ -10,15 +10,33 @@ import {
 } from '../services/mediaService';
 import { buildVisiblePublishedPostWhere } from '../services/postVisibilityService';
 import { normalizeHashtag } from '../utils/textEntities';
+import { z } from 'zod';
+
+export const MAX_SEARCH_QUERY_LENGTH = 120;
+
+const searchQuerySchema = z.string().max(MAX_SEARCH_QUERY_LENGTH);
+
+export const parseSearchQuery = (value: unknown): { kind: 'empty' | 'invalid' | 'valid'; query?: string } => {
+    if (value === undefined || value === '') return { kind: 'empty' };
+    const parsed = searchQuerySchema.safeParse(value);
+    if (!parsed.success) return { kind: 'invalid' };
+    const query = parsed.data.trim().toLowerCase();
+    return query.length < 2 ? { kind: 'empty' } : { kind: 'valid', query };
+};
 
 export const searchAll = async (req: Request, res: Response) => {
-    const query = (req.query.q as string || '').trim().toLowerCase();
+    const parsedQuery = parseSearchQuery(req.query.q);
     const viewerId = req.user?.userId;
 
-    if (!query || query.length < 2) {
+    if (parsedQuery.kind === 'invalid') {
+        res.status(400).json({ error: 'Search query must be a single text value of at most 120 characters.', code: 'INVALID_SEARCH_QUERY' });
+        return;
+    }
+    if (parsedQuery.kind === 'empty') {
         res.json({ topics: [], surveys: [], people: [], groups: [], categories: [] });
         return;
     }
+    const query = parsedQuery.query!;
 
     try {
         const topicQuery = normalizeHashtag(query.replace(/^#/, ''));
@@ -43,11 +61,15 @@ export const searchAll = async (req: Request, res: Response) => {
             // 1. Search Published Posts
             prisma.post.findMany({
                 where: {
-                    ...buildVisiblePublishedPostWhere(viewerId),
-                    OR: [
-                        { title: { contains: query, mode: 'insensitive' } },
-                        { description: { contains: query, mode: 'insensitive' } },
-                        { category: { contains: query, mode: 'insensitive' } }
+                    AND: [
+                        buildVisiblePublishedPostWhere(viewerId),
+                        {
+                            OR: [
+                                { title: { contains: query, mode: 'insensitive' } },
+                                { description: { contains: query, mode: 'insensitive' } },
+                                { category: { contains: query, mode: 'insensitive' } }
+                            ]
+                        }
                     ]
                 },
                 take: 20,

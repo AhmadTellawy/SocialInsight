@@ -109,3 +109,62 @@ export const buildVisiblePublishedPostWhere = (
     ]
   };
 };
+
+export interface ResultsAccessPost {
+  id: string;
+  authorId: string;
+  resultsWho?: string | null;
+  resultsTiming?: string | null;
+  expiresAt: Date;
+}
+
+export interface ResultsAccessDecision {
+  allowed: boolean;
+  viewerParticipated: boolean;
+  reason?: 'audience' | 'timing';
+}
+
+/** Applies the same results audience and timing contract to every result surface. */
+export const evaluatePostResultsAccess = async (
+  db: any,
+  post: ResultsAccessPost,
+  viewerId?: string | null,
+  guestProofHash?: string | null,
+  now = new Date()
+): Promise<ResultsAccessDecision> => {
+  if (viewerId && viewerId === post.authorId) return { allowed: true, viewerParticipated: false };
+
+  const who = (post.resultsWho || 'Public').trim().toLowerCase();
+  const timing = (post.resultsTiming || 'AnyTime').trim().toLowerCase();
+  const needsParticipation = who === 'participants' || timing === 'immediately';
+  const responseIdentity = viewerId
+    ? { userId: viewerId }
+    : guestProofHash
+      ? { guestProofHash, guestProofExpiresAt: { gt: now } }
+      : null;
+
+  const [follow, response] = await Promise.all([
+    who === 'followers' && viewerId
+      ? db.follow.findUnique({
+          where: { followerId_followingId: { followerId: viewerId, followingId: post.authorId } },
+          select: { status: true }
+        })
+      : Promise.resolve(null),
+    needsParticipation && responseIdentity
+      ? db.response.findFirst({ where: { postId: post.id, ...responseIdentity }, select: { id: true } })
+      : Promise.resolve(null)
+  ]);
+
+  const viewerParticipated = Boolean(response);
+  const audienceAllowed = who === 'public'
+    || (who === 'followers' && follow?.status === 'ACTIVE')
+    || (who === 'participants' && viewerParticipated);
+  if (!audienceAllowed) return { allowed: false, viewerParticipated, reason: 'audience' };
+
+  const timingAllowed = timing === 'anytime'
+    || (timing === 'afterend' && post.expiresAt.getTime() <= now.getTime())
+    || (timing === 'immediately' && viewerParticipated);
+  return timingAllowed
+    ? { allowed: true, viewerParticipated }
+    : { allowed: false, viewerParticipated, reason: 'timing' };
+};

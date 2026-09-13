@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 process.env.OTP_HASH_SECRET = process.env.OTP_HASH_SECRET || 'otp-test-secret-at-least-32-bytes-long';
+process.env.OTP_CODE_PEPPER = process.env.OTP_CODE_PEPPER || 'independent-otp-code-pepper-at-least-32-bytes';
 process.env.OTP_BCRYPT_ROUNDS = '8';
 
 const prisma = require('../prisma').default as any;
@@ -12,12 +13,14 @@ type Challenge = any;
 
 const installOtpStore = () => {
   const rows: Challenge[] = [];
+  const budgets = new Map<string, number>();
   let sequence = 0;
   const originals = {
     findFirst: prisma.otpChallenge.findFirst,
     updateMany: prisma.otpChallenge.updateMany,
     create: prisma.otpChallenge.create,
     transaction: prisma.$transaction,
+    budgetUpsert: prisma.authRateLimit.upsert,
     sendAuthEmail: emailService.sendAuthEmail
   };
   const matches = (row: Challenge, where: any): boolean => {
@@ -35,6 +38,7 @@ const installOtpStore = () => {
   const findFirst = async ({ where, orderBy, select }: any) => {
     const found = rows.filter((row) => matches(row, where)).sort((a, b) => {
       if (orderBy?.version === 'desc') return b.version - a.version;
+      if (orderBy?.intentVersion === 'desc') return b.intentVersion - a.intentVersion;
       if (orderBy?.createdAt === 'desc') return b.createdAt.getTime() - a.createdAt.getTime();
       return 0;
     })[0];
@@ -66,12 +70,20 @@ const installOtpStore = () => {
   prisma.otpChallenge.findFirst = findFirst;
   prisma.otpChallenge.updateMany = updateMany;
   prisma.otpChallenge.create = create;
+  const budgetUpsert = async ({ where, create, update }: any) => {
+    const current = budgets.get(where.keyHash) || 0;
+    const next = current ? current + Number(update.count.increment || 0) : create.count;
+    budgets.set(where.keyHash, next);
+    return { count: next };
+  };
+  prisma.authRateLimit.upsert = budgetUpsert;
   prisma.$transaction = async (callback: any) => {
     const snapshot = rows.map((row) => ({ ...row }));
     try {
       return await callback({
         $executeRaw: async () => [{ pg_advisory_xact_lock: null }],
-        otpChallenge: { findFirst, findUnique, updateMany, create }
+        otpChallenge: { findFirst, findUnique, updateMany, create },
+        authRateLimit: { upsert: budgetUpsert }
       });
     } catch (error) {
       rows.splice(0, rows.length, ...snapshot);
@@ -83,6 +95,7 @@ const installOtpStore = () => {
     prisma.otpChallenge.updateMany = originals.updateMany;
     prisma.otpChallenge.create = originals.create;
     prisma.$transaction = originals.transaction;
+    prisma.authRateLimit.upsert = originals.budgetUpsert;
     (emailService as any).sendAuthEmail = originals.sendAuthEmail;
   };
   return { rows, restore };
@@ -99,6 +112,8 @@ test('OTP issuance stores only a hash, sends configurable TTL and records SENT s
     const row = store.rows[0];
     assert.equal(row.destination, 'private@example.test');
     assert.match(row.codeHash, /^\$2[aby]\$/);
+    assert.equal(row.hashVersion, 2);
+    assert.equal(row.intentVersion, 1);
     assert.equal(/^\d{6}$/.test(row.codeHash), false);
     assert.equal(row.deliveryStatus, 'SENT');
     assert.equal(email.expiresInMinutes, 7);
@@ -108,6 +123,81 @@ test('OTP issuance stores only a hash, sends configurable TTL and records SENT s
     assert.notEqual(row.ipHash, '127.0.0.1');
     assert.notEqual(row.userAgentHash, 'fixture');
   } finally { delete process.env.OTP_TTL_SECONDS; store.restore(); }
+});
+
+test('OTP v2 is destination-bound and legacy hash material cannot verify it', async () => {
+  const store = installOtpStore();
+  let code = '';
+  try {
+    (emailService as any).sendAuthEmail = async (input: any) => { code = input.code; return { messageId: 'email-v2' }; };
+    await issueEmailOtp({ destination: 'private@example.test', purpose: 'PASSWORD_RESET', subject: 'user-v2' });
+    const bcrypt = require('bcryptjs') as typeof import('bcryptjs');
+    assert.equal(await bcrypt.compare(`PASSWORD_RESET:user-v2:${code}`, store.rows[0].codeHash), false);
+    await assert.rejects(consumeEmailOtp({ destination: 'other@example.test', purpose: 'PASSWORD_RESET', subject: 'user-v2', code }));
+    await consumeEmailOtp({ destination: 'private@example.test', purpose: 'PASSWORD_RESET', subject: 'user-v2', code });
+  } finally { store.restore(); }
+});
+
+test('latest email-change intent supersedes older destinations and binds the source mailbox', async () => {
+  const store = installOtpStore();
+  const codes: string[] = [];
+  try {
+    (emailService as any).sendAuthEmail = async (input: any) => { codes.push(input.code); return { messageId: `email-intent-${codes.length}` }; };
+    const common = { purpose: 'EMAIL_CHANGE' as const, subject: 'user-intent', sourceDestination: 'current@example.test', supersedeBySubjectPurpose: true };
+    await issueEmailOtp({ ...common, destination: 'first@example.test' });
+    await issueEmailOtp({ ...common, destination: 'second@example.test' });
+    assert.equal(store.rows[0].deliveryStatus, 'FAILED');
+    assert.ok(store.rows[0].invalidatedAt instanceof Date);
+    assert.equal(store.rows[1].intentVersion, 2);
+    assert.equal(store.rows[1].sourceDestinationHash?.length, 64);
+    await assert.rejects(consumeEmailOtp({ destination: 'first@example.test', purpose: 'EMAIL_CHANGE', subject: 'user-intent', code: codes[0], requireLatestIntent: true }));
+    await consumeEmailOtp({ destination: 'second@example.test', purpose: 'EMAIL_CHANGE', subject: 'user-intent', code: codes[1], requireLatestIntent: true });
+  } finally { store.restore(); }
+});
+
+test('OTP issuance budgets normalize destination across purposes and pending subjects', async () => {
+  const store = installOtpStore();
+  try {
+    process.env.OTP_DESTINATION_HOURLY_LIMIT = '2';
+    process.env.OTP_DESTINATION_DAILY_LIMIT = '10';
+    (emailService as any).sendAuthEmail = async () => ({ messageId: 'email-budget' });
+    await issueEmailOtp({ destination: 'Private@Example.Test ', purpose: 'REGISTRATION', subject: 'pending-a' });
+    await issueEmailOtp({ destination: 'private@example.test', purpose: 'PASSWORD_RESET', subject: 'user-a' });
+    await assert.rejects(
+      issueEmailOtp({ destination: 'PRIVATE@example.test', purpose: 'REGISTRATION', subject: 'pending-b' }),
+      (error: any) => error instanceof OtpError && error.code === 'OTP_RATE_LIMITED'
+    );
+    assert.equal(store.rows.length, 2);
+  } finally {
+    delete process.env.OTP_DESTINATION_HOURLY_LIMIT;
+    delete process.env.OTP_DESTINATION_DAILY_LIMIT;
+    store.restore();
+  }
+});
+
+test('concurrent shared-destination issuance cannot exceed the durable budget', async () => {
+  const store = installOtpStore();
+  try {
+    process.env.OTP_DESTINATION_HOURLY_LIMIT = '1';
+    (emailService as any).sendAuthEmail = async () => ({ messageId: 'email-budget-race' });
+    const results = await Promise.allSettled([
+      issueEmailOtp({ destination: 'same@example.test', purpose: 'REGISTRATION', subject: 'pending-a' }),
+      issueEmailOtp({ destination: 'SAME@example.test', purpose: 'REGISTRATION', subject: 'pending-b' })
+    ]);
+    assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+    assert.equal(results.filter((result) => result.status === 'rejected' && (result.reason as any).code === 'OTP_RATE_LIMITED').length, 1);
+  } finally { delete process.env.OTP_DESTINATION_HOURLY_LIMIT; store.restore(); }
+});
+
+test('OTP issuance fails closed when the durable budget store is unavailable', async () => {
+  const store = installOtpStore();
+  let sent = false;
+  try {
+    prisma.$transaction = async () => { throw new Error('database unavailable'); };
+    (emailService as any).sendAuthEmail = async () => { sent = true; return { messageId: 'unexpected' }; };
+    await assert.rejects(issueEmailOtp({ destination: 'private@example.test', purpose: 'REGISTRATION', subject: 'pending-db' }), /database unavailable/);
+    assert.equal(sent, false);
+  } finally { store.restore(); }
 });
 
 test('OTP purpose/subject binding rejects replay in another flow', async () => {

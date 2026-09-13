@@ -408,7 +408,7 @@ export async function replaySnapshot(db: PrismaClient, snapshot: Snapshot, recei
           (current.deleteNotBefore && Date.parse(current.deleteNotBefore) > now().getTime())) fail('MEDIA_CHANGED_DURING_FENCE');
       await tx.mediaVariant.deleteMany({ where: { mediaAssetId: pointer.assetId } });
       await tx.mediaAsset.update({ where: { id: pointer.assetId }, data: { status: 'DELETED', deletedAt: asset.deletedAt ?? now(), uploadBucket: null, uploadKey: null,
-        storageCleanupNotBefore: null, altText: null, checksum: null, moderationMetadata: Prisma.DbNull, moderationStatus: 'NOT_REVIEWED', errorCode: null,
+        sourceCleanupNotBefore: null, storageCleanupNotBefore: null, altText: null, checksum: null, moderationMetadata: Prisma.DbNull, moderationStatus: 'NOT_REVIEWED', errorCode: null,
         sourceMime: null, sourceWidth: null, sourceHeight: null, sourceByteSize: null, aspectRatio: null, cropX: null, cropY: null, cropWidth: null, cropHeight: null, focalX: null, focalY: null } });
     });
     await dependencies.checkpoint({ phase: 'MEDIA_APPLIED', assetId: pointer.assetId });

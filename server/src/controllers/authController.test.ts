@@ -5,6 +5,7 @@ import type {} from '../middleware/requestContext';
 
 process.env.AUTH_SESSION_HASH_SECRET = process.env.AUTH_SESSION_HASH_SECRET || 'controller-test-secret-at-least-32-bytes';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'legacy-controller-test-secret-at-least-32-bytes';
+process.env.OTP_CODE_PEPPER = process.env.OTP_CODE_PEPPER || 'controller-otp-pepper-independent-fixture';
 
 const prisma = require('../prisma').default as any;
 const bcrypt = require('bcryptjs') as typeof import('bcryptjs');
@@ -162,6 +163,23 @@ test('successful login returns safe user data, CSRF and cookies but no bearer to
   assert.equal(state.headers['cache-control'], 'no-store');
 });
 
+test('login applies the bcrypt UTF-8 byte boundary and keeps rejection generic', async () => {
+  const exact72Bytes = `Aa1!${'ش'.repeat(34)}`;
+  const over72Bytes = `${exact72Bytes}x`;
+  let reads = 0;
+  prisma.user.findFirst = async () => { reads += 1; return baseUser(); };
+  (bcrypt as any).compare = async () => false;
+  const acceptedBoundary = createResponse();
+  await login({ body: { identifier: 'private@example.test', password: exact72Bytes } } as any, acceptedBoundary.response);
+  assert.equal(acceptedBoundary.state.statusCode, 401);
+  assert.equal(reads, 1);
+  const rejectedBoundary = createResponse();
+  await login({ body: { identifier: 'private@example.test', password: over72Bytes } } as any, rejectedBoundary.response);
+  assert.equal(rejectedBoundary.state.statusCode, 401);
+  assert.deepEqual(rejectedBoundary.state.body, { error: 'Invalid login credentials', code: 'INVALID_CREDENTIALS' });
+  assert.equal(reads, 1, 'overlong credentials must be rejected before bcrypt/database work');
+});
+
 test('registration completion rejects a former username before creating an account', async () => {
   const browserSecret = 'completion-browser-secret-at-least-thirty-two-characters';
   const pending = {id:PENDING_ID,email:'new@example.test',fullName:'New User',dob:new Date('1990-09-01'),password:'hash',handle:'former_name',currentStep:5,browserSecretHash:sessionService.hashSessionSecret(`registration:${browserSecret}`)};
@@ -244,6 +262,7 @@ test('registration attempts for the same email get distinct browser-bound capabi
   const registrationCookie = first.state.headers['set-cookie'][0];
   assert.match(registrationCookie, /^si_registration_browser=/);
   assert.match(registrationCookie, /HttpOnly/);
+  assert.match(registrationCookie, /Path=\/api\/auth(?:;|$)/);
 });
 
 test('registration password update rejects a pendingId without its browser secret', async () => {
@@ -270,6 +289,15 @@ test('registration password update rejects a pendingId without its browser secre
   } as any, bound.response);
   assert.equal(bound.state.statusCode, 200);
   assert.equal(updates, 1);
+
+  const exact72Bytes = `Aa1!${'ش'.repeat(34)}`;
+  const accepted = createResponse();
+  await setRegistrationPassword({ body: { pendingId: PENDING_ID, password: exact72Bytes }, headers: { cookie: `si_registration_browser=${browserSecret}` } } as any, accepted.response);
+  assert.equal(accepted.state.statusCode, 200);
+  const rejected = createResponse();
+  await setRegistrationPassword({ body: { pendingId: PENDING_ID, password: `${exact72Bytes}x` }, headers: { cookie: `si_registration_browser=${browserSecret}` } } as any, rejected.response);
+  assert.equal(rejected.state.statusCode, 400);
+  assert.equal(rejected.state.body.code, 'INVALID_PASSWORD');
 });
 
 test('password reset request is non-enumerating for existing and absent accounts', async () => {
@@ -313,6 +341,19 @@ test('password reset consumes bound OTP, updates hash and revokes all sessions a
   assert.ok(operations[1][1].data.revokedAt instanceof Date);
   assert.equal(notification.kind, 'PASSWORD_RESET');
   assert.equal(notification.recipient, 'private@example.test');
+});
+
+test('missing-user reset confirmation performs password and OTP work before the generic rejection', async () => {
+  prisma.user.findFirst = async () => null;
+  let hashes = 0, compares = 0;
+  (bcrypt as any).hash = async () => { hashes += 1; return 'unused-password-hash'; };
+  (bcrypt as any).compare = async () => { compares += 1; return false; };
+  const { response, state } = createResponse();
+  await confirmPasswordReset({ body: { email: 'absent@example.test', code: '123456', password: 'NewPassword1!' } } as any, response);
+  assert.equal(state.statusCode, 400);
+  assert.equal(state.body.code, 'PASSWORD_RESET_INVALID');
+  assert.equal(hashes, 1);
+  assert.equal(compares, 1);
 });
 
 test('a password reset OTP cannot cross a concurrent email or credential change', async () => {
@@ -362,7 +403,7 @@ test('email change confirmation revokes old sessions then issues a fresh session
   let consumed: any;
   (otpService as any).consumeEmailOtp = async (input: any, onConsume: any) => {
     consumed = input;
-    return { challengeId: 'challenge-change', value: await prisma.$transaction((tx: any) => onConsume(tx, {createdAt: new Date()})) };
+    return { challengeId: 'challenge-change', value: await prisma.$transaction((tx: any) => onConsume(tx, {createdAt: new Date(), intentVersion: 2, sourceDestinationHash: otpService.otpServiceDestinationHash('private@example.test')})) };
   };
   const operations: any[] = [];
   const queued: any[] = [];
@@ -381,7 +422,7 @@ test('email change confirmation revokes old sessions then issues a fresh session
   const { response, state } = createResponse();
   await confirmEmailChange({ user: { userId: 'user-1', authMode: 'session' }, authSession: {id: 'session-old', userId: 'user-1'}, body: { email: 'new@example.test', code: '123456' }, requestId: 'email-change' } as any, response);
   assert.equal(state.statusCode, 200);
-  assert.deepEqual(consumed, { destination: 'new@example.test', purpose: 'EMAIL_CHANGE', subject: 'user-1', code: '123456' });
+  assert.deepEqual(consumed, { destination: 'new@example.test', purpose: 'EMAIL_CHANGE', subject: 'user-1', code: '123456', requireLatestIntent: true });
   assert.deepEqual(operations.map(([name]) => name), ['user', 'sessions', 'new-session']);
   assert.deepEqual(operations[1][1].where, { userId: 'user-1', revokedAt: null });
   assert.equal(state.body.csrfToken, 'new-csrf');
@@ -391,13 +432,16 @@ test('email change confirmation revokes old sessions then issues a fresh session
 });
 
 test('email change request does not disclose whether another account owns the destination', async () => {
-  let issued = 0;
-  (otpService as any).issueEmailOtp = async () => { issued += 1; return { cooldownUntil: new Date() }; };
+  let issued: any;
+  prisma.user.findUnique = async () => ({email: 'private@example.test', status: 'ACTIVE'});
+  (otpService as any).issueEmailOtp = async (input: any) => { issued = input; return { cooldownUntil: new Date() }; };
   const { response, state } = createResponse();
   await requestEmailChange({ user: { userId: 'user-1', authMode: 'session' }, authSession: {id: 'session-old', userId: 'user-1'}, body: { email: 'taken@example.test' }, ip: '127.0.0.1', header: () => undefined, requestId: 'email-change-request' } as any, response);
   assert.equal(state.statusCode, 202);
   assert.equal(state.body.success, true);
-  assert.equal(issued, 1);
+  assert.equal(issued.destination, 'taken@example.test');
+  assert.equal(issued.sourceDestination, 'private@example.test');
+  assert.equal(issued.supersedeBySubjectPurpose, true);
 });
 
 test('logout revokes the active server session and clears both cookies', async () => {

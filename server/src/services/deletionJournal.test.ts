@@ -30,7 +30,8 @@ test('canonical object order and duplicates yield one deterministic purge batch'
 
 test('HEIF pointer capture retains private prepared source and upload deadline without content metadata', () => {
   const pointer = captureDeletionMediaPointer({ id: 'asset', ownerId: 'owner', sourceMime: 'image/heif', uploadBucket: 'media-originals',
-    uploadKey: 'owner/asset/upload.heif', storageCleanupNotBefore: new Date('2030-01-01T00:00:00.000Z'),
+    uploadKey: 'owner/asset/upload.heif', sourceCleanupNotBefore: new Date('2030-01-01T00:00:00.000Z'),
+    storageCleanupNotBefore: new Date('2029-01-01T00:00:00.000Z'),
     variants: [{ storageBucket: 'media-private', storageKey: 'owner/asset/private/480.webp' }] });
   assert.equal(pointer.deleteNotBefore, '2030-01-01T00:00:00.000Z');
   assert.deepEqual(pointer.objects.map(object => object.key), ['owner/asset/prepared.webp', 'owner/asset/upload.heif', 'owner/asset/private/480.webp']);

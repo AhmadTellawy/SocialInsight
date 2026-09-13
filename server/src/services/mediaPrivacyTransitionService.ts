@@ -1,6 +1,11 @@
 import { AccountSecurityError, lockAccountSecurity } from './mfaService';
 import prisma from '../prisma';
-import { promoteMediaAsset, restrictMediaAsset } from './mediaService';
+import {
+  ATTACHED_MEDIA_SCOPE_SELECT,
+  promoteMediaAsset,
+  resolveAttachedMediaScopeFromState,
+  restrictMediaAsset
+} from './mediaService';
 import { Prisma } from '@prisma/client';
 import { acceptPendingPublicFollowers } from './publicFollowAcceptanceService';
 
@@ -8,7 +13,7 @@ const BATCH_SIZE = 20;
 const WORKER_LEASE_MS = 15 * 60_000;
 const FOLLOW_ACCEPTANCE_PHASE = 'FOLLOW_ACCEPTANCE_PENDING';
 class SupersededTransition extends Error {}
-const POST_SCOPE_SELECT = { status: true, isDeleted: true, targetAudience: true, groupId: true, targetedGroups: { select: { id: true } } } as const;
+class MediaSourceScopeChanged extends Error {}
 
 export const processMediaPrivacyTransition = async (transitionId: string): Promise<boolean> => {
   const identity = await prisma.mediaPrivacyTransition.findUnique({ where: { id: transitionId }, select: { userId: true } });
@@ -63,6 +68,34 @@ export const processMediaPrivacyTransition = async (transitionId: string): Promi
     if (job?.status !== 'RUNNING' || job.startedAt?.getTime() !== transition.startedAt?.getTime()
       || account?.mediaPrivacyTarget !== targetIsPrivate || (account.status !== 'ACTIVE' && !targetIsPrivate)) throw new SupersededTransition();
   };
+  const reconcileAttachedAsset = async (assetId: string): Promise<void> => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const asset = await prisma.mediaAsset.findUnique({ where: { id: assetId }, select: ATTACHED_MEDIA_SCOPE_SELECT });
+      if (!asset) return;
+      const desiredScope = resolveAttachedMediaScopeFromState(asset, targetIsPrivate);
+      const assertSourceScope = async (tx: Prisma.TransactionClient) => {
+        await assertCurrent(tx);
+        const current = await tx.mediaAsset.findUnique({ where: { id: assetId }, select: ATTACHED_MEDIA_SCOPE_SELECT });
+        if (resolveAttachedMediaScopeFromState(current, targetIsPrivate) !== desiredScope) throw new MediaSourceScopeChanged();
+      };
+      try {
+        if (desiredScope === 'PUBLIC') {
+          // A previous public state may have left exact public variants behind
+          // after the source became restricted. Remove the stale disclosure
+          // before minting a fresh public presentation for the current source.
+          if (asset.accessScope !== 'PUBLIC' && asset.variants.some(variant => variant.isPublic)) {
+            await restrictMediaAsset(assetId, 'RESTRICTED', assertSourceScope);
+          }
+          await promoteMediaAsset(assetId, assertSourceScope);
+        } else await restrictMediaAsset(assetId, desiredScope, assertSourceScope);
+        return;
+      } catch (error) {
+        if (error instanceof MediaSourceScopeChanged) continue;
+        throw error;
+      }
+    }
+    throw new Error('Media attachment scope kept changing during privacy transition.');
+  };
 
   try {
     const assets = await prisma.mediaAsset.findMany({
@@ -72,26 +105,16 @@ export const processMediaPrivacyTransition = async (transitionId: string): Promi
         status: 'ATTACHED',
         ...(targetIsPrivate
           ? { OR: [{ accessScope: 'PUBLIC' as const }, { variants: { some: { isPublic: true } } }] }
-          : { accessScope: 'RESTRICTED' as const }),
+          : { OR: [{ accessScope: { not: 'PUBLIC' as const } }, { variants: { some: { isPublic: true } } }] }),
         ...(transition.cursorAssetId ? { id: { gt: transition.cursorAssetId } } : {})
       },
       orderBy: { id: 'asc' },
       take: BATCH_SIZE,
-      select: { id: true, purpose: true,
-        postAttachment: { select: { post: { select: POST_SCOPE_SELECT } } },
-        questionFor: { select: { post: { select: POST_SCOPE_SELECT }, section: { select: { post: { select: POST_SCOPE_SELECT } } } } },
-        optionFor: { select: { question: { select: { post: { select: POST_SCOPE_SELECT }, section: { select: { post: { select: POST_SCOPE_SELECT } } } } } } }
-      }
+      select: ATTACHED_MEDIA_SCOPE_SELECT
     });
 
     for (const asset of assets) {
-      if (targetIsPrivate) await restrictMediaAsset(asset.id, 'RESTRICTED', assertCurrent);
-      else {
-        const post = asset.postAttachment?.post || asset.questionFor?.post || asset.questionFor?.section?.post || asset.optionFor?.question.post || asset.optionFor?.question.section?.post;
-        const isPublicProfileImage = asset.purpose === 'PROFILE_AVATAR' || asset.purpose === 'PROFILE_COVER';
-        const isPublicPost = post && post.status === 'PUBLISHED' && !post.isDeleted && !post.groupId && post.targetedGroups.length === 0 && (!post.targetAudience || post.targetAudience.toLowerCase() === 'public');
-        if (isPublicProfileImage || isPublicPost) await promoteMediaAsset(asset.id, assertCurrent);
-      }
+      await reconcileAttachedAsset(asset.id);
     }
 
     if (assets.length === BATCH_SIZE) {

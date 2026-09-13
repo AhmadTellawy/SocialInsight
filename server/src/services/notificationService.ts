@@ -18,6 +18,7 @@ import {
     createMentionNotificationTarget,
     withNotificationDeepLink
 } from '../utils/notificationTarget';
+import { evaluateNotificationVisibility } from './notificationVisibilityService';
 
 interface NotifyOptions {
     dedupe?: boolean;
@@ -38,9 +39,21 @@ const parseStoredPayload = (payload: string | null | undefined): Record<string, 
 const dispatchNotificationRecord = async (
     notification: any,
     normalizedPayload?: Record<string, any>
-): Promise<void> => {
+): Promise<boolean> => {
     const payload = normalizedPayload
         || withNotificationDeepLink(notification.targetType, notification.targetId, parseStoredPayload(notification.payload));
+    const visibility = await evaluateNotificationVisibility({
+        userId: notification.userId,
+        actorId: notification.actorId,
+        type: notification.type,
+        targetType: notification.targetType,
+        targetId: notification.targetId,
+        payload
+    });
+    if (!visibility.allowed) {
+        console.info(JSON.stringify({ event: 'notification_source_unavailable', type: notification.type, reason: visibility.reason }));
+        return false;
+    }
     const realtimeNotification = {
         id: notification.id,
         type: notification.type,
@@ -73,6 +86,7 @@ const dispatchNotificationRecord = async (
             error: errorName(error)
         }));
     });
+    return true;
 };
 
 export const dispatchNotificationById = async (notificationId: string): Promise<boolean> => {
@@ -85,8 +99,7 @@ export const dispatchNotificationById = async (notificationId: string): Promise<
         }
     });
     if (!notification) return false;
-    await dispatchNotificationRecord(notification);
-    return true;
+    return dispatchNotificationRecord(notification);
 };
 
 export const dispatchNotificationIds = async (notificationIds: string[]): Promise<void> => {
@@ -113,6 +126,16 @@ export const notify = async (
 
         const normalizedPayload = withNotificationDeepLink(targetType, targetId, payload);
         const serializedPayload = normalizedPayload ? JSON.stringify(normalizedPayload) : null;
+
+        const visibility = await evaluateNotificationVisibility({
+            userId,
+            actorId,
+            type,
+            targetType,
+            targetId,
+            payload: normalizedPayload
+        });
+        if (!visibility.allowed) return;
 
         if (options.dedupe) {
             const existing = await prisma.notification.findFirst({

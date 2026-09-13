@@ -57,7 +57,18 @@ async function scenario(run: (context: any) => Promise<void>) {
       }
     },
     $executeRaw: async () => { context.locks++; }, user: { findUnique: async () => ({ status: context.accountStatus }) },
-    mediaAsset: { findUnique: async ({ where }: any) => structuredClone(context.assets.get(where.id) || null), updateMany, update: async (args: any) => update(args) },
+    mediaAsset: {
+      findUnique: async ({ where }: any) => structuredClone(context.assets.get(where.id) || null),
+      findMany: async ({ where }: any) => [...context.assets.values()]
+        .filter((asset: any) => (!where.ownerId || asset.ownerId === where.ownerId)
+          && asset.deletedAt === null && !['PENDING_DELETE', 'DELETED'].includes(asset.status))
+        .map((asset: any) => ({ status: asset.status, sourceByteSize: asset.sourceByteSize })),
+      count: async ({ where }: any) => [...context.assets.values()]
+        .filter((asset: any) => (!where.ownerId || asset.ownerId === where.ownerId)
+          && (!where.status || asset.status === where.status) && asset.deletedAt === null).length,
+      updateMany,
+      update: async (args: any) => update(args)
+    },
     mediaVariant: {
       create: async ({ data }: any) => { const asset = context.assets.get(data.mediaAssetId); asset.variants.push({ id: `variant-${asset.variants.length}`, ...data }); return data; },
       upsert: async ({ create }: any) => {

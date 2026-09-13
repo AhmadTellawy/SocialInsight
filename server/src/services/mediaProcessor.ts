@@ -160,6 +160,15 @@ export const processMediaBuffer = async (
   if (!detectedMime || detectedMime !== declaredMime) {
     throw new MediaValidationError('MIME_MISMATCH', 'The image content does not match its declared file type.');
   }
+  if (
+    !metadata.width
+    || !metadata.height
+    || metadata.width > MEDIA_CONFIG.maxSourceEdge
+    || metadata.height > MEDIA_CONFIG.maxSourceEdge
+    || (metadata.pages || 1) > 1
+  ) {
+    throw new MediaValidationError('INVALID_IMAGE_DIMENSIONS', 'The image dimensions or frame count are not supported.');
+  }
 
   let normalized: { data: Buffer; info: OutputInfo };
   try {
@@ -215,11 +224,18 @@ export const processMediaBuffer = async (
     };
   }));
   if (
+    normalized.data.length > MEDIA_CONFIG.maxPreparedOutputBytes
+    || variants.some((variant) => variant.buffer.length > MEDIA_CONFIG.maxPreparedOutputBytes)
+    || (
     purpose === 'PROFILE_COVER'
     && (normalized.data.length > MEDIA_CONFIG.maxCoverOutputBytes
       || variants.some((variant) => variant.buffer.length > MEDIA_CONFIG.maxCoverOutputBytes))
+    )
   ) {
-    throw new MediaValidationError('COVER_OUTPUT_TOO_LARGE', 'The processed cover image is too large.');
+    throw new MediaValidationError(
+      purpose === 'PROFILE_COVER' ? 'COVER_OUTPUT_TOO_LARGE' : 'IMAGE_OUTPUT_TOO_LARGE',
+      'The processed image is too large.'
+    );
   }
 
   return {

@@ -1,4 +1,9 @@
 {
+  "git": {
+    "deploymentEnabled": {
+      "codex/security-remediation-release": false
+    }
+  },
   "buildCommand": "vite build",
   "rewrites": [
     {

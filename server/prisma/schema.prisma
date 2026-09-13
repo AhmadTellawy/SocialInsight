@@ -450,6 +450,7 @@ model MediaAsset {
   altText            String?
   uploadBucket       String?
   uploadKey          String?
+  sourceCleanupNotBefore DateTime?
   storageCleanupNotBefore DateTime?
   errorCode          String?
   moderationStatus   String           @default("NOT_REVIEWED")
@@ -866,6 +867,9 @@ model OtpChallenge {
   purpose         String            @db.VarChar(64)
   subject         String            @db.VarChar(255)
   codeHash        String            @map("code_hash") @db.VarChar(255)
+  hashVersion     Int               @default(1) @map("hash_version")
+  intentVersion   Int               @default(1) @map("intent_version")
+  sourceDestinationHash String?     @map("source_destination_hash") @db.Char(64)
   deliveryStatus  OtpDeliveryStatus @default(PENDING) @map("delivery_status")
   attempts        Int               @default(0)
   maxAttempts     Int               @default(5) @map("max_attempts")
@@ -882,6 +886,7 @@ model OtpChallenge {
   @@unique([destinationHash, purpose, subject, version], map: "otp_challenges_destination_purpose_subject_version_key")
   @@index([destinationHash, purpose, createdAt(sort: Desc)], map: "otp_challenges_destination_purpose_created_idx")
   @@index([subject, purpose, createdAt(sort: Desc)], map: "otp_challenges_subject_purpose_created_idx")
+  @@index([subject, purpose, intentVersion(sort: Desc)], map: "otp_challenges_subject_purpose_intent_idx")
   @@index([deliveryStatus, createdAt], map: "otp_challenges_delivery_created_idx")
   @@index([expiresAt], map: "otp_challenges_expires_idx")
   @@map("otp_challenges")

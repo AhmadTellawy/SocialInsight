@@ -1054,7 +1054,7 @@ export const api = {
     },
 
     reserveHandle: async (pendingId: string, handle: string) => {
-        const response = await authFetch(`${API_BASE_URL}/auth/handle/reserve`, {
+        const response = await authFetch(`${API_BASE_URL}/auth/register/handle/reserve`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ pendingId, handle })

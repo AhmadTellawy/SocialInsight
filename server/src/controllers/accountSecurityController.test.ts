@@ -91,3 +91,26 @@ test('a recently authenticated OAuth account can set its first password only wit
     else assert.equal(state.body.code, 'VERIFIED_EMAIL_REQUIRED');
   }
 });
+
+test('password changes enforce the bcrypt UTF-8 byte boundary for Arabic input', async () => {
+  const exact72Bytes = `Aa1!${'ش'.repeat(34)}`;
+  let transactions = 0;
+  prisma.$transaction = async (work: any) => {
+    transactions += 1;
+    return work(guarded({
+      $executeRaw: async () => {},
+      user: { findUnique: async () => ({status: 'ACTIVE', passwordHash: null, email: 'owner@example.test', emailVerifiedAt: new Date()}), update: async () => ({}) },
+      authSession: {findMany: async () => [], updateMany: async () => ({count: 0})},
+      authChallenge: {updateMany: async () => ({count: 0})},
+      securityEmailOutbox: {createMany: async () => ({count: 1})}
+    }));
+  };
+  const accepted = response();
+  await controller.changeAccountPassword(request({password: exact72Bytes}), accepted.res);
+  assert.equal(accepted.state.status, 200);
+  const rejected = response();
+  await controller.changeAccountPassword(request({password: `${exact72Bytes}x`}), rejected.res);
+  assert.equal(rejected.state.status, 400);
+  assert.equal(rejected.state.body.code, 'INVALID_REQUEST');
+  assert.equal(transactions, 1);
+});

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { resolvePostMediaScopeFromState, serializeMediaAsset, serializePostMediaRecord, serializeUserMediaRecord } from './mediaService';
+import { resolveAttachedMediaScopeFromState, resolvePostMediaScopeFromState, serializeMediaAsset, serializePostMediaRecord, serializeUserMediaRecord } from './mediaService';
 import { processBase64Image } from '../utils/imageProcessor';
 
 test('resolves draft, group, audience, and account media scopes conservatively', () => {
@@ -9,6 +9,18 @@ test('resolves draft, group, audience, and account media scopes conservatively',
   assert.equal(resolvePostMediaScopeFromState('PUBLISHED', [], 'Followers', false), 'RESTRICTED');
   assert.equal(resolvePostMediaScopeFromState('PUBLISHED', [], 'Public', true), 'RESTRICTED');
   assert.equal(resolvePostMediaScopeFromState('PUBLISHED', [], 'Public', false), 'PUBLIC');
+});
+
+test('derives attached media scope from its current source state', () => {
+  const postAsset = (post: any) => ({ status: 'ATTACHED', purpose: 'POST', postAttachment: { post } });
+  assert.equal(resolveAttachedMediaScopeFromState(postAsset({ status: 'PUBLISHED', isDeleted: false, groupId: null, targetedGroups: [], targetAudience: 'Public' }), false), 'PUBLIC');
+  assert.equal(resolveAttachedMediaScopeFromState(postAsset({ status: 'PUBLISHED', isDeleted: false, groupId: null, targetedGroups: [], targetAudience: 'Followers' }), false), 'RESTRICTED');
+  assert.equal(resolveAttachedMediaScopeFromState(postAsset({ status: 'PUBLISHED', isDeleted: false, groupId: 'group-id', targetedGroups: [], targetAudience: 'Groups' }), false), 'INHERITED_GROUP');
+  assert.equal(resolveAttachedMediaScopeFromState(postAsset({ status: 'DRAFT', isDeleted: false, groupId: null, targetedGroups: [], targetAudience: 'Public' }), false), 'OWNER_ONLY');
+  assert.equal(resolveAttachedMediaScopeFromState(postAsset({ status: 'PUBLISHED', isDeleted: true, groupId: null, targetedGroups: [], targetAudience: 'Public' }), false), 'OWNER_ONLY');
+  assert.equal(resolveAttachedMediaScopeFromState({ status: 'ATTACHED', purpose: 'PROFILE_AVATAR', avatarFor: { id: 'owner' } }, false), 'PUBLIC');
+  assert.equal(resolveAttachedMediaScopeFromState({ status: 'ATTACHED', purpose: 'PROFILE_AVATAR', avatarFor: { id: 'owner' } }, true), 'RESTRICTED');
+  assert.equal(resolveAttachedMediaScopeFromState({ status: 'ATTACHED', purpose: 'PROFILE_AVATAR', avatarFor: null }, false), 'OWNER_ONLY');
 });
 
 test('rejects a new arbitrary remote image URL', async () => {

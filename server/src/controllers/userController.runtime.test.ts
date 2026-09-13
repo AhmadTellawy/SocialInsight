@@ -6,6 +6,7 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'user-controller-runtime-test
 const prisma = require('../prisma').default as typeof import('../prisma').default;
 const {
     getNotifications,
+    getUserAnalytics,
     getSuggestedUsers,
     getUserGroups,
     NOTIFICATION_PAGE_DEFAULT,
@@ -118,17 +119,21 @@ test('getUserGroups hydrates filtered counts in the membership relation load', a
 
 test('getNotifications caps pages and exposes an array-compatible next cursor', async () => {
     const originalFindMany = prisma.notification.findMany;
+    const originalUserFindMany = prisma.user.findMany;
     const capturedCalls: any[] = [];
 
     try {
+        (prisma.user as any).findMany = async ({ where }: any) => where.id.in.map((id: string) => ({ id }));
         (prisma.notification as any).findMany = async (args: any) => {
             capturedCalls.push(args);
             return Array.from({ length: args.take }, (_, index) => ({
                 id: `notification-${String(index).padStart(3, '0')}`,
+                userId: 'viewer-1',
+                actorId: null,
                 type: 'like',
                 message: 'liked your post',
                 targetId: 'post-1',
-                targetType: 'post',
+                targetType: 'profile',
                 payload: null,
                 isRead: false,
                 createdAt: new Date(1_700_000_000_000 - index),
@@ -162,6 +167,109 @@ test('getNotifications caps pages and exposes an array-compatible next cursor', 
         assert.equal(defaultPage.state.headers['X-Next-Cursor'], 'notification-049');
     } finally {
         (prisma.notification as any).findMany = originalFindMany;
+        (prisma.user as any).findMany = originalUserFindMany;
+    }
+});
+
+test('notification reads drop a post notification after its source becomes unavailable', async () => {
+    const originals = {
+        notificationFindMany: prisma.notification.findMany,
+        userFindMany: prisma.user.findMany,
+        userBlockFindFirst: prisma.userBlock.findFirst,
+        postFindFirst: prisma.post.findFirst
+    };
+    let calls = 0;
+    try {
+        (prisma.notification as any).findMany = async () => calls++ === 0 ? [{
+            id: 'notification-private', userId: 'viewer-1', actorId: 'actor-1', type: 'like',
+            message: 'sensitive source message', targetId: 'post-private', targetType: 'post', payload: null,
+            isRead: false, createdAt: new Date(), actor: { id: 'actor-1', name: 'Actor', avatar: null }
+        }] : [];
+        (prisma.user as any).findMany = async ({ where }: any) => where.id.in.map((id: string) => ({ id }));
+        (prisma.userBlock as any).findFirst = async () => null;
+        (prisma.post as any).findFirst = async () => null;
+        const { response, state } = createResponse();
+        await getNotifications({ params: { id: 'viewer-1' }, user: { userId: 'viewer-1' }, query: { limit: '10' } } as any, response);
+        assert.equal(state.statusCode, 200);
+        assert.deepEqual(state.body, []);
+        assert.equal(JSON.stringify(state.body).includes('sensitive source message'), false);
+    } finally {
+        (prisma.notification as any).findMany = originals.notificationFindMany;
+        (prisma.user as any).findMany = originals.userFindMany;
+        (prisma.userBlock as any).findFirst = originals.userBlockFindFirst;
+        (prisma.post as any).findFirst = originals.postFindFirst;
+    }
+});
+
+test('notification reads return a continuation cursor after five fully denied scan pages', async () => {
+    const originals = {
+        notificationFindMany: prisma.notification.findMany,
+        userFindMany: prisma.user.findMany,
+        userBlockFindFirst: prisma.userBlock.findFirst,
+        postFindFirst: prisma.post.findFirst
+    };
+    let calls = 0;
+    try {
+        (prisma.notification as any).findMany = async ({ take }: any) => {
+            const page = calls++;
+            return Array.from({ length: take }, (_, index) => ({
+                id: `denied-${page}-${index}`,
+                userId: 'viewer-1', actorId: 'actor-1', type: 'like',
+                message: 'hidden', targetId: `private-${page}-${index}`, targetType: 'post', payload: null,
+                isRead: false, createdAt: new Date(1_700_000_000_000 - page * 100 - index), actor: null
+            }));
+        };
+        (prisma.user as any).findMany = async ({ where }: any) => where.id.in.map((id: string) => ({ id }));
+        (prisma.userBlock as any).findFirst = async () => null;
+        (prisma.post as any).findFirst = async () => null;
+
+        const { response, state } = createResponse();
+        await getNotifications({ params: { id: 'viewer-1' }, user: { userId: 'viewer-1' }, query: { limit: '2' } } as any, response);
+        assert.equal(calls, 5);
+        assert.deepEqual(state.body, []);
+        assert.equal(state.headers['X-Next-Cursor'], 'denied-4-2');
+    } finally {
+        (prisma.notification as any).findMany = originals.notificationFindMany;
+        (prisma.user as any).findMany = originals.userFindMany;
+        (prisma.userBlock as any).findFirst = originals.userBlockFindFirst;
+        (prisma.post as any).findFirst = originals.postFindFirst;
+    }
+});
+
+test('notification reauthorization outage fails the whole read without returning a partial page', async () => {
+    const originals = {
+        notificationFindMany: prisma.notification.findMany,
+        userFindMany: prisma.user.findMany
+    };
+    try {
+        (prisma.notification as any).findMany = async () => [{
+            id: 'notification-sensitive', userId: 'viewer-1', actorId: 'actor-1', type: 'like',
+            message: 'must not escape', targetId: 'post-private', targetType: 'post', payload: null,
+            isRead: false, createdAt: new Date(), actor: null
+        }];
+        (prisma.user as any).findMany = async () => { throw new Error('synthetic authorization store outage'); };
+        const { response, state } = createResponse();
+        await getNotifications({ params: { id: 'viewer-1' }, user: { userId: 'viewer-1' }, query: { limit: '10' } } as any, response);
+        assert.equal(state.statusCode, 500);
+        assert.equal(JSON.stringify(state.body).includes('must not escape'), false);
+    } finally {
+        (prisma.notification as any).findMany = originals.notificationFindMany;
+        (prisma.user as any).findMany = originals.userFindMany;
+    }
+});
+
+test('profile analytics rejects a different authenticated account before any analytics query', async () => {
+    const originalQueryRaw = prisma.$queryRaw;
+    let queried = false;
+    try {
+        (prisma as any).$queryRaw = async () => { queried = true; throw new Error('unexpected analytics query'); };
+        const { response, state } = createResponse();
+        await getUserAnalytics({ params: { id: 'owner-1' }, user: { userId: 'viewer-1' } } as any, response);
+        assert.equal(state.statusCode, 403);
+        assert.match(state.body.error, /only to the account owner/i);
+        assert.equal(queried, false);
+    } finally {
+        (prisma as any).$queryRaw = originalQueryRaw;
     }
 });
 

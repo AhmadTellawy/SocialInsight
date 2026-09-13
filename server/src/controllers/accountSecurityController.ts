@@ -8,9 +8,10 @@ import { challengeAfterPrimaryProof, challengeSummary, clearAuthChallengeCookies
 import { authenticationResponse, SAFE_USER_SELECT } from './authController';
 import { assertActiveAccountSession, invalidateAccountOtps } from '../services/accountSecurityPolicy';
 import { enqueueSecurityNotification } from '../services/securityNotificationService';
+import { credentialPasswordSchema, newPasswordSchema } from '../utils/passwordPolicy';
 
 const db = prisma as any;
-const passwordSchema = z.string().min(8).max(128).regex(/[A-Z]/).regex(/[a-z]/).regex(/\d/).regex(/[!@#$%^&*]/);
+const passwordSchema = newPasswordSchema;
 const proofSchema = z.object({ code: z.string().min(1).max(40) }).strict();
 const noStore = (res: Response) => { res.setHeader('Cache-Control', 'no-store'); res.setHeader('Pragma', 'no-cache'); };
 const handler = (work: (req: Request, res: Response) => Promise<void>) => async (req: Request, res: Response): Promise<void> => {
@@ -35,7 +36,7 @@ export const getSignInMethods = handler(async (req, res) => {
 });
 
 export const reauthenticate = handler(async (req, res) => {
-    const { password } = z.object({ password: z.string().min(1).max(128) }).strict().parse(req.body);
+    const { password } = z.object({ password: credentialPasswordSchema }).strict().parse(req.body);
     if (!req.authSession || req.user!.authMode !== 'session') throw new AccountSecurityError('AUTH_REQUIRED', 401);
     const user = await db.user.findUnique({ where: { id: req.user!.userId } });
     if (!user?.passwordHash || !await bcrypt.compare(password, user.passwordHash)) throw new AccountSecurityError('INVALID_CREDENTIALS', 401);
@@ -70,7 +71,7 @@ export const unlinkSignInMethod = handler(async (req, res) => {
 });
 
 export const changeAccountPassword = handler(async (req, res) => {
-    const input = z.object({ currentPassword: z.string().max(128).optional(), password: passwordSchema }).strict().parse(req.body), userId = req.user!.userId;
+    const input = z.object({ currentPassword: credentialPasswordSchema.optional(), password: passwordSchema }).strict().parse(req.body), userId = req.user!.userId;
     const passwordHash = await bcrypt.hash(input.password, 12);
     const revoked = await db.$transaction(async (tx: any) => {
         await lockAccountSecurity(tx, userId);

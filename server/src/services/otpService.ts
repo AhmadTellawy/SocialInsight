@@ -13,6 +13,8 @@ interface IssueOtpInput {
     subject: string;
     requestIp?: string;
     userAgent?: string;
+    sourceDestination?: string;
+    supersedeBySubjectPurpose?: boolean;
 }
 
 interface VerifyOtpInput {
@@ -20,10 +22,11 @@ interface VerifyOtpInput {
     purpose: OtpPurpose;
     subject: string;
     code: string;
+    requireLatestIntent?: boolean;
 }
 
 export class OtpError extends Error {
-    constructor(public readonly code: 'OTP_COOLDOWN' | 'OTP_INVALID' | 'OTP_DELIVERY_FAILED', message: string) {
+    constructor(public readonly code: 'OTP_COOLDOWN' | 'OTP_RATE_LIMITED' | 'OTP_INVALID' | 'OTP_DELIVERY_FAILED', message: string) {
         super(message);
     }
 }
@@ -40,6 +43,12 @@ const secret = (): string => process.env.OTP_HASH_SECRET?.trim()
 
 const digest = (value: string): string => createHmac('sha256', secret()).update(value).digest('hex');
 const normalizeEmail = (value: string): string => value.trim().toLowerCase();
+const codePepper = (): string => process.env.OTP_CODE_PEPPER?.trim()
+    || (() => { throw new Error('OTP_CODE_PEPPER must be configured independently'); })();
+const v2CodeMaterial = (input: Pick<VerifyOtpInput, 'destination' | 'purpose' | 'subject' | 'code'>): string => createHmac('sha256', codePepper())
+    .update(`v2:${input.purpose}:${input.subject}:${normalizeEmail(input.destination)}:${input.code}`)
+    .digest('hex');
+export const otpServiceDestinationHash = (value: string): string => digest(normalizeEmail(value));
 const db = prisma as any;
 
 const localLocks = new Map<string, Promise<void>>();
@@ -62,13 +71,46 @@ const acquireDatabaseLock = async (tx: any, key: string): Promise<void> => {
     await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
 };
 
+const incrementOtpBudget = async (tx: any, scope: string, dimension: string, nowMs: number, windowMs: number): Promise<number> => {
+    const windowStartedAt = new Date(Math.floor(nowMs / windowMs) * windowMs);
+    const expiresAt = new Date(windowStartedAt.getTime() + windowMs * 2);
+    const keyHash = digest(`otp-budget:${scope}:${windowStartedAt.toISOString()}:${dimension}`);
+    const row = await tx.authRateLimit.upsert({
+        where: { keyHash },
+        create: { keyHash, count: 1, windowStartedAt, expiresAt },
+        update: { count: { increment: 1 }, expiresAt },
+        select: { count: true }
+    });
+    return row.count;
+};
+
+const consumeOtpIssuanceBudget = async (destination: string): Promise<void> => {
+    const now = Date.now();
+    const destinationHash = otpServiceDestinationHash(destination);
+    const hourMs = 60 * 60 * 1000;
+    const dayMs = 24 * hourMs;
+    const perDestinationHourlyLimit = boundedInt('OTP_DESTINATION_HOURLY_LIMIT', 5, 1, 100);
+    const perDestinationDailyLimit = boundedInt('OTP_DESTINATION_DAILY_LIMIT', 12, 1, 500);
+    const globalDailyLimit = boundedInt('OTP_GLOBAL_DAILY_LIMIT', 10_000, 100, 1_000_000);
+    const counts = await db.$transaction(async (tx: any) => Promise.all([
+        incrementOtpBudget(tx, 'destination-hour', destinationHash, now, hourMs),
+        incrementOtpBudget(tx, 'destination-day', destinationHash, now, dayMs),
+        incrementOtpBudget(tx, 'global-day', 'all-destinations', now, dayMs)
+    ]));
+    if (counts[0] > perDestinationHourlyLimit || counts[1] > perDestinationDailyLimit || counts[2] > globalDailyLimit) {
+        throw new OtpError('OTP_RATE_LIMITED', 'Please wait before requesting another code');
+    }
+};
+
 const issueEmailOtpInternal = async (input: IssueOtpInput): Promise<{ cooldownUntil: Date }> => {
     const destination = normalizeEmail(input.destination);
-    const destinationHash = digest(destination);
-    const issuanceKey = `${destinationHash}:${input.purpose}:${input.subject}`;
+    const destinationHash = otpServiceDestinationHash(destination);
+    const issuanceKey = input.supersedeBySubjectPurpose
+        ? `intent:${input.purpose}:${input.subject}`
+        : `${destinationHash}:${input.purpose}:${input.subject}`;
     const now = new Date();
     const code = randomInt(100000, 1000000).toString();
-    const codeHash = await bcrypt.hash(`${input.purpose}:${input.subject}:${code}`, boundedInt('OTP_BCRYPT_ROUNDS', 10, 8, 14));
+    const codeHash = await bcrypt.hash(v2CodeMaterial({ ...input, destination, code }), boundedInt('OTP_BCRYPT_ROUNDS', 10, 8, 14));
     const ttlSeconds = boundedInt('OTP_TTL_SECONDS', 600, 120, 1800);
     const expiresAt = new Date(now.getTime() + ttlSeconds * 1000);
     const cooldownUntil = new Date(now.getTime() + boundedInt('OTP_COOLDOWN_SECONDS', 60, 15, 600) * 1000);
@@ -98,8 +140,19 @@ const issueEmailOtpInternal = async (input: IssueOtpInput): Promise<{ cooldownUn
                     orderBy: { version: 'desc' },
                     select: { version: true }
                 });
+                const latestIntent = await tx.otpChallenge.findFirst({
+                    where: { purpose: input.purpose, subject: input.subject },
+                    orderBy: { intentVersion: 'desc' },
+                    select: { intentVersion: true }
+                });
                 await tx.otpChallenge.updateMany({
-                    where: { destinationHash, purpose: input.purpose, subject: input.subject, consumedAt: null, invalidatedAt: null },
+                    where: {
+                        ...(input.supersedeBySubjectPurpose ? {} : { destinationHash }),
+                        purpose: input.purpose,
+                        subject: input.subject,
+                        consumedAt: null,
+                        invalidatedAt: null
+                    },
                     data: { invalidatedAt: now, deliveryStatus: 'FAILED' }
                 });
                 return tx.otpChallenge.create({
@@ -109,6 +162,9 @@ const issueEmailOtpInternal = async (input: IssueOtpInput): Promise<{ cooldownUn
                         purpose: input.purpose,
                         subject: input.subject,
                         codeHash,
+                        hashVersion: 2,
+                        intentVersion: (latestIntent?.intentVersion || 0) + 1,
+                        sourceDestinationHash: input.sourceDestination ? otpServiceDestinationHash(input.sourceDestination) : null,
                         deliveryStatus: 'PENDING',
                         attempts: 0,
                         maxAttempts,
@@ -153,16 +209,20 @@ const issueEmailOtpInternal = async (input: IssueOtpInput): Promise<{ cooldownUn
 };
 
 export const issueEmailOtp = async (input: IssueOtpInput): Promise<{ cooldownUntil: Date }> => {
-    const key = `issue:${digest(`${normalizeEmail(input.destination)}:${input.purpose}:${input.subject}`)}`;
-    return withLocalLock(key, () => issueEmailOtpInternal(input));
+    const destination = normalizeEmail(input.destination);
+    const key = `issue:${digest(`${destination}:${input.purpose}:${input.subject}`)}`;
+    return withLocalLock(key, async () => {
+        await consumeOtpIssuanceBudget(destination);
+        return issueEmailOtpInternal({ ...input, destination });
+    });
 };
 
 export const consumeEmailOtp = async <T = undefined>(
     input: VerifyOtpInput,
-    onConsume?: (tx: any, challenge: { createdAt: Date }) => Promise<T>
+    onConsume?: (tx: any, challenge: { createdAt: Date; intentVersion: number; sourceDestinationHash?: string | null }) => Promise<T>
 ): Promise<{ challengeId: string; value: T | undefined }> => {
     if (!/^\d{6}$/.test(input.code)) throw new OtpError('OTP_INVALID', 'Invalid or expired code');
-    const destinationHash = digest(normalizeEmail(input.destination));
+    const destinationHash = otpServiceDestinationHash(input.destination);
     const now = new Date();
     const challenge = await db.otpChallenge.findFirst({
         where: {
@@ -188,7 +248,20 @@ export const consumeEmailOtp = async <T = undefined>(
             return { valid: false, affected: 0 };
         }
 
-        const valid = await bcrypt.compare(`${input.purpose}:${input.subject}:${input.code}`, current.codeHash);
+        if (input.requireLatestIntent) {
+            const latestIntent = await tx.otpChallenge.findFirst({
+                where: { purpose: input.purpose, subject: input.subject },
+                orderBy: { intentVersion: 'desc' },
+                select: { id: true }
+            });
+            if (latestIntent?.id !== current.id) return { valid: false, affected: 0 };
+        }
+
+        const valid = current.hashVersion === 2
+            ? await bcrypt.compare(v2CodeMaterial(input), current.codeHash)
+            : current.hashVersion === 1
+                ? await bcrypt.compare(`${input.purpose}:${input.subject}:${input.code}`, current.codeHash)
+                : false;
         if (valid) {
             const consumed = await tx.otpChallenge.updateMany({
                 where: {
@@ -202,7 +275,11 @@ export const consumeEmailOtp = async <T = undefined>(
                 data: { consumedAt: transactionNow }
             });
             if (consumed.count !== 1) return { valid: false, affected: 0 };
-            const value = onConsume ? await onConsume(tx, { createdAt: current.createdAt }) : undefined;
+            const value = onConsume ? await onConsume(tx, {
+                createdAt: current.createdAt,
+                intentVersion: current.intentVersion,
+                sourceDestinationHash: current.sourceDestinationHash
+            }) : undefined;
             return { valid: true, affected: 1, value };
         }
 

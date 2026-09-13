@@ -21,6 +21,7 @@ const { getMediaReadPresentation } = require('./mediaService') as typeof import(
 const storageModule = require('./mediaStorage') as typeof import('./mediaStorage');
 const notificationModule = require('./notificationService') as typeof import('./notificationService');
 const { createPost, updatePost, getPostById, votePost, createComment } = require('../controllers/postController') as typeof import('../controllers/postController');
+const { searchAll } = require('../controllers/searchController') as typeof import('../controllers/searchController');
 
 const prefix = `creator_union_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
 const id = (suffix: string) => `${prefix}_${suffix}`;
@@ -115,6 +116,23 @@ test('actual PostgreSQL enforces profile/group union, private followers, approva
   assert.equal(await GroupPermissionService.canViewPost(id('public_union'), undefined), true);
   assert.equal(await visible(id('private_union'), ids.member), false);
   await prisma.group.update({ where: { id: ids.group }, data: { isDeleted: false } });
+});
+
+test('actual search never returns a matching post outside the viewer audience', async () => {
+  const runSearch = async (viewerId?: string) => {
+    const { state, response } = responseState();
+    await searchAll({ query: { q: 'Synthetic creator integration' }, user: viewerId ? { userId: viewerId } : undefined } as any, response);
+    assert.equal(state.status, 200);
+    return state.body.surveys.map((post: any) => post.id);
+  };
+  const guestResults = await runSearch();
+  assert.deepEqual(guestResults, [id('public_union')]);
+  const memberResults = await runSearch(ids.member);
+  assert.ok(memberResults.includes(id('public_union')));
+  assert.ok(memberResults.includes(id('private_union')));
+  assert.ok(memberResults.includes(id('legacy_group')));
+  assert.equal(memberResults.includes(id('pending')), false);
+  assert.equal((await runSearch(ids.outsider)).includes(id('private_union')), false);
 });
 
 test('actual post detail serialization hides private group identifiers from profile-only readers', async () => {

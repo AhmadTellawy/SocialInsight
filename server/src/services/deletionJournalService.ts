@@ -91,14 +91,18 @@ export async function appendDeletionDecision(tx: Prisma.TransactionClient, input
 
 type MediaPointerSource = {
   id: string; ownerId: string; sourceMime: string | null; uploadBucket: string | null; uploadKey: string | null;
-  storageCleanupNotBefore: Date | null; variants: Array<{ storageBucket: string; storageKey: string }>;
+  sourceCleanupNotBefore: Date | null; storageCleanupNotBefore: Date | null; variants: Array<{ storageBucket: string; storageKey: string }>;
 };
 export function captureDeletionMediaPointer(asset: MediaPointerSource): DeletionMediaPointer {
   if (Boolean(asset.uploadBucket) !== Boolean(asset.uploadKey)) return invalid();
   const objects = asset.variants.map(variant => ({ bucket: variant.storageBucket, key: variant.storageKey }));
   if (asset.uploadBucket && asset.uploadKey) objects.push({ bucket: asset.uploadBucket, key: asset.uploadKey });
   if (asset.sourceMime && isHeifMediaMime(asset.sourceMime)) objects.push({ bucket: MEDIA_CONFIG.buckets.originals, key: `${asset.ownerId}/${asset.id}/prepared.webp` });
-  return normalizeDeletionResourcePointers({ media: [{ assetId: asset.id, objects, deleteNotBefore: asset.storageCleanupNotBefore?.toISOString() ?? null }] }, 'MEDIA', asset.id).media[0];
+  const deleteNotBeforeMs = Math.max(
+    asset.sourceCleanupNotBefore?.getTime() || 0,
+    asset.storageCleanupNotBefore?.getTime() || 0
+  );
+  return normalizeDeletionResourcePointers({ media: [{ assetId: asset.id, objects, deleteNotBefore: deleteNotBeforeMs ? new Date(deleteNotBeforeMs).toISOString() : null }] }, 'MEDIA', asset.id).media[0];
 }
 
 export function mediaPurgeDecision(pointer: DeletionMediaPointer): CanonicalDeletionDecision {

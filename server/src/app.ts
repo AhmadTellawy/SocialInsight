@@ -5,7 +5,6 @@ import path from 'path';
 import cors from 'cors';
 import compression from 'compression';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
 import hpp from 'hpp';
 import postRoutes from './routes/postRoutes';
 import userRoutes from './routes/userRoutes';
@@ -26,6 +25,8 @@ import { isMediaStorageConfigured } from './services/mediaStorage';
 import prisma from './prisma';
 import { requestContext } from './middleware/requestContext';
 import { readRestoreMaintenance } from './config/maintenance';
+import { readTrustedProxyHops } from './config/trustedProxy';
+import { durableRateLimit } from './middleware/authRateLimit';
 
 const app = express();
 const restoreMaintenance = readRestoreMaintenance();
@@ -36,9 +37,9 @@ app.use((_req, res, next) => {
     res.set({ 'Cache-Control': 'no-store', 'Retry-After': '60' })
         .status(503).json({ status: 'maintenance' });
 });
-// Render terminates TLS and supplies the client address through one trusted proxy.
-// Express needs this for secure-cookie behavior and accurate IP rate limiting.
-app.set('trust proxy', 1);
+// This value must match the verified provider topology. Express uses it for
+// secure-cookie behavior and for the client address used by durable throttles.
+app.set('trust proxy', readTrustedProxyHops());
 const httpServer = createServer(app);
 if (!restoreMaintenance) initSocket(httpServer);
 
@@ -106,18 +107,18 @@ app.use((req, res, next) => {
 // Serve static files from the uploads directory
 app.use('/uploads', express.static(path.join(__dirname, '../public/uploads')));
 
-const apiLimiter = rateLimit({
+const apiLimiter = durableRateLimit('api-global', {
     windowMs: 15 * 60 * 1000,
-    limit: 500,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: 'Too many requests from this IP, please try again after 15 minutes',
-    // Authentication has durable, identity-aware database throttles. Avoid a
-    // second proxy-IP MemoryStore bucket that could aggregate all Vercel users.
-    skip: (req) => req.path.startsWith('/auth') || req.path.startsWith('/otp')
+    networkLimit: 6_000,
+    message: 'Too many requests from this network. Please try again later.',
+    code: 'API_RATE_LIMITED'
 });
 
-app.use('/api/', apiLimiter);
+app.use('/api/', (req, res, next) => {
+    // Authentication has its own signed-device and identity-aware budgets.
+    if (req.path.startsWith('/auth') || req.path.startsWith('/otp')) return next();
+    return apiLimiter(req, res, next);
+});
 
 app.use('/api/posts', postRoutes);
 app.use('/api/users', userRoutes);

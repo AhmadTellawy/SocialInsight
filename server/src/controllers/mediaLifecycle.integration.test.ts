@@ -15,6 +15,8 @@ process.env.AUTH_ALLOWED_ORIGINS = 'http://localhost:3000';
 process.env.AUTH_SESSION_HASH_SECRET = 'private-avatar-isolated-fixture-key';
 process.env.AUTH_COOKIE_SECURE = 'false';
 process.env.AUTH_LEGACY_BEARER_COMPAT = 'false';
+process.env.SUPABASE_URL = 'https://fixture.invalid';
+process.env.SUPABASE_SERVICE_ROLE_KEY = 'fixture-service-role-key';
 const prisma = require('../prisma').default as typeof import('../prisma').default;
 const bcrypt = require('bcryptjs') as typeof import('bcryptjs');
 const cron = require('../services/cronService'); mock.method(cron, 'initCronJobs', () => {});
@@ -37,7 +39,7 @@ class Browser {
     }
     const payload = await response.json().catch(() => null);
     if (payload?.csrfToken) this.csrf = payload.csrfToken;
-    return { status: response.status, body: payload };
+    return { status: response.status, body: payload, cacheControl: response.headers.get('cache-control') };
   }
 }
 before(async () => {
@@ -49,7 +51,13 @@ test('owner can observe and cancel a pending public privacy transition without s
   const attachedPrivateAvatar = async (retainedPublicKeys: boolean) => {
     const value = await fixture(), asset = await uploadFixture(value);
     assert.equal((await value.browser.request('/media/' + asset.id + '/finalize', 'POST', {})).status, 200);
-    if (retainedPublicKeys) { await media.promoteMediaAsset(asset.id); await media.restrictMediaAsset(asset.id); }
+    if (retainedPublicKeys) {
+      await media.promoteMediaAsset(asset.id);
+      // Model a timed-out write whose exact public keys must remain durable
+      // until the late-write cleanup deadline, rather than a completed upload.
+      await prisma.mediaAsset.update({ where: { id: asset.id }, data: { storageCleanupNotBefore: new Date(Date.now() + 60_000) } });
+      await media.restrictMediaAsset(asset.id);
+    }
     await prisma.$transaction([
       prisma.mediaAsset.update({ where: { id: asset.id }, data: { status: 'ATTACHED', accessScope: 'RESTRICTED' } }),
       prisma.user.update({ where: { id: value.id }, data: { isPrivate: true, avatarMediaId: asset.id } })
@@ -198,6 +206,104 @@ test('owner can observe and cancel a pending public privacy transition without s
     assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: value.id } })).followersCount, 1);
   });
 });
+
+test('direct private avatar reads require current relationship authorization and never become cacheable', async () => {
+  const owner = await fixture(), follower = await fixture(), visitor = await fixture();
+  const asset = await uploadFixture(owner);
+  assert.equal((await owner.browser.request('/media/' + asset.id + '/finalize', 'POST', {})).status, 200);
+  await prisma.$transaction([
+    prisma.mediaAsset.update({ where: { id: asset.id }, data: { status: 'ATTACHED', accessScope: 'RESTRICTED' } }),
+    prisma.user.update({ where: { id: owner.id }, data: { isPrivate: true, avatarMediaId: asset.id } }),
+    prisma.follow.create({ data: { followingId: owner.id, followerId: follower.id, status: 'ACTIVE' } })
+  ]);
+
+  for (const readable of [
+    await owner.browser.request('/media/' + asset.id),
+    await follower.browser.request('/media/' + asset.id)
+  ]) {
+    assert.equal(readable.status, 200);
+    assert.equal(readable.body.access, 'RESTRICTED');
+    assert.match(readable.cacheControl || '', /private, no-store/);
+  }
+  for (const concealed of [
+    await visitor.browser.request('/media/' + asset.id),
+    await new Browser().request('/media/' + asset.id)
+  ]) {
+    assert.equal(concealed.status, 404);
+    assert.match(concealed.cacheControl || '', /private, no-store/);
+  }
+
+  const block = await prisma.userBlock.create({ data: { blockerId: owner.id, blockedId: follower.id } });
+  const blocked = await follower.browser.request('/media/' + asset.id);
+  assert.equal(blocked.status, 404); assert.match(blocked.cacheControl || '', /private, no-store/);
+  await prisma.userBlock.delete({ where: { id: block.id } });
+  assert.equal((await follower.browser.request('/media/' + asset.id)).status, 200);
+  await prisma.follow.delete({ where: { followerId_followingId: { followerId: follower.id, followingId: owner.id } } });
+  const unfollowed = await follower.browser.request('/media/' + asset.id);
+  assert.equal(unfollowed.status, 404); assert.match(unfollowed.cacheControl || '', /private, no-store/);
+});
+
+test('public profile transition reconciles every attached source state and stale public object', async () => {
+  const value = await fixture();
+  const group = await prisma.group.create({ data: { name: 'Media scope fixture', description: '', category: 'Other' } });
+  const cases = [
+    { label: 'public', status: 'PUBLISHED', targetAudience: 'Public', groupId: null, isDeleted: false, expected: 'PUBLIC' },
+    { label: 'followers', status: 'PUBLISHED', targetAudience: 'Followers', groupId: null, isDeleted: false, expected: 'RESTRICTED' },
+    { label: 'groups', status: 'PUBLISHED', targetAudience: 'Groups', groupId: group.id, isDeleted: false, expected: 'INHERITED_GROUP' },
+    { label: 'draft', status: 'DRAFT', targetAudience: 'Public', groupId: null, isDeleted: false, expected: 'OWNER_ONLY' },
+    { label: 'deleted', status: 'PUBLISHED', targetAudience: 'Public', groupId: null, isDeleted: true, expected: 'OWNER_ONLY' }
+  ] as const;
+  const ids = new Map<string, string>();
+  for (const item of cases) {
+    const asset = await uploadFixture(value, 'POST');
+    assert.equal((await value.browser.request('/media/' + asset.id + '/finalize', 'POST', {})).status, 200);
+    await media.promoteMediaAsset(asset.id);
+    await prisma.post.create({ data: {
+      authorId: value.id, title: item.label, description: '', expiresAt: new Date(Date.now() + 86400000), type: 'Survey',
+      status: item.status, targetAudience: item.targetAudience, groupId: item.groupId, isDeleted: item.isDeleted,
+      media: { create: { sortOrder: 0, mediaAssetId: asset.id } }
+    } });
+    await prisma.mediaAsset.update({ where: { id: asset.id }, data: {
+      status: 'ATTACHED', accessScope: item.label === 'public' ? 'OWNER_ONLY' : 'PUBLIC'
+    } });
+    ids.set(item.label, asset.id);
+  }
+  await prisma.user.update({ where: { id: value.id }, data: { isPrivate: true, mediaPrivacyTarget: false } });
+  const job = await prisma.mediaPrivacyTransition.create({ data: { userId: value.id, targetIsPrivate: false } });
+  await transitions.processMediaPrivacyTransition(job.id);
+  for (const item of cases) {
+    const asset = await prisma.mediaAsset.findUniqueOrThrow({ where: { id: ids.get(item.label)! }, include: { variants: true } });
+    assert.equal(asset.accessScope, item.expected);
+    if (item.expected !== 'PUBLIC') {
+      for (const variant of asset.variants.filter(variant => variant.isPublic)) {
+        assert.equal(objects.has(variant.storageBucket + ':' + variant.storageKey), false);
+      }
+    }
+  }
+});
+
+test('an audience flip during profile publication is re-read before commit and removes the staged public object', async () => {
+  const value = await fixture(), asset = await uploadFixture(value, 'POST');
+  assert.equal((await value.browser.request('/media/' + asset.id + '/finalize', 'POST', {})).status, 200);
+  const post = await prisma.post.create({ data: {
+    authorId: value.id, title: 'Audience race', description: '', expiresAt: new Date(Date.now() + 86400000), type: 'Survey',
+    status: 'PUBLISHED', targetAudience: 'Public', media: { create: { sortOrder: 0, mediaAssetId: asset.id } }
+  } });
+  await prisma.$transaction([
+    prisma.mediaAsset.update({ where: { id: asset.id }, data: { status: 'ATTACHED', accessScope: 'RESTRICTED' } }),
+    prisma.user.update({ where: { id: value.id }, data: { isPrivate: true, mediaPrivacyTarget: false } })
+  ]);
+  const job = await prisma.mediaPrivacyTransition.create({ data: { userId: value.id, targetIsPrivate: false } });
+  const gate = pause(); onUpload = gate.hook;
+  const processing = transitions.processMediaPrivacyTransition(job.id);
+  try { await gate.ready; await prisma.post.update({ where: { id: post.id }, data: { targetAudience: 'Followers' } }); }
+  finally { onUpload = undefined; gate.release(); }
+  await processing;
+  assert.equal((await prisma.mediaAsset.findUniqueOrThrow({ where: { id: asset.id } })).accessScope, 'RESTRICTED');
+  for (const variant of await prisma.mediaVariant.findMany({ where: { mediaAssetId: asset.id, isPublic: true } })) {
+    assert.equal(objects.has(variant.storageBucket + ':' + variant.storageKey), false);
+  }
+});
 after(async () => {
   await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); });
   await prisma.$disconnect(); mock.restoreAll();
@@ -206,9 +312,9 @@ after(async () => {
 const storageModule = require('../services/mediaStorage') as typeof import('../services/mediaStorage');
 const media = require('../services/mediaService') as typeof import('../services/mediaService');
 const objects = new Map<string, Buffer>();
-let onDownload: (() => Promise<void>) | undefined, onUpload: (() => Promise<void>) | undefined, onSign: (() => Promise<void>) | undefined, onRemove: (() => Promise<void>) | undefined, failRemove = false;
+let onDownload: (() => Promise<void>) | undefined, onUpload: (() => Promise<void>) | undefined, onSign: (() => Promise<void>) | undefined, onRemove: (() => Promise<void>) | undefined, failRemove = false, failSign = false;
 const storage: import('../services/mediaStorage').MediaStorage = {
-  createSignedUpload: async (_bucket, key) => { if (onSign) await onSign(); return { path: key, token: 'fixture-token', signedUrl: 'https://storage.example.invalid/' + key }; },
+  createSignedUpload: async (_bucket, key) => { if (onSign) await onSign(); if (failSign) throw new Error('Synthetic signing outage'); return { path: key, token: 'fixture-token', signedUrl: 'https://storage.example.invalid/' + key }; },
   download: async (bucket, key) => { const bytes = objects.get(bucket + ':' + key); if (onDownload) await onDownload(); if (!bytes) throw new Error('Fixture source missing'); return bytes; },
   upload: async (bucket, key, bytes) => { if (onUpload) await onUpload(); objects.set(bucket + ':' + key, bytes); },
   remove: async (bucket, keys) => { if (onRemove) await onRemove(); if (failRemove) throw new Error('Synthetic retryable storage outage'); keys.forEach(key => objects.delete(bucket + ':' + key)); },
@@ -227,14 +333,14 @@ const pause = () => {
   return { release, ready, hook: async () => { reached(); await wait; } };
 };
 async function fixture() {
-  onDownload = onUpload = onSign = onRemove = undefined; failRemove = false;
+  onDownload = onUpload = onSign = onRemove = undefined; failRemove = false; failSign = false;
   const id = randomUUID(), password = 'FixturePass1!';
   await prisma.user.create({ data: { id, name: 'Media lifecycle fixture', handle: 'media_' + id.slice(0, 8), email: id + '@example.invalid', passwordHash: await bcrypt.hash(password, 4), status: 'ACTIVE' } });
   const browser = new Browser(); assert.equal((await browser.request('/auth/login', 'POST', { identifier: id + '@example.invalid', password })).status, 200);
   const source = await require('sharp')({ create: { width: 256, height: 256, channels: 3, background: '#456789' } }).png().toBuffer() as Buffer;
   return { id, browser, source };
 }
-async function uploadFixture(value: Awaited<ReturnType<typeof fixture>>, purpose: 'PROFILE_AVATAR' | 'GROUP_IMAGE' = 'PROFILE_AVATAR') {
+async function uploadFixture(value: Awaited<ReturnType<typeof fixture>>, purpose: 'PROFILE_AVATAR' | 'GROUP_IMAGE' | 'POST' = 'PROFILE_AVATAR') {
   const start = await value.browser.request('/media/uploads', 'POST', { purpose, mime: 'image/png', size: value.source.length, altText: 'Private original caption' });
   assert.equal(start.status, 201, JSON.stringify(start.body));
   const asset = await prisma.mediaAsset.findUniqueOrThrow({ where: { id: start.body.assetId } });
@@ -242,7 +348,7 @@ async function uploadFixture(value: Awaited<ReturnType<typeof fixture>>, purpose
   return asset;
 }
 async function expireAndPurge(assetId: string) {
-  await prisma.mediaAsset.update({ where: { id: assetId }, data: { storageCleanupNotBefore: new Date(Date.now() - 1000) } });
+  await prisma.mediaAsset.update({ where: { id: assetId }, data: { sourceCleanupNotBefore: new Date(Date.now() - 1000), storageCleanupNotBefore: new Date(Date.now() - 1000) } });
   await media.purgeMediaAsset(assetId);
   const result = await prisma.mediaAsset.findUniqueOrThrow({ where: { id: assetId } });
   assert.equal(result.status, 'DELETED'); assert.equal(result.altText, null); assert.equal(result.checksum, null);
@@ -261,13 +367,103 @@ async function deleteFixtureAccount(browser: Browser) {
 }
 
 test('finding-resolution:SI-AS-E04-008', async t => {
+  await t.test('upload reservations are atomic, bounded, and released after signing failure', async () => {
+    const value = await fixture();
+    const created: string[] = [];
+    for (let index = 0; index < 2; index++) {
+      const result = await value.browser.request('/media/uploads', 'POST', { purpose: 'POST', mime: 'image/png', size: value.source.length });
+      assert.equal(result.status, 201, JSON.stringify(result.body)); created.push(result.body.assetId);
+    }
+    const gate = pause(); onSign = gate.hook;
+    const admitted = value.browser.request('/media/uploads', 'POST', { purpose: 'POST', mime: 'image/png', size: value.source.length });
+    try {
+      await gate.ready;
+      const rejected = await value.browser.request('/media/uploads', 'POST', { purpose: 'POST', mime: 'image/png', size: value.source.length });
+      assert.equal(rejected.status, 429); assert.equal(rejected.body.code, 'MEDIA_UPLOAD_QUOTA_EXCEEDED');
+    } finally { onSign = undefined; gate.release(); }
+    const third = await admitted; assert.equal(third.status, 201, JSON.stringify(third.body)); created.push(third.body.assetId);
+    for (const id of created) assert.equal((await value.browser.request('/media/' + id, 'DELETE')).status, 204);
+
+    failSign = true;
+    const failed = await value.browser.request('/media/uploads', 'POST', { purpose: 'POST', mime: 'image/png', size: value.source.length });
+    assert.equal(failed.status, 503); assert.equal((await prisma.mediaAsset.findFirstOrThrow({ where: { ownerId: value.id }, orderBy: { createdAt: 'desc' } })).status, 'PENDING_DELETE');
+    failSign = false;
+    assert.equal((await value.browser.request('/media/uploads', 'POST', { purpose: 'POST', mime: 'image/png', size: value.source.length })).status, 201);
+  });
+
+  await t.test('stale processing leases no longer consume an account processing slot', async () => {
+    const value = await fixture();
+    for (let index = 0; index < 3; index++) await prisma.mediaAsset.create({ data: {
+      ownerId: value.id, purpose: 'POST', status: 'PROCESSING', sourceMime: 'image/png', sourceByteSize: 1,
+      uploadBucket: 'fixture', uploadKey: randomUUID(), updatedAt: new Date(Date.now() - 16 * 60_000)
+    } });
+    const result = await value.browser.request('/media/uploads', 'POST', { purpose: 'POST', mime: 'image/png', size: value.source.length });
+    assert.equal(result.status, 201, JSON.stringify(result.body));
+    assert.equal(await prisma.mediaAsset.count({ where: { ownerId: value.id, status: 'PROCESSING' } }), 0);
+    assert.equal(await prisma.mediaAsset.count({ where: { ownerId: value.id, status: 'FAILED', errorCode: 'PROCESSING_LEASE_EXPIRED' } }), 3);
+  });
+
+  await t.test('concurrent finalize is single-writer and cancellation prevents revival', async () => {
+    const value = await fixture(), asset = await uploadFixture(value), gate = pause(); onDownload = gate.hook;
+    const first = value.browser.request('/media/' + asset.id + '/finalize', 'POST', {});
+    try {
+      await gate.ready;
+      const duplicate = await value.browser.request('/media/' + asset.id + '/finalize', 'POST', {});
+      assert.equal(duplicate.status, 409); assert.equal(duplicate.body.code, 'MEDIA_BUSY');
+      assert.equal((await value.browser.request('/media/' + asset.id, 'DELETE')).status, 204);
+    } finally { onDownload = undefined; gate.release(); }
+    assert.equal((await first).status, 409);
+    assert.equal((await prisma.mediaAsset.findUniqueOrThrow({ where: { id: asset.id } })).status, 'PENDING_DELETE');
+  });
+
+  await t.test('process-wide decoder admission never exceeds the configured slot count', async () => {
+    const values = await Promise.all([fixture(), fixture(), fixture(), fixture()]);
+    const assets: Array<Awaited<ReturnType<typeof uploadFixture>>> = [];
+    for (const value of values) assets.push(await uploadFixture(value));
+    const gate = pause(); onDownload = gate.hook;
+    const active = values.slice(0, 3).map((value, index) => value.browser.request('/media/' + assets[index].id + '/finalize', 'POST', {}));
+    try {
+      await gate.ready;
+      for (let attempt = 0; attempt < 50; attempt++) {
+        if (await prisma.mediaAsset.count({ where: { id: { in: assets.slice(0, 3).map(asset => asset.id) }, status: 'PROCESSING' } }) === 3) break;
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      assert.equal(await prisma.mediaAsset.count({ where: { id: { in: assets.slice(0, 3).map(asset => asset.id) }, status: 'PROCESSING' } }), 3);
+      const overflow = await values[3].browser.request('/media/' + assets[3].id + '/finalize', 'POST', {});
+      assert.equal(overflow.status, 429); assert.equal(overflow.body.code, 'MEDIA_PROCESSING_LIMIT');
+    } finally { onDownload = undefined; gate.release(); }
+    for (const result of await Promise.all(active)) assert.equal(result.status, 200, JSON.stringify(result.body));
+  });
+
   await t.test('normal authorized upload finalizes and retains the source capability cleanup key', async () => {
     const value = await fixture(), asset = await uploadFixture(value);
     const result = await value.browser.request('/media/' + asset.id + '/finalize', 'POST', {});
     assert.equal(result.status, 200, JSON.stringify(result.body)); assert.equal(result.body.status, 'READY');
     const stored = await prisma.mediaAsset.findUniqueOrThrow({ where: { id: asset.id } });
-    assert.ok(stored.uploadKey); assert.ok(stored.storageCleanupNotBefore!.getTime() > Date.now());
+    assert.ok(stored.uploadKey); assert.ok(stored.sourceCleanupNotBefore!.getTime() > Date.now());
     assert.ok(await prisma.mediaVariant.count({ where: { mediaAssetId: asset.id } }));
+  });
+  await t.test('public promotion preserves the signed source cleanup boundary and tracks a late source write', async () => {
+    const value = await fixture(), asset = await uploadFixture(value);
+    assert.equal((await value.browser.request('/media/' + asset.id + '/finalize', 'POST', {})).status, 200);
+    const before = await prisma.mediaAsset.findUniqueOrThrow({ where: { id: asset.id } });
+    assert.ok(before.sourceCleanupNotBefore && before.sourceCleanupNotBefore.getTime() > Date.now());
+    await media.promoteMediaAsset(asset.id);
+    const promoted = await prisma.mediaAsset.findUniqueOrThrow({ where: { id: asset.id } });
+    assert.equal(promoted.sourceCleanupNotBefore?.getTime(), before.sourceCleanupNotBefore.getTime());
+    assert.equal(promoted.storageCleanupNotBefore, null);
+    objects.set(promoted.uploadBucket! + ':' + promoted.uploadKey!, value.source);
+    await media.cleanupExpiredMedia();
+    assert.equal(objects.has(promoted.uploadBucket! + ':' + promoted.uploadKey!), true);
+    await prisma.mediaAsset.update({ where: { id: asset.id }, data: { sourceCleanupNotBefore: new Date(Date.now() - 1000) } });
+    for (let pass = 0; pass < 20; pass++) {
+      await media.cleanupExpiredMedia();
+      const current = await prisma.mediaAsset.findUniqueOrThrow({ where: { id: asset.id } });
+      if (!current.uploadKey) break;
+    }
+    assert.equal(objects.has(promoted.uploadBucket! + ':' + promoted.uploadKey!), false);
+    const cleaned = await prisma.mediaAsset.findUniqueOrThrow({ where: { id: asset.id } });
+    assert.equal(cleaned.uploadBucket, null); assert.equal(cleaned.uploadKey, null);
   });
   await t.test('private active accounts can publish group identity images while deletion still fences promotion', async () => {
     const value = await fixture();
@@ -370,6 +566,7 @@ test('finding-resolution:SI-AS-E04-008', async t => {
     const value = await fixture(), asset = await uploadFixture(value);
     assert.equal((await value.browser.request('/media/' + asset.id + '/finalize', 'POST', {})).status, 200);
     await media.promoteMediaAsset(asset.id);
+    await prisma.mediaAsset.update({ where: { id: asset.id }, data: { storageCleanupNotBefore: new Date(Date.now() + 60_000) } });
     const gate = pause(); let first = true;
     onRemove = async () => { if (first) { first = false; await gate.hook(); } };
     const restricted = media.restrictMediaAsset(asset.id);

@@ -11,7 +11,7 @@ import { enqueueSecurityNotification } from '../services/securityNotificationSer
 import { notify } from '../services/notificationService';
 import { processBase64Image } from '../utils/imageProcessor';
 import { GroupPermissionService } from '../services/groupPermissionService';
-import { MEMBERSHIP_STATUS, POST_STATUS } from '../utils/constants';
+import { MEMBERSHIP_STATUS } from '../utils/constants';
 import {
     commitPreparedMedia,
     getMediaReadPresentation,
@@ -31,6 +31,8 @@ import { requestMediaPrivacyTransition } from '../services/mediaPrivacyTransitio
 import { acceptPendingPublicFollowers } from '../services/publicFollowAcceptanceService';
 import { MediaValidationError } from '../services/mediaProcessor';
 import { withNotificationDeepLink } from '../utils/notificationTarget';
+import { evaluateNotificationVisibility } from '../services/notificationVisibilityService';
+import { buildVisiblePublishedPostWhere } from '../services/postVisibilityService';
 import { buildMentionSearchWhere, MENTION_SUGGESTION_LIMIT, MENTION_USER_SELECT } from '../utils/mentionSearch';
 import {
     ACTIVE_MENTION_REFERENCE_INCLUDE,
@@ -824,34 +826,64 @@ export const getNotifications = async (req: Request, res: Response) => {
     try {
         const limit = boundedPositiveInteger(req.query.limit, NOTIFICATION_PAGE_DEFAULT, NOTIFICATION_PAGE_MAX);
         const cursor = firstQueryValue(req.query.cursor)?.trim() || undefined;
-        const notifications = await prisma.notification.findMany({
-            where: { userId: id as string },
-            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-            take: limit + 1,
-            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-            select: {
-                id: true,
-                type: true,
-                message: true,
-                targetId: true,
-                targetType: true,
-                payload: true,
-                isRead: true,
-                createdAt: true,
-                actor: {
-                    select: { id: true, name: true, avatar: true, ...PUBLIC_AVATAR_MEDIA_SELECT }
+        const visibleNotifications: any[] = [];
+        let scanCursor = cursor;
+        let exhausted = false;
+        let scans = 0;
+        while (visibleNotifications.length <= limit && !exhausted && scans < 5) {
+            const notifications = await prisma.notification.findMany({
+                where: { userId: id as string },
+                orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+                take: limit + 1,
+                ...(scanCursor ? { cursor: { id: scanCursor }, skip: 1 } : {}),
+                select: {
+                    id: true,
+                    userId: true,
+                    actorId: true,
+                    type: true,
+                    message: true,
+                    targetId: true,
+                    targetType: true,
+                    payload: true,
+                    isRead: true,
+                    createdAt: true,
+                    actor: {
+                        select: { id: true, name: true, avatar: true, ...PUBLIC_AVATAR_MEDIA_SELECT }
+                    }
                 }
-            }
-        });
-        const hasMore = notifications.length > limit;
-        if (hasMore) notifications.pop();
-        if (hasMore && notifications.length > 0) {
-            res.setHeader('X-Next-Cursor', notifications[notifications.length - 1].id);
+            });
+            scans += 1;
+            const hasRawMore = notifications.length > limit;
+            const page = notifications;
+            exhausted = !hasRawMore;
+            if (page.length === 0) break;
+            scanCursor = page[page.length - 1].id;
+
+            const decisions = await Promise.all(page.map((notification: any) => {
+                const targetType = notification.targetType === 'user' ? 'profile' : notification.targetType;
+                const payload = withNotificationDeepLink(targetType, notification.targetId, notification.payload);
+                return evaluateNotificationVisibility({
+                    userId: notification.userId,
+                    actorId: notification.actorId,
+                    type: notification.type,
+                    targetType,
+                    targetId: notification.targetId,
+                    payload
+                }).then(decision => ({ notification, targetType, payload, decision }));
+            }));
+            visibleNotifications.push(...decisions.filter(item => item.decision.allowed));
         }
 
-        const mapped = notifications.map((n: any) => {
-            const targetType = n.targetType === 'user' ? 'profile' : n.targetType;
-            const payload = withNotificationDeepLink(targetType, n.targetId, n.payload);
+        const hasMore = visibleNotifications.length > limit || !exhausted;
+        const page = visibleNotifications.slice(0, limit);
+        const nextCursor = page.length > 0
+            ? page[page.length - 1].notification.id
+            : (!exhausted ? scanCursor : undefined);
+        if (hasMore && nextCursor) {
+            res.setHeader('X-Next-Cursor', nextCursor);
+        }
+
+        const mapped = page.map(({ notification: n, targetType, payload }) => {
             return {
                 id: n.id,
                 type: n.type,
@@ -975,7 +1007,10 @@ export const getUserGroups = async (req: Request, res: Response) => {
                 ...(viewerId === id ? {} : { OR: [{ isPublic: true }, ...(viewerId ? [{ members: { some: { userId: viewerId, status: MEMBERSHIP_STATUS.JOINED } } }] : [])] }) } },
             include: { group: { include: { ...PUBLIC_GROUP_MEDIA_INCLUDE,
                 members: { where: { userId: viewerId || '', status: MEMBERSHIP_STATUS.JOINED }, select: { role: true, status: true } },
-                _count: { select: { members: { where: { status: MEMBERSHIP_STATUS.JOINED } }, targetedPosts: { where: { isDeleted: false, status: POST_STATUS.PUBLISHED } } } }
+                _count: { select: {
+                    members: { where: { status: MEMBERSHIP_STATUS.JOINED } },
+                    targetedPosts: { where: buildVisiblePublishedPostWhere(viewerId) }
+                } }
             } } }
         });
         res.setHeader('Cache-Control', 'private, no-store');

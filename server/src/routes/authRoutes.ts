@@ -42,6 +42,12 @@ const authenticatedOtpVerifyRateLimit = authRateLimit('otp-verify-authenticated'
 const oauthStartRateLimit = authRateLimit('oauth-start', 20);
 const oauthLinkRateLimit = authRateLimit('oauth-link', 10, ['authenticatedUserId']);
 const oauthCallbackRateLimit = authRateLimit('oauth-callback', 40);
+// Every authentication request is throttled before session resolution. This
+// prevents arbitrary session-cookie probes from turning into unbounded database
+// reads while the narrower endpoint and authenticated-user limits remain active.
+const authSurfaceRateLimit = authRateLimit('auth-surface', 240, [], 1_200);
+
+router.use(authSurfaceRateLimit);
 
 router.post('/register', requireTrustedOrigin, register);
 router.post('/login', loginRateLimit, requireTrustedOrigin, login);
@@ -51,6 +57,8 @@ router.post('/logout', requireAuth, logout);
 router.post('/register/init', registrationRateLimit, requireTrustedOrigin, initiateRegistration);
 router.post('/register/password', registrationRateLimit, requireTrustedOrigin, setRegistrationPassword);
 router.get('/handle/check', checkHandleAvailability);
+router.post('/register/handle/reserve', registrationRateLimit, requireTrustedOrigin, reserveHandle);
+// Compatibility alias for clients deployed before the canonical registration route.
 router.post('/handle/reserve', registrationRateLimit, requireTrustedOrigin, reserveHandle);
 router.post('/register/otp/send', otpIssueRateLimit, requireTrustedOrigin, sendRegistrationOTP);
 router.post('/register/complete', otpVerifyRateLimit, requireTrustedOrigin, completeRegistration);

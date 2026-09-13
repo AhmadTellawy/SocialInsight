@@ -4,6 +4,7 @@ import test from 'node:test';
 process.env.AUTH_SESSION_HASH_SECRET = process.env.AUTH_SESSION_HASH_SECRET || 'session-test-secret-at-least-32-bytes';
 process.env.AUTH_COOKIE_SECURE = 'true';
 process.env.AUTH_COOKIE_SAME_SITE = 'none';
+process.env.AUTH_SESSION_IDLE_TTL_SECONDS = '600';
 
 const prisma = require('../prisma').default as any;
 const {
@@ -66,6 +67,24 @@ test('resolveSession accepts an active cookie but rejects revoked, expired and i
     prisma.authSession.findUnique = originalFind;
     prisma.authSession.updateMany = originalUpdate;
   }
+});
+
+test('HTTP session validation revokes a session after its idle TTL', async () => {
+  const originalFind = prisma.authSession.findUnique;
+  const originalUpdate = prisma.authSession.updateMany;
+  const token = 'i'.repeat(43);
+  let revoked: any;
+  try {
+    prisma.authSession.findUnique = async () => ({
+      id: 'idle-session', userId: 'user-1', csrfHash: hashSessionSecret('csrf'),
+      expiresAt: new Date(Date.now() + 60_000), revokedAt: null,
+      lastUsedAt: new Date(Date.now() - 601_000), user: {status: 'ACTIVE'}
+    });
+    prisma.authSession.updateMany = async (input: any) => { revoked = input; return {count: 1}; };
+    assert.equal(await resolveSession({headers: {cookie: `${SESSION_COOKIE_NAME}=${token}`}} as any), null);
+    assert.deepEqual(revoked.where, {id: 'idle-session', revokedAt: null});
+    assert.ok(revoked.data.revokedAt instanceof Date);
+  } finally { prisma.authSession.findUnique = originalFind; prisma.authSession.updateMany = originalUpdate; }
 });
 
 test('CSRF comparison is bound to the authenticated session hash', () => {

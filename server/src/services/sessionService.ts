@@ -90,8 +90,14 @@ export interface AuthenticatedSession {
     expiresAt: Date;
     createdAt: Date;
     recentAuthenticatedAt?: Date;
+    lastUsedAt?: Date | null;
     user: { status: string };
 }
+
+const sessionIdleTtlMs = (): number => boundedInt('AUTH_SESSION_IDLE_TTL_SECONDS', 7 * 24 * 60 * 60, 300, 30 * 24 * 60 * 60) * 1000;
+
+const sessionIsIdle = (lastUsedAt: Date | null | undefined, now = Date.now()): boolean => !lastUsedAt
+    || now - lastUsedAt.getTime() >= sessionIdleTtlMs();
 
 export const createSession = async (userId: string, res: Response, request?: Request, proof?: { mfaVerified?: boolean; expectedAuthInvalidatedAt?: Date | null; expectedPasswordUpdatedAt?: Date | null }): Promise<{ sessionId: string; csrfToken: string }> => {
     const token = randomBytes(32).toString('base64url');
@@ -136,11 +142,35 @@ export const resolveSession = async (req: Request): Promise<AuthenticatedSession
         }
     });
     if (!session || session.revokedAt || session.expiresAt <= new Date() || session.user?.status !== 'ACTIVE') return null;
-    if (!session.lastUsedAt || Date.now() - session.lastUsedAt.getTime() > 5 * 60 * 1000) {
+    if (sessionIsIdle(session.lastUsedAt)) {
+        await db.authSession.updateMany({ where: { id: session.id, revokedAt: null }, data: { revokedAt: new Date() } });
+        publishSessionRevocation({ sessionId: session.id });
+        return null;
+    }
+    if (Date.now() - session.lastUsedAt.getTime() > 5 * 60 * 1000) {
         db.authSession.updateMany({ where: { id: session.id, revokedAt: null }, data: { lastUsedAt: new Date() } }).catch(() => undefined);
     }
     return session;
 };
+
+export const findActiveSessionIds = async (sessionIds: string[], userId: string): Promise<Set<string>> => {
+    if (!sessionIds.length) return new Set();
+    const records = await db.authSession.findMany({
+        where: { id: { in: sessionIds }, userId, revokedAt: null, expiresAt: { gt: new Date() }, user: { status: 'ACTIVE' } },
+        select: { id: true, lastUsedAt: true }
+    });
+    const idleIds = records.filter((record: any) => sessionIsIdle(record.lastUsedAt)).map((record: any) => record.id);
+    if (idleIds.length) {
+        await db.authSession.updateMany({ where: { id: { in: idleIds }, userId, revokedAt: null }, data: { revokedAt: new Date() } });
+        idleIds.forEach((sessionId: string) => publishSessionRevocation({ sessionId }));
+    }
+    const idle = new Set(idleIds);
+    return new Set(records.filter((record: any) => !idle.has(record.id)).map((record: any) => record.id));
+};
+
+export const isSessionIdentityActive = async (sessionId: string, userId: string): Promise<boolean> => (
+    await findActiveSessionIds([sessionId], userId)
+).has(sessionId);
 
 export const revokeSession = async (sessionId: string): Promise<void> => {
     const session = await db.authSession.findUnique({ where: { id: sessionId }, select: { userId: true } });

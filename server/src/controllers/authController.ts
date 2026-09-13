@@ -11,7 +11,7 @@ import {
     parseAndValidateDateOfBirth,
     withDerivedAgeGroup
 } from '../utils/profileValidation';
-import { consumeEmailOtp, issueEmailOtp, OtpError } from '../services/otpService';
+import { consumeEmailOtp, issueEmailOtp, OtpError, otpServiceDestinationHash } from '../services/otpService';
 import {
     clearSessionCookies,
     createSession,
@@ -29,18 +29,19 @@ import { normalizeSecurityCode, lockAccountSecurity } from '../services/mfaServi
 import { createLegacyBearerToken } from '../middleware/authMiddleware';
 import { HandleError, normalizeHandle, assertHandleAvailable, claimHandle, lockHandleNamespace } from '../services/handleService';
 import { enqueueSecurityNotification } from '../services/securityNotificationService';
+import { credentialPasswordSchema, newPasswordSchema } from '../utils/passwordPolicy';
 
 const db = prisma as any;
 const GENERIC_LOGIN_ERROR = 'Invalid login credentials';
 const GENERIC_RECOVERY_RESPONSE = 'If the account is eligible, a verification code will be sent';
 const LEGACY_REGISTER_DISABLED_ERROR = 'Use the multi-step registration flow';
 const DUMMY_PASSWORD_HASH = '$2b$12$qD051ezKJGGLFaT.muvKNuy9TdCT/j1TbSKsUKNSqa6VMtH4u6NAO';
+const DUMMY_OTP_HASH = '$2b$10$0w64XLctEqQqQ.w.D16UOuvW6zMzgLv0q2ZAzhWJcZPIYpoWmZu/2';
 const REGISTRATION_BROWSER_COOKIE_NAME = process.env.REGISTRATION_BROWSER_COOKIE_NAME?.trim() || 'si_registration_browser';
 const REGISTRATION_BROWSER_TTL_SECONDS = 24 * 60 * 60;
 
-const passwordSchema = z.string().min(8).max(128)
-    .regex(/[A-Z]/).regex(/[a-z]/).regex(/\d/).regex(/[!@#$%^&*]/);
-const loginSchema = z.object({ identifier: z.string().min(1).max(320), password: z.string().min(1).max(128) });
+const passwordSchema = newPasswordSchema;
+const loginSchema = z.object({ identifier: z.string().min(1).max(320), password: credentialPasswordSchema }).strict();
 const initRegistrationSchema = z.object({ fullName: z.string().trim().min(1).max(100), email: z.string().email().max(320), dob: z.string() });
 const pendingSchema = z.object({ pendingId: z.string().uuid() });
 const registrationPasswordSchema = pendingSchema.extend({ password: passwordSchema });
@@ -70,7 +71,7 @@ const noStore = (res: Response): void => {
 
 const registrationBrowserCookie = (value: string, maxAgeSeconds = REGISTRATION_BROWSER_TTL_SECONDS): string => [
     `${REGISTRATION_BROWSER_COOKIE_NAME}=${encodeURIComponent(value)}`,
-    'Path=/api/auth/register',
+    'Path=/api/auth',
     `Max-Age=${maxAgeSeconds}`,
     'HttpOnly',
     'SameSite=Lax',
@@ -132,7 +133,11 @@ export const register = async (_req: Request, res: Response): Promise<void> => {
 
 export const login = async (req: Request, res: Response): Promise<void> => {
     const parsed = loginSchema.safeParse(req.body);
-    if (!parsed.success) return validationFailure(res, 'INVALID_LOGIN_REQUEST');
+    if (!parsed.success) {
+        noStore(res);
+        res.status(401).json({ error: GENERIC_LOGIN_ERROR, code: 'INVALID_CREDENTIALS' });
+        return;
+    }
     const identifier = parsed.data.identifier.trim();
     try {
         const user = await prisma.user.findFirst({
@@ -257,7 +262,7 @@ export const sendRegistrationOTP = async (req: Request, res: Response): Promise<
         res.status(202).json({ success: true, cooldownUntil: issued.cooldownUntil.toISOString() });
     } catch (error) {
         if (error instanceof OtpError) {
-            const status = error.code === 'OTP_COOLDOWN' ? 429 : 503;
+            const status = ['OTP_COOLDOWN', 'OTP_RATE_LIMITED'].includes(error.code) ? 429 : 503;
             res.status(status).json({ error: error.message, code: error.code });
             return;
         }
@@ -353,9 +358,12 @@ export const confirmPasswordReset = async (req: Request, res: Response): Promise
     if (!parsed.success) return validationFailure(res, 'PASSWORD_RESET_INVALID');
     const email = parsed.data.email.toLowerCase();
     try {
-        const user = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } } as any, select: { id: true, status: true } });
-        if (!user || !['ACTIVE', 'DEACTIVATED'].includes(user.status)) throw new OtpError('OTP_INVALID', 'Invalid or expired code');
         const passwordHash = await bcrypt.hash(parsed.data.password, 12);
+        const user = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } } as any, select: { id: true, status: true } });
+        if (!user || !['ACTIVE', 'DEACTIVATED'].includes(user.status)) {
+            await bcrypt.compare(`PASSWORD_RESET:missing:${parsed.data.code}`, DUMMY_OTP_HASH);
+            throw new OtpError('OTP_INVALID', 'Invalid or expired code');
+        }
         await consumeEmailOtp({ destination: email, purpose: 'PASSWORD_RESET', subject: user.id, code: parsed.data.code }, async (tx, challenge) => {
             await lockAccountSecurity(tx, user.id);
             const current = await tx.user.findUnique({ where: { id: user.id }, select: { email: true, emailVerifiedAt: true, authInvalidatedAt: true, status: true } });
@@ -391,7 +399,7 @@ export const requestEmailVerification = async (req: Request, res: Response): Pro
         res.status(202).json({ success: true });
     } catch (error) {
         if (error instanceof OtpError) {
-            res.status(error.code === 'OTP_COOLDOWN' ? 429 : 503).json({ error: error.message, code: error.code });
+            res.status(['OTP_COOLDOWN', 'OTP_RATE_LIMITED'].includes(error.code) ? 429 : 503).json({ error: error.message, code: error.code });
             return;
         }
         logFailure(req, 'email_verification_request_failed', error);
@@ -428,12 +436,14 @@ export const requestEmailChange = async (req: Request, res: Response): Promise<v
     if (!parsed.success) return validationFailure(res, 'EMAIL_CHANGE_INVALID');
     const email = parsed.data.email.toLowerCase();
     try {
-        const issued = await issueEmailOtp({ destination: email, purpose: 'EMAIL_CHANGE', subject: req.user!.userId, ...requestContext(req) });
+        const user = await prisma.user.findUnique({ where: { id: req.user!.userId }, select: { email: true, status: true } });
+        if (!user?.email || user.status !== 'ACTIVE') return validationFailure(res, 'EMAIL_CHANGE_INVALID');
+        const issued = await issueEmailOtp({ destination: email, purpose: 'EMAIL_CHANGE', subject: req.user!.userId, sourceDestination: user.email, supersedeBySubjectPurpose: true, ...requestContext(req) });
         noStore(res);
         res.status(202).json({ success: true, cooldownUntil: issued.cooldownUntil.toISOString() });
     } catch (error) {
         if (error instanceof OtpError) {
-            res.status(error.code === 'OTP_COOLDOWN' ? 429 : 503).json({ error: error.message, code: error.code });
+            res.status(['OTP_COOLDOWN', 'OTP_RATE_LIMITED'].includes(error.code) ? 429 : 503).json({ error: error.message, code: error.code });
             return;
         }
         logFailure(req, 'email_change_request_failed', error);
@@ -446,10 +456,11 @@ export const confirmEmailChange = async (req: Request, res: Response): Promise<v
     if (!parsed.success) return validationFailure(res, 'EMAIL_CHANGE_INVALID');
     const email = parsed.data.email.toLowerCase();
     try {
-        const consumed = await consumeEmailOtp({ destination: email, purpose: 'EMAIL_CHANGE', subject: req.user!.userId, code: parsed.data.code }, async (tx) => {
+        const consumed = await consumeEmailOtp({ destination: email, purpose: 'EMAIL_CHANGE', subject: req.user!.userId, code: parsed.data.code, requireLatestIntent: true }, async (tx, challenge) => {
             await lockAccountSecurity(tx, req.user!.userId);
             await assertActiveAccountSession(tx, req);
             const previous = await tx.user.findUnique({ where: { id: req.user!.userId }, select: { email: true, emailVerifiedAt: true } });
+            if (!previous?.email || !challenge.sourceDestinationHash || challenge.sourceDestinationHash !== otpServiceDestinationHash(previous.email)) throw new OtpError('OTP_INVALID', 'Invalid or expired code');
             await invalidateAccountOtps(tx, req.user!.userId);
             const changedAt = new Date();
             const changedUser = await tx.user.update({ where: { id: req.user!.userId, status: 'ACTIVE' }, data: { email, emailVerifiedAt: changedAt, authInvalidatedAt: changedAt } });

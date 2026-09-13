@@ -4,7 +4,7 @@ import test, { after } from 'node:test';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'post-controller-runtime-test-secret';
 
 const prisma = require('../prisma').default as typeof import('../prisma').default;
-const { getComments, likePost } = require('./postController') as typeof import('./postController');
+const { createComment, getComments, getParticipants, likeComment, likePost } = require('./postController') as typeof import('./postController');
 
 after(async () => {
     await prisma.$disconnect();
@@ -98,7 +98,8 @@ test('comments use a bounded cursor page and append a requested deep-link target
 test('post likes use the authenticated user and ignore a client-supplied userId', async () => {
     const originals = {
         postFindUnique: prisma.post.findUnique,
-        postUpdate: prisma.post.update,
+        postFindFirst: prisma.post.findFirst,
+        postUpdateMany: prisma.post.updateMany,
         likeFindUnique: prisma.userLike.findUnique,
         likeDelete: prisma.userLike.delete,
         transaction: prisma.$transaction
@@ -113,16 +114,22 @@ test('post likes use the authenticated user and ignore a client-supplied userId'
                 ? { id: 'post-1', sharedFromId: null, sharedCaption: null }
                 : { authorId: null };
         };
-        (prisma.userLike as any).findUnique = async (args: any) => {
-            findWhere = args.where.userId_postId;
-            return { userId: 'trusted-user', postId: 'post-1' };
-        };
-        (prisma.userLike as any).delete = async (args: any) => {
-            deleteWhere = args.where.userId_postId;
-            return {};
-        };
-        (prisma.post as any).update = async () => ({ authorId: null });
-        (prisma as any).$transaction = async (operations: Promise<unknown>[]) => Promise.all(operations);
+        (prisma as any).$transaction = async (callback: any) => callback({
+            post: {
+                findFirst: async () => ({ id: 'post-1', authorId: null }),
+                updateMany: async () => ({ count: 1 })
+            },
+            userLike: {
+                findUnique: async (args: any) => {
+                    findWhere = args.where.userId_postId;
+                    return { userId: 'trusted-user', postId: 'post-1' };
+                },
+                delete: async (args: any) => {
+                    deleteWhere = args.where.userId_postId;
+                    return {};
+                }
+            }
+        });
 
         const { response, state } = responseState();
         await likePost({
@@ -137,9 +144,113 @@ test('post likes use the authenticated user and ignore a client-supplied userId'
         assert.deepEqual(state.body, { isLiked: false });
     } finally {
         (prisma.post as any).findUnique = originals.postFindUnique;
-        (prisma.post as any).update = originals.postUpdate;
+        (prisma.post as any).findFirst = originals.postFindFirst;
+        (prisma.post as any).updateMany = originals.postUpdateMany;
         (prisma.userLike as any).findUnique = originals.likeFindUnique;
         (prisma.userLike as any).delete = originals.likeDelete;
         (prisma as any).$transaction = originals.transaction;
+    }
+});
+
+test('post likes denied by the published audience guard perform no write', async () => {
+    const originals = { postFindUnique: prisma.post.findUnique, transaction: prisma.$transaction };
+    let writes = 0;
+    try {
+        (prisma.post as any).findUnique = async () => ({ id: 'post-1', sharedFromId: null, sharedCaption: null });
+        (prisma as any).$transaction = async (callback: any) => callback({
+            post: { findFirst: async () => null },
+            userLike: {
+                findUnique: async () => { writes += 1; return null; },
+                create: async () => { writes += 1; return {}; },
+                delete: async () => { writes += 1; return {}; }
+            }
+        });
+        const { response, state } = responseState();
+        await likePost({ params: { id: 'post-1' }, user: { userId: 'blocked-user' }, body: {} } as any, response);
+        assert.equal(state.statusCode, 403);
+        assert.equal(writes, 0);
+    } finally {
+        (prisma.post as any).findUnique = originals.postFindUnique;
+        (prisma as any).$transaction = originals.transaction;
+    }
+});
+
+test('participants omit anonymous and guest rows without exposing count or timing oracles', async () => {
+    const originals = {
+        postFindUnique: prisma.post.findUnique,
+        postFindFirst: prisma.post.findFirst,
+        responseFindMany: prisma.response.findMany
+    };
+    let participantQuery: any;
+    try {
+        (prisma.post as any).findUnique = async () => ({ id: 'post-1', sharedFromId: null, sharedCaption: null });
+        (prisma.post as any).findFirst = async () => ({
+            id: 'post-1', authorId: 'author-1', forceAnonymous: false,
+            resultsWho: 'Public', resultsTiming: 'AnyTime', expiresAt: new Date('2026-12-01T00:00:00.000Z')
+        });
+        (prisma.response as any).findMany = async (args: any) => {
+            participantQuery = args;
+            return [{
+                id: 'response-internal', timestamp: new Date(), isAnonymous: false,
+                user: { id: 'person-1', name: 'Person', handle: 'person', avatar: null, avatarMediaId: null, avatarMedia: null, verifiedBadge: false, isPrivate: false }
+            }];
+        };
+        const { response, state } = responseState();
+        await getParticipants({ params: { id: 'post-1' }, query: {}, user: { userId: 'viewer-1' } } as any, response);
+        assert.equal(state.statusCode, 200);
+        assert.equal(participantQuery.where.isAnonymous, false);
+        assert.deepEqual(participantQuery.where.userId, { not: null });
+        assert.equal(state.headers['X-Participant-Count'], undefined);
+        assert.equal(state.headers['X-Anonymous-Participant-Count'], undefined);
+        assert.equal(JSON.stringify(state.body).includes('response-internal'), false);
+        assert.equal('timestamp' in state.body[0], false);
+        assert.deepEqual(state.body.map((participant: any) => participant.id), ['person-1']);
+    } finally {
+        (prisma.post as any).findUnique = originals.postFindUnique;
+        (prisma.post as any).findFirst = originals.postFindFirst;
+        (prisma.response as any).findMany = originals.responseFindMany;
+    }
+});
+
+test('comment creation denied by the published audience guard never opens a write transaction', async () => {
+    const originals = { postFindUnique: prisma.post.findUnique, postFindFirst: prisma.post.findFirst, transaction: prisma.$transaction };
+    let transactions = 0;
+    try {
+        (prisma.post as any).findUnique = async () => ({ id: 'post-1', sharedFromId: null, sharedCaption: null });
+        (prisma.post as any).findFirst = async () => null;
+        (prisma as any).$transaction = async () => { transactions += 1; throw new Error('unexpected write transaction'); };
+        const { response, state } = responseState();
+        await createComment({ params: { id: 'post-1' }, user: { userId: 'blocked-user' }, body: { text: 'blocked' } } as any, response);
+        assert.equal(state.statusCode, 403);
+        assert.equal(transactions, 0);
+    } finally {
+        (prisma.post as any).findUnique = originals.postFindUnique;
+        (prisma.post as any).findFirst = originals.postFindFirst;
+        (prisma as any).$transaction = originals.transaction;
+    }
+});
+
+test('comment likes denied by the source post guard perform no write or counter update', async () => {
+    const originalTransaction = prisma.$transaction;
+    let writes = 0;
+    try {
+        (prisma as any).$transaction = async (callback: any) => callback({
+            comment: {
+                findFirst: async () => null,
+                update: async () => { writes += 1; },
+                updateMany: async () => { writes += 1; }
+            },
+            commentLike: {
+                findUnique: async () => { writes += 1; return null; },
+                create: async () => { writes += 1; },
+                delete: async () => { writes += 1; }
+            }
+        });
+        const { response, state } = responseState();
+        await likeComment({ params: { id: 'comment-1' }, user: { userId: 'blocked-user' } } as any, response);
+        assert.equal(state.statusCode, 403);
+        assert.equal(writes, 0);
+    } finally {
+        (prisma as any).$transaction = originalTransaction;
     }
 });

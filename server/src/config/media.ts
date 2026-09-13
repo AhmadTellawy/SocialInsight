@@ -6,6 +6,7 @@ export const MEDIA_CONFIG = {
   maxCoverInputBytes: 10 * 1024 * 1024,
   maxCoverOutputBytes: 3 * 1024 * 1024,
   maxDecodedPixels: 40_000_000,
+  maxSourceEdge: 16_384,
   maxPreparedOutputBytes: 12 * 1024 * 1024,
   heifWholeWorkerTimeoutMs: 45_000,
   heifConversionTimeoutMs: 55_000,

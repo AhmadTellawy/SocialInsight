@@ -10,7 +10,6 @@ import { dispatchNotificationIds, notify } from '../services/notificationService
 import { processBase64Image } from '../utils/imageProcessor';
 import { PrivacyService } from '../services/privacyService';
 import { isProfileAndGroups, validateProfileAndGroupsInput, canInteractWithProfileAndGroups } from '../services/postAudienceService';
-import { GroupPermissionService } from '../services/groupPermissionService';
 import { POST_STATUS, MEMBERSHIP_STATUS, GROUP_ROLES } from '../utils/constants';
 import {
     commitPreparedMedia,
@@ -53,7 +52,7 @@ import {
     reconcilePeopleTags,
     serializePeopleTags
 } from '../services/peopleTagService';
-import { buildVisiblePublishedPostWhere } from '../services/postVisibilityService';
+import { buildVisiblePublishedPostWhere, evaluatePostResultsAccess } from '../services/postVisibilityService';
 import {
     PostOptionValidationError,
     buildPostReportDedupeKey,
@@ -2048,7 +2047,12 @@ export const getParticipants = async (req: Request, res: Response) => {
         const post = await prisma.post.findFirst({
             where: { id, ...buildVisiblePublishedPostWhere(currentUserId) },
             select: {
+                id: true,
+                authorId: true,
                 forceAnonymous: true,
+                resultsWho: true,
+                resultsTiming: true,
+                expiresAt: true,
             } as any
         });
         if (!post) {
@@ -2056,14 +2060,16 @@ export const getParticipants = async (req: Request, res: Response) => {
             return;
         }
 
-        if (post && (post as any).forceAnonymous === true) {
-            return res.json([]);
-        }
+        const resultAccess = await evaluatePostResultsAccess(prisma, post as any, currentUserId, readGuestParticipationHash(req));
+        if (!resultAccess.allowed) return res.status(403).json({ error: resultAccess.reason === 'timing' ? 'Results are not available yet' : 'You do not have access to these results' });
+
+        res.setHeader('Cache-Control', 'private, no-store');
+        if ((post as any).forceAnonymous === true) return res.json([]);
 
         const responses = await prisma.response.findMany({
-            where: { postId: id },
+            where: { postId: id, isAnonymous: false, userId: { not: null }, user: { status: 'ACTIVE' } },
             include: { user: { select: SAFE_USER_SELECT } },
-            orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
+            orderBy: [{ id: 'desc' }],
             take: limit + 1,
             ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {})
         });
@@ -2071,36 +2077,9 @@ export const getParticipants = async (req: Request, res: Response) => {
         if (hasMore) responses.pop();
         applyNextCursorHeader(res, responses, hasMore);
         
-        let anonIdx = 1;
-        let guestIdx = 1;
-
-        const mapped = responses.map((r: any) => {
-            if (r.isAnonymous) {
-                 return {
-                     id: 'anon-' + r.id,
-                     name: `Anonymous ${anonIdx++}`,
-                     avatar: null,
-                     handle: null,
-                     isAnonymous: true,
-                     timestamp: r.timestamp
-                 };
-            }
-            if (!r.user) {
-                 return {
-                     id: 'guest-' + r.id,
-                     name: `Guest ${guestIdx++}`,
-                     avatar: null,
-                     handle: null,
-                     isAnonymous: true, // Render as anonymous (hides profile link)
-                     timestamp: r.timestamp
-                 };
-            }
-            return {
-                 ...serializeUserMediaRecord(r.user),
-                 isAnonymous: false,
-                 timestamp: r.timestamp
-            };
-        });
+        const mapped = responses
+            .filter((response: any) => response.user)
+            .map((response: any) => ({ ...serializeUserMediaRecord(response.user), isAnonymous: false }));
         res.json(mapped);
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch participants' });
@@ -2128,45 +2107,12 @@ export const getPostResults = async (req: Request, res: Response) => {
             return;
         }
 
-        const isAuthor = !!currentUserId && post.authorId === currentUserId;
-        const responseIdentity = currentUserId ? { userId: currentUserId } : guestProofHash ? { guestProofHash, guestProofExpiresAt: { gt: new Date() } } : null;
-        const [follow, viewerResponse] = await Promise.all([
-            !isAuthor && post.resultsWho === 'Followers' && currentUserId
-                ? prisma.follow.findUnique({
-                    where: { followerId_followingId: { followerId: currentUserId, followingId: post.authorId } },
-                    select: { status: true }
-                })
-                : Promise.resolve(null),
-            responseIdentity
-                ? prisma.response.findFirst({
-                    where: { postId: id, ...responseIdentity },
-                    select: { id: true }
-                })
-                : Promise.resolve(null)
-        ]);
-
-        let whoPasses = isAuthor || !post.resultsWho || post.resultsWho === 'Public';
-
-        if (!whoPasses && post.resultsWho === 'Followers') {
-            whoPasses = follow?.status === 'ACTIVE';
-        }
-
-        if (!whoPasses && post.resultsWho === 'Participants') {
-            whoPasses = Boolean(viewerResponse);
-        }
-
-        if (!whoPasses) {
+        const resultAccess = await evaluatePostResultsAccess(prisma, { id, ...post }, currentUserId, guestProofHash);
+        if (!resultAccess.allowed && resultAccess.reason === 'audience') {
             res.status(403).json({ error: 'You do not have access to these results' });
             return;
         }
-
-        const timing = post.resultsTiming || 'AnyTime';
-        const timingPasses = isAuthor
-            || timing === 'AnyTime'
-            || (timing === 'AfterEnd' && post.expiresAt.getTime() <= Date.now())
-            || (timing === 'Immediately' && !!viewerResponse);
-
-        if (!timingPasses) {
+        if (!resultAccess.allowed) {
             res.status(403).json({ error: 'Results are not available yet' });
             return;
         }
@@ -2289,52 +2235,22 @@ export const createComment = async (req: Request, res: Response) => {
         const id = await resolveInteractionTarget(rawId, 'comment');
         const userId = req.user!.userId;
 
-        const commentTarget = await prisma.post.findUnique({
-            where: { id },
+        const commentTarget = await prisma.post.findFirst({
+            where: { id, ...buildVisiblePublishedPostWhere(userId) },
             select: {
                 allowComments: true,
-                authorId: true,
-                targetAudience: true,
-                targetedGroups: { select: { id: true } },
-                status: true,
-                isDeleted: true
+                authorId: true
             }
         });
 
-        if (!commentTarget || commentTarget.isDeleted || commentTarget.status !== 'PUBLISHED') {
-            res.status(404).json({ error: 'Post not found' });
+        if (!commentTarget) {
+            res.status(403).json({ error: 'Forbidden' });
             return;
         }
 
         if (commentTarget.allowComments === false) {
             res.status(403).json({ error: 'Comments are disabled for this post' });
             return;
-        }
-
-        const isAuthor = commentTarget.authorId === userId;
-        const targetGroupIds = mapTargetGroups(commentTarget);
-        if (isProfileAndGroups(commentTarget.targetAudience) && !(await canInteractWithProfileAndGroups(id, commentTarget.authorId, userId, targetGroupIds))) {
-            res.status(403).json({ error: 'Forbidden' });
-            return;
-        }
-        if (!isProfileAndGroups(commentTarget.targetAudience) && !isAuthor && (commentTarget.targetAudience === 'Groups' || targetGroupIds.length > 0)) {
-            const membership = await prisma.groupMember.findFirst({
-                where: { userId, groupId: { in: targetGroupIds }, status: 'JOINED' }
-            });
-            if (!membership) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-        }
-
-        if (!isAuthor && commentTarget.targetAudience === 'Followers') {
-            const follow = await prisma.follow.findUnique({
-                where: { followerId_followingId: { followerId: userId, followingId: commentTarget.authorId } }
-            });
-            if (!follow) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
         }
 
         const bodyText = text !== undefined ? text : content;
@@ -2346,23 +2262,20 @@ export const createComment = async (req: Request, res: Response) => {
 
         if (!validateMentionRecipientLimit(cleanText, res, 'comment')) return;
 
-        let parentComment: { postId: string; userId: string } | null = null;
-        if (parentId) {
-            parentComment = await prisma.comment.findUnique({
-                where: { id: parentId },
-                select: { postId: true, userId: true }
-            });
-            if (!parentComment) {
-                res.status(400).json({ error: 'Parent comment not found' });
-                return;
-            }
-            if (parentComment.postId !== id) {
-                res.status(400).json({ error: 'Parent comment does not belong to the same post' });
-                return;
-            }
-        }
-
         const transactionResult = await prisma.$transaction(async (tx) => {
+            const currentPost = await tx.post.findFirst({
+                where: { id, ...buildVisiblePublishedPostWhere(userId) },
+                select: { id: true, authorId: true, allowComments: true }
+            });
+            if (!currentPost) throw Object.assign(new Error('Forbidden'), { statusCode: 403 });
+            if (!currentPost.allowComments) throw Object.assign(new Error('Comments are disabled for this post'), { statusCode: 403 });
+
+            const parentComment = parentId ? await tx.comment.findFirst({
+                where: { id: parentId, postId: id },
+                select: { postId: true, userId: true }
+            }) : null;
+            if (parentId && !parentComment) throw Object.assign(new Error('Parent comment does not belong to this post'), { statusCode: 400 });
+
             const createdComment = await tx.comment.create({
                 data: { text: cleanText, userId, postId: id, parentId }
             });
@@ -2388,9 +2301,9 @@ export const createComment = async (req: Request, res: Response) => {
                     replies: true
                 }
             });
-            return { comment, targetPost, mentionResult };
-        });
-        const { comment, targetPost, mentionResult } = transactionResult;
+            return { comment, targetPost, mentionResult, parentRecipientId: parentComment?.userId };
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+        const { comment, targetPost, mentionResult, parentRecipientId } = transactionResult;
 
         await dispatchNotificationIds(mentionResult.notificationIds);
 
@@ -2398,7 +2311,7 @@ export const createComment = async (req: Request, res: Response) => {
             ? { postId: id, commentId: parentId, replyId: comment.id, sourceType: 'reply' }
             : { postId: id, commentId: comment.id, sourceType: 'comment' };
 
-        const conversationalRecipientId = parentComment?.userId || targetPost.authorId;
+        const conversationalRecipientId = parentRecipientId || targetPost.authorId;
         if (conversationalRecipientId && !mentionResult.targetUserIds.includes(conversationalRecipientId)) {
             await notify(
                 userId,
@@ -2418,8 +2331,10 @@ export const createComment = async (req: Request, res: Response) => {
             res.status(400).json({ error: error.message, code: 'SOCIAL_TEXT_LIMIT_EXCEEDED', limit: error.limit });
             return;
         }
-        console.error('Create comment failed:', error);
-        res.status(500).json({ error: 'Failed to create comment' });
+        if ((error as any)?.code === 'P2034') return void res.status(503).set('Retry-After', '1').json({ error: 'Commenting is busy. Retry this request.' });
+        const statusCode = typeof (error as any)?.statusCode === 'number' ? (error as any).statusCode : 500;
+        if (statusCode === 500) console.error('Create comment failed:', error);
+        res.status(statusCode).json({ error: statusCode === 500 ? 'Failed to create comment' : (error as Error).message });
     }
 };
 
@@ -2428,35 +2343,30 @@ export const likePost = async (req: Request, res: Response) => {
     const userId = req.user!.userId;
     try {
         const id = await resolveInteractionTarget(rawId, 'like');
-        const targetPostCheck = await prisma.post.findUnique({ where: { id }, select: { authorId: true, targetAudience: true } });
-        if (targetPostCheck && targetPostCheck.authorId) {
-            const canView = isProfileAndGroups(targetPostCheck.targetAudience)
-                ? await GroupPermissionService.canViewPost(id, userId)
-                : await PrivacyService.canViewUserContent(userId, targetPostCheck.authorId);
-            if (!canView) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
+        const outcome = await prisma.$transaction(async tx => {
+            const targetPost = await tx.post.findFirst({
+                where: { id, ...buildVisiblePublishedPostWhere(userId) },
+                select: { id: true, authorId: true }
+            });
+            if (!targetPost) throw Object.assign(new Error('Forbidden'), { statusCode: 403 });
+            const existing = await tx.userLike.findUnique({ where: { userId_postId: { userId, postId: id } } });
+            if (existing) {
+                await tx.userLike.delete({ where: { userId_postId: { userId, postId: id } } });
+                await tx.post.updateMany({ where: { id, likesCount: { gt: 0 } }, data: { likesCount: { decrement: 1 } } });
+                return { isLiked: false, authorId: targetPost.authorId };
             }
+            await tx.userLike.create({ data: { userId, postId: id } });
+            await tx.post.update({ where: { id }, data: { likesCount: { increment: 1 } } });
+            return { isLiked: true, authorId: targetPost.authorId };
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+        if (outcome.isLiked && outcome.authorId) {
+            await notify(userId, outcome.authorId, 'like', 'liked your post', 'survey', id);
         }
-        const existing = await prisma.userLike.findUnique({ where: { userId_postId: { userId, postId: id } } });
-        if (existing) {
-            await prisma.$transaction([
-                prisma.userLike.delete({ where: { userId_postId: { userId, postId: id } } }),
-                prisma.post.update({ where: { id }, data: { likesCount: { decrement: 1 } } })
-            ]);
-            res.json({ isLiked: false });
-        } else {
-            const [_, targetPost] = await prisma.$transaction([
-                prisma.userLike.create({ data: { userId, postId: id } }),
-                prisma.post.update({ where: { id }, data: { likesCount: { increment: 1 } } })
-            ]);
-            if (targetPost.authorId) {
-                await notify(userId, targetPost.authorId, 'like', 'liked your post', 'survey', id);
-            }
-            res.json({ isLiked: true });
-        }
+        res.json({ isLiked: outcome.isLiked });
     } catch (error) {
-        res.status(500).json({ error: 'Failed to like post' });
+        if ((error as any)?.code === 'P2034') return void res.status(503).set('Retry-After', '1').json({ error: 'Liking is busy. Retry this request.' });
+        const statusCode = typeof (error as any)?.statusCode === 'number' ? (error as any).statusCode : 500;
+        res.status(statusCode).json({ error: statusCode === 500 ? 'Failed to like post' : (error as Error).message });
     }
 };
 
@@ -2464,24 +2374,33 @@ export const likeComment = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const userId = req.user!.userId;
     try {
-        const existing = await prisma.commentLike.findUnique({ where: { userId_commentId: { userId, commentId: id } } });
-        if (existing) {
-            await prisma.commentLike.delete({ where: { userId_commentId: { userId, commentId: id } } });
-            await prisma.comment.update({ where: { id }, data: { likes: { decrement: 1 } } });
-            res.json({ isLiked: false });
-        } else {
-            await prisma.commentLike.create({ data: { userId, commentId: id } });
-            const targetComment = await prisma.comment.update({ where: { id }, data: { likes: { increment: 1 } } });
-            if (targetComment.userId) {
-                const commentNavigation = targetComment.parentId
-                    ? { postId: targetComment.postId, commentId: targetComment.parentId, replyId: id, sourceType: 'reply' }
-                    : { postId: targetComment.postId, commentId: id, sourceType: 'comment' };
-                await notify(userId, targetComment.userId, 'like', 'liked your comment', 'post', targetComment.postId, commentNavigation);
+        const outcome = await prisma.$transaction(async tx => {
+            const targetComment = await tx.comment.findFirst({
+                where: { id, post: buildVisiblePublishedPostWhere(userId) },
+                select: { id: true, userId: true, postId: true, parentId: true }
+            });
+            if (!targetComment) throw Object.assign(new Error('Forbidden'), { statusCode: 403 });
+            const existing = await tx.commentLike.findUnique({ where: { userId_commentId: { userId, commentId: id } } });
+            if (existing) {
+                await tx.commentLike.delete({ where: { userId_commentId: { userId, commentId: id } } });
+                await tx.comment.updateMany({ where: { id, likes: { gt: 0 } }, data: { likes: { decrement: 1 } } });
+                return { isLiked: false, targetComment };
             }
-            res.json({ isLiked: true });
+            await tx.commentLike.create({ data: { userId, commentId: id } });
+            await tx.comment.update({ where: { id }, data: { likes: { increment: 1 } } });
+            return { isLiked: true, targetComment };
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+        if (outcome.isLiked && outcome.targetComment.userId) {
+            const commentNavigation = outcome.targetComment.parentId
+                ? { postId: outcome.targetComment.postId, commentId: outcome.targetComment.parentId, replyId: id, sourceType: 'reply' }
+                : { postId: outcome.targetComment.postId, commentId: id, sourceType: 'comment' };
+            await notify(userId, outcome.targetComment.userId, 'like', 'liked your comment', 'post', outcome.targetComment.postId, commentNavigation);
         }
+        res.json({ isLiked: outcome.isLiked });
     } catch (error) {
-        res.status(500).json({ error: 'Failed to like comment' });
+        if ((error as any)?.code === 'P2034') return void res.status(503).set('Retry-After', '1').json({ error: 'Liking is busy. Retry this request.' });
+        const statusCode = typeof (error as any)?.statusCode === 'number' ? (error as any).statusCode : 500;
+        res.status(statusCode).json({ error: statusCode === 500 ? 'Failed to like comment' : (error as Error).message });
     }
 };
 
@@ -2764,7 +2683,10 @@ export const sharePost = async (req: Request, res: Response) => {
         }
 
         const transactionResult = await prisma.$transaction(async (tx) => {
-            const canonical = await tx.post.findUnique({ where: { id: actualSharedFromId }, select: { authorId: true } });
+            const canonical = await tx.post.findFirst({
+                where: { id: actualSharedFromId, ...buildVisiblePublishedPostWhere(userId) },
+                select: { authorId: true }
+            });
             if (!canonical) throw new Error('SHARING_UNAVAILABLE');
             const actorAndAuthor = Array.from(new Set([userId, canonical.authorId])).sort();
             for (const userId of actorAndAuthor) await lockAccountSecurity(tx, userId);

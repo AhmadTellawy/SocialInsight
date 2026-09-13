@@ -7,7 +7,8 @@ import {
   finalizeMediaUpload,
   getMediaConfigResponse,
   getMediaReadPresentation,
-  prepareMediaUpload
+  prepareMediaUpload,
+  PUBLIC_MEDIA_CACHE_SECONDS
 } from '../services/mediaService';
 import { MediaValidationError } from '../services/mediaProcessor';
 import { assertActiveAccountSession } from '../services/accountSecurityPolicy';
@@ -109,6 +110,7 @@ export const prepareMedia = async (req: Request, res: Response): Promise<void> =
 
 export const startMediaUpload = async (req: Request, res: Response): Promise<void> => {
   try {
+    res.setHeader('Cache-Control', 'private, no-store');
     const ownerId = req.user!.userId;
     const input = uploadSchema.parse(req.body);
     const upload = await createMediaUpload(ownerId, input.purpose, input.mime, input.size, input.altText, tx => assertActiveAccountSession(tx, req, false));
@@ -120,6 +122,7 @@ export const startMediaUpload = async (req: Request, res: Response): Promise<voi
 
 export const finalizeMedia = async (req: Request, res: Response): Promise<void> => {
   try {
+    res.setHeader('Cache-Control', 'private, no-store');
     const input = finalizeSchema.parse(req.body);
     const result = await finalizeMediaUpload(req.user!.userId, req.params.id as string, input, tx => assertActiveAccountSession(tx, req, false));
     res.json(result);
@@ -130,8 +133,11 @@ export const finalizeMedia = async (req: Request, res: Response): Promise<void> 
 
 export const getMedia = async (req: Request, res: Response): Promise<void> => {
   try {
+    res.setHeader('Cache-Control', 'private, no-store');
     const presentation = await getMediaReadPresentation(req.params.id as string, req.user?.userId);
-    res.setHeader('Cache-Control', presentation.access === 'PUBLIC' ? 'public, max-age=300' : 'private, no-store');
+    if (presentation.access === 'PUBLIC') {
+      res.setHeader('Cache-Control', `public, max-age=${PUBLIC_MEDIA_CACHE_SECONDS}`);
+    }
     res.json(presentation);
   } catch (error) {
     respondWithMediaError(req, res, error);
@@ -140,6 +146,7 @@ export const getMedia = async (req: Request, res: Response): Promise<void> => {
 
 export const cancelMedia = async (req: Request, res: Response): Promise<void> => {
   try {
+    res.setHeader('Cache-Control', 'private, no-store');
     await deleteMediaAsset(req.user!.userId, req.params.id as string);
     res.status(204).send();
   } catch (error) {

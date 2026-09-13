@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import express from 'express';
 
 process.env.AUTH_SESSION_HASH_SECRET = process.env.AUTH_SESSION_HASH_SECRET || 'rate-limit-test-secret-at-least-32-bytes';
 
 const prisma = require('../prisma').default as any;
-const { authRateLimit } = require('./authRateLimit') as typeof import('./authRateLimit');
+const { authRateLimit, durableRateLimit } = require('./authRateLimit') as typeof import('./authRateLimit');
 
 test('database-backed auth throttling limits by signed client capability and normalized identity', async () => {
     const originalUpsert = prisma.authRateLimit.upsert;
@@ -91,4 +92,77 @@ test('OAuth provider names never create a global cross-user throttle bucket', as
     } finally {
         prisma.authRateLimit.upsert = originalUpsert;
     }
+});
+
+test('durable operation limits survive client-cookie changes and isolate authenticated users', async () => {
+    const originalUpsert = prisma.authRateLimit.upsert;
+    const counts = new Map<string, number>();
+    prisma.authRateLimit.upsert = async ({ where }: any) => {
+        const count = (counts.get(where.keyHash) || 0) + 1;
+        counts.set(where.keyHash, count);
+        return { count };
+    };
+    try {
+        const middleware = durableRateLimit('profile-test', { windowMs: 60_000, userLimit: 1, networkLimit: 10 });
+        const invoke = async (userId: string) => {
+            const state: any = { status: 200, next: 0, headers: {} };
+            const res: any = {
+                setHeader(name: string, value: string) { state.headers[name] = value; },
+                status(code: number) { state.status = code; return res; },
+                json(body: unknown) { state.body = body; return res; }
+            };
+            await middleware({ ip: '203.0.113.40', socket: {}, user: { userId } } as any, res, () => { state.next += 1; });
+            return state;
+        };
+        assert.equal((await invoke('user-a')).next, 1);
+        assert.equal((await invoke('user-a')).status, 429);
+        assert.equal((await invoke('user-b')).next, 1);
+    } finally {
+        prisma.authRateLimit.upsert = originalUpsert;
+    }
+});
+
+test('durable operation limits fail closed when the shared counter is unavailable', async () => {
+    const originalUpsert = prisma.authRateLimit.upsert;
+    prisma.authRateLimit.upsert = async () => { throw new Error('synthetic outage'); };
+    try {
+        const middleware = durableRateLimit('media-test', { windowMs: 60_000, userLimit: 1 });
+        const state: any = { status: 200, next: 0, headers: {} };
+        const res: any = {
+            setHeader(name: string, value: string) { state.headers[name] = value; },
+            status(code: number) { state.status = code; return res; },
+            json(body: unknown) { state.body = body; return res; }
+        };
+        await middleware({ ip: '203.0.113.41', socket: {} } as any, res, () => { state.next += 1; });
+        assert.equal(state.next, 0);
+        assert.equal(state.status, 503);
+        assert.equal(state.body.code, 'RATE_LIMIT_UNAVAILABLE');
+    } finally {
+        prisma.authRateLimit.upsert = originalUpsert;
+    }
+});
+
+test('the auth surface blocks a random session cookie before session lookup', async t => {
+    const originalUpsert = prisma.authRateLimit.upsert;
+    const originalSessionLookup = prisma.authSession.findUnique;
+    let sessionLookups = 0;
+    prisma.authRateLimit.upsert = async () => ({ count: 1_201 });
+    prisma.authSession.findUnique = async () => { sessionLookups += 1; return null; };
+    const app = express();
+    app.use('/api/auth', require('../routes/authRoutes').default);
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    t.after(async () => {
+        prisma.authRateLimit.upsert = originalUpsert;
+        prisma.authSession.findUnique = originalSessionLookup;
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/auth/session`, {
+        headers: { cookie: 'si_session=random-session-value-that-must-not-reach-the-database' }
+    });
+    assert.equal(response.status, 429);
+    assert.equal(sessionLookups, 0);
 });
