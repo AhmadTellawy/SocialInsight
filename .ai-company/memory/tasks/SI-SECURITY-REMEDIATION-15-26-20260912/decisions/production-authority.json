@@ -1,0 +1,55 @@
+{
+  "schema_version": "1.0.0",
+  "decision_id": "SECURITY-15-26-FOUNDER-PRODUCTION-20260912",
+  "task_id": "SI-SECURITY-REMEDIATION-15-26-20260912",
+  "created_at": "2026-09-12T20:45:35.3500691Z",
+  "updated_at": "2026-09-12T20:45:35.3500691Z",
+  "title": "Record founder authority for security remediation and production release",
+  "decision_domain": "RELEASE_OPERATIONS",
+  "truth_grade": "APPROVED_DECISION",
+  "status": "APPROVED",
+  "context": "The founder requested comprehensive professional remediation of audit points 15-26 and online publication without repeated authorization requests. The existing target is TARGET-PRODUCTION-OPINIUP: the opiniup.com Vercel frontend and socialinsight-api.onrender.com Render backend service srv-d70vn4p4tr6s73e2qnjg.",
+  "options_considered": [
+    {
+      "option": "Implement and deploy the in-scope security remediation through the governed existing production path",
+      "benefits": ["Completes the explicitly requested remediation and publication outcome."],
+      "costs_and_risks": ["Critical authentication, privacy, data, realtime, upload, and release changes require all applicable independent gates and traceable evidence."],
+      "selected": true
+    },
+    {
+      "option": "Implement locally and stop before external deployment",
+      "benefits": ["Avoids a production mutation."],
+      "costs_and_risks": ["Does not complete the founder's explicitly authorized online publication request."],
+      "selected": false
+    }
+  ],
+  "decision": "The founder authorizes comprehensive implementation of audit remediation points 15-26 and deployment of the resulting traceable release to TARGET-PRODUCTION-OPINIUP using the existing Vercel and Render production path. This authority includes existing-path staging, commit and push, non-destructive production smoke verification, monitoring, and rollback when a defined trigger is met. It excludes destructive changes to existing user data, destructive database resets or restores, publication of new legal text, purchases or new accounts, real-user messaging, secret disclosure, and destructive exploitation. Production execution remains conditional on all applicable independent gates, additive migration safety, target freshness, rollback readiness, and any qualified external review explicitly required by the audit.",
+  "rationale": "The current user instruction provides task-specific external deployment authority. A03 independently confirmed that this authority is sufficient within the stated boundaries and classified the task CRITICAL; readiness and evidence remain separate controls.",
+  "evidence": [
+    {
+      "reference": ".ai-company/memory/tasks/SI-SECURITY-REMEDIATION-15-26-20260912/scope-worklog.md",
+      "observation": "The current task worklog records the founder's explicit comprehensive remediation and online publication instruction without exposing secrets.",
+      "truth_grade": "APPROVED_DECISION"
+    },
+    {
+      "reference": ".ai-company/memory/tasks/SI-SECURITY-REMEDIATION-15-26-20260912/decisions/A03-authority-review-receipt.md",
+      "observation": "A03 independently confirmed sufficient bounded authority, CRITICAL risk, excluded destructive and unrequested actions, and required the full applicable release gates.",
+      "truth_grade": "APPROVED_DECISION"
+    }
+  ],
+  "consequences": {
+    "positive": ["The team may proceed autonomously through implementation, verification, staging, and the authorized production release path."],
+    "negative": ["Production release cannot proceed while any applicable blocking gate or explicitly required qualified external review is unresolved."],
+    "follow_up": [
+      "Use additive reviewed migrations with preflight and rollback or forward-fix evidence.",
+      "Independently verify product, code, QA, security, privacy, trust and safety, data migration, operations, monitoring, staging, release, and production behavior on the final snapshot."
+    ]
+  },
+  "authority": {
+    "decision_owner": "FOUNDER",
+    "approval_basis": "Explicit current-conversation instruction to comprehensively remediate audit points 15-26 and publish the result online with full authority for the bounded task.",
+    "approved_at": "2026-09-12T20:45:35.3500691Z"
+  },
+  "owner": "F01",
+  "reviewed_by": ["A03"]
+}

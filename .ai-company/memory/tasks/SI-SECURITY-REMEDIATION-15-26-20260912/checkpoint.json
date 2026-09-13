@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.0.0",
+  "checkpoint_id": "SI-SECURITY-REMEDIATION-15-26-20260912:CP:3",
+  "task_id": "SI-SECURITY-REMEDIATION-15-26-20260912",
+  "task_version": 3,
+  "updated_at": "2026-09-13T01:53:59.331Z",
+  "repository_revision": {"commit": "2062cabd25ff8517db96bb5e297ae36706ff1eb1", "working_tree": "DIRTY"},
+  "implementation_snapshot": {"kind": "GIT_COMMIT", "value": "2062cabd25ff8517db96bb5e297ae36706ff1eb1", "captured_at": "2026-09-13T01:53:59.331Z"},
+  "workflow": "security-remediation",
+  "current_phase": "SECURITY_PRIVACY_VALIDATION",
+  "task_status": "BLOCKED",
+  "scope_summary": "Audit points 15-26 are implemented and locally verified on the isolated release branch. Production remains unchanged pending the qualified external penetration test and release gates required by audit point 26.",
+  "decisions": [{"id": "SECURITY-15-26-FOUNDER-PRODUCTION-20260912", "reference": "decisions/production-authority.json", "status": "APPROVED"}],
+  "assumptions": [],
+  "completed_work": [
+    {"id": "WORK-001", "description": "Recorded task-specific founder production authority and independent A03 authority and risk review.", "owner": "A03", "completed_at": "2026-09-12T20:45:35.3500691Z", "evidence_refs": ["decisions/production-authority.json", "decisions/A03-authority-review-receipt.md"]},
+    {"id": "WORK-002", "description": "Implemented authentication, authorization, privacy, media, abuse prevention, realtime, migration, dependency and operational hardening for audit points 15-26.", "owner": "A01", "completed_at": "2026-09-13T01:53:59.331Z", "evidence_refs": ["remediation-coverage.md", "validation-evidence.md"]},
+    {"id": "WORK-003", "description": "Merged the current production fixes, resolved conflicts, and retained both production behavior and the security controls.", "owner": "D01", "completed_at": "2026-09-13T01:53:59.331Z", "evidence_refs": ["validation-evidence.md", "gate-status.md"]},
+    {"id": "WORK-004", "description": "Completed local unit, build, browser, PostgreSQL integration, migration rehearsal, dependency audit and independent code review evidence.", "owner": "E02", "completed_at": "2026-09-13T01:53:59.331Z", "evidence_refs": ["validation-evidence.md", "gate-status.md"]},
+    {"id": "WORK-005", "description": "Added required production secret names and trusted proxy hop configuration to the existing Render service without deploying the blocked release.", "owner": "D08", "completed_at": "2026-09-13T01:53:59.331Z", "evidence_refs": ["validation-evidence.md", "release-blocker.md"]}
+  ],
+  "modified_files": [
+    "App.tsx", "components/ShareSheet.tsx", "docs/auth-production-runbook.md", "server/.env.example", "server/prisma/schema.prisma",
+    "server/prisma/migrations/20260913010000_auth_intent_otp_hash_version/migration.sql", "server/prisma/migrations/20260913020000_split_media_cleanup_fences/migration.sql",
+    "server/scripts/security-permissions-preflight.sql", "server/src/app.ts", "server/src/controllers/authController.ts", "server/src/controllers/mediaController.ts",
+    "server/src/controllers/postController.ts", "server/src/controllers/searchController.ts", "server/src/services/mediaService.ts",
+    "server/src/services/notificationVisibilityService.ts", "server/src/services/otpService.ts", "server/src/services/sessionService.ts",
+    "server/src/services/socketService.ts", "services/api.ts", "tests/post-options-e2e/fixtures.ts", "vercel.json"
+  ],
+  "test_results": [
+    {"command": "npm.cmd run test:unit", "environment": "isolated release worktree", "result": "PASSED", "evidence_ref": "validation-evidence.md"},
+    {"command": "npm.cmd run build", "environment": "isolated release worktree frontend", "result": "PASSED", "evidence_ref": "validation-evidence.md"},
+    {"command": "npm.cmd test", "environment": "isolated release worktree server", "result": "PASSED", "evidence_ref": "validation-evidence.md"},
+    {"command": "npm.cmd run build", "environment": "isolated release worktree server", "result": "PASSED", "evidence_ref": "validation-evidence.md"},
+    {"command": "npx.cmd playwright test --config=playwright.post-options.config.ts --grep-invert real-hook", "environment": "isolated Vite preview", "result": "PASSED", "evidence_ref": "validation-evidence.md"},
+    {"command": "npx.cmd playwright test --config=playwright.post-options.config.ts --grep real-hook", "environment": "isolated Vite development server", "result": "PASSED", "evidence_ref": "validation-evidence.md"},
+    {"command": "npm.cmd audit --audit-level=low", "environment": "frontend and server dependency trees", "result": "PASSED", "evidence_ref": "validation-evidence.md"},
+    {"command": "node .agents/skills/social-insight-ai-company/scripts/validate-company.mjs --task-id SI-SECURITY-REMEDIATION-15-26-20260912", "environment": "repository governance", "result": "FAILED", "evidence_ref": "gate-status.md"}
+  ],
+  "remaining_work": [
+    {"id": "WORK-006", "description": "Obtain a qualified independent external penetration test and retest report for the exact release candidate, as required by audit point 26.", "owner": "E04", "status": "BLOCKED", "depends_on": []},
+    {"id": "WORK-007", "description": "Verify an isolated backend staging target and provider database, storage, mail, proxy, monitoring and rollback behavior for the exact release commit.", "owner": "D08", "status": "BLOCKED", "depends_on": ["WORK-006"]},
+    {"id": "WORK-008", "description": "Approve, deploy and verify the exact release on Vercel and Render production after every required gate passes.", "owner": "F01", "status": "BLOCKED", "depends_on": ["WORK-006", "WORK-007"]},
+    {"id": "WORK-009", "description": "Repair or baseline the unrelated task-staging exact-selection root-drift company contract before governed closure.", "owner": "A04", "status": "BLOCKED", "depends_on": []}
+  ],
+  "risks": [
+    {"description": "The change set is critical and broad across authentication, privacy, data, media and realtime behavior.", "level": "CRITICAL", "mitigation": "Keep production on its current revision until external penetration testing, staging and exact-target release gates pass.", "owner": "A03"},
+    {"description": "A frontend preview would call the production backend because the current Vercel rewrites point to Render production.", "level": "HIGH", "mitigation": "The release branch preview remains explicitly disabled until an isolated backend exists.", "owner": "D08"}
+  ],
+  "blockers": [
+    {"id": "BLOCK-EXTERNAL-PENTEST", "description": "Audit point 26 requires a qualified independent human penetration test and retest; internal AI review cannot satisfy that requirement.", "hard_blocker": true, "owner": "FOUNDER", "next_step": "Arrange the qualified external assessment against the exact staged release and provide the signed report for E04 and F01 review."},
+    {"id": "BLOCK-STAGING-BACKEND", "description": "No isolated Render backend and data/storage target is currently available for representative staging validation.", "hard_blocker": true, "owner": "D08", "next_step": "Use an existing isolated backend target or authorize a suitable non-production environment without connecting previews to production data."},
+    {"id": "BLOCK-COMPANY-VALIDATOR", "description": "The company validator passed 655 checks but its unrelated task-staging exact-selection root-drift utility contract failed.", "hard_blocker": true, "owner": "A04", "next_step": "Repair or explicitly baseline the company utility contract, then rerun the scoped validator."}
+  ],
+  "next_owner": "FOUNDER",
+  "next_action": "Provide the qualified external penetration test and an isolated staging target; then F01 can complete staging, production deployment, smoke verification and monitoring.",
+  "state_history": [
+    {"from": "TASK_CREATED", "to": "INTAKE", "transitioned_at": "2026-09-12T20:23:24.186Z", "owner": "A01", "reason": "Task artifacts initialized.", "evidence_refs": ["task-brief.json"]},
+    {"from": "INTAKE", "to": "SCOPE_LOCKED", "transitioned_at": "2026-09-12T20:45:35.3500691Z", "owner": "A03", "reason": "Founder production authority and CRITICAL risk classification were recorded.", "evidence_refs": ["decisions/production-authority.json", "decisions/A03-authority-review-receipt.md"]},
+    {"from": "SCOPE_LOCKED", "to": "BASELINE_CAPTURED", "transitioned_at": "2026-09-12T21:00:00.000Z", "owner": "A01", "reason": "Repository, production targets and current deployed revision were inspected.", "evidence_refs": ["scope-worklog.md"]},
+    {"from": "BASELINE_CAPTURED", "to": "IMPLEMENTATION_IN_PROGRESS", "transitioned_at": "2026-09-12T21:10:00.000Z", "owner": "A01", "reason": "Security remediation began in the isolated release worktree.", "evidence_refs": ["remediation-coverage.md"]},
+    {"from": "IMPLEMENTATION_IN_PROGRESS", "to": "INTERNAL_REVIEWS", "transitioned_at": "2026-09-13T00:30:00.000Z", "owner": "E03", "reason": "Implementation was frozen and submitted for independent review.", "evidence_refs": ["gate-status.md"]},
+    {"from": "INTERNAL_REVIEWS", "to": "QA_VALIDATION", "transitioned_at": "2026-09-13T01:20:00.000Z", "owner": "E01", "reason": "Independent code findings were remediated and final regression verification started.", "evidence_refs": ["validation-evidence.md"]},
+    {"from": "QA_VALIDATION", "to": "SECURITY_PRIVACY_VALIDATION", "transitioned_at": "2026-09-13T01:53:59.331Z", "owner": "A03", "reason": "Local implementation and QA evidence passed; external security and staging dependencies still block release.", "evidence_refs": ["validation-evidence.md", "gate-status.md", "release-blocker.md"]}
+  ]
+}

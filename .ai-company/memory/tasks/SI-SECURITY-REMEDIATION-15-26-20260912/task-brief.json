@@ -1,0 +1,256 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "SI-SECURITY-REMEDIATION-15-26-20260912",
+  "created_at": "2026-09-12T20:23:24.186Z",
+  "original_request": "Implement all security remediation findings from audit points 15-26 and deploy to production target TARGET-PRODUCTION-OPINIUP: existing https://opiniup.com Vercel frontend and https://socialinsight-api.onrender.com Render backend service srv-d70vn4p4tr6s73e2qnjg, then verify and monitor.",
+  "clarified_answers": [],
+  "objective": "Implement all security remediation findings from audit points 15-26 and deploy to production target TARGET-PRODUCTION-OPINIUP: existing https://opiniup.com Vercel frontend and https://socialinsight-api.onrender.com Render backend service srv-d70vn4p4tr6s73e2qnjg, then verify and monitor.",
+  "scope": [
+    "Resolve the active request using evidence and the selected workflow."
+  ],
+  "non_goals": [
+    "Unrelated refactors or external mutations outside the active request."
+  ],
+  "actors": [
+    {
+      "id": "FOUNDER",
+      "name": "Social Insight founder",
+      "role_in_journey": "Defines the outcome and holds final product authority.",
+      "permissions": [
+        "Provide task-specific business and external-action authority."
+      ]
+    },
+    {
+      "id": "AFFECTED_USERS",
+      "name": "Affected Social Insight users",
+      "role_in_journey": "Use or are protected by the affected journey.",
+      "permissions": []
+    }
+  ],
+  "assumptions": [],
+  "constraints": [
+    "Preserve existing user changes.",
+    "Do not expose secrets.",
+    "Implementers cannot approve their own work."
+  ],
+  "task_type": "SECURITY_PRIVACY_REMEDIATION",
+  "complexity": "LARGE",
+  "risk_classification": {
+    "level": "CRITICAL",
+    "rationale": "A03 classified the task CRITICAL because remediation spans authentication, privacy, data integrity, uploads, realtime behavior, abuse controls, additive migrations, and a production release with a wide blast radius.",
+    "dimensions": [
+      "USER_EXPERIENCE",
+      "ACCESSIBILITY_LOCALIZATION",
+      "RELIABILITY",
+      "RELEASE_OPERATIONS",
+      "SECURITY",
+      "PRIVACY",
+      "DATA_INTEGRITY",
+      "DATABASE_MIGRATION",
+      "TRUST_SAFETY",
+      "PERFORMANCE"
+    ]
+  },
+  "affected_domains": [
+    "UX_UI",
+    "ACCESSIBILITY",
+    "LOCALIZATION",
+    "FRONTEND_PWA",
+    "BACKEND_API",
+    "DEVOPS_RELEASE"
+  ],
+  "selected_agents": [
+    {
+      "role_id": "A01",
+      "reason": "Selected by security-privacy-remediation routing with signals frontend-ui, backend-api, deployment.",
+      "responsibility": "Serve as the founder-facing integration owner and move work through evidence-backed gates."
+    },
+    {
+      "role_id": "A02",
+      "reason": "Selected by security-privacy-remediation routing with signals frontend-ui, backend-api, deployment.",
+      "responsibility": "Turn the request into a traceable Task Brief, dependency graph, ownership map, and resumable checkpoint."
+    },
+    {
+      "role_id": "A03",
+      "reason": "Selected by security-privacy-remediation routing with signals frontend-ui, backend-api, deployment.",
+      "responsibility": "Classify risk, apply authority and RACI controls, and prevent gate or permission bypass."
+    },
+    {
+      "role_id": "A04",
+      "reason": "Selected by security-privacy-remediation routing with signals frontend-ui, backend-api, deployment.",
+      "responsibility": "Maintain the constitution, decision log, ADRs, assumptions, and reusable release learning."
+    },
+    {
+      "role_id": "B01",
+      "reason": "Added by A03 for CRITICAL security remediation and product identity protection.",
+      "responsibility": "Protect Social Insight product identity, customer value, and strategic focus."
+    },
+    {
+      "role_id": "B02",
+      "reason": "Selected by security-privacy-remediation routing with signals frontend-ui, backend-api, deployment.",
+      "responsibility": "Define scope, user stories, acceptance criteria, KPIs, and product acceptance."
+    },
+    {
+      "role_id": "B03",
+      "reason": "Added by A03 to trace security and privacy rules across UI, API, data, and tests.",
+      "responsibility": "Trace business rules and state transitions across UI, API, data, and tests."
+    },
+    {
+      "role_id": "B05",
+      "reason": "Added by A03 to verify trustworthy analytics, aggregation, and experiment behavior.",
+      "responsibility": "Define trustworthy metrics, events, funnels, and experiments that cannot be forged by clients."
+    },
+    {
+      "role_id": "C03",
+      "reason": "Selected by security-privacy-remediation routing with signals frontend-ui, backend-api, deployment.",
+      "responsibility": "Specify high-quality mobile-first interfaces consistent with Social Insight and its design system."
+    },
+    {
+      "role_id": "C04",
+      "reason": "Selected by security-privacy-remediation routing with signals frontend-ui, backend-api, deployment.",
+      "responsibility": "Protect design-system consistency, WCAG 2.2 AA goals, touch usability, and RTL/LTR parity."
+    },
+    {
+      "role_id": "C05",
+      "reason": "Selected by security-privacy-remediation routing with signals frontend-ui, backend-api, deployment.",
+      "responsibility": "Keep Arabic and English product language natural, consistent, actionable, and direction-safe."
+    },
+    {
+      "role_id": "D01",
+      "reason": "Selected by security-privacy-remediation routing with signals frontend-ui, backend-api, deployment.",
+      "responsibility": "Own incremental architecture, API boundaries, and security/reliability/performance tradeoffs."
+    },
+    {
+      "role_id": "D02",
+      "reason": "Selected by security-privacy-remediation routing with signals frontend-ui, backend-api, deployment.",
+      "responsibility": "Implement React, TypeScript, Vite, PWA, state, navigation, and resilient UI behavior."
+    },
+    {
+      "role_id": "D03",
+      "reason": "Selected by security-privacy-remediation routing with signals frontend-ui, backend-api, deployment.",
+      "responsibility": "Implement Express services and API contracts with server-authoritative validation and authorization."
+    },
+    {
+      "role_id": "D04",
+      "reason": "Added by A03 because vote integrity, identity normalization, and lifecycle changes affect database constraints and migrations.",
+      "responsibility": "Protect Prisma and PostgreSQL integrity, query behavior, migrations, and recovery."
+    },
+    {
+      "role_id": "D05",
+      "reason": "Added by A03 because authentication expiry and delivery authorization affect Socket.IO and notifications.",
+      "responsibility": "Implement authenticated Socket.IO, notification, push, and messaging lifecycles."
+    },
+    {
+      "role_id": "D06",
+      "reason": "Added by A03 because media validation, upload quotas, processing, storage, and cleanup are in scope.",
+      "responsibility": "Implement safe gallery, validation, upload, processing, storage, crop, retry, and cleanup behavior."
+    },
+    {
+      "role_id": "D07",
+      "reason": "Added by A03 to measure abuse-control and remediation performance and scalability effects.",
+      "responsibility": "Measure and improve frontend, API, database, and realtime performance with comparable evidence."
+    },
+    {
+      "role_id": "D08",
+      "reason": "Selected by security-privacy-remediation routing with signals frontend-ui, backend-api, deployment.",
+      "responsibility": "Maintain safe environment separation, CI/CD, health, secrets, backups, rollback, and observability."
+    },
+    {
+      "role_id": "E01",
+      "reason": "Selected by security-privacy-remediation routing with signals frontend-ui, backend-api, deployment.",
+      "responsibility": "Own risk-based test strategy, traceability, evidence sufficiency, and the independent Quality Gate."
+    },
+    {
+      "role_id": "E02",
+      "reason": "Selected by security-privacy-remediation routing with signals frontend-ui, backend-api, deployment.",
+      "responsibility": "Implement and run isolated Unit, API, Integration, E2E, and browser automation selected by E01."
+    },
+    {
+      "role_id": "E03",
+      "reason": "Selected by security-privacy-remediation routing with signals frontend-ui, backend-api, deployment.",
+      "responsibility": "Independently review the diff and surrounding system for real correctness and maintainability risk."
+    },
+    {
+      "role_id": "E04",
+      "reason": "Selected by security-privacy-remediation routing with signals frontend-ui, backend-api, deployment.",
+      "responsibility": "Threat-model and independently verify auth, sessions, IDOR, injection, XSS, CSRF, SSRF, uploads, dependencies, secrets, and WebSockets."
+    },
+    {
+      "role_id": "E05",
+      "reason": "Selected by security-privacy-remediation routing with signals frontend-ui, backend-api, deployment.",
+      "responsibility": "Apply privacy by design, minimization, purpose, retention, consent, export, and deletion controls."
+    },
+    {
+      "role_id": "E07",
+      "reason": "Added by A03 because reporting, blocking, moderation, and abuse resistance are in scope.",
+      "responsibility": "Design and verify reporting, blocking, moderation, appeals, enforcement, and abuse resistance."
+    },
+    {
+      "role_id": "F01",
+      "reason": "Selected by security-privacy-remediation routing with signals frontend-ui, backend-api, deployment.",
+      "responsibility": "Assemble release evidence and execute only an authorized, traceable deployment through the proven path."
+    },
+    {
+      "role_id": "F02",
+      "reason": "Selected by security-privacy-remediation routing with signals frontend-ui, backend-api, deployment.",
+      "responsibility": "Define and observe logs, metrics, traces, alerts, SLOs, incident timelines, rollback triggers, and postmortems."
+    }
+  ],
+  "dependencies": [],
+  "acceptance_criteria": [
+    {
+      "id": "AC-001",
+      "statement": "Every in-scope outcome is implemented or backed by a precise blocker and evidence.",
+      "verification_method": "Review task evidence and final report against scope."
+    },
+    {
+      "id": "AC-002",
+      "statement": "Every applicable independent gate passes.",
+      "verification_method": "Validate recorded gate owners, evidence, and decisions."
+    }
+  ],
+  "deployment_target": {
+    "environment": "PRODUCTION",
+    "authorized": true,
+    "target_ref": "TARGET-PRODUCTION-OPINIUP",
+    "rationale": "The founder explicitly authorized comprehensive remediation and online publication to the existing target; A03 confirmed bounded authority, while release remains conditional on all applicable gates.",
+    "authority_evidence_ref": ".ai-company/memory/tasks/SI-SECURITY-REMEDIATION-15-26-20260912/decisions/production-authority.json"
+  },
+  "destructive_controls": {
+    "required": false,
+    "permanent_prohibition": false,
+    "conflicts": [],
+    "requirements_satisfied": true
+  },
+  "workflow": "security-remediation",
+  "required_gates": [
+    "scope-authority",
+    "baseline",
+    "source-quality",
+    "independent-review",
+    "qa",
+    "security",
+    "privacy",
+    "authorization-matrix",
+    "trust-safety",
+    "data-migration",
+    "performance",
+    "reliability",
+    "identity-alignment",
+    "accessibility-localization",
+    "api-contract",
+    "staging",
+    "release",
+    "production-verification",
+    "monitoring",
+    "product-acceptance",
+    "architecture",
+    "risk-review"
+  ],
+  "current_state": "SECURITY_PRIVACY_VALIDATION",
+  "source_revision": {
+    "commit": "72d00e47719e2ccc45d3d53fabed73db0aa03821",
+    "working_tree": "DIRTY",
+    "captured_at": "2026-09-12T20:23:24.186Z"
+  }
+}
