@@ -319,16 +319,20 @@ test('real PostgreSQL-compatible engine: seeded permission matrix and >500 admit
   const forbiddenBatchId = `${prefix}-batch-forbidden`;
   addPost(forbiddenBatchId, batchOwner, { resultsWho: 'OnlyMe' });
   responses.push({ id: `${forbiddenBatchId}-response`, postId: forbiddenBatchId, userId: otherId });
+  // Small setup packets keep this fixture portable to the local PG wire bridge;
+  // production aggregation still executes its real 500-ID pages unchanged.
+  const chunks = <T>(rows: T[]): T[][] => Array.from({ length: Math.ceil(rows.length / 20) }, (_, index) => rows.slice(index * 20, (index + 1) * 20));
+  const seed = async (model: any, rows: any[]) => { for (const data of chunks(rows)) await model.createMany({ data }); };
   try {
-    await prisma.user.createMany({ data: users });
-    await prisma.userDemographics.createMany({ data: userIds.map(userId => ({ userId, gender: 'Female' })) });
-    await prisma.group.createMany({ data: groups });
-    await prisma.post.createMany({ data: posts });
-    await prisma.follow.createMany({ data: follows });
-    await prisma.userBlock.createMany({ data: blocks });
-    await prisma.groupMember.createMany({ data: members });
-    await prisma.hiddenPost.createMany({ data: hidden });
-    await prisma.response.createMany({ data: responses });
+    await seed(prisma.user, users);
+    await seed(prisma.userDemographics, userIds.map(userId => ({ userId, gender: 'Female' })));
+    await seed(prisma.group, groups);
+    await seed(prisma.post, posts);
+    await seed(prisma.follow, follows);
+    await seed(prisma.userBlock, blocks);
+    await seed(prisma.groupMember, members);
+    await seed(prisma.hiddenPost, hidden);
+    await seed(prisma.response, responses);
     for (const target of targeted) await prisma.post.update({ where: { id: target.id }, data: { targetedGroups: { connect: target.groups.map(id => ({ id })) } } });
     for (const scenario of cases) {
       const result = await getProfileAnalytics(scenario.ownerId, scenario.actorId);
@@ -344,7 +348,10 @@ test('real PostgreSQL-compatible engine: seeded permission matrix and >500 admit
     const batch = await getProfileAnalytics(batchOwner, viewerId);
     assert.equal(batch?.totalResponses, 503, 'Admitted public posts span multiple 500-ID batches');
     assert.deepEqual(batch?.byCountry, { BatchAllowed: 503 }, 'Forbidden post must not leak another country dimension');
-    context.diagnostic(`Real Prisma and aggregate SQL verified ${cases.length} policy cases plus503 allowed and1 excluded batch post.`);
+    context.diagnostic(`Real Prisma and aggregate SQL verified ${cases.length} policy cases plus 503 allowed and 1 excluded batch post.`);
+  } catch (error) {
+    context.diagnostic(`Original integration failure before cleanup: ${String(error)}`);
+    throw error;
   } finally {
     await prisma.response.deleteMany({ where: { postId: { in: postIds } } });
     await prisma.hiddenPost.deleteMany({ where: { postId: { in: postIds } } });
