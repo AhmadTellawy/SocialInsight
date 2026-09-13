@@ -18,7 +18,8 @@ export default defineConfig({
     { name: 'ar-mobile', use: { ...devices['Pixel 5'], locale: 'ar-JO' } },
     { name: 'en-desktop', use: { ...devices['Desktop Chrome'], locale: 'en-US' } },
   ],
-  webServer: { command: `npm run dev -- --host 127.0.0.1 --port ${port} --strictPort`, url: baseURL, reuseExistingServer: false, timeout: 120_000 },
+  webServer: { command: `npm run preview -- --host 127.0.0.1 --port ${port} --strictPort`, url: baseURL, reuseExistingServer: false, timeout: 120_000 },
 });
+
 
 

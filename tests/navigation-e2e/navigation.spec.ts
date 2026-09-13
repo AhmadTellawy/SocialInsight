@@ -258,7 +258,7 @@ for (const type of ['Poll', 'Survey', 'Quiz', 'Challenge']) {
     await page.reload();
     await expect(page.getByRole('heading', { name: `New ${type}`, exact: true })).toBeVisible();
     await expect(page).toHaveURL(`/create/${type.toLowerCase()}?group=${group.id}`);
-    await back(page);
+    await page.getByRole('button', { name: 'Close', exact: true }).click();
     await expect(page).toHaveURL(`/group/${group.id}`);
     await expect(page.getByRole('heading', { name: group.name, exact: true })).toBeVisible();
   });

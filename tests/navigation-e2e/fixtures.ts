@@ -35,6 +35,12 @@ async function install(page: Page, state: State, baseURL: string, language: 'ar'
     if (url.hostname === 'cdn.tailwindcss.com') return r.fulfill({ path: process.env.NAVIGATION_TAILWIND || path.resolve('tests/navigation-e2e/assets/tailwind.js'), contentType: 'application/javascript' });
     if (url.origin !== origin) return r.abort('blockedbyclient');
     if (p.startsWith('/socket.io')) return r.abort('blockedbyclient');
+    // Vite preview throws before its SPA fallback for malformed URI encoding.
+    // Serve the unchanged production entry document only for this router-guard
+    // fixture; hosting-server malformed-URL behavior requires separate live smoke.
+    if (request.isNavigationRequest() && p === '/post/%E0%A4%A') {
+      return r.fulfill({ path: path.resolve('dist/index.html'), contentType: 'text/html' });
+    }
     if (!p.startsWith('/api/')) return r.continue();
     state.calls.push(`${method} ${p}`);
     if (method === 'POST' && (p === '/api/analytics/interactions/batch' || p.endsWith('/views') || p.endsWith('/notifications/read'))) return json(r, { success: true });
