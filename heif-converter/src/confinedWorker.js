@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process';
 import { stat, readdir } from 'node:fs/promises';
 import sharp from 'sharp';
 
+sharp.block({operation:['VipsForeignLoad']});
+sharp.unblock({operation:['VipsForeignLoadPngFile','VipsForeignLoadWebpBuffer']});
 sharp.cache(false);
 sharp.concurrency(1);
 const [input, decoded] = process.argv.slice(2);

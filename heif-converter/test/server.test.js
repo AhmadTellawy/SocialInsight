@@ -91,6 +91,26 @@ test('rejects unauthenticated, AVIF, and replayed requests', async () => {
   });
 });
 
+test('rejects a missing or mismatched signed body digest before conversion', async () => {
+  const input = heifFixture();
+  let calls = 0;
+  await withServer({ convert: async () => { calls += 1; } }, async (url) => {
+    const missingHeaders = signedHeaders(input, 'request_missing_digest_01');
+    delete missingHeaders['x-si-body-sha256'];
+    const missing = await fetch(`${url}/v1/convert`, { method: 'POST', headers: missingHeaders, body: input });
+    assert.equal(missing.status, 401);
+
+    const changed = Buffer.concat([input, Buffer.from([0])]);
+    const mismatchHeaders = {
+      ...signedHeaders(input, 'request_mismatch_digest_1'),
+      'content-length': String(changed.length),
+    };
+    const mismatch = await fetch(`${url}/v1/convert`, { method: 'POST', headers: mismatchHeaders, body: changed });
+    assert.equal(mismatch.status, 401);
+    assert.equal(calls, 0);
+  });
+});
+
 test('health endpoints expose pinned runtime evidence', async () => {
   await withServer({ convert: async () => undefined }, async (url) => {
     const live = await fetch(`${url}/health/live`);

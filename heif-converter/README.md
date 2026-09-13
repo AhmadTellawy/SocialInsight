@@ -78,6 +78,7 @@ cd heif-converter
 npm test
 docker build --pull -t social-insight/heif-converter:1.0.0 .
 docker run --rm --entrypoint /usr/local/bin/heif-convert social-insight/heif-converter:1.0.0 --version
+docker run --rm --entrypoint /usr/local/bin/si-heif-confine social-insight/heif-converter:1.0.0 --supervise-probe
 ```
 
-اختبارات Node تستخدم converter مزيفًا ولا تحتاج Docker أو native codec، بينما فحص بدء الحاوية يستخدم decoder الحقيقي ويفشل قبل الاستماع إذا لم ينجح. قبل الإنتاج يجب إجراء build clean مع SBOM وفحص image، corpus سليم/خبيث أوسع، اختبار موارد وتزامن، smoke عبر API الرئيسي، ثم بوابات E03/E04/E01 المستقلة. انشر canary أولًا وراقب `429` و`4xx` و`5xx` وtimeout وlatency p95/p99 وRSS واستخدام tmp. rollback هو إعادة API الرئيسي إلى رفض HEIF الآمن وتعطيل مسار الخدمة، ثم سحب نسخة الحاوية.
+اختبارات Node تستخدم converter مزيفًا ولا تحتاج Docker أو native codec، بينما فحص بدء الحاوية يستخدم decoder الحقيقي ويفشل قبل الاستماع إذا لم ينجح. الأمر `--supervise-probe` يشغّل حزمة Linux الموسعة على العينات المثبتة نفسها، بما في ذلك منع الشبكة وorphan reaping واستنفاد fork/thread والإلغاء وحدود ملف يقارب 15 MiB والتنظيف وOOM، ثم يخرج بنتيجة الفحص بدل تشغيل HTTP. شغّله على الصورة نفسها مع حدود الذاكرة/swap/pids المبينة أعلاه وسجّل المخرجات دون أسرار. قبل الإنتاج يجب إجراء build clean مع SBOM وفحص image، corpus سليم/خبيث أوسع، smoke عبر API الرئيسي، ثم بوابات E03/E04/E01 المستقلة. انشر canary أولًا وراقب `429` و`4xx` و`5xx` وtimeout وlatency p95/p99 وRSS واستخدام tmp. rollback هو إعادة API الرئيسي إلى رفض HEIF الآمن وتعطيل مسار الخدمة، ثم سحب نسخة الحاوية.
