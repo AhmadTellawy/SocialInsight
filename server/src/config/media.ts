@@ -8,7 +8,9 @@ export const MEDIA_CONFIG = {
   maxDecodedPixels: 40_000_000,
   maxMasterEdge: 2400,
   maxPreparedOutputBytes: 12 * 1024 * 1024,
-  heifConversionTimeoutMs: 30_000,
+  // Must exceed the converter's 45-second whole-worker deadline so the
+  // service can reap its process group and finish cleanup before cancellation.
+  heifConversionTimeoutMs: 55_000,
   maxUploadConcurrency: 3,
   minAspectRatio: 0.8,
   maxAspectRatio: 1.91,

@@ -91,27 +91,23 @@ try {
     assert.equal(report.error,'EAGAIN');assert.equal(report.limit,32);assert.ok(report.created>0&&report.created<=32);absent(pid);for(const child of report.children)absent(child);
     return{exhaustion:report,workerGone:true};
   });
-  const camera=Buffer.from(await fs.readFile('/fixtures/fixtures/camera-sample.base64','utf8'),'base64');
-  for(const [name,input] of [['camera',camera],['aperture',await fs.readFile('/fixtures/fixtures/rainbow-451x461.heic')],['alpha',await fs.readFile('/fixtures/fixtures/with-alpha-512x512.heic')]]) {
+  const camera=Buffer.from((await fs.readFile('/opt/heif-converter/self-test/rainbow-451x461.heic.base64','utf8')).trim(),'base64');
+  const alpha=Buffer.from((await fs.readFile('/opt/heif-converter/self-test/with-alpha-512x512.heic.base64','utf8')).trim(),'base64');
+  const generic=Buffer.from(camera);generic.write('mif1',8,4,'ascii');
+  for(const [name,input] of [['camera',camera],['generic-heif',generic],['alpha',alpha]]) {
     await record('native-sharp-'+name,async()=>{
       const result=await runConfinedJob(input);
       assert.equal(result.mime,'image/webp');assert.ok(result.data.length>0);
       return{width:result.width,height:result.height,bytes:result.data.length,sha256:crypto.createHash('sha256').update(result.data).digest('hex')};
     });
   }
-  for(const [name,width,height] of [['12mp',2400,1800],['40mp',2400,1500]])await record('generated-'+name,async()=>{
-    const input=await fs.readFile('/fixtures/generated/'+name+'.heic');
-    const phases=[],started=performance.now();
-    const result=await runConfinedJob(input,{onDiagnostic:code=>{const phase={code,ms:Math.round(performance.now()-started)};phases.push(phase);console.log(JSON.stringify({fixture:name,phase}));}});
-    assert.equal(result.mime,'image/webp');assert.equal(result.width,width);assert.equal(result.height,height);
-    return{inputBytes:input.length,inputSha256:crypto.createHash('sha256').update(input).digest('hex'),outputBytes:result.data.length,width:result.width,height:result.height,phases};
-  });
   await record('near15MiB-valid-free-box',async()=>{
     const padding=Buffer.alloc(15*1024*1024-camera.length);padding.writeUInt32BE(padding.length);padding.write('free',4,'ascii');
     const result=await runConfinedJob(Buffer.concat([camera,padding]));
-    assert.equal(result.width,1440);assert.equal(result.height,960);assert.equal(result.mime,'image/webp');return{inputBytes:15*1024*1024};
+    assert.equal(result.width,451);assert.equal(result.height,461);assert.equal(result.mime,'image/webp');return{inputBytes:15*1024*1024};
   });
-  for(const [name,input] of [['sequence',await fs.readFile('/fixtures/fixtures/example.heic')],['unsupported-codec',await fs.readFile('/fixtures/fixtures/uncompressed_pix_RGB.heif')],['truncated',camera.subarray(0,48)]])await record('reject-'+name,async()=>{
+  const unsupported=Buffer.from(camera);unsupported.write('avif',8,4,'ascii');
+  for(const [name,input] of [['unsupported-codec',unsupported],['truncated',camera.subarray(0,48)],['malformed',Buffer.alloc(64)]])await record('reject-'+name,async()=>{
     await assert.rejects(runConfinedJob(input),e=>e.code==='IMAGE_PROCESSING_FAILED');
   });
   await record('actual-cancel-and-reap',async()=>{

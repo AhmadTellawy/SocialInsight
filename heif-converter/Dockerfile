@@ -105,6 +105,7 @@ RUN HEIF_SHA="$(cat /tmp/heif-convert.sha256)" \
       "${HEIF_COMMIT}" "${DE265_COMMIT}" "${HEIF_SHA}" > /opt/heif-converter/native-versions.json \
     && chmod 0444 /opt/heif-converter/native-versions.json \
     && chmod 0444 /opt/heif-converter/self-test/*.base64 \
+    && rm /app/src/converter.js /app/src/processRunner.js \
     && rm /tmp/heif-convert.sha256 /tmp/libheif.commit /tmp/libde265.commit
 
 ENV NODE_ENV=production \
