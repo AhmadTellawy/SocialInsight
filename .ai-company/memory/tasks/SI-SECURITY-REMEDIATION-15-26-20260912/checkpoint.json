@@ -3,8 +3,8 @@
   "checkpoint_id": "SI-SECURITY-REMEDIATION-15-26-20260912:CP:3",
   "task_id": "SI-SECURITY-REMEDIATION-15-26-20260912",
   "task_version": 3,
-  "updated_at": "2026-09-13T01:53:59.331Z",
-  "repository_revision": {"commit": "2062cabd25ff8517db96bb5e297ae36706ff1eb1", "working_tree": "DIRTY"},
+  "updated_at": "2026-09-13T17:45:32.886Z",
+  "repository_revision": {"commit": "1f74f4213e8485b8d8ad913990533ec70e4f99c9", "working_tree": "DIRTY"},
   "implementation_snapshot": {"kind": "GIT_COMMIT", "value": "2062cabd25ff8517db96bb5e297ae36706ff1eb1", "captured_at": "2026-09-13T01:53:59.331Z"},
   "workflow": "security-remediation",
   "current_phase": "SECURITY_PRIVACY_VALIDATION",
@@ -17,7 +17,8 @@
     {"id": "WORK-002", "description": "Implemented authentication, authorization, privacy, media, abuse prevention, realtime, migration, dependency and operational hardening for audit points 15-26.", "owner": "A01", "completed_at": "2026-09-13T01:53:59.331Z", "evidence_refs": ["remediation-coverage.md", "validation-evidence.md"]},
     {"id": "WORK-003", "description": "Merged the current production fixes, resolved conflicts, and retained both production behavior and the security controls.", "owner": "D01", "completed_at": "2026-09-13T01:53:59.331Z", "evidence_refs": ["validation-evidence.md", "gate-status.md"]},
     {"id": "WORK-004", "description": "Completed local unit, build, browser, PostgreSQL integration, migration rehearsal, dependency audit and independent code review evidence.", "owner": "E02", "completed_at": "2026-09-13T01:53:59.331Z", "evidence_refs": ["validation-evidence.md", "gate-status.md"]},
-    {"id": "WORK-005", "description": "Added required production secret names and trusted proxy hop configuration to the existing Render service without deploying the blocked release.", "owner": "D08", "completed_at": "2026-09-13T01:53:59.331Z", "evidence_refs": ["validation-evidence.md", "release-blocker.md"]}
+    {"id": "WORK-005", "description": "Added required production secret names and trusted proxy hop configuration to the existing Render service without deploying the blocked release.", "owner": "D08", "completed_at": "2026-09-13T01:53:59.331Z", "evidence_refs": ["validation-evidence.md", "release-blocker.md"]},
+    {"id": "WORK-010", "description": "Published the isolated security remediation branch to the explicitly approved GitHub repository and verified the remote commit.", "owner": "F01", "completed_at": "2026-09-13T17:45:32.886Z", "evidence_refs": ["validation-evidence.md", "release-blocker.md"]}
   ],
   "modified_files": [
     "App.tsx", "components/ShareSheet.tsx", "docs/auth-production-runbook.md", "server/.env.example", "server/prisma/schema.prisma",

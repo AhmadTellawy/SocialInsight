@@ -3,6 +3,7 @@
 - Implementation snapshot: `2062cabd25ff8517db96bb5e297ae36706ff1eb1`
 - Original security base: `870ce07e0ba08bda913d67293ff4bf9c5efdd713`
 - Current production revision merged into the release: `689b64dfba705f29a2a635fa5abff937745dc4fb`
+- Published GitHub branch: `codex/security-remediation-release` at commit `1f74f4213e8485b8d8ad913990533ec70e4f99c9`
 - Environment: isolated Windows release worktree; local PostgreSQL 17.11 on `127.0.0.1:55447`; no production data used.
 
 | Check | Result | Evidence |
@@ -28,5 +29,6 @@ Operational notes:
 
 - Production Render now has the required secret names `AUTH_SESSION_HASH_SECRET`, `OTP_HASH_SECRET`, `OTP_CODE_PEPPER` and `TRUST_PROXY_HOPS=1` saved without deploying the blocked code. Secret values are not recorded.
 - Production Vercel and Render remain on `689b64dfba705f29a2a635fa5abff937745dc4fb`.
+- The GitHub remote branch was verified to match the local commit exactly after push.
 - The Vercel preview for this branch is deliberately disabled because its rewrites target the production Render backend.
 - Database timezone was set to UTC in the isolated rehearsal; production UTC verification remains a deployment preflight.
