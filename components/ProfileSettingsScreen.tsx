@@ -1,6 +1,7 @@
+import { useAppNavigation } from '../hooks/useAppNavigation';
 
 import React, { useState, useMemo } from 'react';
-import { useBlocker, useNavigate, useLocation } from 'react-router-dom';
+import { useBlocker, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, User, Mail, Globe, Lock, Eye, Search, Activity,
   Share2, Users, Bell, Palette, Shield, LifeBuoy, LogOut,
@@ -69,7 +70,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   onBack,
   onLogout
 }) => {
-  const navigate = useNavigate();
+  const { navigate, back } = useAppNavigation();
   const location = useLocation();
   const { t, i18n } = useTranslation();
   const subPageMatch = location.pathname.split('/settings/profile/')[1];
@@ -77,9 +78,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
 
   const setCurrentSubPage = (page: SubPage) => {
     if (page === 'main') {
-      // A global history length cannot prove that the previous entry belongs
-      // to Opiniup. Profile subpages always return to their known parent.
-      navigate('/settings/profile', { replace: true });
+      back('/settings/profile');
     } else {
       navigate(`/settings/profile/${page}`);
     }
@@ -587,7 +586,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   if (currentSubPage === 'links') {
     return (
       <ProfileLinksManager
-        onBack={() => navigate('/settings/profile/edit-profile', { replace: true })}
+        onBack={() => back('/settings/profile/edit-profile')}
         onLinksChange={(links) => {
           setLinkCount(links.length);
           setProfileForm((current) => ({ ...current, profileLinks: links }));

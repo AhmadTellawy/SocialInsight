@@ -126,6 +126,7 @@ export const PostAnalysis: React.FC<PostAnalysisProps> = ({ survey, isAccessDeni
 
   const [resultsData, setResultsData] = useState<any[]>([]);
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(true);
+  const [resultsFailed, setResultsFailed] = useState(false);
 
   // Fetch real data on mount
   useEffect(() => {
@@ -136,13 +137,18 @@ export const PostAnalysis: React.FC<PostAnalysisProps> = ({ survey, isAccessDeni
     }
 
     const controller = new AbortController();
+    setResultsData([]);
+    setResultsFailed(false);
     const loadData = async () => {
       try {
         setIsLoadingAnalysis(true);
         const data = await api.getPostResults(sourceSurvey.id, controller.signal);
-        setResultsData(data);
+        if (!controller.signal.aborted) setResultsData(data);
       } catch (err: any) {
-        if (err?.name !== 'AbortError') console.error("Failed to load post results:", err);
+        if (!controller.signal.aborted) {
+          setResultsData([]);
+          setResultsFailed(true);
+        }
       } finally {
         if (!controller.signal.aborted) setIsLoadingAnalysis(false);
       }
@@ -325,8 +331,13 @@ export const PostAnalysis: React.FC<PostAnalysisProps> = ({ survey, isAccessDeni
     setHighlightedOptionId(segment.optionId);
   };
 
-  const handleShareAnalysis = () => {
-    setShowToast("Analysis link copied to clipboard");
+  const handleShareAnalysis = async () => {
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/post/${encodeURIComponent(survey.id)}?tab=analysis`);
+      setShowToast("Analysis link copied to clipboard");
+    } catch {
+      setShowToast("Could not copy the link. Please try again.");
+    }
     setTimeout(() => setShowToast(null), 2500);
   };
 
@@ -365,7 +376,7 @@ export const PostAnalysis: React.FC<PostAnalysisProps> = ({ survey, isAccessDeni
   const TypeIcon = typeConfig.icon;
   const VisibilityIcon = sourceSurvey.resultsVisibility === 'Private' ? Lock : Globe;
 
-  if (isAccessDenied) {
+  if (isAccessDenied || resultsFailed) {
     return (
       <div className="flex flex-col h-full bg-white animate-in zoom-in-95 duration-500 items-center justify-center p-6 text-center select-none">
         <div className="w-24 h-24 bg-gray-50 rounded-full flex items-center justify-center mb-6 border border-gray-100 shadow-inner">

@@ -1,3 +1,5 @@
+import { useLocation } from 'react-router-dom';
+import { useAppNavigation } from '../hooks/useAppNavigation';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Settings, Users, Grid, CheckCircle2, MoreHorizontal, MapPin, Link as LinkIcon, Edit3, UserPlus, Shield, ExternalLink, ArrowLeft, Mail, FileText, PieChart, Building2, Globe as GlobeIcon, Plus, ChevronRight, Search, X, UserCircle2, Zap, Info, Lock, BarChart3, TrendingUp, Bookmark, PenTool, Activity, Repeat, Image as ImageIcon, Camera, Trash2, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -90,10 +92,16 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 }) => {
   const { t } = useTranslation();
   const [activeStatSheet, setActiveStatSheet] = useState<'following' | 'followers' | 'posts' | null>(null);
-  const [showProfileAnalysis, setShowProfileAnalysis] = useState(false);
+  const location = useLocation();
+  const { back, setQuery } = useAppNavigation();
+  const query = new URLSearchParams(location.search);
+  const showProfileAnalysis = query.get('view') === 'analysis';
+  const setShowProfileAnalysis = (show: boolean) => setQuery('view', show ? 'analysis' : null);
   const [statSearch, setStatSearch] = useState('');
   const [postFilter, setPostFilter] = useState<'All' | SurveyType>('All');
-  const [activeTab, setActiveTab] = useState<ProfileTab>('content');
+  const requestedTab = query.get('tab');
+  const activeTab: ProfileTab = ['reposts', 'groups', 'drafts', 'saved'].includes(requestedTab || '') ? requestedTab as ProfileTab : 'content';
+  const setActiveTab = (tab: ProfileTab) => setQuery('tab', tab === 'content' ? null : tab);
   const [isFollowLoading, setIsFollowLoading] = useState(false);
   const [targetUser, setTargetUser] = useState<UserProfile | null>(null);
   const [showLinksSheet, setShowLinksSheet] = useState(false);
@@ -528,7 +536,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
   useEffect(() => {
     if (showProfileAnalysis && !canViewPrivateProfileContent) {
-      setShowProfileAnalysis(false);
+      setQuery('view', null, true);
     }
   }, [showProfileAnalysis, canViewPrivateProfileContent]);
 
@@ -851,6 +859,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   };
 
   const renderTabContent = () => {
+    if ((activeTab === 'drafts' || activeTab === 'saved') && !isMe) return renderPrivateProfileState();
     switch (activeTab as any) {
       case 'content':
         if (!canViewPrivateProfileContent) {
@@ -1079,7 +1088,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   };
 
   if (showProfileAnalysis && canViewPrivateProfileContent) {
-    return <ProfileAnalysis userProfile={profileUser} onBack={() => setShowProfileAnalysis(false)} />;
+    return <ProfileAnalysis userProfile={profileUser} onBack={() => { const parentQuery = new URLSearchParams(location.search); parentQuery.delete('view'); back(location.pathname + (parentQuery.size ? '?' + parentQuery.toString() : '')); }} />;
   }
 
   if (isLoading) {

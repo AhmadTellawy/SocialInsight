@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
+import { useAppNavigation } from '../hooks/useAppNavigation';
 import { useTranslation } from 'react-i18next';
 import { 
   Search, X, Clock, TrendingUp, ChevronRight, User, Users, 
@@ -66,9 +68,16 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
   const navigate = useNavigate();
   const isRtl = ['ar', 'ur'].includes(i18n.language?.split('-')[0]);
 
-  const [query, setQuery] = useState('');
+  const location = useLocation();
+  const { setQuery: setRouteQuery } = useAppNavigation();
+  const routeQuery = new URLSearchParams(location.search);
+  const query = routeQuery.get('q') || '';
+  const setQuery = (value: string) => setRouteQuery('q', value || null, true);
   const [debouncedQuery, setDebouncedQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState<'All' | 'Topics' | 'Surveys' | 'Polls' | 'Groups' | 'Categories' | 'People'>('All');
+  type SearchFilter = 'All' | 'Topics' | 'Surveys' | 'Polls' | 'Groups' | 'Categories' | 'People';
+  const requestedFilter = routeQuery.get('filter');
+  const activeFilter: SearchFilter = ['Topics', 'Surveys', 'Polls', 'Groups', 'Categories', 'People'].includes(requestedFilter || '') ? requestedFilter as SearchFilter : 'All';
+  const setActiveFilter = (value: SearchFilter) => setRouteQuery('filter', value === 'All' ? null : value);
   const [isLoading, setIsLoading] = useState(false);
   const [trendingTopics, setTrendingTopics] = useState<any[]>(readCachedTrendingTopics);
 

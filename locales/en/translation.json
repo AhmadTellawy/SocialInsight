@@ -1,4 +1,5 @@
 {
+  "navigation": { "notFound": "Page not found", "analysisUnavailable": "Analysis unavailable" },
   "postSharing": {
     "menuTitle": "Share post",
     "toFeed": "Share to your feed",
