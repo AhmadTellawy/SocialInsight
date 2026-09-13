@@ -39,11 +39,10 @@ async function install(page: Page, s: State, language: 'ar' | 'en', baseURL: str
   if (!['127.0.0.1', 'localhost'].includes(new URL(origin).hostname)) throw new Error('Only isolated localhost is supported');
   await page.addInitScript(({ profile, language }) => {
     localStorage.clear();
-    localStorage.setItem('si_token', 'synthetic-isolated-post-options-token');
     localStorage.setItem('si_user', JSON.stringify(profile));
     localStorage.setItem('i18nextLng', language);
     Object.defineProperty(navigator, 'share', { configurable: true, value: undefined });
-  }, { profile: user(s.actor), language });
+  }, { profile: { ...user(s.actor), language }, language });
   await page.routeWebSocket('**/*', socket => socket.close());
   await page.route('**/*', async route => {
     const req = route.request(); const url = new URL(req.url()); const path = url.pathname; const method = req.method();
@@ -62,8 +61,13 @@ async function install(page: Page, s: State, language: 'ar' | 'en', baseURL: str
     const body = req.postData() ? (() => { try { return req.postDataJSON(); } catch { return null; } })() : null;
     s.calls.push({ method, path, body });
     if (path.startsWith('/socket.io/')) return route.abort('blockedbyclient');
-    if (method === 'GET' && path === '/api/users/me') return json(route, user(s.actor));
-    if (method === 'GET' && [OWNER, VIEWER].some(id => path === `/api/users/${id}`)) return json(route, user(path.split('/').at(-1)!));
+    if (method === 'GET' && path === '/api/auth/session') {
+      return json(route, { user: { ...user(s.actor), language }, csrfToken: 'synthetic-csrf-token-at-least-16' });
+    }
+    if (method === 'GET' && path === '/api/users/me') return json(route, { ...user(s.actor), language });
+    if (method === 'GET' && [OWNER, VIEWER].some(id => path === `/api/users/${id}`)) {
+      return json(route, { ...user(path.split('/').at(-1)!), language });
+    }
     if (method === 'GET' && path === '/api/posts') return json(route, { data: s.deleted || s.hidden ? [] : [post(s)], nextCursor: null });
     if (method === 'GET' && path === `/api/posts/${POST}`) return json(route, post(s));
     if (method === 'GET' && path === `/api/users/${OWNER}/follow-status`) {
