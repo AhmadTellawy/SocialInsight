@@ -16,19 +16,24 @@ export const post = { id: 'navigation-post', title: 'Navigation fixture poll', t
   options: [{ id: 'option-a', text: 'Choice A', votes: 0 }, { id: 'option-b', text: 'Choice B', votes: 0 }] };
 export const otherProfile = { ...profile, id: 'other-navigation-user', handle: 'other_navigation_user', name: 'Other Navigation Fixture', isPrivate: false, isFollowing: false, followStatus: 'NONE' };
 export const privateProfile = { ...otherProfile, id: 'private-navigation-user', handle: 'private_navigation_user', name: 'Private Navigation Fixture', isPrivate: true };
-type State = { calls: string[]; unexpected: string[]; errors: string[]; denyGroupMembers?: boolean; holdProfile?: Promise<void>; profileRequested?: () => void };
+type State = { calls: string[]; unexpected: string[]; errors: string[]; guest?: boolean; notifications?: Array<Record<string, unknown>>; denyGroupMembers?: boolean; holdProfile?: Promise<void>; profileRequested?: () => void };
 const json = (r: Route, value: unknown, status = 200) => r.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
 
 async function install(page: Page, state: State, baseURL: string, language: 'ar' | 'en') {
   const origin = new URL(baseURL).origin;
   if (!['localhost', '127.0.0.1'].includes(new URL(origin).hostname)) throw new Error('Navigation tests require isolated localhost');
   page.on('pageerror', error => state.errors.push(error.message));
-  await page.addInitScript(({ profile, language }) => {
-    localStorage.setItem('si_user', JSON.stringify({ ...profile, language }));
-    localStorage.setItem('si_token', 'synthetic-navigation-token');
+  await page.addInitScript(({ profile, language, guest }) => {
+    if (guest) {
+      localStorage.removeItem('si_user');
+      localStorage.removeItem('si_token');
+    } else {
+      localStorage.setItem('si_user', JSON.stringify({ ...profile, language }));
+      localStorage.setItem('si_token', 'synthetic-navigation-token');
+    }
     localStorage.setItem('i18nextLng', language);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { (window as any).__copiedNavigationUrl = text; } } });
-  }, { profile, language });
+  }, { profile, language, guest: state.guest === true });
   await page.routeWebSocket('**/*', socket => socket.close());
   await page.route('**/*', async r => {
     const request = r.request(), url = new URL(request.url()), p = url.pathname, method = request.method();
@@ -45,6 +50,9 @@ async function install(page: Page, state: State, baseURL: string, language: 'ar'
     state.calls.push(`${method} ${p}`);
     if (method === 'POST' && (p === '/api/analytics/interactions/batch' || p.endsWith('/views') || p.endsWith('/notifications/read'))) return json(r, { success: true });
     if (method === 'GET') {
+      if (p === `/api/users/${profile.id}/notifications`) return json(r, state.notifications || []);
+      if (p === '/api/hashtags/navigation/posts') return json(r, { topic: { displayName: 'navigation', postCount: 1 }, data: [post], nextCursor: null });
+      if (p === '/api/users/me' && state.guest) return json(r, { error: 'Authentication required' }, 401);
       for (const target of [otherProfile, privateProfile]) {
         if (p === `/api/users/${target.id}` || p === `/api/users/handle/${target.handle}`) return json(r, target);
       }

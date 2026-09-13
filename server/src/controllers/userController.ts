@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { PeopleTagPermission, Prisma } from '@prisma/client';
 import prisma from '../prisma';
 import { PrivacyService } from '../services/privacyService';
+import { getProfileAnalytics } from '../services/profileAnalyticsAccess';
 import { notify } from '../services/notificationService';
 import { processBase64Image } from '../utils/imageProcessor';
 import { GroupPermissionService } from '../services/groupPermissionService';
@@ -616,72 +617,17 @@ export const updateUser = async (req: Request, res: Response) => {
 export const getUserAnalytics = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const currentUserId = req.user?.userId;
+    if (!currentUserId) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+    }
     try {
-        if (currentUserId) {
-            const canView = await PrivacyService.canViewUserContent(currentUserId, id);
-            if (!canView) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-        } else if (id !== currentUserId) { // No auth provided and they are not the same
-            const targetUser = await prisma.user.findUnique({ where: { id }, select: { isPrivate: true } });
-            if (targetUser?.isPrivate) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
+        const analytics = await getProfileAnalytics(id, currentUserId);
+        if (!analytics) {
+            res.status(403).json({ error: 'Forbidden' });
+            return;
         }
-        const rows = await prisma.$queryRaw<Array<{
-            type: string | null;
-            country: string | null;
-            gender: string | null;
-            ageGroup: string | null;
-            count: bigint;
-        }>>(Prisma.sql`
-            SELECT
-                post."type",
-                viewer."country",
-                demographics."gender",
-                CASE
-                    WHEN viewer."birthday" IS NULL THEN NULL
-                    WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) < 18 THEN 'Under 18'
-                    WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) <= 24 THEN '18-24'
-                    WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) <= 34 THEN '25-34'
-                    WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) <= 44 THEN '35-44'
-                    WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) <= 54 THEN '45-54'
-                    ELSE '55+'
-                END AS "ageGroup",
-                COUNT(*)::bigint AS "count"
-            FROM "Response" response
-            INNER JOIN "Post" post ON post."id" = response."postId"
-            LEFT JOIN "users" viewer ON viewer."id" = response."userId"
-            LEFT JOIN "user_demographics" demographics ON demographics."user_id" = viewer."id"
-            WHERE post."authorId" = ${id}
-              AND post."isDeleted" = FALSE
-              AND post."status" = 'PUBLISHED'
-              AND post."sharedFromId" IS NULL
-            GROUP BY 1, 2, 3, 4
-        `);
-
-        let totalResponses = 0;
-        const byType: Record<string, number> = {};
-        const byCountry: Record<string, number> = {};
-        const byGender: Record<string, number> = {};
-        const byAge: Record<string, number> = {};
-
-        ['Poll', 'Survey', 'Quiz', 'Challenge'].forEach(k => byType[k] = 0);
-        ['Male', 'Female'].forEach(k => byGender[k] = 0);
-
-        rows.forEach(row => {
-            const count = Number(row.count);
-            const type = row.type || 'Survey';
-            totalResponses += count;
-            byType[type] = (byType[type] || 0) + count;
-            if (row.country) byCountry[row.country] = (byCountry[row.country] || 0) + count;
-            if (row.gender) byGender[row.gender] = (byGender[row.gender] || 0) + count;
-            if (row.ageGroup) byAge[row.ageGroup] = (byAge[row.ageGroup] || 0) + count;
-        });
-
-        res.json({ totalResponses, byType, byCountry, byGender, byAge });
+        res.json(analytics);
     } catch (error) {
         logUserRequestFailure(req, 'profile_analytics_read_failed', error);
         res.status(500).json({ error: 'Failed to fetch analytics' });
