@@ -1,3 +1,5 @@
+import { PostSaveStatus } from './PostSaveStatus';
+import { usePostSaveFeedback } from '../hooks/usePostSaveFeedback';
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { X, Image as ImageIcon, Plus, Trash2, Globe, Users, AlertCircle, Clock, Calendar, ChevronDown, List, Info, Lock, Camera, Save, BarChart3, Check, ChevronRight, UserCircle, Target, Link2, GalleryHorizontalEnd, Settings2, Star, MoreHorizontal, ArrowUp, ArrowDown, MessageSquare, ArrowLeft, Tag } from 'lucide-react';
@@ -79,8 +81,9 @@ const createRatingOptions = (): PollDraftOption[] => [5, 4, 3, 2, 1].map((rating
   followUpLabel: ''
 }));
 
-export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onSubmit, onSaveDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
+export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onSubmit: persistPost, onSaveDraft: persistDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
   const { t } = useTranslation();
+  const { error: submissionError, isSaving, onSubmit, onSaveDraft } = usePostSaveFeedback(persistPost, persistDraft, t);
   const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
   const [selectedGroups, setSelectedGroups] = useState<string[]>(initialGroupId ? [initialGroupId] : []);
   const [isCategorySheetOpen, setIsCategorySheetOpen] = useState(false);
@@ -92,6 +95,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   const [advancedSheetView, setAdvancedSheetView] = useState<'main' | 'results'>('main');
 
   const handleExit = () => {
+    if (isSaving) return;
     // Check if there are any changes to prompt for save
     if (title.trim() || options.some(o => o.text.trim()) || postMedia.length > 0 || legacyCoverImage) {
       setShowExitConfirm(true);
@@ -170,8 +174,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
           await cancelTemporaryMediaDrafts(options.flatMap((option) => option.mediaDrafts));
         }
       } catch (error) {
+        setShowExitConfirm(false);
         console.error('Failed to save draft:', error);
-        alert('Failed to save draft. Please try again.');
         return;
       }
     }
@@ -490,7 +494,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   };
 
   const handleSubmit = async () => {
-    if (isSubmitting) return;
+    if (isSaving || isSubmitting) return;
     if (!userProfile?.id) {
       alert('Please log in to create a post');
       return;
@@ -537,7 +541,6 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
       onClose();
     } catch (error) {
       console.error('Error in handleSubmit:', error);
-      alert('Failed to create post. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -555,7 +558,10 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   };
 
   return (
-    <div className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-right duration-350">
+    <>
+      <PostSaveStatus active={isSaving || isSubmitting} label={t('postOptions.saving')} />
+      <div data-post-editor inert={isSaving || isSubmitting} aria-busy={isSaving || isSubmitting} className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-right duration-350">
+      {submissionError && <p role="alert" className="shrink-0 border-b border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">{submissionError}</p>}
       {/* Simplified Clean Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white/95 backdrop-blur-md sticky top-0 z-40 safe-top shrink-0">
         <button aria-label={composerStep === 2 ? 'Back' : 'Close'} onClick={() => { if (composerStep === 2) { setComposerStep(1); setHasAttemptedSubmit(false); scrollContainerRef.current?.scrollTo({ top: 0 }); } else handleExit(); }} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">
@@ -564,8 +570,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
         <div className="text-center"><h1 className="text-[12px] font-bold text-gray-800">New Poll</h1><p className="text-xs text-gray-500">Step {composerStep} of 2</p></div>
         <button
           onClick={() => composerStep === 1 ? handleNext() : handleSubmit()}
-          disabled={isSubmitting}
-          aria-disabled={isSubmitting}
+          disabled={isSaving || isSubmitting}
+          aria-disabled={isSaving || isSubmitting}
           className={`text-white font-bold text-[12px] px-5 py-2.5 rounded-full transition-all uppercase tracking-widest ${
             !isSubmitting
               ? 'bg-blue-600 hover:bg-blue-700 shadow-md active:scale-95 shadow-blue-200/50'
@@ -1338,13 +1344,14 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
             <h3 className="text-lg font-bold text-gray-900 mb-2">Discard changes?</h3>
             <p className="text-sm text-gray-500 mb-6 leading-relaxed">You have unsaved work. If you exit now, your changes will be lost.</p>
             <div className="flex flex-col gap-2">
-              <button onClick={handleDiscard} className="w-full py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-colors">Discard and Exit</button>
-              <button onClick={handleSaveDraft} className="w-full py-3 bg-blue-50 text-blue-600 rounded-xl font-bold text-sm hover:bg-blue-100 transition-colors">Save as Draft</button>
-              <button onClick={() => setShowExitConfirm(false)} className="w-full py-3 bg-gray-100 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-200 transition-colors">Keep Editing</button>
+              <button onClick={handleDiscard} disabled={isSaving || isSubmitting} className="w-full py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-colors">Discard and Exit</button>
+              <button onClick={handleSaveDraft} disabled={isSaving || isSubmitting} className="w-full py-3 bg-blue-50 text-blue-600 rounded-xl font-bold text-sm hover:bg-blue-100 transition-colors">Save as Draft</button>
+              <button onClick={() => setShowExitConfirm(false)} disabled={isSaving || isSubmitting} className="w-full py-3 bg-gray-100 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-200 transition-colors">Keep Editing</button>
             </div>
           </div>
         </div>
       )}
     </div>
+    </>
   );
 };

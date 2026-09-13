@@ -180,6 +180,10 @@ const App: React.FC = () => {
   };
 
   const handleCloseModal = () => {
+    setEditingDraft(null);
+    setActiveCreationFlow(null);
+    setActiveCreationGroupId(null);
+    setIsNavVisible(true);
     if (window.history.state && window.history.state.idx > 0) {
       navigate(-1);
     } else {
@@ -293,6 +297,9 @@ const App: React.FC = () => {
   const [editingDraft, setEditingDraft] = useState<Survey | null>(null);
   const [accountModalType, setAccountModalType] = useState<'group' | 'company' | null>(null);
   const [editRestrictionState, setEditRestrictionState] = useState<{isOpen: boolean, surveyId?: string, isConfirming?: boolean}>({isOpen: false});
+  const [restrictedDeleteError, setRestrictedDeleteError] = useState<string | null>(null);
+  const [isRestrictedDeleting, setIsRestrictedDeleting] = useState(false);
+  const restrictedDeleteLock = useRef(false);
 
 
 
@@ -1194,6 +1201,7 @@ const App: React.FC = () => {
   };
 
   const handleFollowChange = (targetUserId: string, isFollowing: boolean) => {
+    if (!userProfile?.id || userProfileIdRef.current !== userProfile.id) return;
     setSurveys(prev => prev.map(s => {
       if (s.author.id === targetUserId) {
         return { ...s, author: { ...s.author, isFollowing } };
@@ -1210,18 +1218,20 @@ const App: React.FC = () => {
   React.useEffect(() => {
     const handleGlobalFollowSync = (e: Event) => {
       const customEvent = e as CustomEvent<any>;
-      const { targetUserId, isFollowing } = customEvent.detail;
+      const { targetUserId, isFollowing, viewerId } = customEvent.detail || {};
+      if (!userProfile?.id || viewerId !== userProfile.id) return;
       handleFollowChange(targetUserId, isFollowing);
     };
 
     window.addEventListener('onFollowStateChange', handleGlobalFollowSync);
     return () => window.removeEventListener('onFollowStateChange', handleGlobalFollowSync);
-  }, [selectedProfile]);
+  }, [selectedProfile, userProfile?.id]);
 
   React.useEffect(() => {
     const handleEditRestricted = (e: Event) => {
       const customEvent = e as CustomEvent<any>;
       if (customEvent.detail && customEvent.detail.surveyId) {
+        setRestrictedDeleteError(null);
         setEditRestrictionState({ isOpen: true, surveyId: customEvent.detail.surveyId });
       }
     };
@@ -1229,123 +1239,47 @@ const App: React.FC = () => {
     return () => window.removeEventListener('onEditRestricted', handleEditRestricted);
   }, []);
 
+  // Keep the editor and the confirmed feed intact until the server accepts the save.
+  const postSaveInFlight = useRef(false);
   const handleCreateSubmit = async (newSurveyData: Partial<Survey>) => {
-    if (!userProfile || !userProfile.id) {
-      console.error("No user profile available");
-      alert("Please log in to create a post");
-      return;
-    }
-
-    // Reset UI state first to prevent white screen
-    if (!activeCreationGroupId) {
-      setActiveTab('home');
-    }
-    setActiveCreationFlow(null);
-    setActiveCreationGroupId(null);
-    setEditingDraft(null);
-    setIsNavVisible(true);
-
+    if (!userProfile?.id) throw new Error(t('postOptions.loginRequired'));
+    if (postSaveInFlight.current) throw new Error(t('postOptions.saving'));
+    postSaveInFlight.current = true;
     try {
-      let resultSurvey: Survey;
-      const targetId = newSurveyData.id || (editingDraft ? editingDraft.id : undefined);
-
-      // Determine final status
+      const targetId = newSurveyData.id || editingDraft?.id;
       const status = newSurveyData.status || (newSurveyData.isDraft ? 'DRAFT' : 'PUBLISHED');
-
-      // Strict Enforcement: Reject edit if > 5 minutes
-      if (targetId && status === 'PUBLISHED') {
-        const createdAtTime = newSurveyData.createdAt || editingDraft?.createdAt;
-        if (createdAtTime) {
-          const createdAt = new Date(createdAtTime).getTime();
-          const now = Date.now();
-          const diffInMinutes = (now - createdAt) / (1000 * 60);
-          
-          if (diffInMinutes > 5) {
-            setEditRestrictionState({ isOpen: true, surveyId: targetId });
-            return;
-          }
-        }
-      }
-      console.log(`Determined status: ${status}, targetId: ${targetId}`);
-
-      // Optimistic Update only for Published posts
-      const tempId = targetId || `temp-${Date.now()}`;
-      if (status === 'PUBLISHED') {
-        try {
-          const optimisticSurvey = normalizeSurvey({
-            id: tempId,
-            clientKey: tempId,
-            createdAt: new Date().toISOString(),
-            ...newSurveyData,
-            status: 'PUBLISHED'
-          }, userProfile);
-
-          if (!targetId) {
-            setSurveys(prev => [optimisticSurvey, ...prev]);
-            setProfileSurveys(prev => [optimisticSurvey, ...prev]);
-          } else {
-            setSurveys(prev => [optimisticSurvey, ...prev.filter(s => s.id !== targetId)]);
-            setProfileSurveys(prev => [optimisticSurvey, ...prev.filter(s => s.id !== targetId)]);
-          }
-
-          setTimeout(() => {
-            pullToRefreshRef.current?.scrollToTop();
-          }, 100);
-        } catch (optError) {
-          console.error("Error with optimistic update:", optError);
-          // If optimistic update fails, we will rely on the API response only
-        }
-      }
-
-      // API Call
-      try {
-        if (targetId) {
-          resultSurvey = await api.updatePost(targetId, {
-            groupId: activeCreationGroupId || undefined,
-            ...newSurveyData,
-            status: status,
-            authorId: userProfile.id
-          });
-        } else {
-          resultSurvey = await api.createSurvey({
-            groupId: activeCreationGroupId || undefined,
-            ...newSurveyData,
-            status: status,
-            authorId: userProfile.id
-          });
-        }
-
-        // Replace optimistic entry or update feed
-        if (resultSurvey && status === 'PUBLISHED') {
-          const normalizedResult = normalizeSurvey(resultSurvey, userProfile);
-          setSurveys(prev => prev.map(s => s.id === tempId ? { ...normalizedResult, clientKey: s.clientKey } : s));
-          setProfileSurveys(prev => prev.map(s => s.id === tempId ? { ...normalizedResult, clientKey: s.clientKey } : s));
-        } else if (targetId && status === 'DRAFT') {
-          setSurveys(prev => prev.filter(s => s.id !== targetId));
-        }
-      } catch (apiError) {
-        // Rollback optimistic update on failure only if it's a new temporary post
-        if (!targetId) {
-          setSurveys(prev => prev.filter(s => s.id !== tempId));
-        }
-        throw apiError;
-      }
+      const payload = {
+        groupId: activeCreationGroupId || undefined,
+        ...newSurveyData,
+        status,
+        authorId: userProfile.id
+      };
+      const result = targetId
+        ? await api.updatePost(targetId, payload)
+        : await api.createSurvey(payload);
+      const saved = normalizeSurvey(result, userProfile);
+      const reconcile = (posts: Survey[]) => {
+        if (saved.status !== 'PUBLISHED') return posts.filter(post => post.id !== saved.id);
+        const existing = posts.find(post => post.id === saved.id);
+        return existing
+          ? posts.map(post => post.id === saved.id ? { ...saved, clientKey: post.clientKey } : post)
+          : [saved, ...posts];
+      };
+      setSurveys(reconcile);
+      setProfileSurveys(reconcile);
+      if (selectedSurveyId === saved.id) setDetailSurvey(saved.status === 'PUBLISHED' ? saved : null);
     } catch (error) {
-      console.error("Failed to create/publish survey:", error);
       if (error instanceof ApiError && error.code === 'MENTION_LIMIT_EXCEEDED') {
-        alert(t('mentions.limitExceeded', { limit: error.details?.limit }));
-      } else {
-        alert("Something went wrong. Please check your connection.");
+        throw new Error(t('mentions.limitExceeded', { limit: error.details?.limit }));
       }
+      throw new Error(t('postOptions.publishFailed'));
+    } finally {
+      postSaveInFlight.current = false;
     }
   };
 
-  const handleShareToFeed = async (originalSurvey: Survey, caption: string) => {
-    if (!userProfile) {
-      console.error("No user profile available");
-      alert("Please log in to share");
-      return;
-    }
+  const handleShareToFeed = async (originalSurvey: Survey, caption: string): Promise<'shared' | 'unshared'> => {
+    if (!userProfile) throw new Error(t('postOptions.loginRequired'));
 
     try {
       // 1. Save to DB
@@ -1361,7 +1295,7 @@ const App: React.FC = () => {
           }
           return s;
         }));
-        return;
+        return 'unshared';
       }
 
       // 2. Normalize with current user perspective
@@ -1388,9 +1322,10 @@ const App: React.FC = () => {
       setTimeout(() => {
         pullToRefreshRef.current?.scrollToTop();
       }, 100);
+      return 'shared';
     } catch (error) {
       console.error("Failed to share post:", error);
-      alert("Failed to share post. Please try again.");
+      throw error;
     }
   };
 
@@ -1414,40 +1349,20 @@ const App: React.FC = () => {
 
 
   const handleSaveDraft = async (draftData: Partial<Survey>) => {
-    if (!userProfile) {
-      console.error("No user profile available");
-      alert("Please log in to save a draft");
-      return;
-    }
-
+    if (!userProfile?.id) throw new Error(t('postOptions.loginRequired'));
+    if (postSaveInFlight.current) throw new Error(t('postOptions.saving'));
+    postSaveInFlight.current = true;
     try {
-      // Ensure status is DRAFT regardless of what's in draftData
-      const finalData = {
-        ...draftData,
-        status: 'DRAFT',
-        authorId: userProfile?.id
-      };
-
-      if (editingDraft || draftData.id) {
-        const id = (editingDraft?.id || draftData.id)!;
-        await api.updatePost(id, finalData);
-      } else {
-        await api.createSurvey(finalData);
-      }
-
-      // Explicitly remove from feed surveys if it was being edited from a published one (shouldn't happen but just in case)
-      if (editingDraft?.id || draftData.id) {
-        const id = editingDraft?.id || draftData.id;
-        setSurveys(prev => prev.filter(s => s.id !== id));
-      }
-
-      setActiveCreationFlow(null);
-      setActiveCreationGroupId(null);
-      setEditingDraft(null);
-      setIsNavVisible(true);
+      const id = editingDraft?.id || draftData.id;
+      const payload = { ...draftData, status: 'DRAFT', authorId: userProfile.id };
+      const saved = id ? await api.updatePost(id, payload) : await api.createSurvey(payload);
+      setSurveys(posts => posts.filter(post => post.id !== saved.id));
+      setProfileSurveys(posts => posts.filter(post => post.id !== saved.id));
+      if (selectedSurveyId === saved.id) setDetailSurvey(null);
     } catch (error) {
-      console.error("Failed to save draft:", error);
-      alert("Failed to save draft. Please check your connection.");
+      throw new Error(t('postOptions.draftFailed'));
+    } finally {
+      postSaveInFlight.current = false;
     }
   };
 
@@ -2084,6 +1999,7 @@ const App: React.FC = () => {
                 onSurveyProgress={handleSurveyProgress}
                 onSettingsClick={() => navigate(`/group/${activeGroup.id}/settings`)}
                 onCreatePost={(type) => {
+                  setEditingDraft(null);
                   setActiveCreationGroupId(activeGroup.id);
                   const routes = {
                     Poll: '/create/poll',
@@ -2277,7 +2193,7 @@ const App: React.FC = () => {
           )}
 
           {activeCreationFlow === 'challenge' && (
-            <CreateChallengeScreen onClose={handleCloseModal} onSubmit={handleCreateSubmit} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
+            <CreateChallengeScreen onClose={handleCloseModal} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
           )}
 
           {accountModalType !== null && (
@@ -2286,69 +2202,49 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      <BottomSheet isOpen={editRestrictionState.isOpen} onClose={() => {
-        setEditRestrictionState({ isOpen: false });
-        setActiveTab('home');
-        navigate('/');
+      <BottomSheet isOpen={editRestrictionState.isOpen} dismissDisabled={isRestrictedDeleting} onClose={() => {
+        if (!restrictedDeleteLock.current) setEditRestrictionState({ isOpen: false });
       }} title={t('Editing Disabled')}>
         <div className="p-4 space-y-4">
+          {restrictedDeleteError && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{restrictedDeleteError}</p>}
           {editRestrictionState.isConfirming ? (
             <div className="text-center space-y-4">
-              <div className="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto mb-2 shadow-sm border border-red-100">
-                <Trash2 size={32} strokeWidth={1.5} />
-              </div>
-              <h3 className="text-xl font-black text-gray-900 mb-2">Delete Post</h3>
-              <p className="text-sm text-gray-500 leading-relaxed max-w-xs mx-auto">
-                Are you sure you want to delete this post? This action cannot be undone.
-              </p>
+              <h3 className="text-xl font-bold text-gray-900">{t('postOptions.deleteConfirmTitle')}</h3>
+              <p className="text-sm text-gray-500">{t('postOptions.deleteConfirmMessage')}</p>
               <div className="flex gap-3 pt-2">
-                <button
+                <button disabled={isRestrictedDeleting}
                   onClick={async () => {
                     const sid = editRestrictionState.surveyId;
-                    if (sid && userProfile?.id) {
-                      try {
-                        const result = await api.deletePost(sid);
-                        handlePostDeleted(sid, result.deletedPostIds);
-                      } catch (e) {
-                        console.error("Failed to delete post:", e);
-                      }
+                    if (!sid || restrictedDeleteLock.current) return;
+                    restrictedDeleteLock.current = true;
+                    setIsRestrictedDeleting(true);
+                    setRestrictedDeleteError(null);
+                    try {
+                      const result = await api.deletePost(sid);
+                      handlePostDeleted(sid, result.deletedPostIds);
+                      setEditRestrictionState({ isOpen: false });
+                    } catch {
+                      setRestrictedDeleteError(t('postOptions.deleteFailed'));
+                    } finally {
+                      restrictedDeleteLock.current = false;
+                      setIsRestrictedDeleting(false);
                     }
-                    setEditRestrictionState({ isOpen: false });
-                    setActiveTab('home');
-                    navigate('/');
                   }}
-                  className="flex-1 bg-red-600 text-white p-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg shadow-red-600/20 active:scale-95 transition-all"
-                >
-                  Confirm Delete
-                </button>
-                <button
-                  onClick={() => setEditRestrictionState(prev => ({ ...prev, isConfirming: false }))}
-                  className="flex-1 bg-gray-100 text-gray-700 p-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-gray-200 active:scale-95 transition-all"
-                >
-                  Cancel
-                </button>
+                  className="flex-1 bg-red-600 text-white p-4 rounded-2xl font-bold text-sm disabled:opacity-50"
+                >{isRestrictedDeleting ? t('postOptions.deleting') : t('postOptions.confirmDelete')}</button>
+                <button disabled={isRestrictedDeleting} onClick={() => { setRestrictedDeleteError(null); setEditRestrictionState(prev => ({ ...prev, isConfirming: false })); }}
+                  className="flex-1 bg-gray-100 text-gray-700 p-4 rounded-2xl font-bold text-sm disabled:opacity-50"
+                >{t('postOptions.cancel')}</button>
               </div>
             </div>
           ) : (
             <>
               <p className="text-sm text-gray-600 whitespace-pre-wrap">{t('Edit Restricted Message')}</p>
               <div className="flex gap-3 pt-2">
-                <button
-                  onClick={() => setEditRestrictionState(prev => ({ ...prev, isConfirming: true }))}
-                  className="flex-1 bg-red-600 text-white p-3 rounded-xl font-bold shadow-md shadow-red-600/20 active:scale-95 transition-all"
-                >
-                  {t('Delete Post')}
-                </button>
-                <button
-                  onClick={() => {
-                    setEditRestrictionState({ isOpen: false });
-                    setActiveTab('home');
-                    navigate('/');
-                  }}
-                  className="flex-1 bg-gray-100 text-gray-700 p-3 rounded-xl font-bold active:scale-95 transition-all"
-                >
-                  {t('Cancel')}
-                </button>
+                <button onClick={() => setEditRestrictionState(prev => ({ ...prev, isConfirming: true }))}
+                  className="flex-1 bg-red-600 text-white p-3 rounded-xl font-bold">{t('Delete Post')}</button>
+                <button onClick={() => setEditRestrictionState({ isOpen: false })}
+                  className="flex-1 bg-gray-100 text-gray-700 p-3 rounded-xl font-bold">{t('Cancel')}</button>
               </div>
             </>
           )}

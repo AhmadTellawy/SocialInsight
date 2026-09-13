@@ -7,7 +7,7 @@ import { BottomSheet } from './BottomSheet';
 import { RichTextRenderer } from './RichTextRenderer';
 import { UserAvatar } from './UserAvatar';
 import { api } from '../services/api';
-import { useFollowState } from '../hooks/useFollowState';
+import { usePostFollowState } from '../hooks/usePostFollowState';
 import { useTranslation } from 'react-i18next';
 import { SurveyActions } from './Survey/SurveyActions';
 import { SurveyQuestion } from './Survey/SurveyQuestion';
@@ -41,7 +41,7 @@ interface SurveyCardProps {
   onVote?: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: Option, followUpAnswers?: Record<string, string>, answers?: PostAnswerPayload[]) => void | boolean | Promise<void | boolean>;
   onSurveyProgress?: (surveyId: string, progress: { index: number, answers: Record<string, any>, followUpAnswers?: Record<string, string>, historyStack?: number[], isAnonymous?: boolean }) => void;
   onAuthorClick?: (author: { id: string; name: string; avatar: string; handle?: string }) => void;
-  onShareToFeed?: (survey: Survey, caption: string) => void;
+  onShareToFeed?: (survey: Survey, caption: string) => Promise<'shared' | 'unshared'>;
   onUpdateDemographics?: (demographics: Partial<NonNullable<UserProfile['demographics']>>) => void | Promise<void>;
   positionInFeed?: number;
   sourceSurface?: 'FEED' | 'PROFILE' | 'SAVED' | 'SEARCH' | 'DEEP_LINK' | 'SHARE_CAPTURE';
@@ -175,7 +175,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   onDelete,
   onEditDraft
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [timeLeftStr, setTimeLeftStr] = useState('');
   const [isExpired, setIsExpired] = useState(false);
   const navigate = useNavigate();
@@ -278,6 +278,10 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const [isLikersSheetOpen, setIsLikersSheetOpen] = useState(false);
   const [hasOpenedLikersSheet, setHasOpenedLikersSheet] = useState(false);
   const [isRepostMenuOpen, setIsRepostMenuOpen] = useState(false);
+  const [isReposting, setIsReposting] = useState(false);
+  const [repostError, setRepostError] = useState('');
+  const repostBusyRef = useRef(false);
+  const [isShareBusy, setIsShareBusy] = useState(false);
   const [shareSheetInitialStep, setShareSheetInitialStep] = useState<'menu' | 'repost-editor'>('menu');
 
   useEffect(() => {
@@ -377,42 +381,35 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const [quizStats, setQuizStats] = useState<{ correct: number, total: number } | null>(null);
 
   const authorType = sourceSurvey.author?.type || 'User'; // Adjust based on your schema if needed
-  const [isInteracted, setIsInteracted] = useFollowState(sourceSurvey.author?.id, sourceSurvey.author?.isFollowing || false);
-  const [isInteractLoading, setIsInteractLoading] = useState(false);
-
-  useEffect(() => {
-    setIsInteracted(sourceSurvey.author?.isFollowing || false);
-  }, [sourceSurvey.author?.isFollowing]);
+  const { status: followStatus, loading: isInteractLoading, toggle: toggleFollow } = usePostFollowState(userProfile?.id, sourceSurvey.author?.id, sourceSurvey.author?.isFollowing || false, isMenuOpen);
+  const isInteracted = followStatus === 'ACTIVE';
+  const isFollowPending = followStatus === 'PENDING';
 
   const handleFollowInteraction = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!userProfile?.id || !sourceSurvey.author?.id) return;
-    const authorId = sourceSurvey.author.id;
-    const newStatus = !isInteracted;
-    setIsInteracted(newStatus);
-    setIsInteractLoading(true);
-
-    Analytics.track({
-      event_type: 'FOLLOW_TOGGLE',
-      target_user_id: authorId,
-      new_state: newStatus,
-      actor_user_id: userProfile.id,
-      source_surface: sourceSurface,
-      position_in_feed: positionInFeed
-    });
-
+    if (!userProfile?.id || !sourceSurvey.author?.id || isInteractLoading) return;
+    setMenuError('');
     try {
-      const resp = await api.followUser(authorId, userProfile.id);
-      if (resp && resp.isFollowing !== undefined) {
-        setIsInteracted(resp.isFollowing);
-      }
-      setIsMenuOpen(false);
-    } catch (error) {
-      console.error("Failed to follow/join", error);
-      setIsInteracted(!newStatus);
+      if (await toggleFollow()) setIsMenuOpen(false);
+    } catch {
       setMenuError(t('postOptions.actionFailed'));
+      setIsMenuOpen(true);
+    }
+  };
+
+  const handleInlineRepost = async () => {
+    if (!onShareToFeed || repostBusyRef.current) return;
+    repostBusyRef.current = true;
+    setIsReposting(true);
+    setRepostError('');
+    try {
+      await onShareToFeed(survey, '');
+      setIsRepostMenuOpen(false);
+    } catch {
+      setRepostError(t('postOptions.actionFailed'));
     } finally {
-      setIsInteractLoading(false);
+      repostBusyRef.current = false;
+      setIsReposting(false);
     }
   };
 
@@ -422,7 +419,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     if (isMe) return null;
     if (isInteracted) return null;
 
-    const label = authorType === 'Group' ? t('Join') : t('Follow');
+    const label = isFollowPending ? t('postOptions.cancelRequest') : authorType === 'Group' ? t('Join') : t('Follow');
     const activeLabel = authorType === 'Group' ? t('Joined') : t('Following');
 
     return (
@@ -2443,8 +2440,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 {isInteracted ? <UserMinus size={22} strokeWidth={1.5} /> : <UserPlus size={22} strokeWidth={1.5} />}
               </div>
               <div>
-                <div className="font-semibold text-gray-900 text-sm">{isInteracted ? t('postOptions.unfollowAuthor', { name: authorName }) : t('postOptions.followAuthor', { name: authorName })}</div>
-                <div className="text-xs text-gray-500">{isInteracted ? t('postOptions.unfollowDescription') : t('postOptions.followDescription')}</div>
+                <div className="font-semibold text-gray-900 text-sm">{isFollowPending ? t('postOptions.cancelRequestAuthor', { name: authorName }) : isInteracted ? t('postOptions.unfollowAuthor', { name: authorName }) : t('postOptions.followAuthor', { name: authorName })}</div>
+                <div className="text-xs text-gray-500">{isFollowPending ? t('postOptions.pendingDescription') : isInteracted ? t('postOptions.unfollowDescription') : t('postOptions.followDescription')}</div>
               </div>
             </button>
           )}
@@ -2474,19 +2471,15 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       <BottomSheet isOpen={isReportSheetOpen} onClose={() => setIsReportSheetOpen(false)} title={t('postOptions.reportTitle')}>
         <div className="p-4 space-y-4">
           <p className="text-sm text-gray-600 mb-4">{t('postOptions.reportPrompt')}</p>
-          <div className="space-y-2" role="radiogroup" aria-label={t('postOptions.reportPrompt')}>
+          <fieldset className="space-y-2" disabled={isReporting}>
+            <legend className="sr-only">{t('postOptions.reportPrompt')}</legend>
             {REPORT_REASONS.map(r => (
-              <button
-                key={r}
-                onClick={() => setReportReason(r)}
-                role="radio"
-                aria-checked={reportReason === r}
-                className={`w-full p-4 rounded-xl border text-start text-sm font-bold transition-all ${reportReason === r ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-100 hover:bg-gray-50'}`}
-              >
+              <label key={r} className={`flex items-center gap-3 w-full p-4 rounded-xl border text-start text-sm font-bold transition-all focus-within:ring-2 focus-within:ring-blue-500 ${reportReason === r ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-100 hover:bg-gray-50'}`}>
+                <input type="radio" name={`report-reason-${survey.id}`} value={r} checked={reportReason === r} onChange={() => setReportReason(r)} className="h-4 w-4 accent-blue-600" />
                 {t(`postOptions.reportReasons.${r}`)}
-              </button>
+              </label>
             ))}
-          </div>
+          </fieldset>
           {reportReason === 'OTHER' && (
             <textarea
               value={reportDescription}
@@ -2520,7 +2513,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           />
         </React.Suspense>
       </BottomSheet>
-      <BottomSheet isOpen={isShareSheetOpen} onClose={() => { setIsShareSheetOpen(false); setShareSheetInitialStep('menu'); }}>
+      <BottomSheet isOpen={isShareSheetOpen} dismissDisabled={isShareBusy} ariaLabel={t('postSharing.menuTitle')} onClose={() => { if (!isShareBusy) { setIsShareSheetOpen(false); setShareSheetInitialStep('menu'); } }}>
         <React.Suspense fallback={<SheetContentFallback />}>
           <ShareSheet
             positionInFeed={positionInFeed}
@@ -2529,37 +2522,36 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             onShareToFeed={onShareToFeed}
             userProfile={userProfile}
             sourceSurface={sourceSurface}
+            onBusyChange={setIsShareBusy}
             initialStep={shareSheetInitialStep}
           />
         </React.Suspense>
       </BottomSheet>
-      <BottomSheet isOpen={isRepostMenuOpen} onClose={() => setIsRepostMenuOpen(false)} customLayout={false}>
-        <div className="p-2 space-y-1">
-          <button onClick={() => {
-            setIsRepostMenuOpen(false);
-            if (onShareToFeed) onShareToFeed(survey, '');
-          }} className="w-full flex items-center gap-4 p-4 hover:bg-gray-50 rounded-xl transition-colors text-left group">
+      <BottomSheet isOpen={isRepostMenuOpen} dismissDisabled={isReposting} onClose={() => !isReposting && setIsRepostMenuOpen(false)} ariaLabel={t('postSharing.repost')} customLayout={false}>
+        <div dir={i18n.dir()} className="p-2 space-y-1">
+          {repostError && <p role="alert" className="px-4 text-sm text-red-600">{repostError}</p>}
+          <button disabled={isReposting || !onShareToFeed} onClick={handleInlineRepost} className="w-full flex items-center gap-4 p-4 hover:bg-gray-50 rounded-xl transition-colors text-start group">
             <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${survey.hasReposted ? 'bg-red-50 text-red-600 group-hover:bg-red-100' : 'bg-green-50 text-green-600 group-hover:bg-green-100'}`}>
               <Repeat size={22} strokeWidth={1.5} />
             </div>
             <div>
-              <div className={`font-bold text-[15px] ${survey.hasReposted ? 'text-red-600' : 'text-gray-900'}`}>{survey.hasReposted ? 'Undo Repost' : 'Repost'}</div>
-              <div className="text-xs text-gray-500 font-normal mt-0.5">{survey.hasReposted ? 'Remove this from your feed' : 'Instantly share to your feed'}</div>
+              <div className={`font-bold text-[15px] ${survey.hasReposted ? 'text-red-600' : 'text-gray-900'}`}>{isReposting ? t('postSharing.posting') : survey.hasReposted ? t('postSharing.undo') : t('postSharing.repost')}</div>
+              <div className="text-xs text-gray-500 font-normal mt-0.5">{survey.hasReposted ? t('postSharing.undoDescription') : t('postSharing.repostDescription')}</div>
             </div>
           </button>
 
           {!survey.hasReposted && (
-            <button onClick={() => {
+            <button disabled={isReposting} onClick={() => {
               setIsRepostMenuOpen(false);
               setShareSheetInitialStep('repost-editor');
               setIsShareSheetOpen(true);
-            }} className="w-full flex items-center gap-4 p-4 hover:bg-gray-50 rounded-xl transition-colors text-left group">
+            }} className="w-full flex items-center gap-4 p-4 hover:bg-gray-50 rounded-xl transition-colors text-start group">
               <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center group-hover:bg-blue-100 transition-colors">
                 <Edit3 size={22} strokeWidth={1.5} />
               </div>
               <div>
-                <div className="font-bold text-gray-900 text-[15px]">Quote</div>
-                <div className="text-xs text-gray-500 font-normal mt-0.5">Add a comment before sharing</div>
+                <div className="font-bold text-gray-900 text-[15px]">{t('postSharing.quote')}</div>
+                <div className="text-xs text-gray-500 font-normal mt-0.5">{t('postSharing.quoteDescription')}</div>
               </div>
             </button>
           )}

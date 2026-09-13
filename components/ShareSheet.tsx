@@ -10,6 +10,7 @@ import { UserAvatar } from './UserAvatar';
 import { useTranslation } from 'react-i18next';
 import { ShareCard } from './share/ShareCard';
 import { RichMentionInput } from './RichMentionInput';
+import { shareWithFileFallback } from '../utils/nativeShare';
 import {
   SHARE_CARD_SIZE,
   buildCanonicalPostUrl,
@@ -21,7 +22,8 @@ import {
 interface ShareSheetProps {
   survey: Survey;
   onClose: () => void;
-  onShareToFeed?: (survey: Survey, caption: string) => void;
+  onShareToFeed?: (survey: Survey, caption: string) => Promise<'shared' | 'unshared'>;
+  onBusyChange?: (busy: boolean) => void;
   userProfile?: UserProfile;
   onAuthorClick?: (author: { name: string; avatar: string }) => void;
   sourceSurface?: string;
@@ -54,13 +56,15 @@ const waitForCaptureAssets = async (root: HTMLElement, timeoutMs = 5000): Promis
   await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
 };
 
-export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShareToFeed, userProfile, sourceSurface = 'FEED', positionInFeed, initialStep = 'menu' }) => {
-  const { t } = useTranslation();
+export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShareToFeed, userProfile, sourceSurface = 'FEED', positionInFeed, initialStep = 'menu', onBusyChange }) => {
+  const { t, i18n } = useTranslation();
   const [step, setStep] = useState<'menu' | 'contacts' | 'feed' | 'repost-editor'>(initialStep);
-  const [sentTo, setSentTo] = useState<string[]>([]);
+  const [shareError, setShareError] = useState('');
+  const busyRef = useRef(false);
   const [copied, setCopied] = useState(false);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [isReposting, setIsReposting] = useState(false);
+  const [shareOutcome, setShareOutcome] = useState<'shared' | 'unshared'>('shared');
   const [repostCaption, setRepostCaption] = useState('');
 
   const posterRef = useRef<HTMLDivElement>(null);
@@ -72,20 +76,30 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
     [survey]
   );
 
-  const handleRepostConfirm = async () => {
-    if (!onShareToFeed) return;
-
-    setIsReposting(true);
-    await new Promise(resolve => setTimeout(resolve, 600));
-    onShareToFeed(survey, repostCaption);
-    setIsReposting(false);
-    setStep('feed');
-    setTimeout(() => onClose(), 1200);
-  };
-
   const recordShare = (method: 'COPY_LINK' | 'NATIVE_SHARE') => {
     Analytics.track({ event_type: 'SHARE_OR_COPY_LINK', post_id: survey.id, method, source_surface: sourceSurface, ...(sourceSurface === 'FEED' ? { position_in_feed: positionInFeed } : {}) });
   };
+
+  const handleRepostConfirm = async () => {
+    if (!onShareToFeed || busyRef.current) return;
+    busyRef.current = true;
+    onBusyChange?.(true);
+    setIsReposting(true);
+    setShareError('');
+    try {
+      const outcome = await onShareToFeed(survey, repostCaption);
+      setShareOutcome(outcome);
+      if (outcome === 'shared') Analytics.track({ event_type: 'SHARE_OR_COPY_LINK', post_id: survey.id, method: 'REPOST', actor_user_id: userProfile?.id, source_surface: sourceSurface });
+      setStep('feed');
+    } catch {
+      setShareError(t('postSharing.failed'));
+    } finally {
+      busyRef.current = false;
+      onBusyChange?.(false);
+      setIsReposting(false);
+    }
+  };
+
   const handleCopyLink = async () => {
     try {
       await navigator.clipboard.writeText(postUrl);
@@ -93,12 +107,15 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
-      console.error('Failed to copy', err);
+      setShareError(t('postSharing.copyFailed'));
     }
   };
 
   const handleSystemShare = async () => {
-    if (!posterRef.current) return;
+    if (!posterRef.current || busyRef.current) return;
+    busyRef.current = true;
+    onBusyChange?.(true);
+    setShareError('');
 
     setIsGeneratingImage(true);
     const typeLabel = t(shareCardModel.badge, { defaultValue: shareCardModel.badge });
@@ -133,77 +150,47 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
 
       const blob = await new Promise<Blob | null>((resolve) => outputCanvas.toBlob(resolve, 'image/png', 1.0));
 
-      if (blob && navigator.share) {
-        const file = new File([blob], `Opiniup_${shareCardModel.badge}.png`, { type: 'image/png' });
-
-        const shareData: ShareData = {
-          title: `Opiniup - ${survey.title}`,
-          text: shareText,
-          url: postUrl
-        };
-
-        if (navigator.canShare && navigator.canShare({ files: [file] })) {
-          shareData.files = [file];
-          shareData.text = `${shareText}\n${postUrl}`;
-          delete shareData.url;
-        }
-
-        try {
-          await navigator.share(shareData);
-          recordShare('NATIVE_SHARE');
-          onClose();
-        } catch (shareError) {
-          if ((shareError as { name?: string })?.name === 'AbortError') return;
-          console.warn('Share error:', shareError);
-          await navigator.share({
-            title: `Opiniup - ${survey.title}`,
-            text: shareText,
-            url: postUrl
-          });
-          recordShare('NATIVE_SHARE');
-          onClose();
-        }
+      if (navigator.share) {
+        const file = blob ? new File([blob], 'Opiniup.png', { type: 'image/png' }) : undefined;
+        const result = await shareWithFileFallback(navigator, { title: survey.title, text: shareText, url: postUrl }, file);
+        if (result === 'cancelled') return;
+        recordShare('NATIVE_SHARE');
+        onClose();
       } else if (blob) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `opiniup-post.png`;
+        a.download = 'opiniup-post.png';
         a.click();
         URL.revokeObjectURL(url);
         await handleCopyLink();
+      } else {
+        throw new Error('Share image unavailable');
       }
-    } catch (err) {
-      if ((err as { name?: string })?.name === 'AbortError') return;
-      console.error('Share failure:', err);
-      if (navigator.share) {
-        try { await navigator.share({
-          title: `Opiniup`,
-          text: shareText,
-          url: postUrl
-        });
-        recordShare('NATIVE_SHARE');
-        onClose(); } catch { /* Cancelled or unavailable: no success event. */ }
-      }
+    } catch {
+      setShareError(t('postSharing.externalFailed'));
     } finally {
+      busyRef.current = false;
+      onBusyChange?.(false);
       setIsGeneratingImage(false);
-
     }
   };
 
   const renderMenu = () => (
     <div className="p-4 space-y-3 animate-in fade-in slide-in-from-bottom-2">
       <button
-        onClick={() => setStep('repost-editor')}
+        onClick={() => { setShareError(''); setStep('repost-editor'); }}
+        disabled={!onShareToFeed || isGeneratingImage}
         className="w-full flex items-center gap-4 p-4 hover:bg-gray-50 rounded-2xl border border-gray-100 transition-all active:scale-95 group"
       >
         <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 group-hover:bg-blue-600 group-hover:text-white transition-colors">
           <Repeat size={24} />
         </div>
-        <div className="text-left flex-1">
-          <h4 className="font-bold text-gray-900">Share to your feed</h4>
-          <p className="text-xs text-gray-500">Post this on your profile feed</p>
+        <div className="text-start flex-1">
+          <h4 className="font-bold text-gray-900">{t('postSharing.toFeed')}</h4>
+          <p className="text-xs text-gray-500">{t('postSharing.toFeedDescription')}</p>
         </div>
-        <ChevronRight size={20} className="text-gray-300" />
+        <ChevronRight size={20} className="text-gray-300 rtl:rotate-180" />
       </button>
 
 
@@ -215,9 +202,9 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
         <div className="w-12 h-12 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center shrink-0 group-hover:bg-purple-600 group-hover:text-white transition-colors">
           {isGeneratingImage ? <Loader2 size={24} className="animate-spin" /> : <Share2 size={24} />}
         </div>
-        <div className="text-left flex-1">
-          <h4 className="font-bold text-gray-900">Share Outside</h4>
-          <p className="text-xs text-gray-500">{isGeneratingImage ? t('shareCard.preparing') : 'WhatsApp, Instagram, etc.'}</p>
+        <div className="text-start flex-1">
+          <h4 className="font-bold text-gray-900">{t('postSharing.outside')}</h4>
+          <p className="text-xs text-gray-500">{isGeneratingImage ? t('shareCard.preparing') : t('postSharing.outsideDescription')}</p>
         </div>
         <ExternalLink size={18} className="text-gray-300" />
       </button>
@@ -227,23 +214,24 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
   const renderRepostEditor = () => (
     <div className="flex flex-col h-full animate-in slide-in-from-bottom-4 duration-300 p-4">
       <div className="flex items-center justify-between mb-4 border-b border-gray-50 pb-2">
-        <button onClick={() => setStep('menu')} className="text-gray-500 font-bold text-sm">Cancel</button>
-        <h4 className="font-black text-gray-900 uppercase tracking-widest text-xs">Repost</h4>
+        <button disabled={isReposting} onClick={() => { setShareError(''); setStep('menu'); }} className="text-gray-500 font-bold text-sm">{t('common.cancel')}</button>
+        <h4 className="font-black text-gray-900 uppercase tracking-widest text-xs">{t('postSharing.repost')}</h4>
         <button
           onClick={handleRepostConfirm}
-          disabled={isReposting}
+          disabled={isReposting || !onShareToFeed}
           className="bg-blue-600 text-white px-5 py-1.5 rounded-full font-bold text-sm shadow-md active:scale-95 transition-all disabled:opacity-50"
         >
-          {isReposting ? <Loader2 size={16} className="animate-spin" /> : 'Post'}
+          {isReposting ? t('postSharing.posting') : t('postSharing.post')}
         </button>
       </div>
 
-      <div className="flex gap-3 mb-4">
-        <UserAvatar src={userProfile?.avatar} mediaId={userProfile?.avatarMediaId} media={userProfile?.avatarMedia} name={userProfile?.name} alt={userProfile?.name || 'You'} size={40} />
+      <div className="flex gap-3 mb-4" inert={isReposting} aria-busy={isReposting}>
+        <UserAvatar src={userProfile?.avatar} mediaId={userProfile?.avatarMediaId} media={userProfile?.avatarMedia} name={userProfile?.name} alt={userProfile?.name || t('postSharing.you')} size={40} />
         <RichMentionInput
           value={repostCaption}
           onChange={setRepostCaption}
-          placeholder="Say something about this..."
+          placeholder={t('postSharing.caption')}
+          ariaLabel={t('postSharing.caption')}
           className="flex-1 bg-transparent border-none text-gray-800 placeholder-gray-400 focus:ring-0 resize-none pt-2 min-h-[120px]"
           minRows={5}
           autoFocus
@@ -252,7 +240,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
 
       <div className="border border-gray-200 rounded-2xl p-4 bg-gray-50/50 overflow-hidden">
         <div className="flex items-center gap-2 mb-2">
-          <UserAvatar src={survey.author.avatar} mediaId={survey.author.avatarMediaId} media={survey.author.avatarMedia} name={survey.author.name} alt={survey.author.name || 'Author'} size={20} />
+          <UserAvatar src={survey.author.avatar} mediaId={survey.author.avatarMediaId} media={survey.author.avatarMedia} name={survey.author.name} alt={survey.author.name || t('postSharing.author')} size={20} />
           <span className="text-[11px] font-bold text-gray-700">{survey.author.name}</span>
         </div>
         <h5 className="font-bold text-sm text-gray-900 line-clamp-1">{survey.title}</h5>
@@ -262,7 +250,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
   );
 
   return (
-    <div className="flex flex-col h-full bg-white relative overflow-hidden">
+    <div dir={i18n.dir()} className="flex flex-col h-full bg-white relative overflow-hidden">
       {/* Dedicated deterministic external representation; never capture the live Feed card. */}
       <div className="pointer-events-none fixed left-[-12000px] top-0" aria-hidden="true">
         <div ref={posterRef}>
@@ -270,7 +258,8 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
         </div>
       </div>
 
-      <div className="flex-1 overflow-hidden">
+      {shareError && <p role="alert" className="px-4 py-2 text-sm text-red-600">{shareError}</p>}
+      <div className="flex-1 overflow-auto">
         {step === 'menu' && renderMenu()}
         {step === 'repost-editor' && renderRepostEditor()}
         {step === 'feed' && (
@@ -278,8 +267,9 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
             <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-6">
               <CheckCircle2 size={48} strokeWidth={3} />
             </div>
-            <h3 className="text-xl font-black text-gray-900 mb-2">Shared Successfully!</h3>
-            <p className="text-sm text-gray-500">Your repost is now live on your feed.</p>
+            <h3 className="text-xl font-black text-gray-900 mb-2">{t(shareOutcome === 'unshared' ? 'postSharing.unshared' : 'postSharing.success')}</h3>
+            <p className="text-sm text-gray-500">{t(shareOutcome === 'unshared' ? 'postSharing.unsharedDescription' : 'postSharing.successDescription')}</p>
+            <button onClick={onClose} className="mt-4 rounded-xl px-5 py-3 bg-blue-600 text-white">{t('postSharing.close')}</button>
           </div>
         )}
       </div>
@@ -291,9 +281,8 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
             className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl font-black uppercase tracking-widest text-[10px] transition-all shadow-sm ${copied ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-600 border border-gray-200 active:scale-95'}`}
           >
             {copied ? <Check size={14} strokeWidth={3} /> : <Copy size={14} />}
-            <span>{copied ? 'Copied Link' : 'Copy Link'}</span>
+            <span>{copied ? t('postSharing.copied') : t('postSharing.copy')}</span>
           </button>
-          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tight">Post ID: {survey.id.split('-').pop()}</p>
         </div>
       )}
     </div>

@@ -15,7 +15,7 @@ interface HashtagTopicScreenProps {
   onVote?: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: any, followUpAnswers?: Record<string, string>, answers?: PostAnswerPayload[]) => void | boolean | Promise<void | boolean>;
   onSurveyProgress?: (surveyId: string, progress: any) => void;
   onAuthorClick?: (author: { id: string; name: string; avatar: string; handle?: string }) => void;
-  onShareToFeed?: (survey: Survey, caption: string) => void;
+  onShareToFeed?: (survey: Survey, caption: string) => Promise<'shared' | 'unshared'>;
   onUpdateDemographics?: (demographics: Partial<NonNullable<UserProfile['demographics']>>) => void;
   onGroupClick?: (groupId: string) => void;
   onLike?: (surveyId: string, isLiked: boolean) => void;
