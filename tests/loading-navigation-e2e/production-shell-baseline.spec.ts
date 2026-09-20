@@ -8,17 +8,57 @@ const percentile = (values: number[], ratio: number): number => {
 };
 
 const blockProductionWrites = async (page: Page): Promise<void> => {
-  await page.route('**/*', async (route) => {
-    const request = route.request();
-    const pathname = new URL(request.url()).pathname;
-    if (request.method() !== 'GET' && request.method() !== 'HEAD') {
-      if (/\/analytics\/|\/views\/?$/.test(pathname)) {
-        await route.fulfill({ status: 204, body: '' });
-        return;
+  await page.addInitScript(() => {
+    const writeGuard = { suppressedFetches: 0, suppressedBeacons: 0, blockedXhr: 0, blockedForms: 0 };
+    (window as typeof window & { __productionWriteGuard?: typeof writeGuard }).__productionWriteGuard = writeGuard;
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const requestMethod = (init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
+      if (requestMethod !== 'GET' && requestMethod !== 'HEAD') {
+        const requestUrl = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        const pathname = new URL(requestUrl, window.location.href).pathname;
+        if (/\/analytics\/|\/views\/?$/.test(pathname)) {
+          writeGuard.suppressedFetches += 1;
+          return new Response('', { status: 204 });
+        }
+        throw new Error(`Production baseline blocked an unexpected ${requestMethod} ${pathname}`);
       }
-      throw new Error(`Production baseline attempted an unexpected ${request.method()} ${pathname}`);
-    }
-    await route.continue();
+      return nativeFetch(input, init);
+    };
+
+    const xhrRequests = new WeakMap<XMLHttpRequest, { method: string; url: string }>();
+    const nativeXhrOpen = XMLHttpRequest.prototype.open;
+    const nativeXhrSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function(method: string, url: string | URL, ...rest: unknown[]) {
+      xhrRequests.set(this, { method: method.toUpperCase(), url: String(url) });
+      return nativeXhrOpen.call(this, method, url, ...(rest as [boolean?, string?, string?]));
+    };
+    XMLHttpRequest.prototype.send = function(body?: Document | XMLHttpRequestBodyInit | null) {
+      const request = xhrRequests.get(this);
+      if (request && request.method !== 'GET' && request.method !== 'HEAD') {
+        writeGuard.blockedXhr += 1;
+        throw new Error(`Production baseline blocked an unexpected ${request.method} ${request.url}`);
+      }
+      return nativeXhrSend.call(this, body);
+    };
+
+    HTMLFormElement.prototype.submit = function() {
+      writeGuard.blockedForms += 1;
+      throw new Error('Production baseline blocked an unexpected form submission');
+    };
+    HTMLFormElement.prototype.requestSubmit = function() {
+      writeGuard.blockedForms += 1;
+      throw new Error('Production baseline blocked an unexpected form submission');
+    };
+    document.addEventListener('submit', (event) => {
+      writeGuard.blockedForms += 1;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }, true);
+    navigator.sendBeacon = () => {
+      writeGuard.suppressedBeacons += 1;
+      return true;
+    };
   });
 };
 
@@ -74,7 +114,10 @@ test('records production guest cold and warm shell timing without writes', async
     viewport: testInfo.project.use.viewport,
     user_agent_profile: 'Playwright Pixel 5 geometry / Chromium',
     service_workers: 'blocked for comparable document-shell timing',
-    cache_conditions: { cold: 'new browser context per sample', warm: 'reload in one browser context' },
+    cache_conditions: {
+      cold: 'new browser context per sample',
+      warm: 'reload in one browser context with HTTP cache preserved; writes blocked by init-script fetch, XHR, form, and beacon guards'
+    },
     sample_size_each: samples,
     cold_ms: { p50: percentile(cold, 0.5), p75: percentile(cold, 0.75), p95: percentile(cold, 0.95), raw: cold },
     warm_ms: { p50: percentile(warm, 0.5), p75: percentile(warm, 0.75), p95: percentile(warm, 0.95), raw: warm },
