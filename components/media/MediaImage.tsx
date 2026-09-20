@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ImageOff } from 'lucide-react';
 import { MediaPresentation } from '../../types';
 import { mediaApi } from '../../services/mediaApi';
@@ -13,7 +13,16 @@ type MediaImageProps = Omit<React.ImgHTMLAttributes<HTMLImageElement>, 'src' | '
   onUnavailable?: () => void;
 };
 
-export const MediaImage: React.FC<MediaImageProps> = ({
+export const MediaImage: React.FC<MediaImageProps> = (props) => (
+  <MediaImageSource
+    key={JSON.stringify([props.media?.id || props.mediaId, props.media?.access, props.media?.src, props.media?.srcSet, props.fallbackSrc])}
+    {...props}
+  />
+);
+
+// A source/access change starts a new lifecycle synchronously: a previous image
+// or an in-flight refresh must never appear under another identity or audience.
+const MediaImageSource: React.FC<MediaImageProps> = ({
   media,
   mediaId,
   fallbackSrc,
@@ -23,69 +32,102 @@ export const MediaImage: React.FC<MediaImageProps> = ({
   onUnavailable,
   alt,
   sizes,
+  className,
   style,
   onError,
+  onLoad,
   ...imageProps
 }) => {
   const id = media?.id || mediaId || undefined;
-  const identity = `${id || ''}:${media?.src || ''}:${fallbackSrc || ''}`;
-  const initial = useMemo<MediaPresentation | null>(() => {
-    if (media) return media;
-    if (!fallbackSrc) return null;
-    return { id: '', access: 'PUBLIC', aspectRatio: 1, width: 1, height: 1, src: fallbackSrc };
-  }, [identity]);
-  const [resolved, setResolved] = useState<MediaPresentation | null>(initial);
-  const [failed, setFailed] = useState(false);
-  const [loading, setLoading] = useState(Boolean(id && !initial?.src));
-  const retriedSourceRef = useRef<string | null>(null);
+  const identity = id ? `media:${id}` : (media?.src || fallbackSrc ? `src:${media?.src || fallbackSrc}` : 'empty');
+  const initial: MediaPresentation | null = media || (fallbackSrc
+    ? { id: '', access: 'PUBLIC', aspectRatio: 1, width: 1, height: 1, src: fallbackSrc }
+    : null);
+  const [view, setView] = useState(() => ({
+    identity,
+    resolved: initial,
+    failed: false,
+    loading: Boolean(id && !initial?.src)
+  }));
+  const currentIdentityRef = useRef(identity);
+  const activeRef = useRef(false);
+  const onUnavailableRef = useRef(onUnavailable);
+  onUnavailableRef.current = onUnavailable;
+  const retryRef = useRef({ identity, attempted: false });
+  currentIdentityRef.current = identity;
+  if (retryRef.current.identity !== identity) retryRef.current = { identity, attempted: false };
+
+  // Never render state retained from another media identity, including during the
+  // render before the identity-change effect commits.
+  const currentView = view.identity === identity
+    ? view
+    : { identity, resolved: initial, failed: false, loading: Boolean(id && !initial?.src) };
 
   useEffect(() => {
     let active = true;
-    setResolved(initial);
-    setFailed(false);
-    setLoading(Boolean(id && !initial?.src));
-    retriedSourceRef.current = null;
+    activeRef.current = true;
     if (id && !initial?.src) {
       mediaApi.get(id).then((result) => {
-        if (active) setResolved(result);
+        if (active && currentIdentityRef.current === identity) {
+          setView({ identity, resolved: result, failed: false, loading: false });
+        }
       }).catch(() => {
-        if (active) {
-          setFailed(true);
-          onUnavailable?.();
+        if (active && currentIdentityRef.current === identity) {
+          setView({ identity, resolved: null, failed: true, loading: false });
+          onUnavailableRef.current?.();
         }
       }).finally(() => {
-        if (active) setLoading(false);
+        if (active && currentIdentityRef.current === identity) {
+          setView((previous) => previous.identity === identity ? { ...previous, loading: false } : previous);
+        }
       });
-    } else {
-      setLoading(false);
     }
-    return () => { active = false; };
-  }, [identity, id, initial]);
+    return () => { active = false; activeRef.current = false; };
+  }, [identity, id]);
 
-  const refresh = async (): Promise<void> => {
+  const refresh = async (failedSource: string): Promise<void> => {
     if (!id) {
-      setFailed(true);
+      setView((previous) => previous.identity === identity ? { ...previous, failed: true, loading: false } : previous);
       return;
     }
-    setLoading(true);
+    const requestIdentity = identity;
     try {
-      setResolved(await mediaApi.get(id, true));
-      setFailed(false);
+      const refreshed = await mediaApi.get(id, true);
+      if (!activeRef.current || currentIdentityRef.current !== requestIdentity) return;
+      setView((previous) => previous.identity === requestIdentity
+        ? {
+            ...previous,
+            resolved: refreshed,
+            failed: !refreshed.src || refreshed.src === failedSource,
+            loading: false
+          }
+        : previous);
+      if (!refreshed.src || refreshed.src === failedSource) onUnavailableRef.current?.();
     } catch {
-      setFailed(true);
-      onUnavailable?.();
-    } finally {
-      setLoading(false);
+      if (activeRef.current && currentIdentityRef.current === requestIdentity) {
+        setView((previous) => previous.identity === requestIdentity
+          ? { ...previous, failed: true, loading: false }
+          : previous);
+        onUnavailableRef.current?.();
+      }
     }
   };
 
-  if (loading) {
-    return <span aria-busy="true" className="flex h-full w-full animate-pulse items-center justify-center bg-gray-100 text-gray-300"><ImageOff size={20} aria-hidden="true" /></span>;
+  const placeholderStyle = {
+    aspectRatio: initial?.aspectRatio || currentView.resolved?.aspectRatio || undefined,
+    ...style
+  };
+
+  if (currentView.loading) {
+    if (fallback) return <>{fallback}</>;
+    return <span aria-busy="true" className={`flex h-full w-full items-center justify-center bg-gray-100 text-gray-300 ${className || ''}`} style={placeholderStyle}><ImageOff size={20} aria-hidden="true" /></span>;
   }
 
-  if (failed || !resolved?.src) {
-    return <>{fallback || <span role="img" aria-label={alt || 'Image unavailable'} className="flex h-full w-full items-center justify-center bg-gray-100 text-gray-400"><ImageOff size={20} aria-hidden="true" /></span>}</>;
+  if (currentView.failed || !currentView.resolved?.src) {
+    return <>{fallback || <span role="img" aria-label={alt || 'Image unavailable'} className={`flex h-full w-full items-center justify-center bg-gray-100 text-gray-400 ${className || ''}`} style={placeholderStyle}><ImageOff size={20} aria-hidden="true" /></span>}</>;
   }
+
+  const resolved = currentView.resolved;
 
   return (
     <img
@@ -93,6 +135,7 @@ export const MediaImage: React.FC<MediaImageProps> = ({
       src={resolved.src}
       srcSet={resolved.srcSet}
       sizes={sizes}
+      className={className}
       width={resolved.width || undefined}
       height={resolved.height || undefined}
       alt={alt ?? resolved.altText ?? ''}
@@ -108,13 +151,16 @@ export const MediaImage: React.FC<MediaImageProps> = ({
       }}
       onError={(event) => {
         onError?.(event);
-        if (!id || retriedSourceRef.current === resolved.src) {
-          setFailed(true);
+        if (!id || retryRef.current.attempted) {
+          setView((previous) => previous.identity === identity ? { ...previous, failed: true, loading: false } : previous);
           onUnavailable?.();
           return;
         }
-        retriedSourceRef.current = resolved.src;
-        void refresh();
+        retryRef.current.attempted = true;
+        void refresh(resolved.src);
+      }}
+      onLoad={(event) => {
+        onLoad?.(event);
       }}
     />
   );

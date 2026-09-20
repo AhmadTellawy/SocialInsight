@@ -451,6 +451,27 @@
       "deleted": "تم حذف الرابط."
     }
   },
+  "loadingNavigation": {
+    "retry": "إعادة المحاولة",
+    "loadMore": "تحميل المزيد",
+    "loadMoreComments": "تحميل المزيد من التعليقات",
+    "failedComments": "تعذر تحميل التعليقات. حاول مرة أخرى.",
+    "failedParticipants": "تعذر تحميل المشاركين.",
+    "fetchingResults": "جارٍ جلب النتائج...",
+    "noParticipants": "لا يوجد مشاركون",
+    "loadingParticipants": "جارٍ تحميل المشاركين...",
+    "participantsUnavailable": "المشاركون غير متاحين",
+    "showingParticipants": "عرض {{count}} من المشاركين",
+    "failedLikes": "تعذر تحميل الإعجابات.",
+    "likes": "الإعجابات",
+    "showing": "عرض {{count}}",
+    "closeLikes": "إغلاق الإعجابات",
+    "noLikes": "لا توجد إعجابات بعد",
+    "loadingDatabase": "جارٍ تحميل البيانات...",
+    "userDirectoryUnavailable": "تعذر تحميل دليل المستخدمين.",
+    "failedConnections": "تعذر تحميل قائمة العلاقات.",
+    "failedMoreConnections": "تعذر تحميل المزيد من العلاقات."
+  },
   "shareCard": {
     "questions": "{{count}} أسئلة",
     "moreOptions": "+ {{count}} خيارات أخرى",

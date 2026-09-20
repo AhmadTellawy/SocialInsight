@@ -584,6 +584,27 @@
       "deleted": "Link deleted."
     }
   },
+  "loadingNavigation": {
+    "retry": "Retry",
+    "loadMore": "Load more",
+    "loadMoreComments": "Load more comments",
+    "failedComments": "Failed to load comments. Please try again.",
+    "failedParticipants": "Failed to load participants.",
+    "fetchingResults": "Fetching results...",
+    "noParticipants": "No participants found",
+    "loadingParticipants": "Loading participants...",
+    "participantsUnavailable": "Participants unavailable",
+    "showingParticipants": "Showing {{count}} participants",
+    "failedLikes": "Failed to load likes.",
+    "likes": "Likes",
+    "showing": "Showing {{count}}",
+    "closeLikes": "Close likes",
+    "noLikes": "No likes yet",
+    "loadingDatabase": "Loading database...",
+    "userDirectoryUnavailable": "Unable to load the user directory.",
+    "failedConnections": "Failed to load connections.",
+    "failedMoreConnections": "Failed to load more connections."
+  },
   "shareCard": {
     "questions": "{{count}} questions",
     "moreOptions": "+ {{count}} more options",

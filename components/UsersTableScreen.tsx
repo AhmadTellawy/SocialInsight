@@ -3,6 +3,7 @@ import { ArrowLeft, Search, User, Globe, Calendar, Filter, MoreVertical, Downloa
 import { api } from '../services/api';
 import { UserProfile } from '../types';
 import { UserAvatar } from './UserAvatar';
+import { useTranslation } from 'react-i18next';
 
 interface UsersTableScreenProps {
     onBack: () => void;
@@ -10,30 +11,34 @@ interface UsersTableScreenProps {
 }
 
 export const UsersTableScreen: React.FC<UsersTableScreenProps> = ({ onBack, onUserClick }) => {
+    const { t } = useTranslation();
     const [users, setUsers] = useState<UserProfile[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [search, setSearch] = useState('');
     const [filterCountry, setFilterCountry] = useState('All');
     const [loadError, setLoadError] = useState<string | null>(null);
+    const [retryAttempt, setRetryAttempt] = useState(0);
 
     useEffect(() => {
         const controller = new AbortController();
+        setIsLoading(true);
         const fetchUsers = async () => {
             try {
                 setLoadError(null);
                 const data = await api.getUsers(controller.signal);
+                if (controller.signal.aborted) return;
                 setUsers(data);
             } catch (error: any) {
-                if (error?.name === 'AbortError') return;
+                if (controller.signal.aborted || error?.name === 'AbortError') return;
                 console.error("Failed to fetch users:", error);
-                setLoadError('Unable to load the user directory.');
+                setLoadError(t('loadingNavigation.userDirectoryUnavailable'));
             } finally {
                 if (!controller.signal.aborted) setIsLoading(false);
             }
         };
         void fetchUsers();
         return () => controller.abort();
-    }, []);
+    }, [retryAttempt, t]);
 
     const countries = ['All', ...Array.from(new Set(users.map(u => u.country).filter(Boolean)))];
 
@@ -100,12 +105,13 @@ export const UsersTableScreen: React.FC<UsersTableScreenProps> = ({ onBack, onUs
                 {isLoading ? (
                     <div className="flex flex-col items-center justify-center py-20">
                         <div className="w-10 h-10 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mb-4" />
-                        <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">Loading Database...</p>
+                        <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">{t('loadingNavigation.loadingDatabase')}</p>
                     </div>
                 ) : loadError ? (
                     <div className="flex flex-col items-center justify-center py-20 text-gray-400">
                         <User size={48} className="opacity-10 mb-4" />
                         <p className="text-sm font-bold">{loadError}</p>
+                        <button type="button" onClick={() => setRetryAttempt(attempt => attempt + 1)} className="mt-3 rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white">{t('loadingNavigation.retry')}</button>
                     </div>
                 ) : filteredUsers.length > 0 ? (
                     <div className="min-w-full inline-block align-middle">
@@ -167,7 +173,7 @@ export const UsersTableScreen: React.FC<UsersTableScreenProps> = ({ onBack, onUs
             {/* Footer Info */}
             <div className="px-4 py-3 bg-gray-50 border-t border-gray-100 text-center">
                 <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">
-                    Showing {filteredUsers.length} of {users.length} registered users
+                    {isLoading ? 'Loading users...' : loadError ? 'User directory unavailable' : `Showing ${filteredUsers.length} of ${users.length} loaded users`}
                 </p>
             </div>
         </div>

@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next';
 import { Send, ThumbsUp, Reply, Edit2, Trash2, X, Loader2 } from 'lucide-react';
 import { Analytics } from '../utils/analytics';
 import { Comment, UserProfile } from '../types';
-import { MOCK_COMMENTS } from '../services/mockData';
 import { LikersSheet } from './LikersSheet';
 import { RichMentionInput } from './RichMentionInput';
 import { RichTextRenderer } from './RichTextRenderer';
@@ -167,6 +166,17 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isSubmittingRef = React.useRef(false);
   const commentsAbortRef = React.useRef<AbortController | null>(null);
+  const commentsRequestRef = React.useRef(0);
+  const submitRequestRef = React.useRef(0);
+  const currentSurveyIdRef = React.useRef(surveyId);
+  const draftBySurveyRef = React.useRef(new Map<string, string>());
+  const pendingLikesRef = React.useRef(new Set<string>());
+  const surveyLifecycleRef = React.useRef(0);
+
+  React.useEffect(() => () => {
+    surveyLifecycleRef.current += 1;
+    submitRequestRef.current += 1;
+  }, [surveyId]);
 
   // Comment Actions State
   const [actionSheetComment, setActionSheetComment] = useState<{ comment: Comment, isReply: boolean, parentId?: string } | null>(null);
@@ -174,14 +184,17 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
   const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
 
   const loadCommentsPage = React.useCallback(async (cursor: string | null, append: boolean) => {
+    const requestId = ++commentsRequestRef.current;
     const controller = new AbortController();
-    if (!append) commentsAbortRef.current?.abort();
+    commentsAbortRef.current?.abort();
     commentsAbortRef.current = controller;
-    append ? setIsLoadingMore(true) : setIsLoading(true);
+    setIsLoadingMore(append);
+    setIsLoading(!append);
     setLoadError(null);
     try {
       const focusId = append ? undefined : (initialReplyId || initialCommentId);
       const page = await api.getCommentsPage(surveyId, cursor, 30, controller.signal, focusId);
+      if (controller.signal.aborted || requestId !== commentsRequestRef.current) return;
       setComments(previous => {
         const byId = new Map<string, Comment>();
         (append ? previous : []).forEach(comment => byId.set(comment.id, comment));
@@ -190,18 +203,39 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
       });
       setNextCursor(page.nextCursor);
     } catch (error: any) {
-      if (error?.name !== 'AbortError') setLoadError('Failed to load comments. Please try again.');
+      if (error?.name !== 'AbortError' && requestId === commentsRequestRef.current) setLoadError(t('loadingNavigation.failedComments'));
     } finally {
-      append ? setIsLoadingMore(false) : setIsLoading(false);
+      if (requestId === commentsRequestRef.current) {
+        append ? setIsLoadingMore(false) : setIsLoading(false);
+      }
     }
-  }, [surveyId, initialCommentId, initialReplyId]);
+  }, [surveyId, initialCommentId, initialReplyId, t]);
 
   React.useEffect(() => {
     setComments([]);
     setNextCursor(null);
     void loadCommentsPage(null, false);
-    return () => commentsAbortRef.current?.abort();
+    return () => {
+      commentsRequestRef.current += 1;
+      commentsAbortRef.current?.abort();
+    };
   }, [loadCommentsPage]);
+
+  React.useEffect(() => {
+    const previousSurveyId = currentSurveyIdRef.current;
+    if (previousSurveyId === surveyId) return;
+
+    draftBySurveyRef.current.set(previousSurveyId, newComment);
+    currentSurveyIdRef.current = surveyId;
+    submitRequestRef.current += 1;
+    isSubmittingRef.current = false;
+    setIsSubmitting(false);
+    setNewComment(draftBySurveyRef.current.get(surveyId) || '');
+    setReplyingTo(null);
+    setEditingCommentId(null);
+    setActionSheetComment(null);
+    setIsLikersSheetOpen(false);
+  }, [surveyId]);
 
   React.useEffect(() => {
     if (!userProfile?.id) return;
@@ -248,7 +282,12 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
   }, [isLoading, initialCommentId, initialReplyId, comments]);
 
   const handleLike = async (commentId: string, isReply = false, parentId?: string) => {
-    if (!userProfile?.id) return;
+    if (!userProfile?.id || pendingLikesRef.current.has(commentId)) return;
+    const lifecycle = surveyLifecycleRef.current;
+    pendingLikesRef.current.add(commentId);
+    const toggleLike = (comment: Comment) => comment.id === commentId
+      ? { ...comment, likes: Math.max(0, comment.isLiked ? comment.likes - 1 : comment.likes + 1), isLiked: !comment.isLiked }
+      : comment;
     try {
       // Optimistic update
       if (isReply && parentId) {
@@ -256,19 +295,26 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
           if (c.id === parentId && c.replies) {
             return {
               ...c,
-              replies: c.replies.map(r => r.id === commentId ? { ...r, likes: r.isLiked ? r.likes - 1 : r.likes + 1, isLiked: !r.isLiked } : r)
+              replies: c.replies.map(toggleLike)
             };
           }
           return c;
         }));
       } else {
-        setComments(prev => prev.map(c => c.id === commentId ? { ...c, likes: c.isLiked ? c.likes - 1 : c.likes + 1, isLiked: !c.isLiked } : c));
+        setComments(prev => prev.map(toggleLike));
       }
 
       await api.likeComment(commentId);
     } catch (e) {
+      if (lifecycle !== surveyLifecycleRef.current) return;
       console.error("Failed to like comment", e);
-      // Revert optimistic update on failure could be added here
+      if (isReply && parentId) {
+        setComments(prev => prev.map(c => c.id === parentId && c.replies ? { ...c, replies: c.replies.map(toggleLike) } : c));
+      } else {
+        setComments(prev => prev.map(toggleLike));
+      }
+    } finally {
+      pendingLikesRef.current.delete(commentId);
     }
   };
 
@@ -278,22 +324,28 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
 
     isSubmittingRef.current = true;
     setIsSubmitting(true);
+    const requestId = ++submitRequestRef.current;
+    const requestSurveyId = surveyId;
+    const submittedText = newComment;
+    const submittedReplyingTo = replyingTo;
+    const submittedEditingCommentId = editingCommentId;
 
     try {
-      if (editingCommentId) {
+      if (submittedEditingCommentId) {
         // Handle Edit Update
-        const updatedRaw = await api.updateComment(editingCommentId, newComment);
+        const updatedRaw = await api.updateComment(submittedEditingCommentId, submittedText);
+        if (requestId !== submitRequestRef.current || currentSurveyIdRef.current !== requestSurveyId) return;
         setComments(prev => {
           // It could be a reply or a top level comment
           // To safely update, we recursively map or just check both levels
           return prev.map(c => {
-            if (c.id === editingCommentId) {
+            if (c.id === submittedEditingCommentId) {
               return { ...c, ...updatedRaw };
             }
             if (c.replies) {
               return {
                 ...c,
-                replies: c.replies.map(r => r.id === editingCommentId ? { ...r, ...updatedRaw } : r)
+                replies: c.replies.map(r => r.id === submittedEditingCommentId ? { ...r, ...updatedRaw } : r)
               };
             }
             return c;
@@ -303,11 +355,13 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
         setEditingCommentId(null);
       } else {
         // Handle New Comment
-        const createdComment = await api.createComment(surveyId, newComment, replyingTo || undefined);
+        const createdComment = await api.createComment(requestSurveyId, submittedText, submittedReplyingTo || undefined);
+        draftBySurveyRef.current.delete(requestSurveyId);
+        if (requestId !== submitRequestRef.current || currentSurveyIdRef.current !== requestSurveyId) return;
 
-        if (replyingTo) {
+        if (submittedReplyingTo) {
           setComments(prev => prev.map(c => {
-            if (c.id === replyingTo) {
+            if (c.id === submittedReplyingTo) {
               return { ...c, replies: [...(c.replies || []), createdComment] };
             }
             return c;
@@ -320,22 +374,25 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
         if (onCommentAdded) onCommentAdded();
         Analytics.track({
           event_type: 'COMMENT_CREATE',
-          post_id: surveyId,
+          post_id: requestSurveyId,
           comment_id: createdComment.id,
           actor_user_id: userProfile?.id,
           source_surface: sourceSurface
         });
       }
     } catch (error) {
+      if (requestId !== submitRequestRef.current || currentSurveyIdRef.current !== requestSurveyId) return;
       console.error("Failed to process comment", error);
       if (error instanceof ApiError && error.code === 'MENTION_LIMIT_EXCEEDED') {
         alert(t('mentions.limitExceeded', { limit: error.details?.limit }));
       } else {
-        alert(editingCommentId ? "Failed to update comment." : "Failed to send the comment. Please try again.");
+        alert(submittedEditingCommentId ? "Failed to update comment." : "Failed to send the comment. Please try again.");
       }
     } finally {
-      isSubmittingRef.current = false;
-      setIsSubmitting(false);
+      if (requestId === submitRequestRef.current) {
+        isSubmittingRef.current = false;
+        setIsSubmitting(false);
+      }
     }
   };
 
@@ -361,7 +418,7 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
         ) : loadError && comments.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 text-center text-gray-500">
             <p className="text-sm mb-3">{loadError}</p>
-            <button onClick={() => void loadCommentsPage(null, false)} className="px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold">Retry</button>
+            <button type="button" onClick={() => void loadCommentsPage(null, false)} className="px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold">{t('loadingNavigation.retry')}</button>
           </div>
         ) : comments.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 text-gray-400">
@@ -388,14 +445,16 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
                 highlightedCommentId={highlightedCommentId}
               />
             ))}
+            {loadError && <p role="alert" className="text-center text-sm text-red-600">{loadError}</p>}
             {nextCursor && (
               <button
                 onClick={() => void loadCommentsPage(nextCursor, true)}
+                type="button"
                 disabled={isLoadingMore}
                 className="mx-auto my-5 flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-xs font-bold text-gray-600 disabled:opacity-60"
               >
                 {isLoadingMore && <Loader2 size={14} className="animate-spin" />}
-                Load more comments
+                {loadError ? t('loadingNavigation.retry') : t('loadingNavigation.loadMoreComments')}
               </button>
             )}
           </>
@@ -482,9 +541,11 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
 
             <button
               onClick={async () => {
+                const lifecycle = surveyLifecycleRef.current;
                 if (window.confirm("Are you sure you want to delete this comment?")) {
                   try {
                     await api.deleteComment(actionSheetComment.comment.id);
+                    if (lifecycle !== surveyLifecycleRef.current) return;
                     setComments(prev => {
                       if (actionSheetComment.isReply && actionSheetComment.parentId) {
                         return prev.map(c => c.id === actionSheetComment.parentId ? { ...c, replies: c.replies?.filter(r => r.id !== actionSheetComment.comment.id) } : c);
@@ -493,6 +554,7 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
                     });
                     setActionSheetComment(null);
                   } catch (err) {
+                    if (lifecycle !== surveyLifecycleRef.current) return;
                     console.error("Failed to delete comment", err);
                     alert("Failed to delete comment");
                   }

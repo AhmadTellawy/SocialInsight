@@ -1,6 +1,6 @@
 import { useLocation } from 'react-router-dom';
 import { useAppNavigation } from '../hooks/useAppNavigation';
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useLayoutEffect, useRef } from 'react';
 import { Settings, Users, Grid, CheckCircle2, MoreHorizontal, MapPin, Link as LinkIcon, Edit3, UserPlus, Shield, ExternalLink, ArrowLeft, Mail, FileText, PieChart, Building2, Globe as GlobeIcon, Plus, ChevronRight, Search, X, UserCircle2, Zap, Info, Lock, BarChart3, TrendingUp, Bookmark, PenTool, Activity, Repeat, Image as ImageIcon, Camera, Trash2, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -40,6 +40,11 @@ interface ProfileScreenProps {
   isLoadingMore?: boolean;
   hasNextPage?: boolean;
   onLoadMore?: () => void;
+  postsError?: string | null;
+  onRetryPosts?: () => void;
+  initialScrollTop?: number;
+  onScrollPositionChange?: (scrollTop: number) => void;
+  scrollRestoreKey?: string;
 }
 
 type ProfileTab = 'content' | 'reposts' | 'groups' | 'drafts' | 'saved';
@@ -88,7 +93,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   isLoading,
   isLoadingMore,
   hasNextPage,
-  onLoadMore
+  onLoadMore,
+  postsError,
+  onRetryPosts,
+  initialScrollTop = 0,
+  onScrollPositionChange,
+  scrollRestoreKey = 'profile'
 }) => {
   const { t } = useTranslation();
   const [activeStatSheet, setActiveStatSheet] = useState<'following' | 'followers' | 'posts' | null>(null);
@@ -111,6 +121,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [coverActionError, setCoverActionError] = useState<string | null>(null);
 
   const viewUserId = (!user?.id || user.id === userProfile.id) ? userProfile.id : (user as any)?.id;
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    if (!isLoading && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = initialScrollTop;
+    }
+  }, [initialScrollTop, isLoading, scrollRestoreKey]);
   const initialFollowStatus = (user as any)?.followStatus || ((user as any)?.isFollowing ? 'ACTIVE' : 'NONE');
   const [isFollowing, setLocalFollowingState] = useFollowState(viewUserId, (user as any)?.isFollowing === true || initialFollowStatus === 'ACTIVE', userProfile?.id);
   const [followStatus, setFollowStatus] = useState<string>(initialFollowStatus);
@@ -132,8 +148,17 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [connectionNextCursor, setConnectionNextCursor] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [connectionRetryKey, setConnectionRetryKey] = useState(0);
+  const connectionRequestRef = useRef(0);
+  const connectionAbortRef = useRef<AbortController | null>(null);
+  const connectionLoadMoreAbortRef = useRef<AbortController | null>(null);
+  const connectionContextRef = useRef<string | null>(null);
 
   const isMe = !user?.id || user.id === userProfile.id;
+  const connectionTargetUserId = isMe ? userProfile.id : viewUserId;
+  const connectionContext = activeStatSheet && activeStatSheet !== 'posts' && connectionTargetUserId
+    ? `${connectionTargetUserId}:${activeStatSheet}`
+    : null;
+  connectionContextRef.current = connectionContext;
   const suppliedUser = user as (Partial<UserProfile> & { isFollowing?: boolean; followStatus?: string }) | undefined;
   const resolvedTargetUser = targetUser?.id === viewUserId ? targetUser : null;
   const hasProfileStats = isMe || !!resolvedTargetUser?.stats || !!suppliedUser?.stats;
@@ -302,10 +327,16 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   }, [isMe, user, userProfile?.id]);
 
   useEffect(() => {
-    const targetUserId = isMe ? userProfile.id : viewUserId;
+    const targetUserId = connectionTargetUserId;
     if (!activeStatSheet || activeStatSheet === 'posts' || !targetUserId) return;
+    const requestId = ++connectionRequestRef.current;
+    const requestContext = `${targetUserId}:${activeStatSheet}`;
     const controller = new AbortController();
+    connectionAbortRef.current?.abort();
+    connectionLoadMoreAbortRef.current?.abort();
+    connectionAbortRef.current = controller;
     setIsConnectionLoading(true);
+    setIsConnectionLoadingMore(false);
     setConnectionList([]);
     setConnectionNextCursor(null);
     setConnectionError(null);
@@ -315,35 +346,52 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       : api.getUserFollowingPage(targetUserId, null, 50, controller.signal);
     void request
       .then(page => {
+        if (controller.signal.aborted || requestId !== connectionRequestRef.current || connectionContextRef.current !== requestContext) return;
         setConnectionList(page.items);
         setConnectionNextCursor(page.nextCursor);
       })
       .catch((error: any) => {
-        if (error?.name !== 'AbortError') setConnectionError('Failed to load connections.');
+        if (error?.name !== 'AbortError' && requestId === connectionRequestRef.current && connectionContextRef.current === requestContext) {
+          setConnectionError(t('loadingNavigation.failedConnections'));
+        }
       })
-      .finally(() => setIsConnectionLoading(false));
-    return () => controller.abort();
-  }, [activeStatSheet, connectionRetryKey, isMe, userProfile.id, viewUserId]);
+      .finally(() => {
+        if (requestId === connectionRequestRef.current && connectionContextRef.current === requestContext) setIsConnectionLoading(false);
+      });
+    return () => {
+      controller.abort();
+      if (connectionAbortRef.current === controller) connectionAbortRef.current = null;
+    };
+  }, [activeStatSheet, connectionRetryKey, connectionTargetUserId, t]);
 
   const loadMoreConnections = async () => {
-    const targetUserId = isMe ? userProfile.id : viewUserId;
+    const targetUserId = connectionTargetUserId;
     if (!activeStatSheet || activeStatSheet === 'posts' || !targetUserId || !connectionNextCursor || isConnectionLoadingMore) return;
+    const requestId = connectionRequestRef.current;
+    const requestContext = `${targetUserId}:${activeStatSheet}`;
+    const controller = new AbortController();
+    connectionLoadMoreAbortRef.current?.abort();
+    connectionLoadMoreAbortRef.current = controller;
     setIsConnectionLoadingMore(true);
     setConnectionError(null);
     try {
       const page = activeStatSheet === 'followers'
-        ? await api.getUserFollowersPage(targetUserId, connectionNextCursor)
-        : await api.getUserFollowingPage(targetUserId, connectionNextCursor);
+        ? await api.getUserFollowersPage(targetUserId, connectionNextCursor, 50, controller.signal)
+        : await api.getUserFollowingPage(targetUserId, connectionNextCursor, 50, controller.signal);
+      if (controller.signal.aborted || requestId !== connectionRequestRef.current || connectionContextRef.current !== requestContext) return;
       setConnectionList(previous => {
         const byId = new Map(previous.map(person => [person.id, person]));
         page.items.forEach(person => byId.set(person.id, person));
         return Array.from(byId.values());
       });
       setConnectionNextCursor(page.nextCursor);
-    } catch {
-      setConnectionError('Failed to load more connections.');
+    } catch (error: any) {
+      if (error?.name !== 'AbortError' && requestId === connectionRequestRef.current && connectionContextRef.current === requestContext) {
+        setConnectionError(t('loadingNavigation.failedMoreConnections'));
+      }
     } finally {
-      setIsConnectionLoadingMore(false);
+      if (connectionLoadMoreAbortRef.current === controller) connectionLoadMoreAbortRef.current = null;
+      if (requestId === connectionRequestRef.current && connectionContextRef.current === requestContext) setIsConnectionLoadingMore(false);
     }
   };
 
@@ -793,7 +841,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                   className="mx-auto my-5 flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-xs font-bold text-gray-600 disabled:opacity-60"
                 >
                   {isConnectionLoadingMore && <Loader2 size={14} className="animate-spin" />}
-                  {t('Load more')}
+                  {t('loadingNavigation.loadMore')}
                 </button>
               )}
               {connectionError && connectionList.length > 0 && (
@@ -803,7 +851,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           ) : connectionError ? (
             <div className="py-20 px-8 text-center text-gray-500">
               <p className="text-sm mb-3">{connectionError}</p>
-              <button onClick={() => setConnectionRetryKey(key => key + 1)} className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white">{t('Retry')}</button>
+              <button onClick={() => setConnectionRetryKey(key => key + 1)} className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white">{t('loadingNavigation.retry')}</button>
             </div>
           ) : (
             (() => {
@@ -1105,13 +1153,13 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           </button>
         </div>
         <div className="relative bg-white pb-6">
-          <div className="aspect-[3/1] w-full animate-pulse bg-gray-100" aria-hidden="true" />
+          <div className="aspect-[3/1] w-full animate-pulse bg-gray-100 motion-reduce:animate-none" aria-hidden="true" />
           <div className="px-6 flex flex-col items-center">
-          <div className="-mt-14 w-28 h-28 rounded-[1.65rem] bg-gray-100 animate-pulse mb-6 border-4 border-white shadow-xl"></div>
-          <div className="w-40 h-8 bg-gray-100 animate-pulse rounded-full mb-2"></div>
-          <div className="w-24 h-4 bg-gray-100 animate-pulse rounded-full mb-6"></div>
-          <div className="w-full max-w-sm h-12 bg-gray-50 animate-pulse rounded-2xl mb-8"></div>
-          <div className="w-full bg-white rounded-[2.5rem] border border-gray-100 shadow-xl shadow-gray-200/40 px-3 py-6 h-[100px] animate-pulse"></div>
+          <div className="-mt-14 w-28 h-28 rounded-[1.65rem] bg-gray-100 animate-pulse motion-reduce:animate-none mb-6 border-4 border-white shadow-xl"></div>
+          <div className="w-40 h-8 bg-gray-100 animate-pulse motion-reduce:animate-none rounded-full mb-2"></div>
+          <div className="w-24 h-4 bg-gray-100 animate-pulse motion-reduce:animate-none rounded-full mb-6"></div>
+          <div className="w-full max-w-sm h-12 bg-gray-50 animate-pulse motion-reduce:animate-none rounded-2xl mb-8"></div>
+          <div className="w-full bg-white rounded-[2.5rem] border border-gray-100 shadow-xl shadow-gray-200/40 px-3 py-6 h-[100px] animate-pulse motion-reduce:animate-none"></div>
           </div>
         </div>
       </div>
@@ -1120,6 +1168,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
+    onScrollPositionChange?.(target.scrollTop);
     const scrollBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
     // Trigger load more 500px before reaching the bottom
     if (scrollBottom < 500 && onLoadMore && hasNextPage && !isLoadingMore) {
@@ -1128,7 +1177,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   };
 
   return (
-    <div onScroll={handleScroll} className="bg-white flex-1 overflow-y-auto min-h-full flex flex-col no-scrollbar">
+    <div ref={scrollContainerRef} data-testid="profile-scroll-container" onScroll={handleScroll} className="bg-white flex-1 overflow-y-auto min-h-full flex flex-col no-scrollbar">
       <div className={`flex items-center px-4 h-[60px] sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-gray-50 ${onBack ? 'justify-between' : 'justify-end'}`}>
         {onBack && (
           <button onClick={onBack} className="flex h-11 w-11 items-center justify-center -ms-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors" aria-label={t('common.back', { defaultValue: 'Back' })}>
@@ -1186,7 +1235,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
         <div className="px-6 flex flex-col items-center">
           <div className="relative -mt-14 mb-5 z-10">
-            <div className="w-28 h-28 rounded-[22%] p-1 bg-white shadow-xl border border-gray-100 ring-4 ring-white/80">
+            <div data-testid="profile-avatar-frame" className="w-28 h-28 rounded-[22%] p-1 bg-white shadow-xl border border-gray-100 ring-4 ring-white/80">
               <MediaImage
                 mediaId={profileUser.avatarMediaId}
                 fallbackSrc={profileUser.avatar?.includes('ui-avatars') ? undefined : profileUser.avatar}
@@ -1365,6 +1414,14 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         </div>
 
         <div className="pb-20">
+          {postsError && (activeTab === 'content' || activeTab === 'reposts') && (
+            <div role="alert" className="mx-4 mt-4 flex items-center justify-between gap-3 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+              <span>{t(postsError)}</span>
+              <button type="button" onClick={onRetryPosts} className="shrink-0 rounded-xl bg-red-600 px-3 py-2 text-xs font-bold text-white">
+                {t('Retry')}
+              </button>
+            </div>
+          )}
           {renderTabContent()}
           {canViewPrivateProfileContent && (activeTab === 'content' || activeTab === 'reposts') && (
             <div className="py-8 flex flex-col items-center justify-center min-h-[120px] transition-all">

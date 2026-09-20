@@ -3,6 +3,7 @@ import { User, CheckCircle2, UserCircle2, Loader2 } from 'lucide-react';
 import { Survey } from '../types';
 import { api } from '../services/api';
 import { UserAvatar } from './UserAvatar';
+import { useTranslation } from 'react-i18next';
 
 interface ParticipantsSheetProps {
   survey: Survey;
@@ -10,17 +11,26 @@ interface ParticipantsSheetProps {
 }
 
 export const ParticipantsSheet: React.FC<ParticipantsSheetProps> = ({ survey, onAuthorClick }) => {
+  const { t } = useTranslation();
   const [participants, setParticipants] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const requestRef = React.useRef(0);
+  const abortRef = React.useRef<AbortController | null>(null);
 
-  const loadPage = React.useCallback(async (cursor: string | null, append: boolean, signal?: AbortSignal) => {
-    append ? setIsLoadingMore(true) : setIsLoading(true);
+  const loadPage = React.useCallback(async (cursor: string | null, append: boolean) => {
+    const requestId = ++requestRef.current;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setIsLoadingMore(append);
+    setIsLoading(!append);
     setLoadError(null);
     try {
-      const page = await api.getParticipantsPage(survey.id, cursor, 30, signal);
+      const page = await api.getParticipantsPage(survey.id, cursor, 30, controller.signal);
+      if (controller.signal.aborted || requestId !== requestRef.current) return;
       setParticipants(previous => {
         const byId = new Map<string, any>();
         (append ? previous : []).forEach(participant => byId.set(participant.id, participant));
@@ -29,18 +39,22 @@ export const ParticipantsSheet: React.FC<ParticipantsSheetProps> = ({ survey, on
       });
       setNextCursor(page.nextCursor);
     } catch (error: any) {
-      if (error?.name !== 'AbortError') setLoadError('Failed to load participants.');
+      if (error?.name !== 'AbortError' && requestId === requestRef.current) setLoadError(t('loadingNavigation.failedParticipants'));
     } finally {
-      append ? setIsLoadingMore(false) : setIsLoading(false);
+      if (requestId === requestRef.current) {
+        append ? setIsLoadingMore(false) : setIsLoading(false);
+      }
     }
-  }, [survey.id]);
+  }, [survey.id, t]);
 
   useEffect(() => {
-    const controller = new AbortController();
     setParticipants([]);
     setNextCursor(null);
-    void loadPage(null, false, controller.signal);
-    return () => controller.abort();
+    void loadPage(null, false);
+    return () => {
+      requestRef.current += 1;
+      abortRef.current?.abort();
+    };
   }, [loadPage]);
 
 
@@ -52,12 +66,12 @@ export const ParticipantsSheet: React.FC<ParticipantsSheetProps> = ({ survey, on
         {isLoading ? (
           <div className="flex flex-col items-center justify-center py-20">
             <Loader2 size={32} className="animate-spin text-blue-500 opacity-50" />
-            <p className="text-xs text-gray-400 mt-4 font-bold uppercase tracking-widest">Fetching results...</p>
+            <p className="text-xs text-gray-400 mt-4 font-bold uppercase tracking-widest">{t('loadingNavigation.fetchingResults')}</p>
           </div>
         ) : loadError && participants.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-gray-500">
             <p className="mb-3 text-sm">{loadError}</p>
-            <button onClick={() => void loadPage(null, false)} className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white">Retry</button>
+            <button type="button" onClick={() => void loadPage(null, false)} className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white">{t('loadingNavigation.retry')}</button>
           </div>
         ) : participants.length > 0 ? (
           <div className="divide-y divide-gray-50">
@@ -82,32 +96,38 @@ export const ParticipantsSheet: React.FC<ParticipantsSheetProps> = ({ survey, on
                 {p.isAnonymous ? (
                   <span className="text-[9px] font-black text-gray-300 uppercase tracking-widest border border-gray-100 px-1.5 py-0.5 rounded">Private</span>
                 ) : (
-                  <button className="text-blue-600 font-bold text-xs hover:underline">View Profile</button>
+                  <span className="text-blue-600 font-bold text-xs group-hover:underline">View Profile</span>
                 )}
               </div>
             ))}
+            {loadError && <p role="alert" className="p-4 text-center text-sm text-red-600">{loadError}</p>}
             {nextCursor && (
               <button
+                type="button"
                 onClick={() => void loadPage(nextCursor, true)}
                 disabled={isLoadingMore}
                 className="mx-auto my-4 flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-xs font-bold text-gray-600 disabled:opacity-60"
               >
                 {isLoadingMore && <Loader2 size={14} className="animate-spin" />}
-                Load more participants
+                {loadError ? t('loadingNavigation.retry') : t('loadingNavigation.loadMore')}
               </button>
             )}
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-20 text-gray-400">
             <User size={48} className="opacity-10 mb-4" />
-            <p className="text-sm">No participants found</p>
+            <p className="text-sm">{t('loadingNavigation.noParticipants')}</p>
           </div>
         )}
       </div>
 
       <div className="p-4 bg-gray-50 text-center border-t border-gray-100">
         <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">
-          Total Participants: {participants.length}
+          {isLoading
+            ? t('loadingNavigation.loadingParticipants')
+            : loadError && participants.length === 0
+              ? t('loadingNavigation.participantsUnavailable')
+              : t('loadingNavigation.showingParticipants', { count: participants.length })}
         </p>
       </div>
     </div>

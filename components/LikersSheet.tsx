@@ -4,6 +4,7 @@ import { BottomSheet } from './BottomSheet';
 import { Loader2, ThumbsUp, X } from 'lucide-react';
 import { api } from '../services/api';
 import { UserAvatar } from './UserAvatar';
+import { useTranslation } from 'react-i18next';
 
 interface LikersSheetProps {
     isOpen: boolean;
@@ -16,19 +17,28 @@ interface LikersSheetProps {
 }
 
 export const LikersSheet: React.FC<LikersSheetProps> = ({ isOpen, onClose, targetId, type, onAuthorClick, currentUser, isLikedLocally }) => {
+    const { t } = useTranslation();
     const [likers, setLikers] = useState<UserProfile[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [nextCursor, setNextCursor] = useState<string | null>(null);
     const [loadError, setLoadError] = useState<string | null>(null);
+    const requestRef = React.useRef(0);
+    const abortRef = React.useRef<AbortController | null>(null);
 
-    const loadPage = React.useCallback(async (cursor: string | null, append: boolean, signal?: AbortSignal) => {
-        append ? setIsLoadingMore(true) : setIsLoading(true);
+    const loadPage = React.useCallback(async (cursor: string | null, append: boolean) => {
+        const requestId = ++requestRef.current;
+        abortRef.current?.abort();
+        const controller = new AbortController();
+        abortRef.current = controller;
+        setIsLoadingMore(append);
+        setIsLoading(!append);
         setLoadError(null);
         try {
             const page = type === 'post'
-                ? await api.getPostLikersPage(targetId, cursor, 30, signal)
-                : await api.getCommentLikersPage(targetId, cursor, 30, signal);
+                ? await api.getPostLikersPage(targetId, cursor, 30, controller.signal)
+                : await api.getCommentLikersPage(targetId, cursor, 30, controller.signal);
+            if (controller.signal.aborted || requestId !== requestRef.current) return;
             let incoming = [...page.items];
             if (!append && currentUser && isLikedLocally !== undefined) {
                 const existsIndex = incoming.findIndex(user => user.id === currentUser.id);
@@ -43,22 +53,31 @@ export const LikersSheet: React.FC<LikersSheetProps> = ({ isOpen, onClose, targe
             });
             setNextCursor(page.nextCursor);
         } catch (error: any) {
-            if (error?.name !== 'AbortError') setLoadError('Failed to load likes.');
+            if (error?.name !== 'AbortError' && requestId === requestRef.current) setLoadError(t('loadingNavigation.failedLikes'));
         } finally {
-            append ? setIsLoadingMore(false) : setIsLoading(false);
+            if (requestId === requestRef.current) {
+                append ? setIsLoadingMore(false) : setIsLoading(false);
+            }
         }
-    }, [currentUser, isLikedLocally, targetId, type]);
+    }, [currentUser, isLikedLocally, targetId, type, t]);
 
     useEffect(() => {
         if (isOpen && targetId) {
-            const controller = new AbortController();
             setLikers([]);
             setNextCursor(null);
-            void loadPage(null, false, controller.signal);
-            return () => controller.abort();
+            void loadPage(null, false);
+            return () => {
+                requestRef.current += 1;
+                abortRef.current?.abort();
+            };
         } else {
+            requestRef.current += 1;
+            abortRef.current?.abort();
             setLikers([]);
             setNextCursor(null);
+            setLoadError(null);
+            setIsLoading(false);
+            setIsLoadingMore(false);
         }
     }, [isOpen, loadPage, targetId]);
 
@@ -70,10 +89,12 @@ export const LikersSheet: React.FC<LikersSheetProps> = ({ isOpen, onClose, targe
                         <div className="w-8 h-8 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center">
                             <ThumbsUp size={16} />
                         </div>
-                        <h2 className="text-lg font-black text-gray-900 tracking-tight">Likes</h2>
-                        {!isLoading && <span className="text-sm font-bold text-gray-400 tabular-nums">({likers.length})</span>}
+                        <h2 className="text-lg font-black text-gray-900 tracking-tight">{t('loadingNavigation.likes')}</h2>
+                        {!isLoading && likers.length > 0 && (
+                            <span className="text-xs font-semibold text-gray-400 tabular-nums">{t('loadingNavigation.showing', { count: likers.length })}</span>
+                        )}
                     </div>
-                    <button onClick={onClose} className="p-2 text-gray-400 hover:bg-gray-50 rounded-full transition-colors active:scale-90">
+                    <button type="button" onClick={onClose} aria-label={t('loadingNavigation.closeLikes')} className="p-2 text-gray-400 hover:bg-gray-50 rounded-full transition-colors active:scale-90">
                         <X size={20} />
                     </button>
                 </div>
@@ -94,7 +115,7 @@ export const LikersSheet: React.FC<LikersSheetProps> = ({ isOpen, onClose, targe
                     ) : loadError && likers.length === 0 ? (
                         <div className="flex flex-col items-center justify-center h-full text-center py-20">
                             <p className="text-sm text-gray-500 mb-3">{loadError}</p>
-                            <button onClick={() => void loadPage(null, false)} className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white">Retry</button>
+                            <button type="button" onClick={() => void loadPage(null, false)} className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white">{t('loadingNavigation.retry')}</button>
                         </div>
                     ) : likers.length > 0 ? (
                         <div className="space-y-4">
@@ -114,14 +135,16 @@ export const LikersSheet: React.FC<LikersSheetProps> = ({ isOpen, onClose, targe
                                     </div>
                                 </div>
                             ))}
+                            {loadError && <p role="alert" className="text-center text-sm text-red-600">{loadError}</p>}
                             {nextCursor && (
                                 <button
+                                    type="button"
                                     onClick={() => void loadPage(nextCursor, true)}
                                     disabled={isLoadingMore}
                                     className="mx-auto flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-xs font-bold text-gray-600 disabled:opacity-60"
                                 >
                                     {isLoadingMore && <Loader2 size={14} className="animate-spin" />}
-                                    Load more
+                                    {loadError ? t('loadingNavigation.retry') : t('loadingNavigation.loadMore')}
                                 </button>
                             )}
                         </div>
@@ -130,7 +153,7 @@ export const LikersSheet: React.FC<LikersSheetProps> = ({ isOpen, onClose, targe
                             <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mb-4">
                                 <ThumbsUp size={24} className="text-gray-300" />
                             </div>
-                            <p className="text-sm font-bold text-gray-500 uppercase tracking-widest">No likes yet</p>
+                            <p className="text-sm font-bold text-gray-500 uppercase tracking-widest">{t('loadingNavigation.noLikes')}</p>
                         </div>
                     )}
                 </div>

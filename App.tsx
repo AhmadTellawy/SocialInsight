@@ -27,6 +27,8 @@ import {
   TrendingUp, FileText, Settings, HelpCircle, PlusCircle, PenLine, Zap, X, Trash2
 } from 'lucide-react';
 import { SocketProvider } from './components/SocketContext';
+import { ProfileSettingsScreen } from './components/ProfileSettingsScreen';
+import { ProfileScreen } from './components/ProfileScreen';
 
 const CreateSurveyModal = React.lazy(() => import('./components/CreateSurveyModal').then(({ CreateSurveyModal }) => ({ default: CreateSurveyModal })));
 const CreatePollScreen = React.lazy(() => import('./components/CreatePollScreen').then(({ CreatePollScreen }) => ({ default: CreatePollScreen })));
@@ -34,9 +36,7 @@ const CreateQuizModal = React.lazy(() => import('./components/CreateQuizModal').
 const CreateChallengeScreen = React.lazy(() => import('./components/CreateChallengeScreen').then(({ CreateChallengeScreen }) => ({ default: CreateChallengeScreen })));
 const CreateAccountModal = React.lazy(() => import('./components/CreateAccountModal').then(({ CreateAccountModal }) => ({ default: CreateAccountModal })));
 const GroupSettingsScreen = React.lazy(() => import('./components/GroupSettingsScreen').then(({ GroupSettingsScreen }) => ({ default: GroupSettingsScreen })));
-const ProfileSettingsScreen = React.lazy(() => import('./components/ProfileSettingsScreen').then(({ ProfileSettingsScreen }) => ({ default: ProfileSettingsScreen })));
 const SearchScreen = React.lazy(() => import('./components/SearchScreen').then(({ SearchScreen }) => ({ default: SearchScreen })));
-const ProfileScreen = React.lazy(() => import('./components/ProfileScreen').then(({ ProfileScreen }) => ({ default: ProfileScreen })));
 const NotificationsScreen = React.lazy(() => import('./components/NotificationsScreen').then(({ NotificationsScreen }) => ({ default: NotificationsScreen })));
 const TrendsScreen = React.lazy(() => import('./components/TrendsScreen').then(({ TrendsScreen }) => ({ default: TrendsScreen })));
 const MessagesScreen = React.lazy(() => import('./components/MessagesScreen').then(({ MessagesScreen }) => ({ default: MessagesScreen })));
@@ -80,6 +80,32 @@ const FEED_MAX_ATTEMPTS = 2;
 const GROUPS_REQUEST_TIMEOUT_MS = 10_000;
 const NOTIFICATIONS_REQUEST_TIMEOUT_MS = 10_000;
 const NOTIFICATIONS_PAGE_SIZE = 50;
+
+type CachedProfile = {
+  profile?: Partial<UserProfile> & { id: string; name: string; avatar: string; handle?: string };
+  surveys: Survey[];
+  nextCursor: string | null;
+  firstPageIds?: string[];
+};
+
+const profileCacheKey = (viewerId: string | undefined, targetKind: 'id' | 'handle', target: string) =>
+  `${viewerId || 'guest'}:${targetKind}:${target.toLowerCase()}`;
+
+const reconcileProfileFirstPage = (
+  existing: Survey[],
+  fresh: Survey[],
+  previousFirstPageIds: string[] | undefined,
+  nextCursor: string | null
+): Survey[] => {
+  // A terminal first page is the complete authoritative result. When more pages
+  // exist, replace the previously validated first-page window and retain only
+  // later cached pages; this prevents deleted/private posts from surviving a
+  // successful refresh while preserving already-loaded pagination.
+  if (!nextCursor) return fresh;
+  const freshIds = new Set(fresh.map(post => post.id));
+  const priorFirstPageIds = new Set(previousFirstPageIds || existing.slice(0, Math.max(fresh.length, 10)).map(post => post.id));
+  return [...fresh, ...existing.filter(post => !freshIds.has(post.id) && !priorFirstPageIds.has(post.id))];
+};
 
 const syncSurveyAuthorWithProfile = (survey: Survey, profile: UserProfile): Survey => {
   const sharedFrom = survey.sharedFrom
@@ -148,6 +174,9 @@ const App: React.FC = () => {
   // User Profile State
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const userProfileIdRef = useRef<string | undefined>(undefined);
+  const profileCacheRef = useRef(new Map<string, CachedProfile>());
+  const profileScrollPositionsRef = useRef(new Map<string, number>());
+  const previousProfileViewerRef = useRef<string | undefined>(undefined);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authBootstrapped, setAuthBootstrapped] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
@@ -181,6 +210,7 @@ const App: React.FC = () => {
       localStorage.setItem('si_token', authToken);
     }
     writeMediaSafeJson('si_user', profile);
+    profileCacheRef.current.clear();
     setUserProfile(profile);
     setIsAuthenticated(true);
     setAuthBootstrapped(true);
@@ -203,6 +233,7 @@ const App: React.FC = () => {
   const handleLogout = () => {
     const previousUserId = userProfile?.id;
     setIsAuthenticated(false);
+    profileCacheRef.current.clear();
     setUserProfile(null);
     setSurveys([]);
     setProfileSurveys([]);
@@ -311,13 +342,9 @@ const App: React.FC = () => {
         type: 'Personal',
         isFollowing: false
       },
-      userProgress: raw.userProgress || {
-        currentQuestionIndex: 0,
-        answers: {},
-        followUpAnswers: {},
-        historyStack: [],
-        isAnonymous: false
-      }
+      // Absence is meaningful: a participated quiz whose progress has not
+      // arrived yet must not be rendered as a confirmed zero score.
+      userProgress: raw.userProgress || undefined
     };
   };
 
@@ -354,6 +381,9 @@ const App: React.FC = () => {
   const [userGroups, setUserGroups] = useState<Group[]>([]);
 
   React.useEffect(() => {
+    const previousViewer = previousProfileViewerRef.current;
+    if (previousViewer && previousViewer !== userProfile?.id) profileCacheRef.current.clear();
+    previousProfileViewerRef.current = userProfile?.id;
     userProfileIdRef.current = userProfile?.id;
   }, [userProfile?.id]);
 
@@ -367,6 +397,7 @@ const App: React.FC = () => {
   const feedRequestRef = useRef<ActiveFeedRequest | null>(null);
   const loadMoreAbortRef = useRef<AbortController | null>(null);
   const profileLoadMoreAbortRef = useRef<AbortController | null>(null);
+  const activeRouteProfileKeyRef = useRef<string | null>(null);
 
   const fetchData = (
     currentUserId?: string,
@@ -454,7 +485,8 @@ const App: React.FC = () => {
 
   const fetchMore = async () => {
     if (activeTab === 'profile') {
-      if (isProfileLoadingMoreRef.current || !profileNextCursor || !selectedProfile) return;
+      const requestProfileKey = activeRouteProfileKey;
+      if (isProfileLoadingMoreRef.current || !profileNextCursor || !selectedProfile || !requestProfileKey) return;
       isProfileLoadingMoreRef.current = true;
       setIsProfileLoadingMore(true);
       const controller = new AbortController();
@@ -470,13 +502,24 @@ const App: React.FC = () => {
           undefined,
           { signal: controller.signal, timeoutMs: FEED_REQUEST_TIMEOUT_MS, normalize: false }
         );
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || activeRouteProfileKeyRef.current !== requestProfileKey) return;
         const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
 
         setProfileSurveys(prev => {
           const existingIds = new Set(prev.map(s => s.id));
           const uniqueNew = newSurveys.filter((s: Survey) => !existingIds.has(s.id));
-          return [...prev, ...uniqueNew];
+          const merged = [...prev, ...uniqueNew];
+          if (activeRouteProfileKeyRef.current === requestProfileKey) {
+            const cached = profileCacheRef.current.get(requestProfileKey);
+            profileCacheRef.current.set(requestProfileKey, {
+              ...cached,
+              profile: cached?.profile || selectedProfile,
+              surveys: merged,
+              nextCursor: res.nextCursor,
+              firstPageIds: cached?.firstPageIds
+            });
+          }
+          return merged;
         });
         setProfileNextCursor(res.nextCursor);
       } catch (error) {
@@ -594,9 +637,22 @@ const App: React.FC = () => {
       feedRequestRef.current?.controller.abort();
       loadMoreAbortRef.current?.abort();
       profileLoadMoreAbortRef.current?.abort();
+      profileRequestAbortRef.current?.abort();
+      profileCacheRef.current.clear();
       setIsAuthenticated(false);
       setUserProfile(null);
       setSurveys([]);
+      setProfileSurveys([]);
+      setProfileNextCursor(null);
+      setSelectedProfile(null);
+      setProfileError(null);
+      setProfilePostsError(null);
+      setNotifications([]);
+      setNotificationNextCursor(null);
+      setSelectedSurveyId(null);
+      setDetailSurvey(null);
+      setDetailError(null);
+      setUserGroups([]);
       if (expiredUserId) localStorage.removeItem(getFeedCacheKey(expiredUserId));
     };
 
@@ -759,6 +815,27 @@ const App: React.FC = () => {
   const setDetailTab = (tab: 'post' | 'analysis') => setQuery('tab', tab === 'post' ? null : tab);
 
   const [selectedProfile, setSelectedProfile] = useState<(Partial<UserProfile> & { id: string; name: string; avatar: string; handle?: string }) | null>(null);
+  const routeProfileTarget = useMemo(() => {
+    if (location.pathname.startsWith('/@')) {
+      const handle = decodeRouteSegment(location.pathname.slice(2));
+      return handle ? { kind: 'handle' as const, value: handle } : null;
+    }
+    if (location.pathname.startsWith('/profile/')) {
+      const id = decodeRouteSegment(location.pathname.slice('/profile/'.length));
+      return id ? { kind: 'id' as const, value: id } : null;
+    }
+    return null;
+  }, [location.pathname]);
+  const activeRouteProfileKey = routeProfileTarget
+    ? profileCacheKey(userProfile?.id, routeProfileTarget.kind, routeProfileTarget.value)
+    : null;
+  activeRouteProfileKeyRef.current = activeRouteProfileKey;
+  const selectedProfileForRoute = routeProfileTarget?.kind === 'id'
+    ? (selectedProfile?.id === routeProfileTarget.value ? selectedProfile : null)
+    : routeProfileTarget?.kind === 'handle'
+      ? (selectedProfile?.handle?.toLowerCase() === routeProfileTarget.value.toLowerCase() ? selectedProfile : null)
+      : selectedProfile;
+  const activeProfileViewKey = `${userProfile?.id || 'guest'}:${selectedProfileForRoute?.id || routeProfileTarget?.value || userProfile?.id || 'pending'}`;
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [externalGroup, setExternalGroup] = useState<Group | null>(null);
   const [isGroupLoading, setIsGroupLoading] = useState(false);
@@ -770,8 +847,18 @@ const App: React.FC = () => {
   const [isPrivacyScreenOpen, setIsPrivacyScreenOpen] = useState(false);
   const [isProfileLoading, setIsProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
+  const [profileErrorTarget, setProfileErrorTarget] = useState<string | null>(null);
+  const [profilePostsError, setProfilePostsError] = useState<string | null>(null);
+  const [profileRetryKey, setProfileRetryKey] = useState(0);
   const profileRequestRef = useRef(0);
   const profileRequestAbortRef = useRef<AbortController | null>(null);
+
+  React.useEffect(() => {
+    profileLoadMoreAbortRef.current?.abort();
+    profileLoadMoreAbortRef.current = null;
+    isProfileLoadingMoreRef.current = false;
+    setIsProfileLoadingMore(false);
+  }, [activeRouteProfileKey]);
 
   React.useEffect(() => {
     if (!selectedProfile?.id) {
@@ -793,11 +880,14 @@ const App: React.FC = () => {
       return;
     }
     if (path === '/profile' && userProfile?.id) {
+      setSelectedProfile(userProfile);
+      setIsProfileLoading(false);
       navigate(profilePath(userProfile) + location.search + location.hash, { replace: true });
       return;
     }
     const isPostRoute = path.startsWith('/post/');
     const isProfileRoute = path.startsWith('/profile/') || path.startsWith('/@') || path === '/profile';
+    const isProfileContext = isProfileRoute || path.startsWith('/settings/profile');
     const isGroupRoute = path.startsWith('/group/');
 
     // Helper to reset states when not on their paths
@@ -807,7 +897,7 @@ const App: React.FC = () => {
       setDetailError(null);
       setIsDetailLoading(false);
     }
-    if (!isProfileRoute) {
+    if (!isProfileContext) {
       profileRequestAbortRef.current?.abort();
       profileRequestAbortRef.current = null;
       setSelectedProfile(null);
@@ -878,38 +968,89 @@ const App: React.FC = () => {
       setActiveTab('profile');
       const handle = decodeRouteSegment(path.slice(2));
       if (handle) {
+        const cacheKey = profileCacheKey(userProfile?.id, 'handle', handle);
+        const cached = profileCacheRef.current.get(cacheKey);
+        const currentMatches = selectedProfile?.handle?.toLowerCase() === handle.toLowerCase();
+        const warmProfile = currentMatches ? selectedProfile : cached?.profile;
         const requestId = ++profileRequestRef.current;
         profileRequestAbortRef.current?.abort();
         const controller = new AbortController();
         profileRequestAbortRef.current = controller;
-        setIsProfileLoading(true);
+        const clearRevokedProfile = () => {
+          if (profileRequestRef.current !== requestId) return;
+          profileRequestRef.current += 1;
+          controller.abort();
+          profileCacheRef.current.delete(cacheKey);
+          setSelectedProfile(null);
+          setProfileSurveys([]);
+          setProfileNextCursor(null);
+          setProfileErrorTarget(cacheKey);
+          setProfileError('Profile unavailable.');
+          setIsProfileLoading(false);
+        };
+        setIsProfileLoading(!warmProfile);
         setProfileError(null);
-        setSelectedProfile(null);
-        setProfileSurveys([]);
+        setProfilePostsError(null);
+        if (!currentMatches) {
+          setSelectedProfile(cached?.profile || null);
+          setProfileSurveys(cached?.surveys || []);
+          setProfileNextCursor(cached?.nextCursor || null);
+        }
         const currentUserId = userProfile?.id || undefined;
-        Promise.all([
-          api.getUserByHandle(handle, controller.signal),
-          api.getSurveys(
-            currentUserId,
-            undefined,
-            10,
-            undefined,
-            handle,
-            { timeoutMs: FEED_REQUEST_TIMEOUT_MS, normalize: false, signal: controller.signal }
-          )
-        ]).then(([user, res]) => {
+        api.getUserByHandle(handle, controller.signal).then(user => {
           if (profileRequestRef.current !== requestId) return;
-          const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
-          setProfileSurveys(newSurveys);
-          setProfileNextCursor(res.nextCursor);
           setSelectedProfile(user);
+          const existing = profileCacheRef.current.get(cacheKey);
+          profileCacheRef.current.set(cacheKey, {
+            profile: user,
+            surveys: existing?.surveys ?? (currentMatches ? profileSurveys : []),
+            nextCursor: existing?.nextCursor ?? (currentMatches ? profileNextCursor : null)
+          });
         }).catch(err => {
-          if (profileRequestRef.current !== requestId) return;
-          if (err?.name === 'AbortError') return;
+          if (profileRequestRef.current !== requestId || err?.name === 'AbortError') return;
           console.error(err);
-          setProfileError('Failed to load profile.');
+          if ([401, 403, 404].includes(err?.status)) {
+            clearRevokedProfile();
+            return;
+          }
+          if (!warmProfile) {
+            setProfileErrorTarget(cacheKey);
+            setProfileError('Failed to load profile.');
+          }
         }).finally(() => {
           if (profileRequestRef.current === requestId) setIsProfileLoading(false);
+        });
+        api.getSurveys(
+          currentUserId,
+          undefined,
+          10,
+          undefined,
+          handle,
+          { timeoutMs: FEED_REQUEST_TIMEOUT_MS, normalize: false, signal: controller.signal }
+        ).then(res => {
+          if (profileRequestRef.current !== requestId) return;
+          const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
+          const existing = profileCacheRef.current.get(cacheKey);
+          const mergedSurveys = reconcileProfileFirstPage(
+            existing?.surveys || (currentMatches ? profileSurveys : []),
+            newSurveys,
+            existing?.firstPageIds,
+            res.nextCursor
+          );
+          setProfileSurveys(mergedSurveys);
+          setProfileNextCursor(res.nextCursor);
+          profileCacheRef.current.set(cacheKey, {
+            ...existing,
+            profile: existing?.profile || warmProfile || undefined,
+            surveys: mergedSurveys,
+            nextCursor: res.nextCursor,
+            firstPageIds: newSurveys.map(post => post.id)
+          });
+        }).catch(err => {
+          if (profileRequestRef.current !== requestId || err?.name === 'AbortError') return;
+          console.error(err);
+          if ([401, 403, 404].includes(err?.status)) clearRevokedProfile();
+          else setProfilePostsError('Failed to load posts.');
         });
       }
     }
@@ -917,42 +1058,89 @@ const App: React.FC = () => {
       setActiveTab('profile');
       const id = decodeRouteSegment(path.slice('/profile/'.length));
       if (id) {
+        const cacheKey = profileCacheKey(userProfile?.id, 'id', id);
+        const cached = profileCacheRef.current.get(cacheKey);
+        const currentMatches = selectedProfile?.id === id;
+        const warmProfile = currentMatches ? selectedProfile : cached?.profile;
         const requestId = ++profileRequestRef.current;
         profileRequestAbortRef.current?.abort();
         const controller = new AbortController();
         profileRequestAbortRef.current = controller;
-        setIsProfileLoading(true);
+        const clearRevokedProfile = () => {
+          if (profileRequestRef.current !== requestId) return;
+          profileRequestRef.current += 1;
+          controller.abort();
+          profileCacheRef.current.delete(cacheKey);
+          setSelectedProfile(null);
+          setProfileSurveys([]);
+          setProfileNextCursor(null);
+          setProfileErrorTarget(cacheKey);
+          setProfileError('Profile unavailable.');
+          setIsProfileLoading(false);
+        };
+        setIsProfileLoading(!warmProfile);
         setProfileError(null);
-        setSelectedProfile(null);
-        setProfileSurveys([]);
+        setProfilePostsError(null);
+        if (!currentMatches) {
+          setSelectedProfile(cached?.profile || null);
+          setProfileSurveys(cached?.surveys || []);
+          setProfileNextCursor(cached?.nextCursor || null);
+        }
         const currentUserId = userProfile?.id || undefined;
-        Promise.all([
-          api.getUser(id, controller.signal),
-          api.getSurveys(
-            currentUserId,
-            undefined,
-            10,
-            id,
-            undefined,
-            { timeoutMs: FEED_REQUEST_TIMEOUT_MS, normalize: false, signal: controller.signal }
-          )
-        ]).then(([user, res]) => {
+        api.getUser(id, controller.signal).then(user => {
           if (profileRequestRef.current !== requestId) return;
-          const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
-          setProfileSurveys(newSurveys);
-          setProfileNextCursor(res.nextCursor);
           setSelectedProfile(user);
-          if (user.handle) {
-            const currentLocation = locationRef.current;
-            navigate(profilePath(user) + currentLocation.search + currentLocation.hash, { replace: true });
-          }
+          const existing = profileCacheRef.current.get(cacheKey);
+          profileCacheRef.current.set(cacheKey, {
+            profile: user,
+            surveys: existing?.surveys ?? (currentMatches ? profileSurveys : []),
+            nextCursor: existing?.nextCursor ?? (currentMatches ? profileNextCursor : null)
+          });
         }).catch(err => {
-          if (profileRequestRef.current !== requestId) return;
-          if (err?.name === 'AbortError') return;
+          if (profileRequestRef.current !== requestId || err?.name === 'AbortError') return;
           console.error(err);
-          setProfileError('Failed to load profile.');
+          if ([401, 403, 404].includes(err?.status)) {
+            clearRevokedProfile();
+            return;
+          }
+          if (!warmProfile) {
+            setProfileErrorTarget(cacheKey);
+            setProfileError('Failed to load profile.');
+          }
         }).finally(() => {
           if (profileRequestRef.current === requestId) setIsProfileLoading(false);
+        });
+        api.getSurveys(
+          currentUserId,
+          undefined,
+          10,
+          id,
+          undefined,
+          { timeoutMs: FEED_REQUEST_TIMEOUT_MS, normalize: false, signal: controller.signal }
+        ).then(res => {
+          if (profileRequestRef.current !== requestId) return;
+          const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
+          const existing = profileCacheRef.current.get(cacheKey);
+          const mergedSurveys = reconcileProfileFirstPage(
+            existing?.surveys || (currentMatches ? profileSurveys : []),
+            newSurveys,
+            existing?.firstPageIds,
+            res.nextCursor
+          );
+          setProfileSurveys(mergedSurveys);
+          setProfileNextCursor(res.nextCursor);
+          profileCacheRef.current.set(cacheKey, {
+            ...existing,
+            profile: existing?.profile || warmProfile || undefined,
+            surveys: mergedSurveys,
+            nextCursor: res.nextCursor,
+            firstPageIds: newSurveys.map(post => post.id)
+          });
+        }).catch(err => {
+          if (profileRequestRef.current !== requestId || err?.name === 'AbortError') return;
+          console.error(err);
+          if ([401, 403, 404].includes(err?.status)) clearRevokedProfile();
+          else setProfilePostsError('Failed to load posts.');
         });
       }
     }
@@ -1008,7 +1196,7 @@ const App: React.FC = () => {
       ++profileRequestRef.current;
       profileRequestAbortRef.current?.abort();
     };
-  }, [location.pathname, authBootstrapped, isAuthenticated, userProfile?.id, userProfile?.handle, authModalOpen]);
+  }, [location.pathname, authBootstrapped, isAuthenticated, userProfile?.id, userProfile?.handle, authModalOpen, profileRetryKey]);
 
   React.useEffect(() => {
     // Query-only traversal must also restore the creation destination.
@@ -1645,7 +1833,7 @@ const App: React.FC = () => {
           );
         }
         if (!userProfile) return <DeferredScreenFallback />;
-        return <ProfileScreen isLoading={isProfileLoading} surveys={profileSurveys} userGroups={userGroups} userProfile={userProfile!} user={selectedProfile || undefined} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onAuthorClick={navigateToProfile} onSurveyProgress={handleSurveyProgress} onShareToFeed={handleShareToFeed} onSettingsClick={() => navigate('/settings/profile')} onEditProfileClick={() => navigate('/settings/profile/edit-profile')} onEditDraft={handleEditPost} onDelete={handlePostDeleted} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} onLike={handleLikePost} />;
+        return <ProfileScreen isLoading={isProfileLoading} surveys={profileSurveys} userGroups={userGroups} userProfile={userProfile!} user={selectedProfileForRoute || undefined} onSurveyClick={handleSurveyClick} onGroupClick={navigateToGroup} onVote={handleVote} onAuthorClick={navigateToProfile} onSurveyProgress={handleSurveyProgress} onShareToFeed={handleShareToFeed} onSettingsClick={() => navigate('/settings/profile')} onEditProfileClick={() => navigate('/settings/profile/edit-profile')} onEditDraft={handleEditPost} onDelete={handlePostDeleted} onUpdateDemographics={handleUpdateDemographics} onUpdateCurrentUser={(updates) => setUserProfile(prev => ({ ...prev!, ...updates }))} onFollowChange={handleFollowChange} onLike={handleLikePost} initialScrollTop={profileScrollPositionsRef.current.get(activeProfileViewKey) || 0} onScrollPositionChange={(scrollTop) => profileScrollPositionsRef.current.set(activeProfileViewKey, scrollTop)} scrollRestoreKey={activeProfileViewKey} />;
       case 'notifications':
         return <NotificationsScreen currentUserId={userProfile?.id || ""} notifications={notifications} hasMore={notificationNextCursor !== null} isInitialLoading={isNotificationsLoading} isLoadingMore={isNotificationsLoadingMore} loadError={notificationLoadError} onLoadMore={loadMoreNotifications} onRetry={retryNotifications} onNotificationsChange={(newNotifs) => {
           if (userProfile?.id) {
@@ -1878,31 +2066,16 @@ const App: React.FC = () => {
                 onEditDraft={handleEditPost}
               />
             )
-          ) : profileError ? (
+          ) : isProfileSettingsOpen ? (
+            renderContent()
+          ) : profileError && profileErrorTarget === activeRouteProfileKey ? (
             <div className="flex-1 flex flex-col items-center justify-center bg-white px-8 text-center">
               <Users size={42} className="text-gray-300 mb-4" />
               <h2 className="text-lg font-black text-gray-900 mb-2">Profile unavailable</h2>
               <p className="text-sm text-gray-500 mb-6">{profileError}</p>
               <button onClick={() => navigate('/')} className="px-5 py-2 rounded-full bg-gray-900 text-white text-sm font-bold">Back home</button>
             </div>
-          ) : isProfileLoading ? (
-            <div className="flex-1 flex flex-col items-center justify-center pt-20">
-              <div className="w-24 h-24 bg-gray-200 rounded-full animate-pulse mb-6 shadow-md border-4 border-white"></div>
-              <div className="w-40 h-6 bg-gray-200 rounded-full animate-pulse mb-3"></div>
-              <div className="w-24 h-4 bg-gray-200 rounded-full animate-pulse mb-8"></div>
-              
-              <div className="flex gap-12 mb-10 w-full max-w-sm px-8 justify-center">
-                <div className="flex flex-col items-center"><div className="w-10 h-6 bg-gray-200 rounded mb-1 animate-pulse"></div><div className="w-16 h-3 bg-gray-200 rounded animate-pulse"></div></div>
-                <div className="flex flex-col items-center"><div className="w-10 h-6 bg-gray-200 rounded mb-1 animate-pulse"></div><div className="w-16 h-3 bg-gray-200 rounded animate-pulse"></div></div>
-                <div className="flex flex-col items-center"><div className="w-10 h-6 bg-gray-200 rounded mb-1 animate-pulse"></div><div className="w-16 h-3 bg-gray-200 rounded animate-pulse"></div></div>
-              </div>
-
-              <div className="w-full px-4 space-y-4">
-                <div className="w-full h-32 bg-gray-100 rounded-2xl animate-pulse"></div>
-                <div className="w-full h-32 bg-gray-100 rounded-2xl animate-pulse"></div>
-              </div>
-            </div>
-          ) : selectedProfile ? (
+          ) : selectedProfileForRoute ? (
             <ProfileScreen 
               surveys={profileSurveys} 
               userGroups={userGroups} 
@@ -1911,7 +2084,7 @@ const App: React.FC = () => {
               onGroupClick={navigateToGroup} 
               onVote={handleVote} 
               onSurveyProgress={handleSurveyProgress} 
-              user={selectedProfile} 
+              user={selectedProfileForRoute}
               onBack={() => navigateToProfile(null)} 
               onAuthorClick={navigateToProfile} 
               onShareToFeed={handleShareToFeed} 
@@ -1921,11 +2094,26 @@ const App: React.FC = () => {
               isLoadingMore={isProfileLoadingMore}
               hasNextPage={!!profileNextCursor}
               onLoadMore={fetchMore}
+              postsError={profilePostsError}
+              onRetryPosts={() => setProfileRetryKey(key => key + 1)}
               onSettingsClick={() => navigate('/settings/profile')}
               onEditProfileClick={() => navigate('/settings/profile/edit-profile')}
               onEditDraft={handleEditPost}
               onDelete={handlePostDeleted}
               onLike={handleLikePost}
+              initialScrollTop={profileScrollPositionsRef.current.get(activeProfileViewKey) || 0}
+              onScrollPositionChange={(scrollTop) => profileScrollPositionsRef.current.set(activeProfileViewKey, scrollTop)}
+              scrollRestoreKey={activeProfileViewKey}
+            />
+          ) : routeProfileTarget || isProfileLoading ? (
+            <ProfileScreen
+              isLoading
+              surveys={[]}
+              userGroups={[]}
+              userProfile={viewerProfile}
+              onSurveyClick={handleSurveyClick}
+              onVote={handleVote}
+              onBack={() => navigateToProfile(null)}
             />
           ) : selectedSurveyId ? (
             selectedSurvey ? (
@@ -2012,11 +2200,6 @@ const App: React.FC = () => {
 
               {activeTab === 'home' ? (
                 <PullToRefresh ref={pullToRefreshRef} onScroll={handleScroll} onRefresh={async () => { await fetchData(userProfile?.id || undefined, userProfile, { force: true }); }} onScrollChange={dir => setIsNavVisible(dir === 'up')} className="flex-1 mt-16 pb-[75px] bg-white no-scrollbar">
-                  {isFeedLoading && surveys.length > 0 && (
-                    <div className="sticky top-0 z-20 h-1 bg-gray-100 overflow-hidden">
-                      <div className="h-full w-1/2 bg-blue-500 rounded-r-full animate-pulse" />
-                    </div>
-                  )}
                   {renderContent()}
                 </PullToRefresh>
               ) : (

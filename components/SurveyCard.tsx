@@ -18,6 +18,7 @@ import { MediaImage } from './media/MediaImage';
 import { calculateAverageRating } from '../utils/ratingScale';
 import { shouldShowOptionNames } from '../utils/optionPresentation';
 import { getPostOptionCapabilities } from '../utils/postOptions';
+import { calculateQuizScore, getCorrectOptionIds, QuizScore } from '../utils/quizScore';
 
 const CommentsSheet = React.lazy(() => import('./CommentsSheet').then(({ CommentsSheet }) => ({ default: CommentsSheet })));
 const ShareSheet = React.lazy(() => import('./ShareSheet').then(({ ShareSheet }) => ({ default: ShareSheet })));
@@ -377,7 +378,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     return (answers && Object.keys(answers).length > 0) || false;
   });
 
-  const [quizStats, setQuizStats] = useState<{ correct: number, total: number } | null>(null);
+  const [quizScoreState, setQuizScoreState] = useState<{ postId: string; score: QuizScore } | null>(null);
 
   const authorType = sourceSurvey.author?.type || 'User'; // Adjust based on your schema if needed
   const { status: followStatus, loading: isInteractLoading, toggle: toggleFollow } = usePostFollowState(userProfile?.id, sourceSurvey.author?.id, sourceSurvey.author?.isFollowing || false, isMenuOpen);
@@ -502,23 +503,20 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       setSelectedOptions([]);
       setSurveyCompleted(false);
       setQuizStarted(false);
-      setQuizStats(null);
+      setQuizScoreState(null);
     } else {
       setHasVoted(survey.hasParticipated || false);
       setSelectedOptions(survey.userSelectedOptions || []);
 
       if (survey.hasParticipated) {
         setSurveyCompleted(true);
-        if (survey.type === SurveyType.QUIZ) {
-          calculateAndSetScore(survey.userProgress?.answers || {});
-        }
       } else {
         setSurveyCompleted(false);
         const hasAnswers = survey.userProgress?.answers && Object.keys(survey.userProgress.answers).length > 0;
         if (!hasAnswers && !quizStarted) {
           setQuizStarted(false);
         }
-        setQuizStats(null);
+        setQuizScoreState(null);
       }
     }
   }, [survey.id, survey.hasParticipated, sourceSurface]);
@@ -626,32 +624,31 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     }, 400);
   };
 
-  const getCorrectOptionIds = (question: FlatQuestion): string[] => {
-    const ids = new Set<string>();
-    if (question.correctOptionId) ids.add(question.correctOptionId);
-    question.options?.forEach(option => {
-      if (option.isCorrect === true) ids.add(option.id);
-    });
-    return Array.from(ids);
+  const calculateAndSetScore = (answers: Record<string, any>) => {
+    const score = calculateQuizScore(flatQuestions, answers);
+    setQuizScoreState(score ? { postId: survey.id, score } : null);
   };
 
-  const calculateAndSetScore = (answers: Record<string, any>) => {
-    let correctCount = 0;
-    flatQuestions.forEach(q => {
-      const userAns = answers[q.id];
-      const correctOptions = getCorrectOptionIds(q);
-      if (correctOptions.length > 0 && userAns) {
-        const userAnsArray = Array.isArray(userAns) ? userAns : [userAns];
-        const isCorrect = correctOptions.length > 1
-          ? correctOptions.every(id => userAnsArray.includes(id)) && userAnsArray.every(id => correctOptions.includes(id))
-          : userAnsArray.some(id => correctOptions.includes(id));
-        if (isCorrect) {
-          correctCount++;
-        }
-      }
-    });
-    setQuizStats({ correct: correctCount, total: flatQuestions.length });
-  };
+  const quizQuestionSignature = useMemo(() => JSON.stringify(flatQuestions.map(question => ({
+    id: question.id,
+    correctOptionId: question.correctOptionId || null,
+    options: question.options?.map(option => ({ id: option.id, isCorrect: option.isCorrect === true })) || []
+  }))), [flatQuestions]);
+  const quizAnswerSignature = useMemo(
+    () => JSON.stringify(survey.userProgress?.answers ?? null),
+    [survey.userProgress?.answers]
+  );
+
+  useEffect(() => {
+    if (sourceSurface === 'SHARE_CAPTURE' || survey.type !== SurveyType.QUIZ || !survey.hasParticipated) {
+      setQuizScoreState(null);
+      return;
+    }
+    const score = calculateQuizScore(flatQuestions, survey.userProgress?.answers);
+    setQuizScoreState(score ? { postId: survey.id, score } : null);
+  }, [survey.id, survey.hasParticipated, survey.type, sourceSurface, quizAnswerSignature, quizQuestionSignature]);
+
+  const quizStats = quizScoreState?.postId === survey.id ? quizScoreState.score : null;
 
   const isQuizNoTimeLimit = survey.type === SurveyType.QUIZ && !survey.config?.timeLimit;
   const isSurveyMode = (survey.type === SurveyType.SURVEY || (survey.type === SurveyType.QUIZ && !(isQuizNoTimeLimit && flatQuestions.length === 1))) && (survey.sections || survey.questions || survey.sharedFrom?.sections || survey.sharedFrom?.questions);
@@ -1723,36 +1720,38 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   };
 
   const renderQuizCompletion = () => {
-    const correct = quizStats?.correct || 0;
-    const total = quizStats?.total || 1;
+    if (!quizStats || quizStats.total === 0) {
+      return (
+        <div data-testid="quiz-result-loading" className="mt-4 overflow-hidden rounded-2xl border border-gray-100 bg-white p-8 shadow-sm" aria-busy="true" aria-label={t('Loading results...', { defaultValue: 'Loading results...' })}>
+          <div className="mx-auto mb-5 h-20 w-20 animate-pulse rounded-full bg-gray-100 motion-reduce:animate-none" />
+          <div className="mx-auto mb-3 h-6 w-40 animate-pulse rounded-full bg-gray-100 motion-reduce:animate-none" />
+          <div className="mx-auto h-4 w-56 max-w-full animate-pulse rounded-full bg-gray-50 motion-reduce:animate-none" />
+        </div>
+      );
+    }
+    const correct = quizStats.correct;
+    const total = quizStats.total;
     const percentage = (correct / total) * 100;
 
     let title = t('Good Effort!');
     let subtitle = t('Keep practicing, you will get better!');
     let bgColor = 'bg-blue-50';
     let iconColor = 'text-blue-500';
-    let topPercent = 0;
-
     if (percentage === 100) {
       title = t('Perfect Score!');
       subtitle = t('You are an absolute expert!');
       bgColor = 'bg-yellow-50';
       iconColor = 'text-yellow-500';
-      topPercent = 1;
     } else if (percentage >= 80) {
       title = t('Excellent Work!');
       subtitle = t('You did a fantastic job!');
       bgColor = 'bg-green-50';
       iconColor = 'text-green-500';
-      topPercent = 15;
     } else if (percentage >= 50) {
       title = t('Well Done!');
       subtitle = t('You passed the quiz successfully.');
       bgColor = 'bg-blue-50';
       iconColor = 'text-blue-500';
-      topPercent = Math.max(20, Math.round(100 - percentage));
-    } else {
-      topPercent = Math.max(50, Math.round(100 - percentage));
     }
 
     return (
@@ -1778,13 +1777,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         </div>
 
         <div className="p-6 bg-white text-center">
-          <div className="inline-flex items-center gap-2 bg-blue-50 text-blue-700 px-4 py-2 rounded-lg text-sm font-bold border border-blue-100 mb-4">
-            <TrendingUp size={16} />
-            {t('You are in the top')} {topPercent}% {t('of participants so far!')}
-          </div>
-          <p className="text-xs text-gray-400 mb-0">
-            {sourceSurvey.participants || 1} {t('people have taken this quiz.')}
-          </p>
+          {typeof sourceSurvey.participants === 'number' && (
+            <p className="text-xs text-gray-400 mb-0">
+              {sourceSurvey.participants} {t('people have taken this quiz.')}
+            </p>
+          )}
         </div>
       </div>
     );

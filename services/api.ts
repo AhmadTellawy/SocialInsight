@@ -588,7 +588,7 @@ export const api = {
     getUserByHandle: async (handle: string, signal?: AbortSignal) => {
         let cleanHandle = handle.startsWith('@') ? handle.substring(1) : handle;
         const response = await authFetch(`${API_BASE_URL}/users/handle/${cleanHandle}`, { signal, timeoutMs: 15_000 });
-        if (!response.ok) throw new Error('Failed to fetch user by handle');
+        if (!response.ok) await throwApiError(response, 'Failed to fetch user by handle');
         return response.json();
     },
 
