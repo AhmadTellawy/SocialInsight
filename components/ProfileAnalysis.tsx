@@ -1,5 +1,6 @@
 
 import React, { useState, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   BarChart3, Globe, User, Calendar,
   Layers, Filter, X, Info, ArrowLeft,
@@ -52,33 +53,30 @@ const getExactPercentages = (values: number[]): number[] => {
 };
 
 export const ProfileAnalysis: React.FC<ProfileAnalysisProps> = ({ userProfile, onBack }) => {
+  const { t } = useTranslation();
   const [activeDimension, setActiveDimension] = useState<string>('type');
   const [activeFilters, setActiveFilters] = useState<Record<string, string[]>>({});
   const [isFilterSheetOpen, setIsFilterSheetOpen] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
   const [analyticsData, setAnalyticsData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   React.useEffect(() => {
     const controller = new AbortController();
     const loadAnalytics = async () => {
       if (!userProfile?.id) return;
-      const cacheKey = `si_profile_analytics_v1:${userProfile.id}`;
-      try {
-        const cached = JSON.parse(sessionStorage.getItem(cacheKey) || 'null');
-        if (cached?.data && Date.now() - Number(cached.cachedAt) < 60_000) {
-          setAnalyticsData(cached.data);
-          setLoading(false);
-        }
-      } catch { }
+      setAnalyticsData(null);
+      setLoading(true);
+      setLoadFailed(false);
       try {
         const data = await api.getUserAnalytics(userProfile.id, controller.signal);
-        setAnalyticsData(data);
-        try {
-          sessionStorage.setItem(cacheKey, JSON.stringify({ data, cachedAt: Date.now() }));
-        } catch { }
+        if (!controller.signal.aborted) setAnalyticsData(data);
       } catch (error: any) {
-        if (error?.name !== 'AbortError') console.error("Failed to load analytics", error);
+        if (!controller.signal.aborted) {
+          setAnalyticsData(null);
+          setLoadFailed(true);
+        }
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
@@ -172,14 +170,21 @@ export const ProfileAnalysis: React.FC<ProfileAnalysisProps> = ({ userProfile, o
     setTimeout(() => setIsAnimating(false), 300);
   };
 
+  if (loadFailed) return (
+    <div className="flex flex-col h-full items-center justify-center gap-5 p-6 text-center">
+      <h1 className="font-bold text-xl">{t('navigation.analysisUnavailable', { defaultValue: 'Analysis unavailable' })}</h1>
+      <button onClick={onBack} className="min-h-11 px-5 rounded-full bg-gray-900 text-white">{t('common.back', { defaultValue: 'Back' })}</button>
+    </div>
+  );
+
   return (
     <div className="flex flex-col h-full bg-white animate-in slide-in-from-right duration-300 z-[60]">
       {/* 1. Header */}
       <div className="p-5 border-b border-gray-100 bg-white sticky top-0 z-20">
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-3">
-            <button onClick={onBack} className="p-2 -ml-2 text-gray-400 hover:bg-gray-50 rounded-full transition-colors">
-              <ArrowLeft size={24} />
+            <button onClick={onBack} aria-label={t('common.back', { defaultValue: 'Back' })} className="min-h-11 min-w-11 p-2 -ml-2 text-gray-400 hover:bg-gray-50 rounded-full transition-colors">
+              <ArrowLeft size={24} className="rtl:rotate-180" />
             </button>
             <div>
               <h1 className="text-lg font-black text-gray-900 tracking-tight leading-none">Global Insights</h1>

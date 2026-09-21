@@ -1,3 +1,4 @@
+import { PagePublisher, PagePublisherRecovery, usePagePublisher } from './pages/PagePublisher';
 import { PostSaveStatus } from './PostSaveStatus';
 import { usePostSaveFeedback } from '../hooks/usePostSaveFeedback';
 
@@ -83,7 +84,8 @@ const createRatingOptions = (): PollDraftOption[] => [5, 4, 3, 2, 1].map((rating
 
 export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onSubmit: persistPost, onSaveDraft: persistDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
   const { t } = useTranslation();
-  const { error: submissionError, isSaving, onSubmit, onSaveDraft } = usePostSaveFeedback(persistPost, persistDraft, t);
+  const publisher = usePagePublisher(userProfile, draft, persistPost, persistDraft);
+  const { error: submissionError, isSaving, onSubmit, onSaveDraft } = usePostSaveFeedback(publisher.submit, publisher.save, t);
   const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
   const [selectedGroups, setSelectedGroups] = useState<string[]>(initialGroupId ? [initialGroupId] : []);
   const [isCategorySheetOpen, setIsCategorySheetOpen] = useState(false);
@@ -557,6 +559,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
     scrollContainerRef.current?.scrollTo({ top: 0 });
   };
 
+  if(draft?.pageId&&(publisher.loading||publisher.accessLost))return <PagePublisherRecovery publisher={publisher} user={userProfile} onClose={onClose}/>;
   return (
     <>
       <PostSaveStatus active={isSaving || isSubmitting} label={t('postOptions.saving')} />
@@ -570,10 +573,10 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
         <div className="text-center"><h1 className="text-[12px] font-bold text-gray-800">New Poll</h1><p className="text-xs text-gray-500">Step {composerStep} of 2</p></div>
         <button
           onClick={() => composerStep === 1 ? handleNext() : handleSubmit()}
-          disabled={isSaving || isSubmitting}
-          aria-disabled={isSaving || isSubmitting}
+          disabled={isSaving || isSubmitting || (composerStep === 2 && publisher.writeBlocked)}
+          aria-disabled={isSaving || isSubmitting || (composerStep === 2 && publisher.writeBlocked)}
           className={`text-white font-bold text-[12px] px-5 py-2.5 rounded-full transition-all uppercase tracking-widest ${
-            !isSubmitting
+            !isSubmitting && !(composerStep === 2 && publisher.writeBlocked)
               ? 'bg-blue-600 hover:bg-blue-700 shadow-md active:scale-95 shadow-blue-200/50'
               : 'bg-gray-300 text-white shadow-none cursor-not-allowed'
           }`}
@@ -875,7 +878,9 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
 
           </div>
           <div hidden={composerStep !== 2} className="space-y-6">
+          <PagePublisher publisher={publisher} user={userProfile} groupDestination={visibility === 'Groups' || visibility === 'ProfileAndGroups' || !!initialGroupId} />
           <PostVisibilitySection
+            pagePublisher={!!publisher.pageId}
             value={visibility}
             onChange={value => { setVisibility(value); setErrors(previous => ({ ...previous, visibility: false })); }}
             selectedGroupIds={selectedGroups}
@@ -1345,7 +1350,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
             <p className="text-sm text-gray-500 mb-6 leading-relaxed">You have unsaved work. If you exit now, your changes will be lost.</p>
             <div className="flex flex-col gap-2">
               <button onClick={handleDiscard} disabled={isSaving || isSubmitting} className="w-full py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-colors">Discard and Exit</button>
-              <button onClick={handleSaveDraft} disabled={isSaving || isSubmitting} className="w-full py-3 bg-blue-50 text-blue-600 rounded-xl font-bold text-sm hover:bg-blue-100 transition-colors">Save as Draft</button>
+              <button onClick={handleSaveDraft} disabled={isSaving || isSubmitting || publisher.writeBlocked} className="w-full py-3 bg-blue-50 text-blue-600 rounded-xl font-bold text-sm hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Save as Draft</button>
               <button onClick={() => setShowExitConfirm(false)} disabled={isSaving || isSubmitting} className="w-full py-3 bg-gray-100 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-200 transition-colors">Keep Editing</button>
             </div>
           </div>

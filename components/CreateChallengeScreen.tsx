@@ -1,3 +1,4 @@
+import { PagePublisher, PagePublisherRecovery, usePagePublisher } from './pages/PagePublisher';
 import { PostSaveStatus } from './PostSaveStatus';
 import { usePostSaveFeedback } from '../hooks/usePostSaveFeedback';
 
@@ -82,7 +83,8 @@ const createChallengeOption = (): ChallengeDraftOption => ({
 
 export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ onClose, onSubmit: persistPost, onSaveDraft: persistDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
   const { t } = useTranslation();
-  const { error: submissionError, isSaving, onSubmit, onSaveDraft } = usePostSaveFeedback(persistPost, persistDraft, t);
+  const publisher = usePagePublisher(userProfile, draft, persistPost, persistDraft);
+  const { error: submissionError, isSaving, onSubmit, onSaveDraft } = usePostSaveFeedback(publisher.submit, publisher.save, t);
   const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
   const [isAdvancedSheetOpen, setIsAdvancedSheetOpen] = useState(false);
   const [advancedSheetView, setAdvancedSheetView] = useState<'main' | 'results'>('main');
@@ -453,6 +455,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
     scrollContainerRef.current?.scrollTo({ top: 0 });
   };
 
+  if(draft?.pageId&&(publisher.loading||publisher.accessLost))return <PagePublisherRecovery publisher={publisher} user={userProfile} onClose={onClose}/>;
   return (
     <>
       <PostSaveStatus active={isSaving || isSubmitting} label={t('postOptions.saving')} />
@@ -465,10 +468,10 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
         <div className="text-center"><h1 className="text-[12px] font-bold text-gray-800">New Challenge</h1><p className="text-xs text-gray-500">Step {composerStep} of 2</p></div>
         <button
           onClick={() => composerStep === 1 ? handleNext() : handleFinalPost()}
-          disabled={isSaving || isSubmitting}
-          aria-disabled={isSaving || isSubmitting}
+          disabled={isSaving || isSubmitting || (composerStep === 2 && publisher.writeBlocked)}
+          aria-disabled={isSaving || isSubmitting || (composerStep === 2 && publisher.writeBlocked)}
           className={`text-white font-bold text-[12px] px-5 py-2.5 rounded-full transition-all uppercase tracking-widest ${
-            !isSubmitting
+            !isSubmitting && !(composerStep === 2 && publisher.writeBlocked)
               ? 'bg-amber-600 hover:bg-amber-700 shadow-md active:scale-95 shadow-amber-200/50'
               : 'bg-gray-300 shadow-none cursor-not-allowed'
           }`}
@@ -697,7 +700,9 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
 
           </div>
           <div hidden={composerStep !== 2} className="space-y-6">
+          <PagePublisher publisher={publisher} user={userProfile} groupDestination={visibility === 'Groups' || visibility === 'ProfileAndGroups' || !!initialGroupId} />
           <PostVisibilitySection
+            pagePublisher={!!publisher.pageId}
             value={visibility}
             onChange={value => { setVisibility(value); setErrors(previous => ({ ...previous, visibility: false })); }}
             selectedGroupIds={selectedGroups}
@@ -1096,7 +1101,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
             <p className="text-sm text-gray-500 mb-6 leading-relaxed">You have unsaved work. If you exit now, your changes will be lost.</p>
             <div className="flex flex-col gap-2">
               <button onClick={handleDiscard} disabled={isSaving || isSubmitting} className="w-full py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-colors">Discard and Exit</button>
-              <button onClick={handleSaveDraft} disabled={isSaving || isSubmitting} className="w-full py-3 bg-amber-50 text-amber-600 rounded-xl font-bold text-sm hover:bg-amber-100 transition-colors">Save as Draft</button>
+              <button onClick={handleSaveDraft} disabled={isSaving || isSubmitting || publisher.writeBlocked} className="w-full py-3 bg-amber-50 text-amber-600 rounded-xl font-bold text-sm hover:bg-amber-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Save as Draft</button>
               <button onClick={() => setShowExitConfirm(false)} disabled={isSaving || isSubmitting} className="w-full py-3 bg-gray-100 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-200 transition-colors">Keep Editing</button>
             </div>
           </div>

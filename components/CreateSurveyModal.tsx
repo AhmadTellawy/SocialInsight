@@ -1,3 +1,4 @@
+import { PagePublisher, PagePublisherRecovery, usePagePublisher } from './pages/PagePublisher';
 import { PostSaveStatus } from './PostSaveStatus';
 import { usePostSaveFeedback } from '../hooks/usePostSaveFeedback';
 
@@ -97,7 +98,8 @@ const createSurveyRatingOptions = (): SurveyOptionDraft[] => [5, 4, 3, 2, 1].map
 
 export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, onClose, onSubmit: persistPost, onSaveDraft: persistDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
   const { t } = useTranslation();
-  const { error: submissionError, isSaving, onSubmit, onSaveDraft } = usePostSaveFeedback(persistPost, persistDraft, t);
+  const publisher = usePagePublisher(userProfile, draft, persistPost, persistDraft);
+  const { error: submissionError, isSaving, onSubmit, onSaveDraft } = usePostSaveFeedback(publisher.submit, publisher.save, t);
   const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
   const [isResultVisibilitySheetOpen, setIsResultVisibilitySheetOpen] = useState(false);
   const [isCategorySheetOpen, setIsCategorySheetOpen] = useState(false);
@@ -669,6 +671,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
     scrollContainerRef.current?.scrollTo({ top: 0 });
   };
 
+  if(draft?.pageId&&(publisher.loading||publisher.accessLost))return <PagePublisherRecovery publisher={publisher} user={userProfile} onClose={onClose}/>;
   return (
     <>
       <PostSaveStatus active={isSaving || isSubmitting} label={t('postOptions.saving')} />
@@ -1106,7 +1109,9 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
 
           </div>
           <div hidden={composerStep !== 2} className="space-y-6">
+          <PagePublisher publisher={publisher} user={userProfile} groupDestination={visibility === 'Groups' || visibility === 'ProfileAndGroups' || !!initialGroupId} />
           <PostVisibilitySection
+            pagePublisher={!!publisher.pageId}
             value={visibility}
             onChange={value => { setVisibility(value); setErrors(previous => ({ ...previous, visibility: false })); }}
             selectedGroupIds={selectedGroups}
@@ -1257,17 +1262,17 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
       <div className="border-t border-gray-100 bg-white/95 backdrop-blur-md px-4 py-3 sticky bottom-0 z-40 safe-bottom shrink-0 flex gap-3">
         <button
           onClick={() => handlePost(true)}
-          disabled={!mediaReady || isSaving || isSubmitting}
-          className="flex-1 py-3 bg-gray-100 text-gray-700 rounded-2xl font-black uppercase tracking-wider text-[11px] hover:bg-gray-200 transition-all active:scale-[0.98]"
+          disabled={!mediaReady || isSaving || isSubmitting || publisher.writeBlocked}
+          className="flex-1 py-3 bg-gray-100 text-gray-700 rounded-2xl font-black uppercase tracking-wider text-[11px] hover:bg-gray-200 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Save Draft
         </button>
         <button
           onClick={() => composerStep === 1 ? handleNext() : handlePost(false)}
-          disabled={!mediaReady || isSaving || isSubmitting}
-          aria-disabled={!mediaReady || isSaving || isSubmitting}
+          disabled={!mediaReady || isSaving || isSubmitting || (composerStep === 2 && publisher.writeBlocked)}
+          aria-disabled={!mediaReady || isSaving || isSubmitting || (composerStep === 2 && publisher.writeBlocked)}
           className={`flex-1 py-3 text-white rounded-2xl font-bold uppercase tracking-wider text-[12px] transition-all ${
-            mediaReady && !isSubmitting
+            mediaReady && !isSubmitting && !(composerStep === 2 && publisher.writeBlocked)
               ? 'bg-blue-600 hover:bg-blue-700 active:scale-[0.98] shadow-lg shadow-blue-200'
               : 'bg-gray-300 shadow-none cursor-not-allowed'
           }`}
@@ -1824,7 +1829,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
             <p className="text-sm text-gray-500 mb-6 leading-relaxed">You have unsaved work. If you exit now, your changes will be lost.</p>
             <div className="flex flex-col gap-2">
               <button onClick={handleDiscard} disabled={isSaving || isSubmitting} className="w-full py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-colors">Discard and Exit</button>
-              <button onClick={() => handlePost(true)} className="w-full py-3 bg-blue-50 text-blue-600 rounded-xl font-bold text-sm hover:bg-blue-100 transition-colors">Save as Draft</button>
+              <button onClick={() => handlePost(true)} disabled={isSaving || isSubmitting || publisher.writeBlocked} className="w-full py-3 bg-blue-50 text-blue-600 rounded-xl font-bold text-sm hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Save as Draft</button>
               <button onClick={() => setShowExitConfirm(false)} disabled={isSaving || isSubmitting} className="w-full py-3 bg-gray-100 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-200 transition-colors">Keep Editing</button>
             </div>
           </div>

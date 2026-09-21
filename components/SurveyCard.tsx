@@ -7,6 +7,7 @@ import { BottomSheet } from './BottomSheet';
 import { RichTextRenderer } from './RichTextRenderer';
 import { UserAvatar } from './UserAvatar';
 import { api } from '../services/api';
+import { usePageContentAccess } from '../hooks/usePageContentAccess';
 import { usePostFollowState } from '../hooks/usePostFollowState';
 import { useTranslation } from 'react-i18next';
 import { SurveyActions } from './Survey/SurveyActions';
@@ -18,6 +19,8 @@ import { MediaImage } from './media/MediaImage';
 import { calculateAverageRating } from '../utils/ratingScale';
 import { shouldShowOptionNames } from '../utils/optionPresentation';
 import { getPostOptionCapabilities } from '../utils/postOptions';
+import { settlePageVote, settlePageLike } from '../utils/pageCardState';
+import type { PageLikeResult } from '../utils/pageCardState';
 
 const CommentsSheet = React.lazy(() => import('./CommentsSheet').then(({ CommentsSheet }) => ({ default: CommentsSheet })));
 const ShareSheet = React.lazy(() => import('./ShareSheet').then(({ ShareSheet }) => ({ default: ShareSheet })));
@@ -31,6 +34,7 @@ const SheetContentFallback = () => (
 );
 
 interface SurveyCardProps {
+  privatePageContext?:boolean;
   survey: Survey;
   userProfile?: UserProfile;
   isDetailView?: boolean;
@@ -39,15 +43,15 @@ interface SurveyCardProps {
   onContentClick?: () => void;
   onVote?: (surveyId: string, optionIds: string[], isAnonymous?: boolean, newOption?: Option, followUpAnswers?: Record<string, string>, answers?: PostAnswerPayload[]) => void | boolean | Promise<void | boolean>;
   onSurveyProgress?: (surveyId: string, progress: { index: number, answers: Record<string, any>, followUpAnswers?: Record<string, string>, historyStack?: number[], isAnonymous?: boolean }) => void;
-  onAuthorClick?: (author: { id: string; name: string; avatar: string; handle?: string }) => void;
-  onShareToFeed?: (survey: Survey, caption: string) => Promise<'shared' | 'unshared'>;
+  onAuthorClick?: (author: { id: string; name: string; avatar: string; handle?: string; kind?: string }) => void;
+  onShareToFeed?: (survey: Survey, caption: string, publisher?:{pageId:string;pageCreateKey:string}) => Promise<'shared' | 'unshared'>;
   onUpdateDemographics?: (demographics: Partial<NonNullable<UserProfile['demographics']>>) => void | Promise<void>;
   positionInFeed?: number;
   sourceSurface?: 'FEED' | 'PROFILE' | 'SAVED' | 'SEARCH' | 'DEEP_LINK' | 'SHARE_CAPTURE';
   onAnalysisClick?: () => void;
   contextGroups?: any[];
   onGroupClick?: (groupId: string) => void;
-  onLike?: (surveyId: string, isLiked: boolean) => void;
+  onLike?: (surveyId: string, isLiked: boolean) => PageLikeResult | Promise<PageLikeResult>;
   onSaveChange?: (surveyId: string, isSaved: boolean) => void;
   onDelete?: (surveyId: string, deletedPostIds?: string[]) => void;
   onEditDraft?: (survey: Survey) => void;
@@ -156,6 +160,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   survey,
   userProfile,
   isDetailView = false,
+  privatePageContext = false,
   initialCommentId,
   initialReplyId,
   onContentClick,
@@ -175,6 +180,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   onEditDraft
 }) => {
   const { t, i18n } = useTranslation();
+  const pageContentAllowed=usePageContentAccess(survey,userProfile?.id,privatePageContext);
   const [timeLeftStr, setTimeLeftStr] = useState('');
   const [isExpired, setIsExpired] = useState(false);
   const navigate = useNavigate();
@@ -283,10 +289,6 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const [isShareBusy, setIsShareBusy] = useState(false);
   const [shareSheetInitialStep, setShareSheetInitialStep] = useState<'menu' | 'repost-editor'>('menu');
 
-  useEffect(() => {
-    if (isDetailView && (initialCommentId || initialReplyId)) setIsCommentsOpen(true);
-  }, [isDetailView, initialCommentId, initialReplyId]);
-
   // Unified Demographic Flow State
   const [isDemographicSheetOpen, setIsDemographicSheetOpen] = useState(false);
   const [pendingDemoSteps, setPendingDemoSteps] = useState<string[]>([]);
@@ -317,6 +319,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const [showShareToast, setShowShareToast] = useState(false);
   const [isLiked, setIsLiked] = useState(interactionTarget.isLiked || false);
   const [likeCount, setLikeCount] = useState(interactionTarget.likes || 0);
+  const pageLikePending = useRef(false);
   const [commentsCount, setCommentsCount] = useState(interactionTarget.commentsCount || 0);
 
   useEffect(() => {
@@ -379,8 +382,35 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
   const [quizStats, setQuizStats] = useState<{ correct: number, total: number } | null>(null);
 
+  const pageVoteContext = !!survey.pageId || !!sourceSurvey.pageId;
+  const submitVote: NonNullable<SurveyCardProps['onVote']> = (...args) => {
+    if (!pageVoteContext) return onVote?.(...args);
+    return settlePageVote(() => onVote?.(...args), () => {
+      // Restore only completion state. Keep entered answers and the current step.
+      setHasVoted(hasVoted);
+      setSurveyCompleted(surveyCompleted);
+      setQuizStats(quizStats);
+      setChallengeEliminatedIds(challengeEliminatedIds);
+      setChallengeActivePair(challengeActivePair);
+      setIsChallengeTransitioning(null);
+      setIsDemographicSheetOpen(false);
+      setIsDemoSuccess(false);
+      setActionFeedback(t('postOptions.actionFailed'));
+    });
+  };
+
+  useEffect(() => {
+    if (!pageVoteContext || isRatingSubmitting || ![SurveyType.POLL, SurveyType.CHALLENGE].includes(sourceSurvey.type)) return;
+    const options = [...(sourceSurvey.options || [])];
+    if (sourceSurvey.pollChoiceType === 'rating') options.sort((a, b) => (b.ratingValue || 0) - (a.ratingValue || 0));
+    // An unsubmitted custom choice is local form state, not a server result.
+    setLocalOptions(previous => !sourceSurvey.hasParticipated
+      ? [...options, ...previous.filter(option => option.id.startsWith('custom-') && !options.some(fresh => fresh.id === option.id))]
+      : options);
+  }, [pageVoteContext, sourceSurvey.type, sourceSurvey.options, sourceSurvey.hasParticipated, sourceSurvey.pollChoiceType, isRatingSubmitting]);
+
   const authorType = sourceSurvey.author?.type || 'User'; // Adjust based on your schema if needed
-  const { status: followStatus, loading: isInteractLoading, toggle: toggleFollow } = usePostFollowState(userProfile?.id, sourceSurvey.author?.id, sourceSurvey.author?.isFollowing || false, isMenuOpen);
+  const { status: followStatus, loading: isInteractLoading, toggle: toggleFollow } = usePostFollowState(userProfile?.id, sourceSurvey.author?.id, sourceSurvey.author?.isFollowing || false, isMenuOpen, sourceSurvey.author?.kind === 'PAGE');
   const isInteracted = followStatus === 'ACTIVE';
   const isFollowPending = followStatus === 'PENDING';
 
@@ -474,6 +504,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       setIsAnonToggled(false);
     }
   }, [survey.id]);
+
+  // Apply notification navigation after resetting the previous post's sheets.
+  useEffect(() => {
+    if (isDetailView && (initialCommentId || initialReplyId)) setIsCommentsOpen(true);
+  }, [survey.id, isDetailView, initialCommentId, initialReplyId]);
 
   useEffect(() => {
     const s = survey.sharedFrom || survey;
@@ -619,7 +654,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       } else {
         setHasVoted(true);
         setSelectedOptions([winnerId]);
-        if (onVote) onVote(sourceSurvey.id, [winnerId], isCurrentlyAnonymous);
+        if (onVote) submitVote(sourceSurvey.id, [winnerId], isCurrentlyAnonymous);
         setIsChallengeTransitioning(null);
         startDemographicFlow();
       }
@@ -772,7 +807,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             const allSelectedOptionIds = answerPayload
               .map(answer => answer.optionId)
               .filter((optionId): optionId is string => !!optionId);
-            onVote(sourceSurvey.id, allSelectedOptionIds, isCurrentlyAnonymous, undefined, followUpAnswers, answerPayload);
+            submitVote(sourceSurvey.id, allSelectedOptionIds, isCurrentlyAnonymous, undefined, followUpAnswers, answerPayload);
           }
           setSurveyCompleted(true);
           startDemographicFlow();
@@ -890,7 +925,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       const allSelectedOptionIds = answerPayload
         .map(answer => answer.optionId)
         .filter((optionId): optionId is string => !!optionId);
-      onVote(sourceSurvey.id, allSelectedOptionIds, isCurrentlyAnonymous, undefined, followUpAnswers, answerPayload);
+      submitVote(sourceSurvey.id, allSelectedOptionIds, isCurrentlyAnonymous, undefined, followUpAnswers, answerPayload);
     }
 
     if (onSurveyProgress) {
@@ -968,7 +1003,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     setRatingError(null);
 
     try {
-      const submitted = await Promise.resolve(onVote(sourceSurvey.id, [option.id], isCurrentlyAnonymous));
+      const submitted = await Promise.resolve(submitVote(sourceSurvey.id, [option.id], isCurrentlyAnonymous));
       if (submitted === false) throw new Error('Rating submission failed');
 
       setLocalOptions(current => current.map(currentOption =>
@@ -1005,7 +1040,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       const targetOpt = localOptions.find(o => o.id === optionId);
       // If clarification is needed, we WAIT for the Participate button
       if (!targetOpt?.withFollowUp && !showParticipateButton && onVote) {
-        onVote(sourceSurvey.id, [optionId], isCurrentlyAnonymous);
+        submitVote(sourceSurvey.id, [optionId], isCurrentlyAnonymous);
         setHasVoted(true);
         startDemographicFlow();
       }
@@ -1047,6 +1082,20 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
     const previousLiked = isLiked;
     const nextLiked = !previousLiked;
+
+    if (pageVoteContext) {
+      await settlePageLike(pageLikePending, { isLiked, likes: likeCount }, async () => {
+        Analytics.track({ event_type: nextLiked ? 'LIKE' : 'UNLIKE', post_id: interactionTarget.id,
+          actor_user_id: userProfile.id, source_surface: sourceSurface, position_in_feed: positionInFeed });
+        if (onLike) return await onLike(interactionTarget.id, nextLiked);
+        await api.likeSurvey(interactionTarget.id);
+        const fresh = await api.getSurveyById(survey.id, userProfile.id);
+        const target = isRepost ? fresh.sharedFrom! : fresh;
+        return { isLiked: !!target.isLiked, likes: target.likes || 0 };
+      }, state => { setIsLiked(state.isLiked); setLikeCount(state.likes); },
+      () => setActionFeedback(t('postOptions.actionFailed')));
+      return;
+    }
 
     setIsLiked(nextLiked);
     setLikeCount(prev => nextLiked ? prev + 1 : prev - 1);
@@ -1255,7 +1304,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const handleAuthorClickInternal = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (onAuthorClick && survey.author) {
-      onAuthorClick({ id: survey.author.id, name: survey.author.name, avatar: survey.author.avatar, handle: survey.author.handle });
+      onAuthorClick({ id: survey.author.id, name: survey.author.name, avatar: survey.author.avatar, handle: survey.author.handle, kind: survey.author.kind });
     }
   };
 
@@ -1301,8 +1350,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const isMySource = !!userProfile?.id && sourceSurvey.author?.id === userProfile.id;
   const postOptionCapabilities = getPostOptionCapabilities({
     isAuthenticated: !!userProfile?.id,
-    isPostOwner: isMyPost,
-    isSourceOwner: isMySource,
+    isPostOwner: isMyPost || !!survey.pageCapabilities?.includes('manageContent'),
+    isSourceOwner: isMySource || !!sourceSurvey.pageCapabilities?.includes('manageContent'),
     isRepost: !!survey.sharedFrom,
     hasViewerPeopleTag: !!viewerPeopleTag
   });
@@ -1707,7 +1756,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
               if (!hasVoted && onVote) {
                 // Identify the newly created custom option to pass to the parent
                 const customOpt = localOptions.find(o => o.id.startsWith('custom-') && selectedOptions.includes(o.id));
-                onVote(sourceSurvey.id, selectedOptions, isCurrentlyAnonymous, customOpt, followUpAnswers);
+                submitVote(sourceSurvey.id, selectedOptions, isCurrentlyAnonymous, customOpt, followUpAnswers);
                 setHasVoted(true);
                 startDemographicFlow();
               }
@@ -1902,7 +1951,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 e.stopPropagation();
                 if (!hasVoted && onVote) {
                   const customOpt = localOptions.find(o => o.id.startsWith('custom-') && selectedOptions.includes(o.id));
-                  onVote(sourceSurvey.id, selectedOptions, isCurrentlyAnonymous, customOpt, followUpAnswers);
+                  submitVote(sourceSurvey.id, selectedOptions, isCurrentlyAnonymous, customOpt, followUpAnswers);
                   setHasVoted(true);
                   startDemographicFlow();
                 }
@@ -2097,6 +2146,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     );
   }
 
+  if(!pageContentAllowed)return null;
   return (
     <>
       <div
@@ -2118,7 +2168,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             <div className="mb-3">
               <div
                 className="flex items-center text-gray-500 font-bold text-xs gap-1.5 cursor-pointer hover:text-blue-600 transition-colors mb-2"
-                onClick={(e) => { e.stopPropagation(); if (onAuthorClick && survey.author) onAuthorClick({ id: survey.author.id, name: survey.author.name, avatar: survey.author.avatar, handle: survey.author.handle }); }}
+                onClick={(e) => { e.stopPropagation(); if (onAuthorClick && survey.author) onAuthorClick({ id: survey.author.id, name: survey.author.name, avatar: survey.author.avatar, handle: survey.author.handle, kind: survey.author.kind }); }}
               >
                 <Repeat size={14} className="text-gray-400" />
                 <span>{survey.author?.name || t('Anonymous')} {t('reposted this')}</span>
@@ -2139,7 +2189,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 <div className="flex items-center gap-3 group-hover:opacity-80 transition-opacity flex-1 overflow-hidden" onClick={(e) => {
                   e.stopPropagation();
                   if (onAuthorClick && sourceSurvey.author) {
-                    onAuthorClick({ id: sourceSurvey.author.id, name: sourceSurvey.author.name, avatar: sourceSurvey.author.avatar, handle: sourceSurvey.author.handle });
+                    onAuthorClick({ id: sourceSurvey.author.id, name: sourceSurvey.author.name, avatar: sourceSurvey.author.avatar, handle: sourceSurvey.author.handle, kind: sourceSurvey.author.kind });
                   }
                 }}>
                   <div className="relative shrink-0">
@@ -2500,6 +2550,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       <BottomSheet isOpen={isCommentsOpen} onClose={() => setIsCommentsOpen(false)} customLayout={true} title={`Comments (${commentsCount})`}>
         <React.Suspense fallback={<SheetContentFallback />}>
           <CommentsSheet
+            pagePost={sourceSurvey}
             surveyId={interactionTarget.id}
             userProfile={userProfile}
             onAuthorClick={onAuthorClick}

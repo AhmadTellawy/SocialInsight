@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { attachPagePublishers } from '../pages/pagePostService';
 import prisma from '../prisma';
 import {
   POST_MEDIA_INCLUDE,
@@ -13,7 +14,9 @@ import {
   getVisiblePeopleTagsInclude,
   serializePeopleTags
 } from '../services/peopleTagService';
-import { buildVisiblePublishedPostWhere } from '../services/postVisibilityService';
+import { buildVisiblePublishedPostWhere as baseVisibleWhere } from '../services/postVisibilityService';
+import { pageDiscoveryPostWhere } from '../pages/pageFeature';
+const buildVisiblePublishedPostWhere=(viewerId?:string|null)=>({AND:[baseVisibleWhere(viewerId),pageDiscoveryPostWhere()]});
 import {
   TOPIC_TOP_CANDIDATE_LIMIT,
   TRENDING_HASHTAG_CANDIDATE_LIMIT,
@@ -87,7 +90,7 @@ const buildTopicPostInclude = (viewerId?: string | null) => ({
     include: { answers: true }
   } : false,
   likes: viewerId ? { where: { userId: viewerId }, take: 1 } : false,
-  shares: viewerId ? { where: { authorId: viewerId }, take: 1 } : false,
+  shares: viewerId ? { where: { authorId: viewerId,pageId:null }, take: 1 } : false,
   savedBy: viewerId ? { where: { userId: viewerId }, take: 1 } : false,
   sharedFrom: {
     include: {
@@ -118,7 +121,7 @@ const buildTopicPostInclude = (viewerId?: string | null) => ({
         include: { answers: true }
       } : false,
       likes: viewerId ? { where: { userId: viewerId }, take: 1 } : false,
-      shares: viewerId ? { where: { authorId: viewerId }, take: 1 } : false,
+      shares: viewerId ? { where: { authorId: viewerId,pageId:null }, take: 1 } : false,
       savedBy: viewerId ? { where: { userId: viewerId }, take: 1 } : false
     }
   }
@@ -223,9 +226,11 @@ export const getHashtagPosts = async (req: Request, res: Response) => {
       }
     }
 
+    const data = posts.map((post) => serializeTopicPost(post, viewerId));
+    await attachPagePublishers(data,viewerId);
     res.json({
       topic: { ...hashtag, postCount },
-      data: posts.map((post) => serializeTopicPost(post, viewerId)),
+      data,
       nextCursor,
       sort
     });

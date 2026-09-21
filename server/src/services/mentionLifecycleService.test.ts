@@ -4,7 +4,7 @@ import { MentionState, MentionSurface } from '@prisma/client';
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'mention-lifecycle-test-secret';
 
-const { reconcilePostMentions } = require('./mentionLifecycleService') as typeof import('./mentionLifecycleService');
+const { reconcilePostMentions, reconcileCommentMentions } = require('./mentionLifecycleService') as typeof import('./mentionLifecycleService');
 
 type StoredMention = {
   id: string;
@@ -29,10 +29,15 @@ const createHarness = () => {
   ];
   const mentions: StoredMention[] = [];
   const notifications: Array<{ id: string; userId: string }> = [];
+  const pageFollows = new Set<string>();
+  const pageBlocks = new Set<string>();
+  const personalBlocks = new Set<string>();
+  const comment = { pageId: null as string | null };
   let mentionSequence = 0;
   let notificationSequence = 0;
   const post = {
     authorId: 'actor',
+    pageId: null as string | null,
     status: 'PUBLISHED',
     isDeleted: false,
     targetAudience: 'Public',
@@ -50,7 +55,10 @@ const createHarness = () => {
         })
       )
     },
-    userBlock: { findMany: async () => [] },
+    userBlock: { findMany: async () => [...personalBlocks].map(blockedId => ({ blockerId: 'actor', blockedId })) },
+    pageFollow: { findMany: async () => [...pageFollows].map(userId => ({ userId })) },
+    pageBlock: { findMany: async () => [...pageBlocks].map(userId => ({ userId })) },
+    comment: { findUnique: async () => comment },
     follow: { findMany: async () => [] },
     groupMember: { findMany: async () => [] },
     post: { findUnique: async () => ({ ...post }) },
@@ -121,7 +129,8 @@ const createHarness = () => {
     surfaces: [{ surface: MentionSurface.POST_TITLE, text }]
   });
 
-  return { users, mentions, notifications, post, reconcile };
+  const reconcileComment = (text: string) => reconcileCommentMentions(tx, { postId: 'post-1', commentId: 'comment-1', actorUserId: 'actor', isReply: false, text });
+  return { users, mentions, notifications, post, reconcile, reconcileComment, pageFollows, pageBlocks, personalBlocks, comment };
 };
 
 test('persistent mention identity survives handle changes and punctuation edits', async () => {
@@ -139,6 +148,30 @@ test('persistent mention identity survives handle changes and punctuation edits'
   assert.equal(harness.mentions[0].targetUserId, 'target-a');
   assert.equal(harness.mentions[0].occurrences[0].rawText, '@old_handle');
   assert.equal(harness.notifications.length, 1);
+});
+
+test('Page mentions follow Page audience and blocks rather than the internal actor privacy', async () => {
+  const harness = createHarness();
+  harness.post.pageId = 'page-1';
+  harness.post.author.isPrivate = true;
+  harness.post.targetAudience = 'Followers';
+  harness.personalBlocks.add('target-a');
+  assert.equal((await harness.reconcile('@old_handle')).created, 0);
+  harness.pageFollows.add('target-a');
+  assert.equal((await harness.reconcile('@old_handle')).created, 1);
+  harness.pageBlocks.add('target-a');
+  assert.equal((await harness.reconcile('@old_handle')).removed, 1);
+});
+
+test('personal comments keep personal blocks while official Page comments use Page blocks', async () => {
+  const harness = createHarness();
+  harness.post.pageId = 'page-1';
+  harness.personalBlocks.add('target-a');
+  assert.equal((await harness.reconcileComment('@old_handle')).created, 0);
+  harness.comment.pageId = 'page-1';
+  assert.equal((await harness.reconcileComment('@old_handle')).created, 1);
+  harness.pageBlocks.add('target-a');
+  assert.equal((await harness.reconcileComment('@old_handle')).removed, 1);
 });
 
 test('mention reconciliation adds, removes, and retains targets without duplicate notifications', async () => {

@@ -1,9 +1,13 @@
 
+import { useAppNavigation } from './hooks/useAppNavigation';
+import { canonicalPath, isKnownPath, profilePath, decodeRouteSegment } from './utils/navigation';
+
 import React, { useState, useRef, useMemo } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { api, ApiError } from './services/api';
 import { Header } from './components/Header';
+import { usePagesAvailability } from './hooks/usePagesAvailability';
 import { BottomNav } from './components/BottomNav';
 import { SurveyCard } from './components/SurveyCard';
 import { HomeScreen } from './components/HomeScreen';
@@ -31,6 +35,7 @@ const CreatePollScreen = React.lazy(() => import('./components/CreatePollScreen'
 const CreateQuizModal = React.lazy(() => import('./components/CreateQuizModal').then(({ CreateQuizModal }) => ({ default: CreateQuizModal })));
 const CreateChallengeScreen = React.lazy(() => import('./components/CreateChallengeScreen').then(({ CreateChallengeScreen }) => ({ default: CreateChallengeScreen })));
 const CreateAccountModal = React.lazy(() => import('./components/CreateAccountModal').then(({ CreateAccountModal }) => ({ default: CreateAccountModal })));
+const PagesWorkspace = React.lazy(() => import('./components/pages/PagesWorkspace').then(({ PagesWorkspace }) => ({ default: PagesWorkspace })));
 const GroupSettingsScreen = React.lazy(() => import('./components/GroupSettingsScreen').then(({ GroupSettingsScreen }) => ({ default: GroupSettingsScreen })));
 const ProfileSettingsScreen = React.lazy(() => import('./components/ProfileSettingsScreen').then(({ ProfileSettingsScreen }) => ({ default: ProfileSettingsScreen })));
 const SearchScreen = React.lazy(() => import('./components/SearchScreen').then(({ SearchScreen }) => ({ default: SearchScreen })));
@@ -122,9 +127,12 @@ const decodePathSegment = (value: string) => {
 };
 
 const App: React.FC = () => {
-  const navigate = useNavigate();
+  const { navigate, back, setQuery } = useAppNavigation();
   const location = useLocation();
+  const locationRef = useRef(location);
+  locationRef.current = location;
   const { t, i18n } = useTranslation();
+  const isPagesRoute = location.pathname === '/pages' || location.pathname.startsWith('/pages/');
   const isProfileSettingsRoute = location.pathname === '/settings/profile'
     || location.pathname.startsWith('/settings/profile/');
 
@@ -146,27 +154,27 @@ const App: React.FC = () => {
   const userProfileIdRef = useRef<string | undefined>(undefined);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authBootstrapped, setAuthBootstrapped] = useState(false);
+  const { available: pagesAvailable } = usePagesAvailability(userProfile?.id, authBootstrapped);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalType, setAuthModalType] = useState<'flow' | 'login'>('flow');
 
   const handleCloseAuth = () => {
-    if (window.history.state && window.history.state.idx > 0) {
-      navigate(-1);
-    } else {
-      navigate('/', { replace: true });
-    }
+    back();
     setAuthModalOpen(false);
   };
 
+  const publishedPageDestination = useRef<string | null>(null);
   const handleCloseModal = () => {
+    const pageId = publishedPageDestination.current;
+    publishedPageDestination.current = null;
     setEditingDraft(null);
     setActiveCreationFlow(null);
     setActiveCreationGroupId(null);
     setIsNavVisible(true);
-    if (window.history.state && window.history.state.idx > 0) {
-      navigate(-1);
+    if (pageId) {
+      navigate('/pages/manage/' + encodeURIComponent(pageId), { replace: true });
     } else {
-      navigate('/', { replace: true });
+      back();
     }
     setActiveCreationFlow(null);
     setActiveCreationGroupId(null);
@@ -198,7 +206,8 @@ const App: React.FC = () => {
     setActiveCreationFlow(null);
     setAccountModalType(null);
     setActiveTab('home');
-    navigate('/', { replace: true });
+    const returnTo = new URLSearchParams(location.search).get('returnTo');
+    navigate(returnTo && (returnTo === '/pages' || returnTo.startsWith('/pages/')) && !returnTo.includes('\\') ? returnTo : '/', { replace: true });
 
     // Initialize Push Notifications if permission granted
     api.setupPushNotifications().catch(console.error);
@@ -290,6 +299,7 @@ const App: React.FC = () => {
       sharedFrom: raw.sharedFrom ? normalizeSurvey(raw.sharedFrom as Partial<Survey>, currentUser) : undefined,
       author: raw.author?.id ? {
         id: raw.author.id,
+        kind: raw.author.kind,
         name: raw.author.name || 'Unknown',
         handle: raw.author.handle,
         avatar: raw.author.avatar || '',
@@ -330,7 +340,7 @@ const App: React.FC = () => {
       const user = readMediaSafeJson<UserProfile>('si_user');
       const cached = readMediaSafeJson<any[]>(getFeedCacheKey(user?.id));
       if (cached) {
-        return cached.map((s: any) => normalizeSurvey(s, user));
+        return cached.filter((s:any)=>!s.pageId&&!s.sharedFrom?.pageId).map((s: any) => normalizeSurvey(s, user));
       }
     } catch (e) {
       console.error("Failed to parse initial feed cache", e);
@@ -413,7 +423,7 @@ const App: React.FC = () => {
           if (controller.signal.aborted) return;
 
           try {
-            writeMediaSafeJson(getFeedCacheKey(currentUserId), normalizedSurveys.slice(0, 10));
+            writeMediaSafeJson(getFeedCacheKey(currentUserId), normalizedSurveys.filter(survey=>!survey.pageId&&!survey.sharedFrom?.pageId).slice(0, 10));
           } catch {
             console.warn('Failed to cache feed to localStorage due to quota limits');
           }
@@ -611,6 +621,12 @@ const App: React.FC = () => {
   React.useEffect(() => {
     if (!authBootstrapped) return;
 
+    if (isPagesRoute) {
+      feedRequestRef.current?.controller.abort();
+      loadMoreAbortRef.current?.abort();
+      return;
+    }
+
     if (isAuthenticated && userProfile?.id) {
       void fetchData(userProfile.id, userProfile);
       return;
@@ -619,7 +635,7 @@ const App: React.FC = () => {
     if (!isAuthenticated) {
       void fetchData();
     }
-  }, [authBootstrapped, isAuthenticated, userProfile?.id]);
+  }, [authBootstrapped, isAuthenticated, isPagesRoute, userProfile?.id]);
 
   React.useEffect(() => {
     if (!authBootstrapped) return;
@@ -759,7 +775,8 @@ const App: React.FC = () => {
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const detailRequestRef = useRef(0);
-  const [detailTab, setDetailTab] = useState<'post' | 'analysis'>('post');
+  const detailTab = new URLSearchParams(location.search).get('tab') === 'analysis' ? 'analysis' : 'post';
+  const setDetailTab = (tab: 'post' | 'analysis') => setQuery('tab', tab === 'post' ? null : tab);
 
   const [selectedProfile, setSelectedProfile] = useState<(Partial<UserProfile> & { id: string; name: string; avatar: string; handle?: string }) | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
@@ -790,7 +807,15 @@ const App: React.FC = () => {
   React.useEffect(() => {
     if (!authBootstrapped) return;
 
-    const path = location.pathname;
+    const path = canonicalPath(location.pathname);
+    if (path !== location.pathname) {
+      navigate(path + location.search + location.hash, { replace: true });
+      return;
+    }
+    if (path === '/profile' && userProfile?.id) {
+      navigate(profilePath(userProfile) + location.search + location.hash, { replace: true });
+      return;
+    }
     const isPostRoute = path.startsWith('/post/');
     const isProfileRoute = path.startsWith('/profile/') || path.startsWith('/@') || path === '/profile';
     const isGroupRoute = path.startsWith('/group/');
@@ -871,7 +896,7 @@ const App: React.FC = () => {
     }
     else if (path.startsWith('/@')) {
       setActiveTab('profile');
-      const handle = decodeURIComponent(path.split('/@')[1] || '').split('/')[0];
+      const handle = decodeRouteSegment(path.slice(2));
       if (handle) {
         const requestId = ++profileRequestRef.current;
         profileRequestAbortRef.current?.abort();
@@ -910,7 +935,7 @@ const App: React.FC = () => {
     }
     else if (path.startsWith('/profile/')) {
       setActiveTab('profile');
-      const id = decodeURIComponent(path.split('/profile/')[1] || '').split('/')[0];
+      const id = decodeRouteSegment(path.slice('/profile/'.length));
       if (id) {
         const requestId = ++profileRequestRef.current;
         profileRequestAbortRef.current?.abort();
@@ -938,7 +963,8 @@ const App: React.FC = () => {
           setProfileNextCursor(res.nextCursor);
           setSelectedProfile(user);
           if (user.handle) {
-            navigate(`/@${user.handle}`, { replace: true });
+            const currentLocation = locationRef.current;
+            navigate(profilePath(user) + currentLocation.search + currentLocation.hash, { replace: true });
           }
         }).catch(err => {
           if (profileRequestRef.current !== requestId) return;
@@ -951,12 +977,12 @@ const App: React.FC = () => {
       }
     }
     else if (path.startsWith('/group/')) {
-      const id = path.split('/group/')[1]?.split('/')[0]; // handle /group/id/settings
+      const id = decodeRouteSegment(path.split('/group/')[1]?.split('/')[0] || ''); // handle /group/id/settings
       if (id) setSelectedGroupId(id);
       if (path.endsWith('/settings')) setIsGroupSettingsOpen(true);
     }
     else if (path.startsWith('/post/')) {
-      const id = path.split('/post/')[1]?.split('/')[0];
+      const id = decodeRouteSegment(path.split('/post/')[1]?.split('/')[0] || '');
       if (id) setSelectedSurveyId(id);
     }
 
@@ -964,7 +990,8 @@ const App: React.FC = () => {
     if ((path === '/login' || path === '/signup') && isAuthenticated && userProfile?.id) {
       setAuthModalOpen(false);
       setAuthModalType('flow');
-      navigate('/', { replace: true });
+      const returnTo = new URLSearchParams(location.search).get('returnTo');
+      navigate(returnTo && (returnTo === '/pages' || returnTo.startsWith('/pages/')) && !returnTo.includes('\\') ? returnTo : '/', { replace: true });
       return;
     }
 
@@ -992,13 +1019,22 @@ const App: React.FC = () => {
       } else if (type === 'business') {
         setIsAddMenuOpen(false);
         setActiveCreationFlow(null);
-        setAccountModalType('company');
+        setAccountModalType(null);
+        navigate('/pages/create', { replace: true });
       }
     } else {
       if (activeCreationFlow && !path.startsWith('/create/')) setActiveCreationFlow(null);
       if (accountModalType && !path.startsWith('/create/')) setAccountModalType(null);
     }
-  }, [location.pathname, authBootstrapped, isAuthenticated, userProfile?.id, authModalOpen]);
+    return () => {
+      ++profileRequestRef.current;
+      profileRequestAbortRef.current?.abort();
+    };
+  }, [location.pathname, authBootstrapped, isAuthenticated, userProfile?.id, userProfile?.handle, authModalOpen]);
+
+  React.useEffect(() => {
+    setActiveCreationGroupId(location.pathname.startsWith('/create/') ? new URLSearchParams(location.search).get('group') : null);
+  }, [location.pathname, location.search]);
 
   React.useEffect(() => {
     if (!authBootstrapped) return;
@@ -1151,6 +1187,7 @@ const App: React.FC = () => {
   const handleCreateSubmit = async (newSurveyData: Partial<Survey>) => {
     if (!userProfile?.id) throw new Error(t('postOptions.loginRequired'));
     if (postSaveInFlight.current) throw new Error(t('postOptions.saving'));
+    publishedPageDestination.current = null;
     postSaveInFlight.current = true;
     try {
       const targetId = newSurveyData.id || editingDraft?.id;
@@ -1165,6 +1202,9 @@ const App: React.FC = () => {
         ? await api.updatePost(targetId, payload)
         : await api.createSurvey(payload);
       const saved = normalizeSurvey(result, userProfile);
+      // Editors close after their media cleanup. Retain the confirmed destination
+      // until then, including when the editor was opened through a direct link.
+      publishedPageDestination.current = saved.status === 'PUBLISHED' && saved.pageId ? saved.pageId : null;
       const reconcile = (posts: Survey[]) => {
         if (saved.status !== 'PUBLISHED') return posts.filter(post => post.id !== saved.id);
         const existing = posts.find(post => post.id === saved.id);
@@ -1185,16 +1225,16 @@ const App: React.FC = () => {
     }
   };
 
-  const handleShareToFeed = async (originalSurvey: Survey, caption: string): Promise<'shared' | 'unshared'> => {
+  const handleShareToFeed = async (originalSurvey: Survey, caption: string, publisher?:{pageId:string;pageCreateKey:string}): Promise<'shared' | 'unshared'> => {
     if (!userProfile) throw new Error(t('postOptions.loginRequired'));
 
     try {
       // 1. Save to DB
-      const resultSurvey = await api.sharePost(originalSurvey.id, userProfile.id, caption);
+      const resultSurvey = await api.sharePost(originalSurvey.id, userProfile.id, caption, publisher);
 
       if (resultSurvey.action === 'unshared') {
         // Remove the repost from the feed if it's there
-        setSurveys(prev => prev.filter(s => !(s.sharedFrom?.id === originalSurvey.id && s.author?.id === userProfile.id && !s.sharedCaption)));
+        setSurveys(prev => prev.filter(s => !(s.sharedFrom?.id === originalSurvey.id && s.author?.id === (publisher?.pageId||userProfile.id) && !s.sharedCaption)));
         // Decrement original count in state
         setSurveys(prev => prev.map(s => {
           if (s.id === originalSurvey.id) {
@@ -1226,6 +1266,7 @@ const App: React.FC = () => {
       setSelectedGroupId(null);
       setIsGroupSettingsOpen(false);
 
+      navigate('/');
       setTimeout(() => {
         pullToRefreshRef.current?.scrollToTop();
       }, 100);
@@ -1238,7 +1279,7 @@ const App: React.FC = () => {
 
   const handleEditPost = (draft: Survey) => {
     setEditingDraft(draft);
-    navigate(`/create/${draft.type.toLowerCase()}`);
+    navigate(`/create/${draft.type.toLowerCase()}${draft.pageId ? '?pageId=' + encodeURIComponent(draft.pageId) : ''}`);
   };
 
   const handlePostDeleted = (surveyId: string, deletedPostIds?: string[]) => {
@@ -1248,9 +1289,8 @@ const App: React.FC = () => {
     if (selectedSurveyId && ids.has(selectedSurveyId)) {
       setSelectedSurveyId(null);
       setDetailSurvey(null);
-      setDetailTab('post');
       setActiveTab('home');
-      navigate('/');
+      navigate('/', { replace: true });
     }
   };
 
@@ -1274,6 +1314,12 @@ const App: React.FC = () => {
   };
 
   const handleAddMenuOption = (option: 'survey' | 'poll' | 'quiz' | 'challenge' | 'group' | 'business') => {
+    if (option === 'business') {
+      if (!pagesAvailable) return;
+      setIsAddMenuOpen(false);
+      navigate('/pages/create');
+      return;
+    }
     if (!isAuthenticated || !userProfile) {
       navigate('/signup');
       return;
@@ -1301,28 +1347,28 @@ const App: React.FC = () => {
     } else {
       if (activeTab !== 'messages') setPrevTab(activeTab as any);
       if (tab === 'home') navigate('/');
+      else if (tab === 'profile' && userProfile?.id) navigate(profilePath(userProfile));
       else navigate(`/${tab}`);
     }
   };
 
   const handleSurveyClick = (id: string, surface: any = 'FEED', tab: 'post' | 'analysis' = 'post') => {
     setSelectedSurveySurface(surface);
-    setDetailTab(tab);
     setIsNavVisible(false);
-    navigate(`/post/${id}`);
+    navigate(`/post/${encodeURIComponent(id)}${tab === 'analysis' ? '?tab=analysis' : ''}`);
   };
 
-  const navigateToProfile = (user: { id: string; name?: string; handle?: string; avatar?: string } | null) => {
+  const navigateToProfile = (user: { id: string; name?: string; handle?: string; avatar?: string; kind?: string } | null) => {
     if (user) {
-      if (user.handle) navigate(`/@${user.handle}`);
-      else navigate(`/profile/${user.id}`);
+      if (user.kind === 'PAGE' && user.handle) navigate(`/pages/${user.handle}`);
+      else navigate(profilePath(user));
     }
-    else navigate(-1);
+    else back();
   };
 
   const navigateToGroup = (id: string | null) => {
-    if (id) navigate(`/group/${id}`);
-    else navigate(-1);
+    if (id) navigate(`/group/${encodeURIComponent(id)}`);
+    else back();
   };
 
   const buildProgressFromAnswerPayload = (payload?: PostAnswerPayload[]) => {
@@ -1551,10 +1597,12 @@ const App: React.FC = () => {
 
     // Server Call with Rollback
     if (userProfile?.id) {
-      api.likeSurvey(surveyId)
+      return api.likeSurvey(surveyId)
+        .then(() => true)
         .catch(error => {
           console.error("Failed to like post, rolling back:", error);
           setSurveys(previousSurveys);
+          return false;
         });
     }
   };
@@ -1574,7 +1622,7 @@ const App: React.FC = () => {
           name={name}
           userProfile={userProfile || undefined}
           contextGroups={userGroups}
-          onBack={() => window.history.length > 2 ? navigate(-1) : navigate('/search', { replace: true })}
+          onBack={() => back('/search')}
           onSurveyClick={handleSurveyClick}
           onVote={handleVote}
           onSurveyProgress={handleSurveyProgress}
@@ -1624,7 +1672,7 @@ const App: React.FC = () => {
               <ProfileSettingsScreen
                 userProfile={userProfile}
                 onUpdateProfile={handleProfileUpdated}
-                onBack={() => navigate(userProfile.handle ? `/@${userProfile.handle}` : `/profile/${userProfile.id}`, { replace: true })}
+                onBack={() => back(profilePath(userProfile))}
                 onLogout={handleLogout}
               />
             </ErrorBoundary>
@@ -1649,12 +1697,12 @@ const App: React.FC = () => {
             }
           }
           setNotifications(newNotifs);
-        }} onBack={() => window.history.length > 2 ? navigate(-1) : navigate('/', { replace: true })} onItemClick={(notification) => {
+        }} onBack={() => back()} onItemClick={(notification) => {
           const deepLink = getNotificationDeepLink(notification);
           if (deepLink) navigate(deepLink);
         }} />;
       case 'messages':
-        return <MessagesScreen onBack={() => window.history.length > 2 ? navigate(-1) : navigate('/', { replace: true })} />;
+        return <MessagesScreen onBack={() => back()} />;
       default:
         // When activeTab isn't explicitly matched but a modal is open
         if (activeCreationFlow || accountModalType) {
@@ -1737,73 +1785,13 @@ const App: React.FC = () => {
   }, [selectedSurvey, userProfile]);
 
   React.useEffect(() => {
-    if (detailTab === 'analysis' && selectedSurvey && !canSeeAnalysis) {
-      setDetailTab('post');
+    const routePostId = decodeRouteSegment(location.pathname.match(/^\/post\/([^/]+)$/)?.[1] || '');
+    if (detailTab === 'analysis' && selectedSurvey?.id === routePostId && !canSeeAnalysis) {
+      setQuery('tab', null, true);
     }
   }, [detailTab, selectedSurvey, canSeeAnalysis]);
 
-  React.useEffect(() => {
-    let startX: number | null = null;
-    let startY: number | null = null;
-
-    const handleTouchStart = (e: TouchEvent) => {
-      if (e.touches.length === 1) {
-        startX = e.touches[0].clientX;
-        startY = e.touches[0].clientY;
-      }
-    };
-
-    const handleTouchMove = (e: TouchEvent) => {
-      if (startX === null || startY === null) return;
-
-      // If swipe started from the very edge (iOS Safari / PWA back gesture zone)
-      if (startX < 40 || startX > window.innerWidth - 40) {
-        const diffX = e.touches[0].clientX - startX;
-        const diffY = e.touches[0].clientY - startY;
-
-        // If it's a primarily horizontal swipe, aggressively prevent browser traversal
-        if (Math.abs(diffX) > Math.abs(diffY)) {
-          if (e.cancelable) {
-            e.preventDefault();
-          }
-        }
-      }
-    };
-
-    const handleTouchEnd = (e: TouchEvent) => {
-      if (startX === null || startY === null) return;
-
-      if (startX < 40 || startX > window.innerWidth - 40) {
-        const endX = e.changedTouches[0].clientX;
-        const endY = e.changedTouches[0].clientY;
-        const diffX = endX - startX;
-        const diffY = endY - startY;
-
-        if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
-          if (selectedSurveyId || selectedProfile || selectedGroupId) {
-            setSelectedSurveyId(null);
-            setSelectedProfile(null);
-            setSelectedGroupId(null);
-          } else if (activeTab === 'home') {
-            if (pullToRefreshRef.current) pullToRefreshRef.current.triggerRefresh();
-          }
-        }
-      }
-      startX = null;
-      startY = null;
-    };
-
-    document.addEventListener('touchstart', handleTouchStart, { passive: true });
-    // IMPORTANT: passive: false is REQUIRED to stop iOS/Android from closing the PWA tab!
-    document.addEventListener('touchmove', handleTouchMove, { passive: false });
-    document.addEventListener('touchend', handleTouchEnd);
-
-    return () => {
-      document.removeEventListener('touchstart', handleTouchStart);
-      document.removeEventListener('touchmove', handleTouchMove);
-      document.removeEventListener('touchend', handleTouchEnd);
-    };
-  }, [selectedSurveyId, selectedProfile, selectedGroupId, activeTab]);
+  // Native browser and OS Back gestures own history traversal.
 
   return (
     <SocketProvider user={userProfile}>
@@ -1817,7 +1805,7 @@ const App: React.FC = () => {
         </div>
       )}
       <div className="min-h-screen bg-gray-100/50 flex justify-center items-center">
-        <div className="w-full max-w-md bg-white h-[100dvh] max-h-screen relative shadow-2xl overflow-hidden flex flex-col">
+        <div className={`w-full ${isPagesRoute ? 'max-w-[1120px]' : 'max-w-md'} bg-white h-[100dvh] max-h-screen relative shadow-2xl overflow-hidden flex flex-col`}>
 
           {!authBootstrapped ? (
             <div className="flex-1 flex flex-col items-center justify-center bg-white px-8">
@@ -1826,7 +1814,17 @@ const App: React.FC = () => {
               <div className="w-28 h-3 rounded-full bg-gray-100 animate-pulse" />
             </div>
           ) : showUsersTable ? (
-            <UsersTableScreen onBack={() => setShowUsersTable(false)} onUserClick={(u) => { setShowUsersTable(false); setSelectedProfile({ id: u.id, name: u.name, avatar: u.avatar }); }} />
+            <UsersTableScreen onBack={() => setShowUsersTable(false)} onUserClick={(u) => { setShowUsersTable(false); navigateToProfile(u); }} />
+          ) : !isKnownPath(canonicalPath(location.pathname)) ? (
+            <div className="flex-1 flex flex-col items-center justify-center px-8 text-center gap-5">
+              <h1 className="font-bold text-xl">{t('navigation.notFound', { defaultValue: 'Page not found' })}</h1>
+              <button onClick={() => back()} className="min-h-11 px-5 rounded-full bg-gray-900 text-white">{t('common.back', { defaultValue: 'Back' })}</button>
+            </div>
+          ) : isPagesRoute ? (
+            <PagesWorkspace key={userProfile?.id || 'guest'} userProfile={userProfile} onPostClick={handleSurveyClick}
+              cardProps={{ userProfile: userProfile || undefined, onVote: handleVote, onAuthorClick: navigateToProfile,
+                onSurveyProgress: handleSurveyProgress, onShareToFeed: handleShareToFeed, onLike: handleLikePost,
+                onDelete: handlePostDeleted, onEditDraft: handleEditPost, onUpdateDemographics: handleUpdateDemographics }} />
           ) : isPrivacyScreenOpen ? (
             <PrivacyPolicyScreen />
           ) : selectedGroupId && isGroupLoading ? (
@@ -1851,7 +1849,7 @@ const App: React.FC = () => {
               <GroupSettingsScreen
                 group={activeGroup}
                 currentUserId={viewerProfile.id || ''}
-                onBack={() => window.history.length > 2 ? navigate(-1) : navigate(`/group/${activeGroup.id}`, { replace: true })}
+                onBack={() => back(`/group/${encodeURIComponent(activeGroup.id)}`)}
                 onUpdateGroup={async (id, updates) => {
                   const updatedGroup = await api.updateGroup(id, updates);
                   setExternalGroup(prev => prev && prev.id === id ? { ...prev, ...updatedGroup } : prev);
@@ -1861,7 +1859,7 @@ const App: React.FC = () => {
                 onDeleteGroup={async (id) => {
                   await api.deleteGroup(id);
                   setUserGroups(prev => prev.filter(g => g.id !== id));
-                  navigateToGroup(null);
+                  navigate('/', { replace: true });
                 }}
                 onManageRoles={async (memberId, newRole) => {
                   await api.updateMemberRole(activeGroup.id, memberId, newRole);
@@ -1907,7 +1905,7 @@ const App: React.FC = () => {
                     Quiz: '/create/quiz',
                     Challenge: '/create/challenge',
                   };
-                  navigate(routes[type] || '/create/survey');
+                  navigate(`${routes[type] || '/create/survey'}?group=${encodeURIComponent(activeGroup.id)}`);
                 }}
                 onInviteUser={async (groupId, userId) => {
                   await api.inviteToGroup(groupId, userId);
@@ -1973,7 +1971,7 @@ const App: React.FC = () => {
               <>
               <div className="bg-white z-10 sticky top-0 border-b border-gray-100">
                 <div className="flex items-center px-4 py-3">
-                  <button onClick={() => navigate(-1)} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-600 transition-colors"><ArrowLeft size={24} /></button>
+                  <button onClick={() => { const parentQuery = new URLSearchParams(location.search); parentQuery.delete('tab'); back(detailTab === 'analysis' ? location.pathname + (parentQuery.size ? '?' + parentQuery.toString() : '') : '/'); }} aria-label={t('common.back', { defaultValue: 'Back' })} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-600 transition-colors"><ArrowLeft size={24} /></button>
                   <span className="font-bold text-lg ml-2">Detail View</span>
                 </div>
                 {/* Detail Tabs */}
@@ -2017,7 +2015,7 @@ const App: React.FC = () => {
                     onEditDraft={handleEditPost}
                   />
                 ) : (
-                  <PostAnalysis survey={selectedSurvey} isAccessDenied={!canSeeAnalysis} />
+                  <PostAnalysis key={selectedSurvey.id} survey={selectedSurvey} isAccessDenied={!canSeeAnalysis} />
                 )}
               </div>
             </>
@@ -2043,7 +2041,8 @@ const App: React.FC = () => {
             <>
               {activeTab !== 'search' && activeTab !== 'profile' && activeTab !== 'notifications' && activeTab !== 'messages' && (
                 <Header
-                  onProfileClick={() => navigate('/profile')}
+                  onPagesClick={pagesAvailable ? () => navigate('/pages') : undefined}
+                  onProfileClick={() => navigate(userProfile?.id ? profilePath(userProfile) : '/login')}
                   onMessagesClick={() => navigate('/messages')}
                   userProfile={userProfile || undefined}
                   onLoginClick={() => navigate('/login')}
@@ -2073,6 +2072,7 @@ const App: React.FC = () => {
                   isVisible={(isNavVisible || activeTab !== 'home') && activeTab !== 'messages'}
                   isAddMenuOpen={isAddMenuOpen}
                   onAddMenuOption={handleAddMenuOption}
+                  pagesAvailable={pagesAvailable}
                   unreadNotificationsCount={unreadNotificationsCount}
                 />
               )}

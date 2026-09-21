@@ -17,6 +17,8 @@ import pushRoutes from './routes/pushRoutes';
 import searchRoutes from './routes/searchRoutes';
 import mediaRoutes from './routes/mediaRoutes';
 import hashtagRoutes from './routes/hashtagRoutes';
+import pageRoutes from './pages/pageRoutes';
+import pageSeoRoutes from './pages/pageSeoRoutes';
 import { requireAuth } from './middleware/authMiddleware';
 import { getNotificationSettings, updateNotificationSettings } from './controllers/userController';
 import { initCronJobs } from './services/cronService';
@@ -104,6 +106,8 @@ app.use('/api/push', pushRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/media', mediaRoutes);
 app.use('/api/hashtags', hashtagRoutes);
+app.use('/api/pages', pageRoutes);
+app.use('/api/pages-seo', pageSeoRoutes);
 
 app.get('/api/health', async (_req, res) => {
     const mediaStorage = isMediaStorageConfigured() ? 'configured' : 'not_configured';
@@ -150,12 +154,15 @@ app.get('/', (req, res) => {
 });
 
 // Initialize scheduled jobs
-initCronJobs();
+if (!(process.env.NODE_ENV === 'test' && process.env.DISABLE_BACKGROUND_JOBS === 'true')) initCronJobs();
 
 if (require.main === module) {
+    void import('./pages/pageNotificationService').then(({startPageOutboxWorker})=>startPageOutboxWorker());
+    void import('./pages/pageLifecycleWorker').then(({startPageLifecycleWorker})=>startPageLifecycleWorker());
     httpServer.listen(PORT, () => {
         console.log(`Server is running on port ${PORT}`);
     });
 }
 
+export { httpServer };
 export default app;

@@ -1,8 +1,16 @@
 {
   "buildCommand": "vite build",
+  "functions": { "api/pages-document.js": { "includeFiles": "dist/index.html" } },
+  "headers": [
+    { "source": "/pages/manage/:path*", "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }] },
+    { "source": "/pages/staff/:path*", "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }] },
+    { "source": "/pages/cases/:path*", "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }] }
+  ],
   "rewrites": [
+    { "source": "/pages/:handle", "destination": "/api/pages-document?handle=:handle" },
+    { "source": "/pages-sitemap.xml", "destination": "/api/pages-sitemap" },
     {
-      "source": "/(.*)",
+      "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
   ]

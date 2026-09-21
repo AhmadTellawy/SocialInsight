@@ -1,4 +1,5 @@
 import prisma from '../prisma';
+import { presentPageNotifications } from '../pages/pageNotificationService';
 import { getIO, getUserNotificationRoom } from './socketService';
 import { sendPushNotification } from './pushService';
 import { PUBLIC_AVATAR_MEDIA_SELECT, serializeUserMediaRecord } from './mediaService';
@@ -38,6 +39,9 @@ const dispatchNotificationRecord = async (
     notification: any,
     normalizedPayload?: Record<string, any>
 ): Promise<void> => {
+    const safeRecords=await presentPageNotifications([notification],notification.userId);
+    if (!safeRecords.length) return;
+    notification=safeRecords[0];
     const payload = normalizedPayload
         || withNotificationDeepLink(notification.targetType, notification.targetId, parseStoredPayload(notification.payload));
     const realtimeNotification = {
@@ -214,7 +218,7 @@ export interface MentionNotificationDependencies {
     findMentionedUsers: (handles: string[]) => Promise<MentionedUserRecord[]>;
     loadSourceContext: (postId: string) => Promise<MentionSourceContext | null>;
     checkEligibility: (
-        input: { actorUserId: string; targetUserId: string; postId: string },
+        input: { actorUserId: string; targetUserId: string; postId: string;commentId?:string },
         source: MentionSourceContext | null
     ) => Promise<MentionEligibilityResult>;
     createNotification: (input: {
@@ -278,7 +282,8 @@ export const extractAndNotifyMentions = async (
             const eligibility = await dependencies.checkEligibility({
                 actorUserId: actorId,
                 targetUserId: user.id,
-                postId: target.postId
+                postId: target.postId,
+                commentId:target.replyId||target.commentId
             }, sourceContext);
 
             if (!eligibility.allowed) {

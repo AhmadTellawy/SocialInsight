@@ -10,7 +10,7 @@
     "dev": "vite",
     "server": "cd server && npm run dev",
     "build": "vite build",
-    "test:unit": "node --test utils/feedRequest.test.ts utils/mediaFileValidation.test.ts utils/mediaSafeStorage.test.ts utils/mediaUploadScheduler.test.ts utils/mentionAutocomplete.test.ts utils/nativeShare.test.ts utils/optionPresentation.test.ts utils/postOptions.test.ts utils/profileEditState.test.ts utils/profileLinkErrors.test.ts utils/profileValidation.test.ts utils/shareCard.test.ts utils/textEntities.test.ts",
+    "test:unit": "node --test utils/navigation.test.ts utils/feedRequest.test.ts utils/mediaFileValidation.test.ts utils/mediaSafeStorage.test.ts utils/mediaUploadScheduler.test.ts utils/mentionAutocomplete.test.ts utils/nativeShare.test.ts utils/optionPresentation.test.ts utils/postOptions.test.ts utils/profileEditState.test.ts utils/profileLinkErrors.test.ts utils/profileValidation.test.ts utils/shareCard.test.ts utils/textEntities.test.ts tests/pageMetadata.test.ts tests/pageDocument.test.js tests/pageCardState.test.ts",
     "test:e2e:profile": "playwright test --config=playwright.profile.config.ts",
     "preview": "vite preview"
   },
@@ -34,6 +34,9 @@
     "@playwright/test": "^1.61.1",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "autoprefixer": "10.4.21",
+    "postcss": "8.5.28",
+    "tailwindcss": "3.4.17",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",
     "vite-plugin-pwa": "^0.21.1"

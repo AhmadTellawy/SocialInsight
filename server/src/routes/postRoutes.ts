@@ -33,22 +33,24 @@ import {
 
 import { recordPostView } from '../controllers/viewController';
 import { requireAuth, optionalAuth } from '../middleware/authMiddleware';
+import { pagePostBoundary } from '../pages/pagePostBoundary';
 
 const router = Router();
+router.use(optionalAuth, pagePostBoundary);
 
 // Optional Auth (Guests can view, Users get personalized views)
-router.get('/', optionalAuth, getPosts);
-router.get('/trends', optionalAuth, getTrends);
+router.get('/', getPosts);
+router.get('/trends', getTrends);
 router.get('/drafts', requireAuth, getDrafts);
 router.get('/saved', requireAuth, getSavedPosts);
-router.get('/comments/:id/likes', optionalAuth, getCommentLikers);
-router.get('/:id', optionalAuth, getPostById);
-router.get('/:id/participants', optionalAuth, getParticipants);
-router.get('/:id/results', optionalAuth, getPostResults);
-router.get('/:id/comments', optionalAuth, getComments);
-router.get('/:id/likes', optionalAuth, getPostLikers);
+router.get('/comments/:id/likes', getCommentLikers);
+router.get('/:id', getPostById);
+router.get('/:id/participants', getParticipants);
+router.get('/:id/results', getPostResults);
+router.get('/:id/comments', getComments);
+router.get('/:id/likes', getPostLikers);
 
-router.post('/:id/views', optionalAuth, recordPostView);
+router.post('/:id/views', recordPostView);
 
 // Require Auth (Only logged in users can mutate data/view private lists)
 router.post('/comments/:id/like', requireAuth, likeComment);
@@ -59,7 +61,7 @@ router.post('/people-tags/:id/reject', requireAuth, rejectPeopleTag);
 router.delete('/people-tags/:id', requireAuth, removePeopleTag);
 router.post('/', requireAuth, createPost);
 router.put('/:id', requireAuth, updatePost);
-router.post('/:id/vote', optionalAuth, votePost); // Guest voting might be allowed based on poll settings, we keep optionalAuth
+router.post('/:id/vote', votePost); // optionalAuth already ran at router entry; guest eligibility remains server checked
 router.post('/:id/comments', requireAuth, createComment);
 router.post('/:id/like', requireAuth, likePost);
 router.post('/:id/save', requireAuth, savePost);

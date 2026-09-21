@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { X, Users, Building2, ChevronRight, Globe as GlobeIcon, Plus, Shield, MapPin, Briefcase, Info, ArrowLeft, Camera, LayoutGrid, Check, Lock } from 'lucide-react';
 import { BottomSheet } from './BottomSheet';
 import { Group, MediaDraft, UserProfile } from '../types';
@@ -18,6 +19,7 @@ interface CreateAccountModalProps {
 type AccountType = 'group' | 'company' | null;
 
 export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({ isOpen, onClose, initialType, onGroupCreated, userProfile }) => {
+  const navigate = useNavigate();
   const [step, setStep] = useState<1 | 2>(1);
   const [type, setType] = useState<AccountType>(null);
   const [formData, setFormData] = useState<any>({
@@ -34,6 +36,7 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({ isOpen, 
 
   useEffect(() => {
     if (isOpen) {
+      if (initialType === 'company') { navigate('/pages/create', { replace: true }); return; }
       if (initialType) {
         setType(initialType);
         setStep(2);
@@ -56,6 +59,7 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({ isOpen, 
   }, [isOpen, initialType]);
 
   const handleSelectType = (selectedType: AccountType) => {
+    if (selectedType === 'company') { navigate('/pages/create'); return; }
     setType(selectedType);
     setStep(2);
   };
@@ -71,6 +75,7 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({ isOpen, 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (type === 'company') { navigate('/pages/create'); return; }
     if (!userProfile?.id) {
       alert("Please log in to create a group");
       return;

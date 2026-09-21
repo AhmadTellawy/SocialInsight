@@ -115,9 +115,11 @@ test('getUserGroups hydrates filtered counts in the membership relation load', a
 
 test('getNotifications caps pages and exposes an array-compatible next cursor', async () => {
     const originalFindMany = prisma.notification.findMany;
+    const originalPostFindMany=prisma.post.findMany;
     const capturedCalls: any[] = [];
 
     try {
+        (prisma.post as any).findMany=async()=>[{id:'post-1',pageId:null,sharedFrom:null}];
         (prisma.notification as any).findMany = async (args: any) => {
             capturedCalls.push(args);
             return Array.from({ length: args.take }, (_, index) => ({
@@ -159,6 +161,7 @@ test('getNotifications caps pages and exposes an array-compatible next cursor', 
         assert.equal(defaultPage.state.headers['X-Next-Cursor'], 'notification-049');
     } finally {
         (prisma.notification as any).findMany = originalFindMany;
+        (prisma.post as any).findMany=originalPostFindMany;
     }
 });
 

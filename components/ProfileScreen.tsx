@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Settings, Users, Grid, CheckCircle2, MoreHorizontal, MapPin, Link as LinkIcon, Edit3, UserPlus, Shield, ExternalLink, ArrowLeft, Mail, FileText, PieChart, Building2, Globe as GlobeIcon, Plus, ChevronRight, Search, X, UserCircle2, Zap, Info, Lock, BarChart3, TrendingUp, Bookmark, PenTool, Activity, Repeat, Image as ImageIcon, Camera, Trash2, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { Link, useLocation } from 'react-router-dom';
 
 import { Analytics } from '../utils/analytics';
 import { PostAnswerPayload, Survey, SurveyType, Group, UserProfile } from '../types';
@@ -9,6 +10,8 @@ import { BottomSheet } from './BottomSheet';
 import { ProfileAnalysis } from './ProfileAnalysis';
 import { api } from '../services/api';
 import { useFollowState } from '../hooks/useFollowState';
+import { usePagesAvailability } from '../hooks/usePagesAvailability';
+import { useAppNavigation } from '../hooks/useAppNavigation';
 import { UserAvatar } from './UserAvatar';
 import { MediaImage } from './media/MediaImage';
 import { RichTextRenderer } from './RichTextRenderer';
@@ -89,11 +92,18 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onLoadMore
 }) => {
   const { t } = useTranslation();
+  const { available: pagesAvailable } = usePagesAvailability(userProfile?.id);
   const [activeStatSheet, setActiveStatSheet] = useState<'following' | 'followers' | 'posts' | null>(null);
-  const [showProfileAnalysis, setShowProfileAnalysis] = useState(false);
+  const location = useLocation();
+  const { back, setQuery } = useAppNavigation();
+  const query = new URLSearchParams(location.search);
+  const showProfileAnalysis = query.get('view') === 'analysis';
+  const setShowProfileAnalysis = (show: boolean) => setQuery('view', show ? 'analysis' : null);
   const [statSearch, setStatSearch] = useState('');
   const [postFilter, setPostFilter] = useState<'All' | SurveyType>('All');
-  const [activeTab, setActiveTab] = useState<ProfileTab>('content');
+  const requestedTab = query.get('tab');
+  const activeTab: ProfileTab = ['reposts', 'groups', 'drafts', 'saved'].includes(requestedTab || '') ? requestedTab as ProfileTab : 'content';
+  const setActiveTab = (tab: ProfileTab) => setQuery('tab', tab === 'content' ? null : tab);
   const [isFollowLoading, setIsFollowLoading] = useState(false);
   const [targetUser, setTargetUser] = useState<UserProfile | null>(null);
   const [showLinksSheet, setShowLinksSheet] = useState(false);
@@ -528,7 +538,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
   useEffect(() => {
     if (showProfileAnalysis && !canViewPrivateProfileContent) {
-      setShowProfileAnalysis(false);
+      setQuery('view', null, true);
     }
   }, [showProfileAnalysis, canViewPrivateProfileContent]);
 
@@ -851,6 +861,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   };
 
   const renderTabContent = () => {
+    if ((activeTab === 'drafts' || activeTab === 'saved') && !isMe) return renderPrivateProfileState();
     switch (activeTab as any) {
       case 'content':
         if (!canViewPrivateProfileContent) {
@@ -1079,7 +1090,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   };
 
   if (showProfileAnalysis && canViewPrivateProfileContent) {
-    return <ProfileAnalysis userProfile={profileUser} onBack={() => setShowProfileAnalysis(false)} />;
+    return <ProfileAnalysis userProfile={profileUser} onBack={() => { const parentQuery = new URLSearchParams(location.search); parentQuery.delete('view'); back(location.pathname + (parentQuery.size ? '?' + parentQuery.toString() : '')); }} />;
   }
 
   if (isLoading) {
@@ -1203,6 +1214,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             {profileUser.isPrivate && <Lock size={18} className="text-gray-400" />}
           </h2>
           <p className="text-xs text-blue-600 font-black tracking-[0.12em] mb-3" dir="ltr">@{profileUser.handle}</p>
+          {isMe && pagesAvailable && <Link to="/pages/mine" className="mb-4 inline-flex min-h-11 items-center gap-2 rounded-xl border border-blue-100 px-4 py-2 text-sm font-bold text-[#0070BA]"><Building2 size={18}/>{t('pages.myPages', { defaultValue: document.documentElement.lang.startsWith('ar') ? 'صفحاتي' : 'My pages' })}</Link>}
 
           {profileUser.bio && (
             <p className="text-sm text-gray-600 text-center max-w-md leading-relaxed whitespace-pre-wrap break-words mb-4 px-2">

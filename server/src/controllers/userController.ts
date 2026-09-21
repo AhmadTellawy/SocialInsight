@@ -1,7 +1,13 @@
 import { Request, Response } from 'express';
+import { ZodError } from 'zod';
+import { finishPageAccountDeletion, pageAccountDeletionImpact, preparePageAccountDeletion } from '../pages/pageAccountLifecycle';
+import { pageTransaction } from '../pages/pageService';
+import { respondPagePostError } from '../pages/pagePostService';
+import { presentPageNotifications } from '../pages/pageNotificationService';
 import { PeopleTagPermission, Prisma } from '@prisma/client';
 import prisma from '../prisma';
 import { PrivacyService } from '../services/privacyService';
+import { getProfileAnalytics } from '../services/profileAnalyticsAccess';
 import { notify } from '../services/notificationService';
 import { processBase64Image } from '../utils/imageProcessor';
 import { GroupPermissionService } from '../services/groupPermissionService';
@@ -272,8 +278,8 @@ const sendPublicProfile = async (req: Request, res: Response, user: any): Promis
         || (!isPrivateProfile && !isBlocked)
         || followStatus === 'ACTIVE';
     const [postsCount, responsesCount, profileLinks, coverMedia] = await Promise.all([
-        prisma.post.count({ where: { authorId: user.id, isDeleted: false, status: 'PUBLISHED', sharedFromId: null } }),
-        prisma.response.count({ where: { post: { authorId: user.id, isDeleted: false, status: 'PUBLISHED' } } }),
+        prisma.post.count({ where: { authorId: user.id, pageId:null, isDeleted: false, status: 'PUBLISHED', sharedFromId: null } }),
+        prisma.response.count({ where: { post: { authorId: user.id, pageId:null, isDeleted: false, status: 'PUBLISHED' } } }),
         canViewPrivateDetails
             ? prisma.profileLink.findMany({ where: { userId: user.id }, orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], select: PROFILE_LINK_SELECT })
             : Promise.resolve([]),
@@ -335,8 +341,8 @@ export const getMe = async (req: Request, res: Response) => {
         if (!user) return res.status(404).json({ error: 'User not found' });
         const [demographics, postsCount, responsesCount, coverMedia] = await Promise.all([
             prisma.userDemographics.findUnique({ where: { userId: user.id } }),
-            prisma.post.count({ where: { authorId: user.id, isDeleted: false, status: 'PUBLISHED', sharedFromId: null } }),
-            prisma.response.count({ where: { post: { authorId: user.id, isDeleted: false, status: 'PUBLISHED' } } }),
+            prisma.post.count({ where: { authorId: user.id, pageId:null, isDeleted: false, status: 'PUBLISHED', sharedFromId: null } }),
+            prisma.response.count({ where: { post: { authorId: user.id, pageId:null, isDeleted: false, status: 'PUBLISHED' } } }),
             profileCoverForViewer(user.coverMediaId, user.id)
         ]);
         const serializedUser = publicUserPayload(serializeUserMediaRecord(user) as any);
@@ -558,10 +564,10 @@ export const updateUser = async (req: Request, res: Response) => {
 
         const [postsCount, responsesCount] = await Promise.all([
             prisma.post.count({
-                where: { authorId: id as string, isDeleted: false, status: 'PUBLISHED', sharedFromId: null }
+                where: { authorId: id as string, pageId:null, isDeleted: false, status: 'PUBLISHED', sharedFromId: null }
             }),
             prisma.response.count({
-                where: { post: { authorId: id as string, isDeleted: false, status: 'PUBLISHED' } }
+                where: { post: { authorId: id as string, pageId:null, isDeleted: false, status: 'PUBLISHED' } }
             })
         ]);
 
@@ -616,72 +622,17 @@ export const updateUser = async (req: Request, res: Response) => {
 export const getUserAnalytics = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const currentUserId = req.user?.userId;
+    if (!currentUserId) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+    }
     try {
-        if (currentUserId) {
-            const canView = await PrivacyService.canViewUserContent(currentUserId, id);
-            if (!canView) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-        } else if (id !== currentUserId) { // No auth provided and they are not the same
-            const targetUser = await prisma.user.findUnique({ where: { id }, select: { isPrivate: true } });
-            if (targetUser?.isPrivate) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
+        const analytics = await getProfileAnalytics(id, currentUserId);
+        if (!analytics) {
+            res.status(403).json({ error: 'Forbidden' });
+            return;
         }
-        const rows = await prisma.$queryRaw<Array<{
-            type: string | null;
-            country: string | null;
-            gender: string | null;
-            ageGroup: string | null;
-            count: bigint;
-        }>>(Prisma.sql`
-            SELECT
-                post."type",
-                viewer."country",
-                demographics."gender",
-                CASE
-                    WHEN viewer."birthday" IS NULL THEN NULL
-                    WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) < 18 THEN 'Under 18'
-                    WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) <= 24 THEN '18-24'
-                    WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) <= 34 THEN '25-34'
-                    WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) <= 44 THEN '35-44'
-                    WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) <= 54 THEN '45-54'
-                    ELSE '55+'
-                END AS "ageGroup",
-                COUNT(*)::bigint AS "count"
-            FROM "Response" response
-            INNER JOIN "Post" post ON post."id" = response."postId"
-            LEFT JOIN "users" viewer ON viewer."id" = response."userId"
-            LEFT JOIN "user_demographics" demographics ON demographics."user_id" = viewer."id"
-            WHERE post."authorId" = ${id}
-              AND post."isDeleted" = FALSE
-              AND post."status" = 'PUBLISHED'
-              AND post."sharedFromId" IS NULL
-            GROUP BY 1, 2, 3, 4
-        `);
-
-        let totalResponses = 0;
-        const byType: Record<string, number> = {};
-        const byCountry: Record<string, number> = {};
-        const byGender: Record<string, number> = {};
-        const byAge: Record<string, number> = {};
-
-        ['Poll', 'Survey', 'Quiz', 'Challenge'].forEach(k => byType[k] = 0);
-        ['Male', 'Female'].forEach(k => byGender[k] = 0);
-
-        rows.forEach(row => {
-            const count = Number(row.count);
-            const type = row.type || 'Survey';
-            totalResponses += count;
-            byType[type] = (byType[type] || 0) + count;
-            if (row.country) byCountry[row.country] = (byCountry[row.country] || 0) + count;
-            if (row.gender) byGender[row.gender] = (byGender[row.gender] || 0) + count;
-            if (row.ageGroup) byAge[row.ageGroup] = (byAge[row.ageGroup] || 0) + count;
-        });
-
-        res.json({ totalResponses, byType, byCountry, byGender, byAge });
+        res.json(analytics);
     } catch (error) {
         logUserRequestFailure(req, 'profile_analytics_read_failed', error);
         res.status(500).json({ error: 'Failed to fetch analytics' });
@@ -812,6 +763,7 @@ export const getNotifications = async (req: Request, res: Response) => {
                 targetId: true,
                 targetType: true,
                 payload: true,
+                dedupeKey: true,
                 isRead: true,
                 createdAt: true,
                 actor: {
@@ -825,7 +777,8 @@ export const getNotifications = async (req: Request, res: Response) => {
             res.setHeader('X-Next-Cursor', notifications[notifications.length - 1].id);
         }
 
-        const mapped = notifications.map((n: any) => {
+        const safeNotifications = await presentPageNotifications(notifications,id);
+        const mapped = safeNotifications.map((n: any) => {
             const targetType = n.targetType === 'user' ? 'profile' : n.targetType;
             const payload = withNotificationDeepLink(targetType, n.targetId, n.payload);
             return {
@@ -1005,21 +958,21 @@ export const getSuggestedUsers = async (req: Request, res: Response) => {
                 (SELECT post."authorId", likes."createdAt" AS "interactedAt"
                  FROM "UserLike" likes
                  INNER JOIN "Post" post ON post."id" = likes."postId"
-                 WHERE likes."userId" = ${viewerId}
+                 WHERE likes."userId" = ${viewerId} AND post."pageId" IS NULL
                  ORDER BY likes."createdAt" DESC
                  LIMIT ${SUGGESTION_INTERACTION_SAMPLE_LIMIT})
                 UNION ALL
                 (SELECT post."authorId", comment."createdAt" AS "interactedAt"
                  FROM "Comment" comment
                  INNER JOIN "Post" post ON post."id" = comment."postId"
-                 WHERE comment."userId" = ${viewerId}
+                 WHERE comment."userId" = ${viewerId} AND post."pageId" IS NULL
                  ORDER BY comment."createdAt" DESC
                  LIMIT ${SUGGESTION_INTERACTION_SAMPLE_LIMIT})
                 UNION ALL
                 (SELECT post."authorId", response."timestamp" AS "interactedAt"
                  FROM "Response" response
                  INNER JOIN "Post" post ON post."id" = response."postId"
-                 WHERE response."userId" = ${viewerId}
+                 WHERE response."userId" = ${viewerId} AND post."pageId" IS NULL
                  ORDER BY response."timestamp" DESC
                  LIMIT ${SUGGESTION_INTERACTION_SAMPLE_LIMIT})
             )
@@ -1075,6 +1028,13 @@ export const getSuggestedUsers = async (req: Request, res: Response) => {
     }
 };
 
+export const getPageDeletionImpact = async (req: Request, res: Response) => {
+    if(req.user?.userId !== req.params.id) return res.status(403).json({error:'Forbidden'});
+    res.setHeader('Cache-Control','private, no-store');
+    try { return res.json({pages:await pageAccountDeletionImpact(req.user.userId)}); }
+    catch { return res.status(500).json({error:'Unable to check owned Pages'}); }
+};
+
 export const deleteAccount = async (req: Request, res: Response) => {
     const id = req.params.id as string;
 
@@ -1082,11 +1042,9 @@ export const deleteAccount = async (req: Request, res: Response) => {
         return res.status(403).json({ error: 'Forbidden: You can only delete your own account' });
     }
     try {
-        const ownedMediaIds = (await prisma.mediaAsset.findMany({
-            where: { ownerId: id, status: { not: 'DELETED' } },
-            select: { id: true }
-        })).map((asset) => asset.id);
-        await prisma.$transaction(async (tx) => {
+        const ownedMediaIds = await pageTransaction(async (tx) => {
+            const affectedPageIds = await preparePageAccountDeletion(tx,id,req.body?.deleteOwnedPages);
+            const personalMedia = await tx.mediaAsset.findMany({where:{ownerId:id,pageId:null,status:{not:'DELETED'}},select:{id:true}});
             // Nullify user PII and soft delete
             await tx.user.update({
                 where: { id },
@@ -1131,14 +1089,19 @@ export const deleteAccount = async (req: Request, res: Response) => {
             // Remove from groups
             await tx.groupMember.deleteMany({ where: { userId: id } });
             
+            await finishPageAccountDeletion(tx,affectedPageIds);
+            await tx.mediaAsset.updateMany({where:{id:{in:personalMedia.map(asset=>asset.id)},pageId:null},data:{status:'PENDING_DELETE'}});
             // Leave posts, comments, responses intact to preserve survey integrity
+            return personalMedia.map(asset=>asset.id);
         });
 
         await scheduleMediaDeletion(ownedMediaIds);
 
         res.json({ success: true, message: 'Account deleted and anonymized successfully' });
     } catch (error) {
+        if(respondPagePostError(error,res)) return;
         logUserRequestFailure(req, 'account_delete_failed', error);
+        if(error instanceof ZodError)return res.status(400).json({code:'PAGE_INVALID_INPUT',error:'Invalid Page deletion selection',fields:[{field:'deleteOwnedPages'}]});
         res.status(500).json({ error: 'Failed to delete account' });
     }
 };

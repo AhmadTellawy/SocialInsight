@@ -1,6 +1,8 @@
 
 import React, { useState, useMemo } from 'react';
-import { useBlocker, useNavigate, useLocation } from 'react-router-dom';
+import { PageAccountDeletion } from './pages/PageAccountDeletion';
+import { useBlocker, useLocation } from 'react-router-dom';
+import { useAppNavigation } from '../hooks/useAppNavigation';
 import {
   ArrowLeft, User, Mail, Globe, Lock, Eye, Search, Activity,
   Share2, Users, Bell, Palette, Shield, LifeBuoy, LogOut,
@@ -69,7 +71,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   onBack,
   onLogout
 }) => {
-  const navigate = useNavigate();
+  const { navigate, back } = useAppNavigation();
   const location = useLocation();
   const { t, i18n } = useTranslation();
   const subPageMatch = location.pathname.split('/settings/profile/')[1];
@@ -77,14 +79,14 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
 
   const setCurrentSubPage = (page: SubPage) => {
     if (page === 'main') {
-      // A global history length cannot prove that the previous entry belongs
-      // to Opiniup. Profile subpages always return to their known parent.
-      navigate('/settings/profile', { replace: true });
+      back('/settings/profile');
     } else {
       navigate(`/settings/profile/${page}`);
     }
   };
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [pageDeletionRefresh,setPageDeletionRefresh]=useState(0);
+  const [deleteOwnedPages, setDeleteOwnedPages] = useState<string[] | null>(null);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [nationalitySearch, setNationalitySearch] = useState('');
@@ -466,16 +468,17 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   };
 
   const handleDeleteAccount = async () => {
-    if (deleteConfirmText !== 'DELETE') return;
+    if (deleteConfirmText !== 'DELETE' || deleteOwnedPages === null) return;
     setIsDeleting(true);
     try {
-      await api.deleteAccount(userProfile.id!);
+      await api.deleteAccount(userProfile.id!, deleteOwnedPages);
       localStorage.removeItem('si_user');
       onLogout(); // This will clear session in parent App.tsx
       window.location.href = '/';
     } catch (error) {
       console.error("Failed to delete account:", error);
-      alert("Failed to delete account. Please try again.");
+      setPageDeletionRefresh(value=>value+1);
+      alert(t("common.error",{defaultValue:"تعذر حذف الحساب. راجع خيارات الصفحات وحاول مجدداً."}));
     } finally {
       setIsDeleting(false);
       setShowDeleteModal(false);
@@ -587,7 +590,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
   if (currentSubPage === 'links') {
     return (
       <ProfileLinksManager
-        onBack={() => navigate('/settings/profile/edit-profile', { replace: true })}
+        onBack={() => back('/settings/profile/edit-profile')}
         onLinksChange={(links) => {
           setLinkCount(links.length);
           setProfileForm((current) => ({ ...current, profileLinks: links }));
@@ -1420,6 +1423,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
               <AlertTriangle size={32} />
             </div>
             <h3 className="text-xl font-black text-gray-900 mb-2">Delete Account?</h3>
+            <PageAccountDeletion refreshKey={pageDeletionRefresh} userId={userProfile.id!} onReady={setDeleteOwnedPages}/>
             <p className="text-sm text-gray-500 mb-4 leading-relaxed">
               This action is <span className="font-bold text-red-500">irreversible</span>. All your personal data, likes, and follows will be permanently removed. Your posts will remain but will be anonymized.
             </p>
@@ -1436,7 +1440,7 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({
             <div className="flex flex-col gap-2">
               <button
                 onClick={handleDeleteAccount}
-                disabled={deleteConfirmText !== 'DELETE' || isDeleting}
+                disabled={deleteConfirmText !== 'DELETE' || isDeleting || deleteOwnedPages === null}
                 className="w-full py-4 bg-red-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all disabled:opacity-50"
               >
                 {isDeleting ? 'Deleting...' : 'Permanently Delete'}

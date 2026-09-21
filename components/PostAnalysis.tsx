@@ -8,11 +8,14 @@ import {
 import { Survey, SurveyType, SurveyQuestion } from '../types';
 import { BottomSheet } from './BottomSheet';
 import { api } from '../services/api';
+import { pageRequest } from '../services/pagesApi';
+import { PageError } from './pages/PageUi';
 import { UserAvatar } from './UserAvatar';
 
 interface PostAnalysisProps {
   survey: Survey;
   isAccessDenied?: boolean;
+  privatePageId?:string;
 }
 
 interface Dimension {
@@ -72,7 +75,7 @@ const getExactPercentages = (values: number[]): number[] => {
   return percentages;
 };
 
-export const PostAnalysis: React.FC<PostAnalysisProps> = ({ survey, isAccessDenied }) => {
+export const PostAnalysis: React.FC<PostAnalysisProps> = ({ survey, isAccessDenied,privatePageId }) => {
   const sourceSurvey = survey.sharedFrom || survey;
   const isChallenge = sourceSurvey.type === SurveyType.CHALLENGE;
   const isQuiz = sourceSurvey.type === SurveyType.QUIZ;
@@ -125,7 +128,9 @@ export const PostAnalysis: React.FC<PostAnalysisProps> = ({ survey, isAccessDeni
   }, [isChallenge, sourceSurvey.options, activeQuestion]);
 
   const [resultsData, setResultsData] = useState<any[]>([]);
+  const [pageResultError,setPageResultError]=useState<unknown>(null);
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(true);
+  const [resultsFailed, setResultsFailed] = useState(false);
 
   // Fetch real data on mount
   useEffect(() => {
@@ -136,20 +141,30 @@ export const PostAnalysis: React.FC<PostAnalysisProps> = ({ survey, isAccessDeni
     }
 
     const controller = new AbortController();
+    setResultsData([]);
+    setResultsFailed(false);
+    setPageResultError(null);
     const loadData = async () => {
       try {
         setIsLoadingAnalysis(true);
-        const data = await api.getPostResults(sourceSurvey.id, controller.signal);
+        const data = privatePageId&&sourceSurvey.pageId===privatePageId?await pageRequest<any[]>('/manage/'+privatePageId+'/content/'+sourceSurvey.id+'/results','GET',undefined,controller.signal):await api.getPostResults(sourceSurvey.id, controller.signal);
+        if(controller.signal.aborted)return;
+        setPageResultError(null);
         setResultsData(data);
       } catch (err: any) {
-        if (err?.name !== 'AbortError') console.error("Failed to load post results:", err);
+        if (!controller.signal.aborted) {
+          setResultsData([]);
+          if (privatePageId) setPageResultError(err);
+          else setResultsFailed(true);
+        }
       } finally {
         if (!controller.signal.aborted) setIsLoadingAnalysis(false);
       }
     };
     void loadData();
-    return () => controller.abort();
-  }, [sourceSurvey.id, isAccessDenied]);
+    const timer=privatePageId?setInterval(()=>void loadData(),30000):undefined;
+    return () => {controller.abort();if(timer)clearInterval(timer);};
+  }, [sourceSurvey.id, isAccessDenied,privatePageId]);
 
   const activeFilterCount = useMemo(() => 
     Object.values(activeFilters).reduce((acc: number, val: any) => acc + (val.length > 0 ? 1 : 0), 0)
@@ -325,8 +340,13 @@ export const PostAnalysis: React.FC<PostAnalysisProps> = ({ survey, isAccessDeni
     setHighlightedOptionId(segment.optionId);
   };
 
-  const handleShareAnalysis = () => {
-    setShowToast("Analysis link copied to clipboard");
+  const handleShareAnalysis = async () => {
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/post/${encodeURIComponent(survey.id)}?tab=analysis`);
+      setShowToast("Analysis link copied to clipboard");
+    } catch {
+      setShowToast("Could not copy the link. Please try again.");
+    }
     setTimeout(() => setShowToast(null), 2500);
   };
 
@@ -365,7 +385,7 @@ export const PostAnalysis: React.FC<PostAnalysisProps> = ({ survey, isAccessDeni
   const TypeIcon = typeConfig.icon;
   const VisibilityIcon = sourceSurvey.resultsVisibility === 'Private' ? Lock : Globe;
 
-  if (isAccessDenied) {
+  if (isAccessDenied || resultsFailed) {
     return (
       <div className="flex flex-col h-full bg-white animate-in zoom-in-95 duration-500 items-center justify-center p-6 text-center select-none">
         <div className="w-24 h-24 bg-gray-50 rounded-full flex items-center justify-center mb-6 border border-gray-100 shadow-inner">
@@ -379,6 +399,7 @@ export const PostAnalysis: React.FC<PostAnalysisProps> = ({ survey, isAccessDeni
     );
   }
 
+  if(privatePageId&&pageResultError)return <PageError error={pageResultError}/>;
   return (
     <div className="flex flex-col h-full bg-white animate-in fade-in duration-300 relative select-none">
       <div className="border-b border-gray-100 bg-white sticky top-0 z-30 shadow-sm">

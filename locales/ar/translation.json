@@ -1,4 +1,5 @@
 {
+  "navigation": { "notFound": "الصفحة غير موجودة", "analysisUnavailable": "التحليلات غير متاحة" },
   "postSharing": {
     "menuTitle": "مشاركة المنشور",
     "toFeed": "مشاركة في صفحتك",

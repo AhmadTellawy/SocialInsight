@@ -453,11 +453,11 @@ export const api = {
         return normalizeSurvey(resData);
     },
 
-    sharePost: async (postId: string, userId: string, caption: string) => {
+    sharePost: async (postId: string, userId: string, caption: string, publisher?:{pageId:string;pageCreateKey:string}) => {
         const response = await authFetch(`${API_BASE_URL}/posts/${postId}/share`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId, caption })
+            body: JSON.stringify({ userId, caption, ...publisher })
         });
         if (!response.ok) throw new Error('Failed to share post');
         const resData = await response.json();
@@ -497,11 +497,11 @@ export const api = {
         return page.items;
     },
 
-    createComment: async (postId: string, text: string, parentId?: string) => {
+    createComment: async (postId: string, text: string, parentId?: string, pageId?: string) => {
         const response = await authFetch(`${API_BASE_URL}/posts/${postId}/comments`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text, parentId })
+            body: JSON.stringify({ text, parentId, pageId })
         });
         if (!response.ok) await throwApiError(response, 'Failed to create comment');
         return response.json();
@@ -598,9 +598,10 @@ export const api = {
         return response.json();
     },
 
-    deleteAccount: async (userId: string) => {
+    deleteAccount: async (userId: string, deleteOwnedPages: string[] = []) => {
         const response = await authFetch(`${API_BASE_URL}/users/${userId}`, {
-            method: 'DELETE'
+            method: 'DELETE',
+            body: JSON.stringify({deleteOwnedPages})
         });
         if (!response.ok) throw new Error('Failed to delete account');
         return response.json();

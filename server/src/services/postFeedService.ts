@@ -61,6 +61,7 @@ const FEED_POST_SCALAR_SELECT = {
   description: true,
   type: true,
   authorId: true,
+  pageId: true,
   groupId: true,
   isTrending: true,
   expiresAt: true,

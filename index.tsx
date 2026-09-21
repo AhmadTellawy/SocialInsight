@@ -4,23 +4,15 @@ import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import App from './App';
 import { registerSW } from 'virtual:pwa-register';
 import './i18n';
+import './styles/tailwind.css';
 
-// Register the PWA service worker
+// Auto-update registration handles replacement workers; first installation stays on this page.
 registerSW({ 
   immediate: true,
-  onNeedRefresh() {
-    window.location.reload();
-  },
   onOfflineReady() {
     console.log('App ready to work offline');
   }
 });
-
-if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    window.location.reload();
-  });
-}
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

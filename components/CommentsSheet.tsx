@@ -2,14 +2,16 @@ import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Send, ThumbsUp, Reply, Edit2, Trash2, X, Loader2 } from 'lucide-react';
 import { Analytics } from '../utils/analytics';
-import { Comment, UserProfile } from '../types';
+import { Comment, Survey, UserProfile } from '../types';
 import { MOCK_COMMENTS } from '../services/mockData';
 import { LikersSheet } from './LikersSheet';
 import { RichMentionInput } from './RichMentionInput';
 import { RichTextRenderer } from './RichTextRenderer';
 import { UserAvatar } from './UserAvatar';
+import { commentComposerIdentity } from '../utils/commentComposerIdentity';
 
 interface CommentsSheetProps {
+  pagePost?: Survey;
   surveyId: string;
   userProfile?: UserProfile;
   onAuthorClick?: (author: { name: string; avatar: string }) => void;
@@ -153,8 +155,9 @@ import { api, ApiError } from '../services/api';
 
 // ... imports
 
-export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProfile, onAuthorClick, sourceSurface = 'FEED', onCommentAdded, initialCommentId, initialReplyId }) => {
-  const { t } = useTranslation();
+export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProfile, onAuthorClick, sourceSurface = 'FEED', onCommentAdded, initialCommentId, initialReplyId, pagePost }) => {
+  const [officialReply,setOfficialReply]=useState(false);
+  const { t, i18n } = useTranslation();
   const [comments, setComments] = useState<Comment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -171,6 +174,7 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
   // Comment Actions State
   const [actionSheetComment, setActionSheetComment] = useState<{ comment: Comment, isReply: boolean, parentId?: string } | null>(null);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const composerAuthor = commentComposerIdentity(comments, editingCommentId, officialReply, pagePost, userProfile);
   const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
 
   const loadCommentsPage = React.useCallback(async (cursor: string | null, append: boolean) => {
@@ -303,7 +307,7 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
         setEditingCommentId(null);
       } else {
         // Handle New Comment
-        const createdComment = await api.createComment(surveyId, newComment, replyingTo || undefined);
+        const createdComment = await api.createComment(surveyId, newComment, replyingTo || undefined, officialReply ? pagePost?.pageId || undefined : undefined);
 
         if (replyingTo) {
           setComments(prev => prev.map(c => {
@@ -381,7 +385,7 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
                 onReply={setReplyingTo}
                 onAuthorClick={onAuthorClick}
                 onLongPress={(comment, isReply, parentId) => {
-                  if (userProfile?.id === comment.author.id) {
+                  if (userProfile?.id === comment.author.id || pagePost?.pageCapabilities?.includes('moderateComments')) {
                     setActionSheetComment({ comment, isReply, parentId });
                   }
                 }}
@@ -404,6 +408,10 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
 
       {/* Fixed Input Area */}
       <div className="absolute bottom-0 left-0 right-0 bg-white border-t border-gray-100 p-3 pb-safe z-10 shadow-[0_-5px_15px_rgba(0,0,0,0.02)]">
+        {pagePost?.pageId && pagePost.pageCapabilities?.includes('reply') && !editingCommentId && <label className="mb-2 flex min-h-11 items-center gap-2 text-sm">
+          <input type="checkbox" className="h-5 w-5" checked={officialReply} onChange={event=>setOfficialReply(event.target.checked)}/>
+          {i18n.language.startsWith('ar') ? 'الرد باسم' : 'Reply as'} {pagePost.author.name}
+        </label>}
         {replyingTo && (
           <div className="flex items-center justify-between bg-gray-50 px-3 py-1.5 rounded-lg mb-2 text-xs text-gray-500">
             <span className="flex items-center gap-1"><Reply size={12} /> Replying to {comments.find(c => c.id === replyingTo)?.author.name}</span>
@@ -411,7 +419,7 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
           </div>
         )}
         <div className="flex items-center gap-3">
-          <UserAvatar src={userProfile?.avatar} mediaId={userProfile?.avatarMediaId} media={userProfile?.avatarMedia} name={userProfile?.name} alt="You" size={32} className="border border-gray-200" />
+          <UserAvatar src={composerAuthor?.avatar} mediaId={composerAuthor?.avatarMediaId} media={composerAuthor?.avatarMedia} name={composerAuthor?.name} alt={composerAuthor?.name || ''} size={32} className="border border-gray-200" />
           <div className="flex-1 flex items-center bg-gray-100 rounded-2xl px-4 py-2 transition-all focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100 border border-transparent focus-within:border-blue-200">
             <RichMentionInput
               value={newComment}
@@ -430,6 +438,7 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
             />
             <button
               onClick={handleSend}
+              aria-label={i18n.language.startsWith('ar') ? 'إرسال التعليق' : 'Send comment'}
               disabled={!newComment.trim() || isSubmitting}
               className={`ml-2 p-1.5 rounded-full transition-all ${newComment.trim() && !isSubmitting ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400'}`}
             >
@@ -464,6 +473,7 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
             </div>
 
             <button
+              hidden={actionSheetComment.comment.pageId ? !actionSheetComment.comment.pageCapabilities?.includes('reply') : actionSheetComment.comment.author.id !== userProfile?.id}
               onClick={() => {
                 setEditingCommentId(actionSheetComment.comment.id);
                 setNewComment(actionSheetComment.comment.text);

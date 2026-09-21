@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import prisma from '../prisma';
 import crypto from 'crypto';
 import { GroupPermissionService } from '../services/groupPermissionService';
+import { guardPagePostPersistence, respondPagePostError } from '../pages/pagePostService';
 
 // In-memory cache to prevent DB spam for the 60-minute window
 // Key: "postId:viewerKey", Value: timestamp
@@ -65,6 +66,7 @@ export const recordPostView = async (req: Request, res: Response) => {
 
         // 3. Database Transaction
         const result = await prisma.$transaction(async (tx) => {
+            await guardPagePostPersistence(tx,postId,userId);
             // Check for recent view in DB (Cache miss fallback)
             const sixtyMinsAgo = new Date(Date.now() - CACHE_TTL);
             const recentView = await tx.postView.findFirst({
@@ -122,6 +124,7 @@ export const recordPostView = async (req: Request, res: Response) => {
 
         return res.json(result);
     } catch (error) {
+        if(respondPagePostError(error,res))return;
         console.error('Error recording post view:', error);
         return res.status(500).json({ error: 'Internal server error' });
     }

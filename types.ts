@@ -14,6 +14,7 @@ export type AccountType = 'Personal' | 'Business' | 'Group';
 export type MediaAccess = 'PUBLIC' | 'RESTRICTED';
 
 export interface MediaPresentation {
+  requiresAuth?: boolean;
   id: string;
   access: MediaAccess;
   aspectRatio: number;
@@ -226,11 +227,15 @@ export interface DraftOption extends Omit<Option, 'votes'> {
 }
 
 export interface Comment {
+  pageId?: string | null;
+  pageCapabilities?: string[];
   id: string;
   userId?: string; // Expected by backend
   authorId?: string; // Used occasionally by UI requests
   author: {
     id?: string;
+    kind?: string;
+    handle?: string;
     name: string;
     avatar: string;
     avatarMediaId?: string;
@@ -292,6 +297,9 @@ export interface PostAnswerPayload {
 }
 
 export interface Survey {
+  pageId?: string | null;
+  pageCreateKey?: string;
+  pageCapabilities?: string[];
   id: string;
   title: string;
   description: string;
@@ -309,6 +317,7 @@ export interface Survey {
   createdAt?: string;
   author: {
     id: string; // Added id
+    kind?: 'PAGE' | 'PERSON';
     name: string;
     handle?: string; // Added handle
     avatar: string;
@@ -421,6 +430,7 @@ export const normalizeSurvey = (raw: any): Survey => {
   // 2) Author identity mapping safely
   const author = raw.author ? {
     id: raw.author.id ?? raw.authorId ?? '',
+    kind: raw.author.kind,
     name: raw.author.name ?? 'Unknown',
     handle: raw.author.handle,
     avatar: raw.author.avatar ?? '',

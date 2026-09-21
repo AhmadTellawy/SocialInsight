@@ -46,7 +46,7 @@ const privateGroup = (members: any[] = []) => ({ id: 'group-1', isPublic: false,
 function post(overrides: any = {}) {
   const group = privateGroup();
   return {
-    id: 'post-1', authorId: 'author-1', targetAudience: 'ProfileAndGroups',
+    id: 'post-1', authorId: 'author-1', pageId:null, targetAudience: 'ProfileAndGroups',
     status: 'PUBLISHED', isDeleted: false, hiddenBy: [], sharedFromId: null,
     groupId: group.id, group, targetedGroups: [group],
     author: { isPrivate: false, mediaPrivacyTarget: false, following: [], blockedBy: [], blocking: [] },

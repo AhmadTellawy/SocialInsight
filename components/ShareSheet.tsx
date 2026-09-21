@@ -3,6 +3,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import {
   Repeat, Check, Share2, Copy, Loader2, ExternalLink, CheckCircle2, ChevronRight
 } from 'lucide-react';
+import { PagePublisher, usePagePublisher } from './pages/PagePublisher';
 import { Survey } from '../types';
 import { Analytics } from '../utils/analytics';
 import { UserProfile } from '../types';
@@ -22,7 +23,7 @@ import {
 interface ShareSheetProps {
   survey: Survey;
   onClose: () => void;
-  onShareToFeed?: (survey: Survey, caption: string) => Promise<'shared' | 'unshared'>;
+  onShareToFeed?: (survey: Survey, caption: string, publisher?: {pageId:string;pageCreateKey:string}) => Promise<'shared' | 'unshared'>;
   onBusyChange?: (busy: boolean) => void;
   userProfile?: UserProfile;
   onAuthorClick?: (author: { name: string; avatar: string }) => void;
@@ -66,6 +67,8 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
   const [shareOutcome, setShareOutcome] = useState<'shared' | 'unshared'>('shared');
   const [repostCaption, setRepostCaption] = useState('');
 
+  const shareKey=useRef(crypto.randomUUID());
+  const publisher=usePagePublisher(userProfile||({id:'',name:''} as UserProfile),undefined,async()=>{});
   const posterRef = useRef<HTMLDivElement>(null);
   const canonicalOrigin = resolveCanonicalOrigin(import.meta.env.VITE_PUBLIC_URL, window.location.origin);
   const postUrl = buildCanonicalPostUrl(survey.id, canonicalOrigin);
@@ -82,7 +85,9 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
     setIsReposting(true);
     setShareError('');
     try {
-      const outcome = await onShareToFeed(survey, repostCaption);
+      if(publisher.pageId&&(publisher.loading||publisher.accessLost))throw new Error('Page access unavailable');
+      const outcome = await onShareToFeed(survey, repostCaption,publisher.pageId?{pageId:publisher.pageId,pageCreateKey:shareKey.current}:undefined);
+      shareKey.current=crypto.randomUUID();
       setShareOutcome(outcome);
       if (outcome === 'shared') Analytics.track({ event_type: 'SHARE_OR_COPY_LINK', post_id: survey.id, method: 'REPOST', actor_user_id: userProfile?.id, source_surface: sourceSurface });
       setStep('feed');
@@ -212,15 +217,16 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({ survey, onClose, onShare
         <h4 className="font-black text-gray-900 uppercase tracking-widest text-xs">{t('postSharing.repost')}</h4>
         <button
           onClick={handleRepostConfirm}
-          disabled={isReposting || !onShareToFeed}
+          disabled={isReposting || !onShareToFeed || (publisher.pageId && (publisher.loading || publisher.accessLost))}
           className="bg-blue-600 text-white px-5 py-1.5 rounded-full font-bold text-sm shadow-md active:scale-95 transition-all disabled:opacity-50"
         >
           {isReposting ? t('postSharing.posting') : t('postSharing.post')}
         </button>
       </div>
 
+      <div className="mb-4">{userProfile&&<PagePublisher publisher={publisher} user={userProfile} groupDestination={false}/>}</div>
       <div className="flex gap-3 mb-4" inert={isReposting} aria-busy={isReposting}>
-        <UserAvatar src={userProfile?.avatar} mediaId={userProfile?.avatarMediaId} media={userProfile?.avatarMedia} name={userProfile?.name} alt={userProfile?.name || t('postSharing.you')} size={40} />
+        <UserAvatar src={publisher.pageId?undefined:userProfile?.avatar} mediaId={publisher.pageId?publisher.page?.avatarMediaId:userProfile?.avatarMediaId} media={publisher.pageId?publisher.page?.avatarMedia:userProfile?.avatarMedia} name={publisher.pageId?publisher.page?.name||'':userProfile?.name} alt={publisher.pageId?publisher.page?.name||t('postSharing.author'):userProfile?.name||t('postSharing.you')} size={40} />
         <RichMentionInput
           value={repostCaption}
           onChange={setRepostCaption}

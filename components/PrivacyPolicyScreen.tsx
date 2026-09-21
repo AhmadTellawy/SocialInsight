@@ -1,15 +1,17 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { ArrowLeft, Shield } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useAppNavigation } from '../hooks/useAppNavigation';
 
 export const PrivacyPolicyScreen: React.FC = () => {
-    const navigate = useNavigate();
+    const { back } = useAppNavigation();
+    const { t } = useTranslation();
 
     return (
         <div className="flex flex-col h-full bg-white animate-in slide-in-from-right duration-300 z-50">
             <div className="bg-white border-b border-gray-100 flex items-center px-4 h-14 sticky top-0 z-30">
-                <button onClick={() => navigate(-1)} className="p-2 -ml-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors">
-                    <ArrowLeft size={24} />
+                <button onClick={() => back('/')} aria-label={t('common.back', { defaultValue: 'Back' })} className="min-h-11 min-w-11 p-2 -ml-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors">
+                    <ArrowLeft size={24} className="rtl:rotate-180" />
                 </button>
                 <div className="flex items-center gap-2 ml-2 text-gray-900">
                     <Shield size={20} className="text-blue-600" />

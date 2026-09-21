@@ -1,3 +1,4 @@
+import { attachPagePublishers } from '../pages/pagePostService';
 import { Request, Response } from 'express';
 import prisma from '../prisma';
 import {
@@ -8,7 +9,9 @@ import {
     serializePostMediaRecord,
     serializeUserMediaRecord
 } from '../services/mediaService';
-import { buildVisiblePublishedPostWhere } from '../services/postVisibilityService';
+import { buildVisiblePublishedPostWhere as baseVisibleWhere } from '../services/postVisibilityService';
+import { pageDiscoveryPostWhere } from '../pages/pageFeature';
+const buildVisiblePublishedPostWhere=(viewerId?:string|null)=>({AND:[baseVisibleWhere(viewerId),pageDiscoveryPostWhere()]});
 import { normalizeHashtag } from '../utils/textEntities';
 
 export const searchAll = async (req: Request, res: Response) => {
@@ -98,6 +101,7 @@ export const searchAll = async (req: Request, res: Response) => {
             })
         ]);
 
+        await attachPagePublishers(posts,viewerId);
         // Extract categories from matching posts
         const categoriesSet = new Set<string>();
         posts.forEach(p => {

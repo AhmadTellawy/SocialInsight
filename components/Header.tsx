@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
-import { User, PieChart } from 'lucide-react';
+import React from 'react';
+import { Building2 } from 'lucide-react';
 import { UserProfile } from '../types';
 import { UserAvatar } from './UserAvatar';
 import { useTranslation } from 'react-i18next';
 
 interface HeaderProps {
+  onPagesClick?: () => void;
   onProfileClick?: () => void;
   onMessagesClick?: () => void;
   userProfile?: UserProfile;
@@ -12,16 +13,16 @@ interface HeaderProps {
   onSignUpClick?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onProfileClick, userProfile, onLoginClick, onSignUpClick }) => {
-  const { t } = useTranslation();
+export const Header: React.FC<HeaderProps> = ({ onProfileClick, onPagesClick, userProfile, onLoginClick, onSignUpClick }) => {
+  const { t, i18n } = useTranslation();
   const BRAND_BLUE = '#0070BA';
   const BRAND_GREEN = '#00A67E';
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 bg-white/95 backdrop-blur-md border-b border-gray-100 h-16 px-4 flex items-center justify-between max-w-md mx-auto shadow-sm transition-all">
-      <div className="flex items-center gap-3">
+    <header className="fixed top-0 left-0 right-0 z-50 bg-white/95 backdrop-blur-md border-b border-gray-100 h-16 px-2 sm:px-4 flex items-center justify-between gap-1 max-w-md mx-auto shadow-sm transition-all">
+      <div className="flex min-w-0 items-center gap-1 sm:gap-3">
         {/* Custom Logo with Fallback */}
-        <div className="relative w-12 h-12 shrink-0 transform active:scale-90 transition-transform cursor-pointer">
+        <div className="relative w-9 h-9 sm:w-12 sm:h-12 shrink-0 transform active:scale-90 transition-transform cursor-pointer">
           <img
             src="/logo.png"
             alt="Opiniup Logo"
@@ -38,7 +39,8 @@ export const Header: React.FC<HeaderProps> = ({ onProfileClick, userProfile, onL
         </div>
       </div>
 
-      <div className="flex items-center gap-1 text-gray-500">
+      <div className="flex shrink-0 items-center gap-1 text-gray-500">
+        {onPagesClick && <button onClick={onPagesClick} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-[#0070BA] hover:bg-blue-50" aria-label={i18n.language.startsWith('ar') ? 'الصفحات' : 'Pages'}><Building2 size={22}/></button>}
         {userProfile ? (
           <button
             onClick={onProfileClick}
@@ -47,11 +49,11 @@ export const Header: React.FC<HeaderProps> = ({ onProfileClick, userProfile, onL
             <UserAvatar src={userProfile.avatar} mediaId={userProfile.avatarMediaId} media={userProfile.avatarMedia} name={userProfile.name} size={32} className="border border-gray-100 shadow-sm" />
           </button>
         ) : (
-          <div className="flex items-center gap-4 mr-2">
-            <button onClick={onLoginClick} className="text-[15px] font-bold text-[#0070BA] hover:text-blue-700 transition-colors">
+          <div className="flex items-center gap-1 sm:gap-3">
+            <button onClick={onLoginClick} className="min-h-11 px-1 text-xs sm:text-[15px] font-bold text-[#0070BA] hover:text-blue-700 transition-colors">
               {t('auth.login', 'Login')}
             </button>
-            <button onClick={onSignUpClick} className="bg-[#0070BA] hover:bg-[#005ea3] text-white text-[15px] font-bold py-1.5 px-5 rounded-full transition-all active:scale-95 shadow-sm">
+            <button onClick={onSignUpClick} className="min-h-11 bg-[#0070BA] hover:bg-[#005ea3] text-white text-xs sm:text-[15px] font-bold py-1.5 px-2 sm:px-5 rounded-full transition-all active:scale-95 shadow-sm">
               {t('auth.signup', 'Sign Up')}
             </button>
           </div>

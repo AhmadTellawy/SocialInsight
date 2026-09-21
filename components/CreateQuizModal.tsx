@@ -1,3 +1,4 @@
+import { PagePublisher, PagePublisherRecovery, usePagePublisher } from './pages/PagePublisher';
 import { PostSaveStatus } from './PostSaveStatus';
 import { usePostSaveFeedback } from '../hooks/usePostSaveFeedback';
 
@@ -84,7 +85,8 @@ const createQuizOption = (): SurveyOptionDraft => ({
 
 export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClose, onSubmit: persistPost, onSaveDraft: persistDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
   const { t } = useTranslation();
-  const { error: submissionError, isSaving, onSubmit, onSaveDraft } = usePostSaveFeedback(persistPost, persistDraft, t);
+  const publisher = usePagePublisher(userProfile, draft, persistPost, persistDraft);
+  const { error: submissionError, isSaving, onSubmit, onSaveDraft } = usePostSaveFeedback(publisher.submit, publisher.save, t);
   const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
   const [isResultVisibilitySheetOpen, setIsResultVisibilitySheetOpen] = useState(false);
   const [isCategorySheetOpen, setIsCategorySheetOpen] = useState(false);
@@ -560,6 +562,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
     scrollContainerRef.current?.scrollTo({ top: 0 });
   };
 
+  if(draft?.pageId&&(publisher.loading||publisher.accessLost))return <PagePublisherRecovery publisher={publisher} user={userProfile} onClose={onClose}/>;
   return (
     <>
       <PostSaveStatus active={isSaving || isSubmitting} label={t('postOptions.saving')} />
@@ -574,17 +577,17 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
         <div className="flex items-center gap-2">
           <button
             onClick={handleSaveDraft}
-            disabled={!mediaReady || isSaving || isSubmitting}
+            disabled={!mediaReady || isSaving || isSubmitting || publisher.writeBlocked}
             className="text-purple-600 border border-purple-200 font-black text-[9px] px-3.5 py-2 rounded-full bg-purple-50 hover:bg-purple-100 transition-all uppercase tracking-widest active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Save Draft
           </button>
           <button
             onClick={() => composerStep === 1 ? handleNext() : handlePost()}
-            disabled={!mediaReady || isSaving || isSubmitting}
-            aria-disabled={!mediaReady || isSaving || isSubmitting}
+            disabled={!mediaReady || isSaving || isSubmitting || (composerStep === 2 && publisher.writeBlocked)}
+            aria-disabled={!mediaReady || isSaving || isSubmitting || (composerStep === 2 && publisher.writeBlocked)}
             className={`text-white font-bold text-[12px] px-4 py-2 rounded-full transition-all uppercase tracking-widest ${
-              mediaReady && !isSubmitting
+              mediaReady && !isSubmitting && !(composerStep === 2 && publisher.writeBlocked)
                 ? 'bg-purple-600 hover:bg-purple-700 shadow-md active:scale-95 shadow-purple-200/50'
                 : 'bg-gray-300 shadow-none cursor-not-allowed'
             }`}
@@ -939,7 +942,9 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
 
           </div>
           <div hidden={composerStep !== 2} className="space-y-6">
+          <PagePublisher publisher={publisher} user={userProfile} groupDestination={visibility === 'Groups' || visibility === 'ProfileAndGroups' || !!initialGroupId} />
           <PostVisibilitySection
+            pagePublisher={!!publisher.pageId}
             value={visibility}
             onChange={value => { setVisibility(value); setErrors(previous => ({ ...previous, visibility: false })); }}
             selectedGroupIds={selectedGroups}
@@ -1367,7 +1372,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
             <p className="text-sm text-gray-500 mb-6 leading-relaxed">You have unsaved work. If you exit now, your changes will be lost.</p>
             <div className="flex flex-col gap-2">
               <button onClick={handleDiscard} disabled={isSaving || isSubmitting} className="w-full py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-colors">Discard and Exit</button>
-              <button onClick={handleSaveDraft} disabled={isSaving || isSubmitting} className="w-full py-3 bg-purple-50 text-purple-600 rounded-xl font-bold text-sm hover:bg-purple-100 transition-colors">Save as Draft</button>
+              <button onClick={handleSaveDraft} disabled={isSaving || isSubmitting || publisher.writeBlocked} className="w-full py-3 bg-purple-50 text-purple-600 rounded-xl font-bold text-sm hover:bg-purple-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Save as Draft</button>
               <button onClick={() => setShowExitConfirm(false)} disabled={isSaving || isSubmitting} className="w-full py-3 bg-gray-100 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-200 transition-colors">Keep Editing</button>
             </div>
           </div>

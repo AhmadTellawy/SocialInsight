@@ -6,6 +6,7 @@ import {
   Prisma
 } from '@prisma/client';
 import prisma from '../prisma';
+import { randomUUID } from 'crypto';
 import { MEDIA_CONFIG, isAllowedMediaMime, maxInputBytesForPurpose } from '../config/media';
 import { GroupPermissionService } from './groupPermissionService';
 import { PrivacyService } from './privacyService';
@@ -24,6 +25,29 @@ const mimeExtension: Record<string, string> = {
 };
 
 const addHours = (date: Date, hours: number): Date => new Date(date.getTime() + hours * 60 * 60 * 1000);
+
+// Durable fail-closed storage barrier without a timeout lease. A stopped runtime
+// must be confirmed before recovery: a slow public upload must not resume after
+// another request attaches the same asset privately.
+export const mediaScopeRuntimeId = randomUUID();
+let scopeRuntimeAnnounced=false;
+const announceScopeRuntime=()=>{
+  if(scopeRuntimeAnnounced)return;
+  scopeRuntimeAnnounced=true;
+  // Link a durable barrier to the issuing process generation in provider logs;
+  // this is the evidence an operator needs before stopped-runtime recovery.
+  console.info(JSON.stringify({event:'media_scope_runtime',runtimeId:mediaScopeRuntimeId,pid:process.pid,
+    processStartedAt:new Date(Date.now()-process.uptime()*1000).toISOString()}));
+};
+const MEDIA_SCOPE_OPERATION_PREFIX = 'MEDIA_SCOPE:';
+const isMediaScopeOperation = (code: string | null | undefined): boolean => !!code?.startsWith(MEDIA_SCOPE_OPERATION_PREFIX);
+const scopeOperationAvailableWhere: Prisma.MediaAssetWhereInput = {
+  OR: [{ errorCode: null }, { NOT: { errorCode: { startsWith: MEDIA_SCOPE_OPERATION_PREFIX } } }]
+};
+const privateAttachmentWhere: Prisma.MediaAssetWhereInput = {
+  accessScope: { not: 'PUBLIC' }, variants: { none: { isPublic: true } }
+};
+const mediaBusy = () => new MediaValidationError('MEDIA_BUSY', 'Image processing is still in progress. Retry shortly or upload the image again.', 409);
 
 const variantKey = (asset: Pick<MediaAsset, 'id' | 'ownerId'>, visibility: 'private' | 'public', width: number): string =>
   `${asset.ownerId}/${asset.id}/${visibility}/${width}.webp`;
@@ -58,6 +82,7 @@ export type MediaPresentation = {
   src?: string;
   srcSet?: string;
   sources?: Array<{ src: string; width: number; height: number }>;
+  requiresAuth?: boolean;
 };
 
 const clampUnit = (value: number): number => Math.max(0, Math.min(1, value));
@@ -217,6 +242,7 @@ export const finalizeMediaUpload = async (ownerId: string, assetId: string, requ
   if (!asset || asset.ownerId !== ownerId || asset.deletedAt) {
     throw new MediaValidationError('MEDIA_NOT_FOUND', 'Media asset was not found.', 404);
   }
+  if (isMediaScopeOperation(asset.errorCode)) throw mediaBusy();
   if (!asset.uploadBucket || !asset.uploadKey || !asset.sourceMime) {
     throw new MediaValidationError('UPLOAD_NOT_READY', 'The source upload is not available.', 409);
   }
@@ -225,7 +251,7 @@ export const finalizeMediaUpload = async (ownerId: string, assetId: string, requ
   }
 
   const claimed = await prisma.mediaAsset.updateMany({
-    where: { id: asset.id, status: { in: ['TEMPORARY', 'FAILED', 'READY'] } },
+    where: { id: asset.id, status: { in: ['TEMPORARY', 'FAILED', 'READY'] }, ...scopeOperationAvailableWhere },
     data: { status: 'PROCESSING', errorCode: null }
   });
   if (claimed.count !== 1) {
@@ -305,43 +331,112 @@ export const finalizeMediaUpload = async (ownerId: string, assetId: string, requ
   }
 };
 
-export const promoteMediaAsset = async (assetId: string): Promise<void> => {
-  const asset = await prisma.mediaAsset.findUnique({ where: { id: assetId }, include: { variants: true } });
-  if (!asset || !['READY', 'ATTACHED'].includes(asset.status)) {
-    throw new MediaValidationError('MEDIA_NOT_READY', 'Media must finish processing before it can be attached.', 409);
+/** Import the legacy Page transport through the existing private upload processor.
+ * Caller authorizes the Page, then attaches the READY asset in its post transaction.
+ * An unattached result retains the ordinary temporary-upload expiry. */
+export const importPageInlineMedia = async (
+  ownerId: string, purpose: MediaPurpose, dataUrl: string, request: MediaCropRequest = {}
+): Promise<string> => {
+  const { assertPagesEnabled } = await import('../pages/pageFeature');
+  assertPagesEnabled(ownerId);
+  const match = typeof dataUrl === 'string' && dataUrl.match(/^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\r\n]+)$/i);
+  if (!match) throw new MediaValidationError('REMOTE_MEDIA_NOT_ALLOWED', 'Upload the image through the media service.');
+  const mime = match[1].toLowerCase();
+  if (!isAllowedMediaMime(mime)) throw new MediaValidationError('UNSUPPORTED_MEDIA_TYPE', 'Only JPEG, PNG, and WebP images are supported.');
+  const encoded = match[2].replace(/[\r\n]/g, '');
+  const maxBytes = maxInputBytesForPurpose(purpose);
+  if (encoded.length > 4 * Math.ceil(maxBytes / 3)) throw new MediaValidationError('INVALID_FILE_SIZE', 'Image exceeds the existing upload limit.');
+  const source = Buffer.from(encoded, 'base64');
+  if (!source.length || source.length > maxBytes || source.toString('base64') !== encoded) {
+    throw new MediaValidationError('INVALID_IMAGE', 'The image data is invalid or exceeds the existing upload limit.');
   }
-  if (asset.variants.some((variant) => variant.isPublic)) {
-    await prisma.mediaAsset.update({ where: { id: asset.id }, data: { accessScope: 'PUBLIC' } });
-    return;
-  }
-
-  const privateVariants = asset.variants.filter((variant) => variant.kind !== 'MASTER' && !variant.isPublic);
-  const copied: string[] = [];
+  const asset = await prisma.mediaAsset.create({data:{ownerId,purpose,sourceMime:mime,sourceByteSize:source.length,
+    uploadBucket:MEDIA_CONFIG.buckets.originals,expiresAt:addHours(new Date(),MEDIA_CONFIG.temporaryLifetimeHours)}});
+  const key = sourceKey(ownerId,asset.id,mime);
   try {
-    const records: Prisma.MediaVariantCreateManyInput[] = [];
-    for (const variant of privateVariants) {
-      const key = variantKey(asset, 'public', variant.width);
-      const body = await getMediaStorage().download(variant.storageBucket, variant.storageKey);
-      await getMediaStorage().upload(MEDIA_CONFIG.buckets.public, key, body, variant.mime, '300');
-      copied.push(key);
-      records.push({
-        mediaAssetId: asset.id,
-        kind: variant.kind,
-        storageBucket: MEDIA_CONFIG.buckets.public,
-        storageKey: key,
-        width: variant.width,
-        height: variant.height,
-        mime: variant.mime,
-        byteSize: variant.byteSize,
-        isPublic: true
-      });
+    await prisma.mediaAsset.update({where:{id:asset.id},data:{uploadKey:key}});
+    await getMediaStorage().upload(MEDIA_CONFIG.buckets.originals,key,source,mime,'0');
+    await finalizeMediaUpload(ownerId,asset.id,request);
+    return asset.id;
+  } catch(error) {
+    // Retain a durable cleanup record if storage deletion is temporarily down.
+    await prisma.mediaAsset.update({where:{id:asset.id},data:{status:'PENDING_DELETE'}}).catch(()=>undefined);
+    await purgeMediaAsset(asset.id).catch(()=>undefined);
+    throw error;
+  }
+};
+
+type MediaScopeOperation = {
+  asset: MediaAsset & { variants: MediaVariant[] };
+  token: string;
+  restoreScope: MediaAccessScope;
+};
+const settledScopeOperations = new Map<string,MediaScopeOperation>();
+const settledCleanupInFlight = new Set<string>();
+const rememberSettledOperation = (operation:MediaScopeOperation) => {
+  // Overflow remains durably blocked and recoverable after runtime shutdown.
+  if(settledScopeOperations.size<500)settledScopeOperations.set(operation.asset.id,operation);
+};
+
+const claimMediaScopeOperation = async (assetId: string, mode: 'PROMOTE' | 'RESTRICT', scope?: MediaAccessScope): Promise<MediaScopeOperation> =>
+  prisma.$transaction(async tx => {
+    announceScopeRuntime();
+    const initial = await tx.mediaAsset.findUnique({where:{id:assetId}});
+    if (mode === 'PROMOTE' && initial?.pageId) throw new MediaValidationError('PAGE_MEDIA_MUST_REMAIN_PRIVATE','Page media must remain private.',409);
+    if (!initial || !['READY','ATTACHED'].includes(initial.status) || initial.deletedAt) throw mediaBusy();
+    const restoreScope = scope || (initial.accessScope === 'PUBLIC' ? 'OWNER_ONLY' : initial.accessScope);
+    const token = `${MEDIA_SCOPE_OPERATION_PREFIX}${mediaScopeRuntimeId}:${randomUUID()}:${mode}:${initial.status}:${restoreScope}`;
+    const claimed = await tx.mediaAsset.updateMany({where:{id:assetId,status:initial.status,updatedAt:initial.updatedAt,
+      ...(mode === 'PROMOTE' ? {pageId:null} : {}),...scopeOperationAvailableWhere},data:{status:'PROCESSING',errorCode:token}});
+    if (claimed.count !== 1) throw mediaBusy();
+    const asset = await tx.mediaAsset.findUniqueOrThrow({where:{id:assetId},include:{variants:true}});
+    if (mode === 'PROMOTE') {
+      const records = asset.variants.filter(variant=>!variant.isPublic&&variant.kind!=='MASTER').map(variant=>({
+        mediaAssetId:assetId,kind:variant.kind,storageBucket:MEDIA_CONFIG.buckets.public,
+        storageKey:variantKey(asset,'public',variant.width),width:variant.width,height:variant.height,
+        mime:variant.mime,byteSize:variant.byteSize,isPublic:true
+      }));
+      if (!records.length) throw new MediaValidationError('MEDIA_NOT_READY','Media variants are unavailable.',409);
+      // Register exact keys before storage I/O, including writes with uncertain replies.
+      await tx.mediaVariant.createMany({data:records,skipDuplicates:true});
     }
-    await prisma.$transaction([
-      prisma.mediaVariant.createMany({ data: records, skipDuplicates: true }),
-      prisma.mediaAsset.update({ where: { id: asset.id }, data: { accessScope: 'PUBLIC' } })
-    ]);
-  } catch (error) {
-    await getMediaStorage().remove(MEDIA_CONFIG.buckets.public, copied).catch(() => undefined);
+    return {asset:{...asset,status:initial.status},token,restoreScope};
+  });
+
+const finishMediaScopeOperation = async (operation: MediaScopeOperation, scope: MediaAccessScope, removePublic: boolean): Promise<void> => {
+  await prisma.$transaction(async tx=>{
+    const result=await tx.mediaAsset.updateMany({where:{id:operation.asset.id,status:'PROCESSING',errorCode:operation.token,
+      ...(scope==='PUBLIC'?{pageId:null}:{})},data:{status:operation.asset.status,accessScope:scope,errorCode:null}});
+    if(result.count!==1)throw mediaBusy();
+    if(removePublic)await tx.mediaVariant.deleteMany({where:{mediaAssetId:operation.asset.id,isPublic:true}});
+  });
+  settledScopeOperations.delete(operation.asset.id);
+};
+
+const removeOperationPublicCopies = async (assetId: string): Promise<void> => {
+  const records=await prisma.mediaVariant.findMany({where:{mediaAssetId:assetId,isPublic:true},select:{storageBucket:true,storageKey:true}});
+  for(const [bucket,keys] of groupStorageObjects(records.map(record=>({bucket:record.storageBucket,key:record.storageKey})))) {
+    await getMediaStorage().remove(bucket,keys);
+  }
+};
+
+export const promoteMediaAsset = async (assetId: string): Promise<void> => {
+  const operation=await claimMediaScopeOperation(assetId,'PROMOTE');
+  try {
+    for(const variant of operation.asset.variants.filter(value=>!value.isPublic&&value.kind!=='MASTER')) {
+      const body=await getMediaStorage().download(variant.storageBucket,variant.storageKey);
+      await getMediaStorage().upload(MEDIA_CONFIG.buckets.public,variantKey(operation.asset,'public',variant.width),body,variant.mime,'300');
+    }
+    await finishMediaScopeOperation(operation,'PUBLIC',false);
+  } catch(error) {
+    try {
+      await removeOperationPublicCopies(assetId);
+      await finishMediaScopeOperation(operation,operation.restoreScope,true);
+    } catch {
+      // Keep PROCESSING and the exact registered keys. No timeout may release this
+      // barrier; recovery requires proof that the issuing runtime has stopped.
+      rememberSettledOperation(operation);
+    }
     throw error;
   }
 };
@@ -359,7 +454,7 @@ export const prepareMediaAttachments = async (
 
   const assets = await prisma.mediaAsset.findMany({
     where: { id: { in: requirements.map((requirement) => requirement.id) }, ownerId, status: 'READY' },
-    select: { id: true, purpose: true }
+    select: { id: true, purpose: true, accessScope: true, variants: { select: { isPublic: true } } }
   });
   if (assets.length !== requirements.length) {
     throw new MediaValidationError('MEDIA_NOT_READY', 'One or more images are unavailable, already used, or still processing.', 409);
@@ -370,6 +465,13 @@ export const prepareMediaAttachments = async (
   }
 
   const promotedAssetIds: string[] = [];
+  if (scope !== 'PUBLIC') {
+    // Interrupted public preparations must not leave reusable public copies when
+    // the same READY upload is subsequently attached to private content.
+    for (const asset of assets) {
+      if (asset.accessScope==='PUBLIC'||asset.variants.some(variant => variant.isPublic)) await restrictMediaAsset(asset.id,scope);
+    }
+  }
   if (scope === 'PUBLIC') {
     try {
       for (const requirement of requirements) {
@@ -390,7 +492,8 @@ export const commitPreparedMedia = async (
 ): Promise<void> => {
   if (prepared.assetIds.length === 0) return;
   const result = await tx.mediaAsset.updateMany({
-    where: { id: { in: prepared.assetIds }, status: 'READY' },
+    where: { id: { in: prepared.assetIds }, status: 'READY', ...scopeOperationAvailableWhere,
+      ...(prepared.scope === 'PUBLIC' ? {pageId:null,accessScope:'PUBLIC' as const} : privateAttachmentWhere) },
     data: { status: 'ATTACHED', accessScope: prepared.scope, expiresAt: null }
   });
   if (result.count !== prepared.assetIds.length) {
@@ -442,10 +545,12 @@ export const commitMediaScopeChange = async (
   prepared: PreparedMediaScopeChange
 ): Promise<void> => {
   if (prepared.assetIds.length === 0) return;
-  await tx.mediaAsset.updateMany({
-    where: { id: { in: prepared.assetIds }, status: 'ATTACHED' },
+  const result=await tx.mediaAsset.updateMany({
+    where: { id: { in: prepared.assetIds }, status: 'ATTACHED', AND:[scopeOperationAvailableWhere,
+      prepared.scope==='PUBLIC'?{pageId:null,accessScope:'PUBLIC'}:{OR:[{pageId:null},privateAttachmentWhere]}] },
     data: { accessScope: prepared.scope }
   });
+  if(result.count!==prepared.assetIds.length)throw mediaBusy();
 };
 
 export const rollbackMediaScopeChange = async (prepared: PreparedMediaScopeChange): Promise<void> => {
@@ -508,14 +613,15 @@ export const resolvePostMediaScopeFromState = (
 export const validatePostMediaSet = async (
   ownerId: string,
   assetIds: string[],
-  requestedAspectRatio?: number
+  requestedAspectRatio?: number,
+  authorizedPageId?: string
 ): Promise<number | null> => {
   if (assetIds.length === 0) return null;
   if (assetIds.length > MEDIA_CONFIG.maxPostImages) {
     throw new MediaValidationError('TOO_MANY_POST_IMAGES', `A post can contain up to ${MEDIA_CONFIG.maxPostImages} images.`);
   }
   const assets = await prisma.mediaAsset.findMany({
-    where: { id: { in: assetIds }, ownerId, purpose: 'POST', status: { in: ['READY', 'ATTACHED'] } },
+    where: { id: { in: assetIds }, ...(authorizedPageId ? {OR:[{ownerId},{pageId:authorizedPageId,status:'ATTACHED'}]} : {ownerId}), purpose: 'POST', status: { in: ['READY', 'ATTACHED'] } },
     select: { id: true, aspectRatio: true }
   });
   if (assets.length !== assetIds.length || assets.some((asset) => !asset.aspectRatio)) {
@@ -535,21 +641,72 @@ export const validatePostMediaSet = async (
 export const restrictMediaAsset = async (assetId: string, scope: MediaAccessScope = 'RESTRICTED'): Promise<void> => {
   const asset = await prisma.mediaAsset.findUnique({ where: { id: assetId }, include: { variants: true } });
   if (!asset) return;
-  const publicVariants = asset.variants.filter((variant) => variant.isPublic);
-  await getMediaStorage().remove(
-    MEDIA_CONFIG.buckets.public,
-    publicVariants.map((variant) => variant.storageKey)
-  );
-  await prisma.$transaction([
-    prisma.mediaVariant.deleteMany({ where: { mediaAssetId: asset.id, isPublic: true } }),
-    prisma.mediaAsset.update({ where: { id: asset.id }, data: { accessScope: scope } })
-  ]);
+  if(scope==='PUBLIC')throw new MediaValidationError('INVALID_MEDIA_SCOPE','Use the public promotion operation.',409);
+  const operation=await claimMediaScopeOperation(assetId,'RESTRICT',scope);
+  // A failed removal deliberately leaves the durable operation barrier in place.
+  try {
+    await removeOperationPublicCopies(assetId);
+    await finishMediaScopeOperation(operation,scope,true);
+  } catch(error) { rememberSettledOperation(operation); throw error; }
+};
+
+/** Retry only an operation this live runtime knows has finished its storage writes.
+ * A process-local registry entry is created after failure has settled, never merely
+ * because a request has been running for a long time. */
+export const retrySettledMediaScopeCleanup = async (assetId:string):Promise<boolean> => {
+  const operation=settledScopeOperations.get(assetId);
+  if(!operation||settledCleanupInFlight.has(assetId))return false;
+  settledCleanupInFlight.add(assetId);
+  try {
+    const current=await prisma.mediaAsset.findUnique({where:{id:assetId},select:{status:true,errorCode:true}});
+    if(!current||current.errorCode!==operation.token){settledScopeOperations.delete(assetId);return false;}
+    if(current.status!=='PROCESSING')return false;
+    await removeOperationPublicCopies(assetId);
+    await finishMediaScopeOperation(operation,operation.restoreScope,true);
+    return true;
+  } finally { settledCleanupInFlight.delete(assetId); }
+};
+
+/** Operator-only recovery; intentionally not exposed by an HTTP route.
+ * First stop/replace the issuing worker and verify its runtime generation against
+ * deployment/process evidence. Then pass its exact MEDIA_SCOPE token and evidence
+ * reference. An elapsed deadline is NOT proof that its storage writes have stopped.
+ * Returns a receipt for the operator's task evidence. A failed recovery retains a
+ * new barrier and can be retried by this runtime's settled-cleanup path.
+ */
+export const recoverStoppedMediaScopeOperation = async (
+  assetId:string, expectedToken:string,
+  confirmation:{runtimeId:string;confirmedStopped:true;evidenceRef:string}
+) => {
+  announceScopeRuntime();
+  const parsed=expectedToken.match(/^MEDIA_SCOPE:([0-9a-f-]{36}):([0-9a-f-]{36}):(PROMOTE|RESTRICT|RECOVER):(READY|ATTACHED|PENDING_DELETE):(OWNER_ONLY|RESTRICTED|INHERITED_GROUP)$/);
+  if(!parsed||confirmation.confirmedStopped!==true||confirmation.runtimeId!==parsed[1]
+    ||confirmation.runtimeId===mediaScopeRuntimeId||!confirmation.evidenceRef.trim()) {
+    throw new MediaValidationError('MEDIA_RECOVERY_CONFIRMATION_REQUIRED','Verify the issuing runtime has stopped before recovery.',409);
+  }
+  const operation=await prisma.$transaction(async tx=>{
+    const asset=await tx.mediaAsset.findUnique({where:{id:assetId},include:{variants:true}});
+    if(!asset||asset.errorCode!==expectedToken||!['PROCESSING','PENDING_DELETE'].includes(asset.status))throw mediaBusy();
+    const status=asset.status==='PENDING_DELETE'?'PENDING_DELETE':parsed[4] as MediaAsset['status'];
+    const restoreScope=parsed[5] as MediaAccessScope;
+    const token=`${MEDIA_SCOPE_OPERATION_PREFIX}${mediaScopeRuntimeId}:${randomUUID()}:RECOVER:${status}:${restoreScope}`;
+    const claim=await tx.mediaAsset.updateMany({where:{id:assetId,status:asset.status,errorCode:expectedToken},data:{status:'PROCESSING',errorCode:token}});
+    if(claim.count!==1)throw mediaBusy();
+    return {asset:{...asset,status},token,restoreScope};
+  });
+  try {
+    await removeOperationPublicCopies(assetId);
+    await finishMediaScopeOperation(operation,operation.restoreScope,true);
+  } catch(error) { rememberSettledOperation(operation); throw error; }
+  return {assetId,recoveredRuntimeId:confirmation.runtimeId,evidenceRef:confirmation.evidenceRef,
+    restoredStatus:operation.asset.status,accessScope:operation.restoreScope,recoveredAt:new Date().toISOString()};
 };
 
 export const markMediaAttached = async (assetIds: string[], scope: MediaAccessScope): Promise<void> => {
   if (assetIds.length === 0) return;
   const result = await prisma.mediaAsset.updateMany({
-    where: { id: { in: assetIds }, status: 'READY' },
+    where: { id: { in: assetIds }, status: 'READY', ...scopeOperationAvailableWhere,
+      ...(scope === 'PUBLIC' ? {pageId:null,accessScope:'PUBLIC' as const} : privateAttachmentWhere) },
     data: { status: 'ATTACHED', accessScope: scope, expiresAt: null }
   });
   if (result.count !== assetIds.length) {
@@ -606,6 +763,15 @@ export const getMediaReadPresentation = async (assetId: string, viewerId?: strin
   const asset = await assetWithAccessContext(assetId);
   if (!asset || asset.status !== 'ATTACHED' || !asset.aspectRatio) {
     throw new MediaValidationError('MEDIA_NOT_FOUND', 'Media asset was not found.', 404);
+  }
+  if (asset.pageId) {
+    const { pageMediaPresentation } = await import('../pages/pageMediaService');
+    try { return await pageMediaPresentation(assetId, viewerId); }
+    catch(error) {
+      const { PagePolicyError } = await import('../pages/pagePolicy');
+      if(error instanceof PagePolicyError) throw new MediaValidationError('MEDIA_NOT_FOUND','Media asset was not found.',404);
+      throw error;
+    }
   }
   if (asset.coverFor && !(await PrivacyService.canViewUserContent(viewerId, asset.ownerId))) {
     throw new MediaValidationError('MEDIA_NOT_FOUND', 'Media asset was not found.', 404);
@@ -664,7 +830,7 @@ export const serializeMediaAsset = (
   asset?: (MediaAsset & { variants: MediaVariant[] }) | null
 ): MediaPresentation | null => {
   if (!asset || !asset.aspectRatio) return null;
-  if (asset.accessScope === 'PUBLIC') return publicPresentation(asset);
+  if (asset.accessScope === 'PUBLIC' && !asset.pageId) return publicPresentation(asset);
   const largest = asset.variants.filter((variant) => !variant.isPublic && variant.kind !== 'MASTER').sort((a, b) => b.width - a.width)[0];
   if (!largest) return null;
   return {
@@ -674,7 +840,8 @@ export const serializeMediaAsset = (
     ...presentationFocalPoint(asset),
     altText: asset.altText,
     width: largest.width,
-    height: largest.height
+    height: largest.height,
+    ...(asset.pageId ? {src:'/api/media/'+encodeURIComponent(asset.id)+'/content',requiresAuth:true} : {})
   };
 };
 
@@ -707,7 +874,9 @@ export const serializeGroupMediaRecord = <T extends Record<string, any>>(group?:
 
 export const serializePostMediaRecord = (post: any, viewerId?: string | null): any => {
   if (!post) return post;
-  const maySeeInternalOptionNames = post.status !== 'PUBLISHED' || (Boolean(viewerId) && post.authorId === viewerId);
+  const maySeeInternalOptionNames = post.pageId
+    ? Boolean(post.pageCapabilities?.includes('analytics'))
+    : post.status !== 'PUBLISHED' || (Boolean(viewerId) && post.authorId === viewerId);
   const hidePostOptionNames = !maySeeInternalOptionNames
     && post.optionPresentation === 'image'
     && post.showOptionNames === false;
@@ -763,13 +932,22 @@ export const deleteMediaAsset = async (ownerId: string, assetId: string): Promis
   if (asset.status === 'ATTACHED') {
     throw new MediaValidationError('MEDIA_ATTACHED', 'Attached media must be removed from its content first.', 409);
   }
-  await prisma.mediaAsset.update({ where: { id: asset.id }, data: { status: 'PENDING_DELETE' } });
+  if(isMediaScopeOperation(asset.errorCode)||asset.status==='PROCESSING')throw mediaBusy();
+  const cancelled=await prisma.mediaAsset.updateMany({where:{id:asset.id,status:asset.status,updatedAt:asset.updatedAt,
+    ...scopeOperationAvailableWhere},data:{status:'PENDING_DELETE'}});
+  if(cancelled.count!==1)throw mediaBusy();
   await purgeMediaAsset(asset.id);
 };
 
 export const purgeMediaAsset = async (assetId: string): Promise<void> => {
   const asset = await prisma.mediaAsset.findUnique({ where: { id: assetId }, include: { variants: true } });
   if (!asset) return;
+  if(isMediaScopeOperation(asset.errorCode)||asset.status==='PROCESSING')throw mediaBusy();
+  // Claim deletion before storage I/O so a promoter/finalizer cannot start while
+  // cleanup is removing the same keys. PENDING_DELETE is never attachable.
+  const claimed=await prisma.mediaAsset.updateMany({where:{id:assetId,status:asset.status,updatedAt:asset.updatedAt,
+    ...scopeOperationAvailableWhere},data:{status:'PENDING_DELETE'}});
+  if(claimed.count!==1)throw mediaBusy();
   const objects = asset.variants.map((variant) => ({ bucket: variant.storageBucket, key: variant.storageKey }));
   if (asset.uploadBucket && asset.uploadKey) objects.push({ bucket: asset.uploadBucket, key: asset.uploadKey });
   for (const [bucket, keys] of groupStorageObjects(objects)) {
@@ -786,6 +964,9 @@ export const purgeMediaAsset = async (assetId: string): Promise<void> => {
 
 export const cleanupExpiredMedia = async (limit = 100): Promise<number> => {
   if (!isMediaStorageConfigured()) return 0;
+  for(const assetId of [...settledScopeOperations.keys()].slice(0,Math.min(limit,25))) {
+    await retrySettledMediaScopeCleanup(assetId).catch(()=>undefined);
+  }
   const staleSourceUploads = await prisma.mediaAsset.findMany({
     where: {
       status: { in: ['READY', 'ATTACHED'] },
@@ -809,6 +990,8 @@ export const cleanupExpiredMedia = async (limit = 100): Promise<number> => {
   }
   const stalePublicAssets = await prisma.mediaAsset.findMany({
     where: {
+      status: { in: ['READY','ATTACHED'] },
+      ...scopeOperationAvailableWhere,
       accessScope: { not: 'PUBLIC' },
       variants: { some: { isPublic: true } }
     },
@@ -822,7 +1005,7 @@ export const cleanupExpiredMedia = async (limit = 100): Promise<number> => {
     where: {
       OR: [
         { status: 'PENDING_DELETE' },
-        { status: { in: ['TEMPORARY', 'FAILED'] }, expiresAt: { lte: new Date() } }
+        { status: { in: ['TEMPORARY', 'FAILED', 'READY'] }, expiresAt: { lte: new Date() }, ...scopeOperationAvailableWhere }
       ]
     },
     take: limit,

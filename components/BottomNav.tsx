@@ -11,6 +11,7 @@ interface BottomNavProps {
   isAddMenuOpen: boolean;
   onAddMenuOption: (option: 'survey' | 'poll' | 'quiz' | 'challenge' | 'group' | 'business') => void;
   unreadNotificationsCount?: number;
+  pagesAvailable?: boolean;
 }
 
 export const BottomNav: React.FC<BottomNavProps> = ({ 
@@ -20,7 +21,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   isVisible,
   isAddMenuOpen,
   onAddMenuOption,
-  unreadNotificationsCount = 0
+  unreadNotificationsCount = 0,
+  pagesAvailable = false
 }) => {
   const { t } = useTranslation();
   
@@ -87,7 +89,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                <span className="font-semibold text-gray-700 text-sm">{t('create_menu.group', 'Create Group')}</span>
              </button>
 
-             <button 
+             {pagesAvailable && <button
                onClick={() => onAddMenuOption('business')}
                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-xl transition-colors text-left"
              >
@@ -95,7 +97,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                  <Building2 size={16} />
                </div>
                <span className="font-semibold text-gray-700 text-sm">{t('create_menu.business', 'Create Business Page')}</span>
-             </button>
+             </button>}
            </div>
         </div>
         </>

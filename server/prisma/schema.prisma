@@ -2,6 +2,205 @@ generator client {
   provider = "prisma-client-js"
 }
 
+model Page {
+  id                    String   @id @default(uuid())
+  ownerId               String
+  owner                 User     @relation("PageOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  handle                String   @unique @db.VarChar(30)
+  name                  String   @db.VarChar(100)
+  category              String
+  bio                   String   @db.VarChar(160)
+  description           String   @default("") @db.VarChar(2000)
+  country               String   @default("")
+  city                  String   @default("")
+  website               String?
+  links                 Json     @default("[]")
+  publicEmail           String?
+  publicPhone           String?
+  cta                   String?
+  avatarMediaId         String?  @unique
+  coverMediaId          String?  @unique
+  avatarMedia           MediaAsset? @relation("PageAvatarMedia", fields: [avatarMediaId], references: [id], onDelete: SetNull)
+  coverMedia            MediaAsset? @relation("PageCoverMedia", fields: [coverMediaId], references: [id], onDelete: SetNull)
+  assets                MediaAsset[] @relation("PageMedia")
+  comments              Comment[]
+  publicationState      String   @default("DRAFT")
+  platformState         String   @default("NONE")
+  safetyHiddenAt        DateTime?
+  deletionRequestedAt   DateTime?
+  purgedAt              DateTime?
+  legalHoldUntil        DateTime?
+  legalHoldReason       String?
+  lastHandleChangedAt   DateTime?
+  representationAt      DateTime
+  createRequestId       String   @unique
+  isTestFixture         Boolean  @default(false)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  members               PageMembership[]
+  handles               PageHandle[]
+  invitations           PageInvitation[]
+  transfers             PageOwnershipTransfer[]
+  follows               PageFollow[]
+  blocks                PageBlock[]
+  posts                 Post[]
+  audit                 PageAuditEvent[]
+  cases                 PageCase[]
+  events                PageEvent[]
+  purgeJob              PagePurgeJob?
+
+  @@index([ownerId, purgedAt])
+  @@index([publicationState, platformState, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([deletionRequestedAt, purgedAt])
+}
+
+// Durable cursor for exact-Page erasure; purgedAt is admission, completedAt is completion.
+model PagePurgeJob {
+  pageId        String @id
+  phase         String @default("NOTIFICATIONS")
+  attempts      Int @default(0)
+  availableAt   DateTime @default(now())
+  leaseToken    String?
+  lastErrorCode String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  completedAt   DateTime?
+  page          Page @relation(fields: [pageId], references: [id], onDelete: Restrict)
+
+  @@index([completedAt, availableAt, pageId])
+}
+
+model PageMembership {
+  pageId    String
+  userId    String
+  role      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  page      Page @relation(fields: [pageId], references: [id], onDelete: Restrict)
+  user      User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@id([pageId, userId])
+  @@index([userId, pageId])
+}
+
+// Every current and former handle remains reserved, including after purge.
+model PageHandle {
+  handle    String @id @db.VarChar(30)
+  pageId    String
+  createdAt DateTime @default(now())
+  page      Page @relation(fields: [pageId], references: [id], onDelete: Restrict)
+  @@index([pageId])
+}
+
+model PageInvitation {
+  id          String @id @default(uuid())
+  pageId      String
+  recipientId String
+  senderId    String
+  role        String
+  status      String @default("PENDING")
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  decidedAt   DateTime?
+  page        Page @relation(fields: [pageId], references: [id], onDelete: Restrict)
+  @@index([recipientId, status, createdAt(sort: Desc), id])
+  @@index([pageId, status, createdAt(sort: Desc), id])
+}
+
+model PageOwnershipTransfer {
+  id          String @id @default(uuid())
+  pageId      String
+  senderId    String
+  recipientId String
+  status      String @default("PENDING")
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  decidedAt   DateTime?
+  page        Page @relation(fields: [pageId], references: [id], onDelete: Restrict)
+  @@index([recipientId, status, createdAt(sort: Desc), id])
+  @@index([pageId, status])
+}
+
+model PageFollow {
+  pageId    String
+  userId    String
+  muted     Boolean @default(false)
+  createdAt DateTime @default(now())
+  page      Page @relation(fields: [pageId], references: [id], onDelete: Restrict)
+  user      User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  @@id([pageId, userId])
+  @@index([userId, createdAt(sort: Desc), pageId])
+  @@index([pageId, createdAt])
+}
+
+model PageBlock {
+  pageId    String
+  userId    String
+  direction String
+  createdAt DateTime @default(now())
+  page      Page @relation(fields: [pageId], references: [id], onDelete: Restrict)
+  user      User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  @@id([pageId, userId, direction])
+  @@index([userId, pageId])
+}
+
+model PageAuditEvent {
+  id        String @id @default(uuid())
+  pageId    String
+  actorId   String?
+  action    String
+  targetId  String?
+  data      Json @default("{}")
+  createdAt DateTime @default(now())
+  page      Page @relation(fields: [pageId], references: [id], onDelete: Restrict)
+  @@index([pageId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([createdAt])
+}
+
+model PageCase {
+  id          String @id @default(uuid())
+  pageId      String
+  postId      String?
+  reporterId  String
+  kind        String @default("REPORT")
+  reason      String
+  detail      String @default("")
+  status      String @default("OPEN")
+  assigneeId  String?
+  decision    String?
+  decisionReason String?
+  parentId    String?
+  evidence    Json @default("[]")
+  legalHoldUntil DateTime?
+  legalHoldReason String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  closedAt    DateTime?
+  page        Page @relation(fields: [pageId], references: [id], onDelete: Restrict)
+  @@index([status, createdAt, id])
+  @@index([reporterId, createdAt(sort: Desc), id])
+  @@index([pageId, createdAt(sort: Desc), id])
+}
+
+// Transactional outbox. Payloads contain minimal ids, not contact details or tokens.
+model PageEvent {
+  id          String @id @default(uuid())
+  pageId      String
+  recipientId String
+  kind        String
+  targetId    String
+  context     Json?
+  dedupeKey   String @unique
+  createdAt   DateTime @default(now())
+  availableAt DateTime @default(now())
+  claimedAt   DateTime?
+  deliveredAt DateTime?
+  attempts    Int @default(0)
+  lastError   String?
+  page        Page @relation(fields: [pageId], references: [id], onDelete: Restrict)
+  @@index([deliveredAt, availableAt, id])
+}
+
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
@@ -76,6 +275,10 @@ model User {
   peopleTagsReceived      PostTaggedUser[]         @relation("PeopleTagTarget")
   peopleTagsCreated       PostTaggedUser[]         @relation("PeopleTagActor")
   profileLinks            ProfileLink[]
+  ownedPages              Page[]              @relation("PageOwner")
+  pageMemberships         PageMembership[]
+  pageFollows             PageFollow[]
+  pageBlocks              PageBlock[]
 
   @@index([status, followersCount(sort: Desc), id], map: "users_status_followers_id_idx")
   @@map("users")
@@ -194,6 +397,10 @@ model Post {
   description        String
   type               String
   authorId           String
+  // authorId remains the internal actor for backwards-compatible history.
+  // When pageId is set, public serializers MUST expose the Page as publisher.
+  pageId             String?
+  page               Page?       @relation(fields: [pageId], references: [id], onDelete: Restrict)
   groupId            String?
   isTrending         Boolean     @default(false)
   expiresAt          DateTime
@@ -262,6 +469,7 @@ model Post {
   taggedUsers     PostTaggedUser[]
 
   @@index([authorId])
+  @@index([pageId, status, isDeleted, createdAt(sort: Desc), id(sort: Desc)])
   @@index([sharedFromId])
   @@index([groupId])
   @@index([createdAt])
@@ -375,6 +583,10 @@ enum MediaTransitionStatus {
 model MediaAsset {
   id                 String           @id @default(uuid())
   ownerId            String
+  pageId             String?
+  page               Page? @relation("PageMedia", fields: [pageId], references: [id], onDelete: Restrict)
+  avatarForPage      Page? @relation("PageAvatarMedia")
+  coverForPage       Page? @relation("PageCoverMedia")
   purpose            MediaPurpose
   status             MediaStatus      @default(TEMPORARY)
   accessScope        MediaAccessScope @default(OWNER_ONLY)
@@ -411,6 +623,7 @@ model MediaAsset {
   optionFor      Option?        @relation("OptionImageMedia")
 
   @@index([ownerId, status])
+  @@index([pageId, status])
   @@index([status, expiresAt])
   @@index([purpose, createdAt])
 }
@@ -505,6 +718,8 @@ model Comment {
   id        String           @id @default(uuid())
   text      String
   userId    String
+  pageId    String?
+  page      Page? @relation(fields: [pageId], references: [id], onDelete: Restrict)
   postId    String
   parentId  String?
   likes     Int              @default(0)

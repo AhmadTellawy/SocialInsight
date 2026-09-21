@@ -1,4 +1,9 @@
+import { activePageActor, lockPage, pageAudit, pageIsBlocked, requirePageCapability } from '../pages/pageService';
+import { pagePostReplay, pagePostRequestKey, recordPagePostCreation } from '../pages/pagePostReplay';
+import { assertPagesEnabled, pageDiscoveryPostWhere } from '../pages/pageFeature';
+import { notifyPagePostInteraction } from '../pages/pageNotificationService';
 import { Request, Response } from 'express';
+import { createHash } from 'node:crypto';
 import { MentionState, MentionSurface, PeopleTagStatus, Prisma } from '@prisma/client';
 import prisma from '../prisma';
 import { dispatchNotificationIds, notify } from '../services/notificationService';
@@ -22,12 +27,14 @@ import {
     PUBLIC_AVATAR_MEDIA_SELECT,
     POST_MEDIA_INCLUDE,
     serializePostMediaRecord,
-    validatePostMediaSet
+    validatePostMediaSet,
+    importPageInlineMedia
 } from '../services/mediaService';
 import { MediaValidationError } from '../services/mediaProcessor';
 import { MediaAttachmentRequirement } from '../services/mediaService';
 import { validatePublishedAnswerTypes } from '../utils/answerTypeValidation';
 import { getMentionLimitViolation } from '../utils/mentionLimits';
+import { parseTextEntities } from '../utils/textEntities';
 import { parseNotificationPayload } from '../utils/notificationTarget';
 import {
     ACTIVE_MENTION_REFERENCE_INCLUDE,
@@ -49,6 +56,9 @@ import {
     serializePeopleTags
 } from '../services/peopleTagService';
 import { buildVisiblePublishedPostWhere } from '../services/postVisibilityService';
+import { loadVisiblePostScalars } from '../services/postVisibilitySql';
+import { attachPageCommentPublishers, attachPagePublishers, authorizePagePublisher, guardPagePostInteractions, guardPagePostPersistence, hasPostPageCapability, isPageFollower, respondPagePostError } from '../pages/pagePostService';
+import { assertPageDestination, PagePolicyError } from '../pages/pagePolicy';
 import {
     PostOptionValidationError,
     buildPostReportDedupeKey,
@@ -193,6 +203,35 @@ const getPostMediaAssetIds = (data: any): string[] => {
     return data.mediaAssetIds.filter((id: unknown): id is string => typeof id === 'string' && id.length > 0);
 };
 
+/** Page media always uses revocable assets, including the existing inline editor transport. */
+const importPagePostImages = async (data: any, actorId: string, existing?: any) => {
+    const inlineCover = data.coverImage || data.image;
+    if (!inlineCover && !Array.isArray(data.mediaAssetIds) && (Object.prototype.hasOwnProperty.call(data, 'coverImage') || Object.prototype.hasOwnProperty.call(data, 'image'))) data.mediaAssetIds = [];
+    if (inlineCover && getPostMediaAssetIds(data).length === 0) {
+        if (inlineCover === existing?.image && existing?.media?.length) data.mediaAssetIds = existing.media.map((item: any) => item.mediaAssetId);
+        else data.mediaAssetIds = [await importPageInlineMedia(actorId, 'POST', inlineCover)];
+    }
+    delete data.coverImage;
+    delete data.image;
+    const existingQuestions = [...(existing?.questions || []), ...(existing?.sections || []).flatMap((section: any) => section.questions || [])];
+    const priorQuestions = new Map(existingQuestions.map((question: any) => [question.id, question]));
+    const priorOptions = new Map(existingQuestions.flatMap((question: any) => question.options || []).map((option: any) => [option.id, option]));
+    const convert = async (item: any, purpose: 'OPTION_IMAGE' | 'QUESTION_IMAGE', previous: any) => {
+        if (item.image && !item.imageMediaId) {
+            item.imageMediaId = item.image === previous?.image && previous?.imageMediaId
+                ? previous.imageMediaId : await importPageInlineMedia(actorId, purpose, item.image);
+        }
+        delete item.image;
+    };
+    for (const option of Array.isArray(data.options) ? data.options : []) await convert(option, 'OPTION_IMAGE', priorOptions.get(option.id));
+    for (const section of Array.isArray(data.sections) ? data.sections : []) {
+        for (const question of Array.isArray(section.questions) ? section.questions : []) {
+            await convert(question, 'QUESTION_IMAGE', priorQuestions.get(question.id));
+            for (const option of Array.isArray(question.options) ? question.options : []) await convert(option, 'OPTION_IMAGE', priorOptions.get(option.id));
+        }
+    }
+};
+
 const normalizeOptionPresentation = (value: unknown): 'text' | 'image' | undefined =>
     value === 'text' || value === 'image' ? value : undefined;
 
@@ -273,7 +312,7 @@ export const buildUserProgress = (answers: any[] = []) => {
     };
 };
 
-const mapPostForClient = (rawPost: any, userId?: string, guestId?: string) => {
+export const mapPostForClient = (rawPost: any, userId?: string, guestId?: string) => {
     const post = serializePostSocialRecord(rawPost, userId);
     const actualResponse = post.sharedFrom ? post.sharedFrom.responses?.[0] : post.responses?.[0];
     const userAnswers = actualResponse?.answers || [];
@@ -325,7 +364,7 @@ const mapPostForClient = (rawPost: any, userId?: string, guestId?: string) => {
         targetGroups: mapTargetGroups(post),
         author: {
             ...post.author,
-            isFollowing: userId ? Boolean(post.author?.following?.length) : false
+            isFollowing: post.author?.kind === 'PAGE' ? Boolean(post.author.isFollowing) : userId ? Boolean(post.author?.following?.length) : false
         },
         allowAnonymous: post.allowAnonymous,
         forceAnonymous: Boolean(post.forceAnonymous),
@@ -357,24 +396,12 @@ export const getPosts = async (req: Request, res: Response) => {
     const authorId = typeof req.query.authorId === 'string' ? req.query.authorId : undefined;
     const authorHandle = typeof req.query.authorHandle === 'string' ? req.query.authorHandle : undefined;
     const groupId = typeof req.query.groupId === 'string' ? req.query.groupId : undefined;
+    const publisherPageId = typeof req.query.pageId === 'string' ? req.query.pageId : undefined;
+    const pagePostType = publisherPageId && typeof req.query.type === 'string' ? normalizePostType(req.query.type) : undefined;
     const cursorValue = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
     const limit = parseFeedLimit(req.query.limit);
     
     try {
-        const feedWhere: Prisma.PostWhereInput = {
-            AND: [
-                buildVisiblePublishedPostWhere(userId),
-                ...(authorId ? [{ authorId }] : []),
-                ...(authorHandle ? [{ author: { handle: authorHandle } }] : []),
-                ...(groupId ? [{
-                    OR: [
-                        { groupId },
-                        { targetedGroups: { some: { id: groupId } } }
-                    ]
-                }] : [])
-            ]
-        };
-
         let cursor = decodeFeedCursor(cursorValue);
         if (cursorValue && !cursor) {
             if (isOpaqueFeedCursor(cursorValue)) {
@@ -394,18 +421,13 @@ export const getPosts = async (req: Request, res: Response) => {
             cursor = legacyCursor;
         }
 
-        const pageWhere: Prisma.PostWhereInput = cursor
-            ? { AND: [feedWhere, buildFeedCursorWhere(cursor)] }
-            : feedWhere;
-
         const feedPage = await prisma.$transaction(async (tx) => {
             // This relation-free scalar page also supplies the stable cursor
             // keys. Only one extra scalar row is read to determine hasMore.
-            const pageRows = await tx.post.findMany({
-                where: pageWhere,
-                take: limit + 1,
-                orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-                select: buildFeedPostScalarSelect()
+            const pageRows = await loadVisiblePostScalars(tx, {
+                viewerId: userId, authorId, authorHandle, groupId,
+                pageId: publisherPageId, type: pagePostType,
+                discovery: !publisherPageId, cursor, limit: limit + 1
             });
             const hasMore = pageRows.length > limit;
             const visiblePageRefs = hasMore ? pageRows.slice(0, limit) : pageRows;
@@ -420,15 +442,7 @@ export const getPosts = async (req: Request, res: Response) => {
                 posts.map((post) => post.sharedFromId).filter(Boolean)
             )) as string[];
             const sharedPosts = sharedPostIds.length > 0
-                ? await tx.post.findMany({
-                    where: {
-                        AND: [
-                            { id: { in: sharedPostIds } },
-                            buildVisiblePublishedPostWhere(userId)
-                        ]
-                    },
-                    select: buildFeedPostScalarSelect()
-                })
+                ? await loadVisiblePostScalars(tx, { viewerId: userId, ids: sharedPostIds, limit: sharedPostIds.length })
                 : [];
             const sharedPostsById = new Map(sharedPosts.map((post: any) => [post.id, post]));
             posts = posts.filter((post) => !post.sharedFromId || sharedPostsById.has(post.sharedFromId));
@@ -474,6 +488,7 @@ export const getPosts = async (req: Request, res: Response) => {
             follows: relationBundle.follows
         });
 
+        await attachPagePublishers(posts, userId);
         const mappedPosts = posts.map((post) => mapPostForClient(post, userId, guestId));
 
         const lastPageRef = visiblePageRefs[visiblePageRefs.length - 1];
@@ -516,17 +531,18 @@ export const getTrends = async (req: Request, res: Response) => {
         // Fetch all candidates matching basic criteria
         const posts = await prisma.post.findMany({
             where: {
-                ...buildVisiblePublishedPostWhere(userId),
+                AND: [buildVisiblePublishedPostWhere(userId), pageDiscoveryPostWhere()],
                 ...dateFilter,
                 ...(type && type !== 'all' ? { type: { equals: type, mode: 'insensitive' } } : {}),
                 ...(category ? { category: { equals: category, mode: 'insensitive' } } : {}),
                 ...(country && country !== 'ALL' ? {
-                    author: {
-                        OR: [
+                    OR: [
+                      { pageId: null, author: { OR: [
                             { country: { equals: country, mode: 'insensitive' } },
                             { location: { contains: country, mode: 'insensitive' } }
-                        ]
-                    }
+                        ] } },
+                      { page: { is: { OR: [ { country: { equals: country, mode: 'insensitive' } }, { city: { contains: country, mode: 'insensitive' } } ] } } }
+                    ]
                 } : {})
             },
             include: {
@@ -548,6 +564,7 @@ export const getTrends = async (req: Request, res: Response) => {
 
         // Map and rank candidates in-memory
         const nowMs = Date.now();
+        await attachPagePublishers(posts,userId);
         const scoredPosts = posts.map(rawPost => {
             const post = serializePostMediaRecord(rawPost, userId);
             const votes = post.responseCount || 0;
@@ -575,6 +592,7 @@ export const getTrends = async (req: Request, res: Response) => {
 
             return {
                 id: post.id,
+                pageId: post.pageId,
                 title: post.title,
                 description: post.description,
                 type: post.type,
@@ -590,6 +608,7 @@ export const getTrends = async (req: Request, res: Response) => {
                 createdAt: post.createdAt,
                 author: {
                     id: post.author.id,
+                    kind: post.author.kind,
                     name: post.author.name,
                     avatar: post.author.avatar || null,
                     avatarMediaId: post.author.avatarMediaId,
@@ -617,17 +636,11 @@ export const getPostById = async (req: Request, res: Response) => {
     const guestId = typeof req.query.guestId === 'string' ? req.query.guestId : undefined;
     try {
         const detail = await prisma.$transaction(async (tx) => {
-            const post = await tx.post.findFirst({
-                where: { id, ...buildVisiblePublishedPostWhere(userId) },
-                select: buildFeedPostScalarSelect()
-            }) as any;
+            const [post] = await loadVisiblePostScalars(tx, { viewerId: userId, ids: [id], limit: 1 });
             if (!post) return null;
 
             const sharedFrom = post.sharedFromId
-                ? await tx.post.findFirst({
-                    where: { id: post.sharedFromId, ...buildVisiblePublishedPostWhere(userId) },
-                    select: buildFeedPostScalarSelect()
-                }) as any
+                ? (await loadVisiblePostScalars(tx, { viewerId: userId, ids: [post.sharedFromId], limit: 1 }))[0]
                 : null;
             if (post.sharedFromId && !sharedFrom) return null;
 
@@ -661,6 +674,7 @@ export const getPostById = async (req: Request, res: Response) => {
             savedPosts: detail.relationBundle.savedPosts,
             follows: detail.relationBundle.follows
         });
+        await attachPagePublishers([detail.post], userId);
         res.json(mapPostForClient(detail.post, userId, guestId));
     } catch (error) {
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2028') {
@@ -683,6 +697,15 @@ export const createPost = async (req: Request, res: Response) => {
     }));
     try {
         const authorId = req.user!.userId;
+        const publisherPageId = data.pageId == null ? null : typeof data.pageId === 'string' && /^[0-9a-f-]{36}$/i.test(data.pageId) ? data.pageId : undefined;
+        if (publisherPageId === undefined) throw new PagePolicyError('PAGE_INVALID_PUBLISHER');
+        if (publisherPageId) await authorizePagePublisher(prisma, publisherPageId, authorId, data);
+        const pageRequestKey = publisherPageId ? pagePostRequestKey(data.pageCreateKey) : null;
+        if (publisherPageId && pageRequestKey) {
+            const replay=await pagePostReplay(prisma,publisherPageId,authorId,pageRequestKey);
+            if(replay){await attachPagePublishers([replay],authorId);return res.json(mapPostForClient(replay,authorId));}
+        }
+        if (publisherPageId) await importPagePostImages(data, authorId);
         const postMediaAssetIds = getPostMediaAssetIds(data);
         const audienceError = validateProfileAndGroupsInput(data.targetAudience, data.targetGroups, data.status === 'DRAFT');
         if (audienceError) {
@@ -766,6 +789,7 @@ export const createPost = async (req: Request, res: Response) => {
             description: data.description || "",
             type: normalizePostType(data.type) || "Post",
             authorId: authorId,
+            pageId: publisherPageId,
             groupId: data.targetGroups && Array.isArray(data.targetGroups) && data.targetGroups.length > 0 
                 ? data.targetGroups[0] 
                 : null,
@@ -807,7 +831,7 @@ export const createPost = async (req: Request, res: Response) => {
         const mediaAspectRatio = await validatePostMediaSet(authorId, postMediaAssetIds, data.mediaAspectRatio);
         if (mediaAspectRatio) postData.mediaAspectRatio = mediaAspectRatio;
         const requirements = getMediaAttachmentRequirements(data);
-        const mediaScope = await resolvePostMediaScope(authorId, postData.status, targetGroupIds, postData.targetAudience);
+        const mediaScope = publisherPageId ? 'RESTRICTED' : await resolvePostMediaScope(authorId, postData.status, targetGroupIds, postData.targetAudience);
         const prepared = await prepareMediaAttachments(authorId, requirements, mediaScope);
 
         let transactionResult;
@@ -816,6 +840,11 @@ export const createPost = async (req: Request, res: Response) => {
                 postData.image = (await getStoredMediaPresentation(postMediaAssetIds[0]))?.src || null;
             }
             transactionResult = await prisma.$transaction(async (tx) => {
+            if (publisherPageId) await authorizePagePublisher(tx, publisherPageId, authorId, data);
+            if(publisherPageId && pageRequestKey){
+                const replay=await pagePostReplay(tx,publisherPageId,authorId,pageRequestKey);
+                if(replay)return {post:replay,createdOptions:replay.questions[0]?.options || [],createdSections:replay.sections,notificationIds:[] as string[]};
+            }
             const newPost = await tx.post.create({
                 data: postData,
                 include: {
@@ -824,6 +853,7 @@ export const createPost = async (req: Request, res: Response) => {
                 }
             });
 
+            if(publisherPageId && pageRequestKey)await recordPagePostCreation(tx,publisherPageId,authorId,pageRequestKey,newPost.id);
             let optionsList: any[] = [];
             let sectionsList: any[] = [];
             const typeStr = normalizePostType(data.type) || '';
@@ -931,6 +961,9 @@ export const createPost = async (req: Request, res: Response) => {
             });
 
             await commitPreparedMedia(tx, prepared);
+            if (publisherPageId && prepared.assetIds.length) await tx.mediaAsset.updateMany({
+                where: { id: { in: prepared.assetIds } }, data: { pageId: publisherPageId }
+            });
             return {
                 post: newPost,
                 createdOptions: optionsList,
@@ -990,8 +1023,10 @@ export const createPost = async (req: Request, res: Response) => {
             targetGroups: mapTargetGroups(post)
         };
 
+        await attachPagePublishers([mappedPost], authorId);
         res.json(mappedPost);
     } catch (error) {
+        if (respondPagePostError(error, res)) return;
         logPostRequestFailure(req, 'post_create_failed', error);
         if (error instanceof MediaValidationError) {
             res.status(error.statusCode).json({ error: error.message, code: error.code });
@@ -1025,6 +1060,7 @@ export const updatePost = async (req: Request, res: Response) => {
             where: { id },
             select: {
                 authorId: true,
+                pageId: true,
                 title: true,
                 description: true,
                 status: true,
@@ -1049,7 +1085,15 @@ export const updatePost = async (req: Request, res: Response) => {
             return;
         }
 
-        if (existingPost.authorId !== trustedUserId) {
+        if (data.pageId !== undefined && (data.pageId || null) !== existingPost.pageId) throw new PagePolicyError('PAGE_PUBLISHER_IMMUTABLE',409);
+        if (existingPost.pageId) {
+            await authorizePagePublisher(prisma,existingPost.pageId,trustedUserId,{
+                ...data,status:data.status ?? existingPost.status,groupId:data.groupId ?? existingPost.groupId,
+                targetAudience:data.targetAudience ?? existingPost.targetAudience,
+                targetGroups:data.targetGroups ?? existingPost.targetedGroups.map(group=>group.id)
+            },existingPost.status==='DRAFT');
+        }
+        if (!existingPost.pageId && existingPost.authorId !== trustedUserId) {
             res.status(403).json({ error: 'Unauthorized to update this post' });
             return;
         }
@@ -1094,6 +1138,7 @@ export const updatePost = async (req: Request, res: Response) => {
         }
 
         // --- PRE-PROCESS IMAGES ---
+        if (existingPost.pageId) await importPagePostImages(data, trustedUserId, existingPost);
         const submittedPostMediaIds = Array.isArray(data.mediaAssetIds) ? getPostMediaAssetIds(data) : undefined;
         if (submittedPostMediaIds === undefined && data.coverImage) data.coverImage = await processBase64Image(data.coverImage, existingPost.image);
         if (submittedPostMediaIds === undefined && data.image) data.image = await processBase64Image(data.image, existingPost.image);
@@ -1277,8 +1322,8 @@ export const updatePost = async (req: Request, res: Response) => {
         const removedIds = Array.from(oldIds).filter((mediaId) => !incomingIds.has(mediaId));
         const newRequirements = incomingRequirements.filter((requirement) => !oldIds.has(requirement.id));
         const finalStatus = updateData.status || existingPost.status;
-        const mediaScope = await resolvePostMediaScope(trustedUserId, finalStatus, effectiveTargetGroups, data.targetAudience !== undefined ? data.targetAudience : existingPost.targetAudience);
-        const ratio = await validatePostMediaSet(trustedUserId, finalPostMediaIds, data.mediaAspectRatio || existingPost.mediaAspectRatio || undefined);
+        const mediaScope = existingPost.pageId ? 'RESTRICTED' : await resolvePostMediaScope(trustedUserId, finalStatus, effectiveTargetGroups, data.targetAudience !== undefined ? data.targetAudience : existingPost.targetAudience);
+        const ratio = await validatePostMediaSet(trustedUserId, finalPostMediaIds, data.mediaAspectRatio || existingPost.mediaAspectRatio || undefined,existingPost.pageId || undefined);
         if (ratio) updateData.mediaAspectRatio = ratio;
         else if (submittedPostMediaIds) updateData.mediaAspectRatio = null;
 
@@ -1311,11 +1356,21 @@ export const updatePost = async (req: Request, res: Response) => {
         let transactionResult;
         try {
             transactionResult = await prisma.$transaction(async (tx) => {
+                if (existingPost.pageId) {
+                    await lockPage(tx, existingPost.pageId);
+                    const current = await tx.post.findUnique({where:{id},select:{pageId:true,status:true,isDeleted:true,createdAt:true,responseCount:true}});
+                    if (!current || current.isDeleted || current.pageId!==existingPost.pageId) throw new PagePolicyError('PAGE_POST_UNAVAILABLE',404);
+                    await authorizePagePublisher(tx,existingPost.pageId,trustedUserId,{...data,status:finalStatus,targetGroups:effectiveTargetGroups},current.status==='DRAFT');
+                    if (current.status==='PUBLISHED' && Date.now()-current.createdAt.getTime()>EDIT_WINDOW_MS) throw new PagePolicyError('POST_EDIT_WINDOW_CLOSED',403);
+                    if (current.responseCount>0 && (data.options!==undefined || data.sections!==undefined)) throw new PagePolicyError('POST_ANSWERS_ALREADY_RECEIVED',409);
+                }
                 const post = await tx.post.update({
                     where: { id },
                     data: updateData,
                     include: { author: { select: SAFE_USER_SELECT }, targetedGroups: true }
                 });
+
+                if(existingPost.pageId)await pageAudit(tx,existingPost.pageId,trustedUserId,'CONTENT_UPDATED',id,{fields:Object.keys(updateData)});
 
                 if (submittedPostMediaIds !== undefined) {
                     await tx.postMedia.deleteMany({ where: { postId: id } });
@@ -1435,6 +1490,7 @@ export const updatePost = async (req: Request, res: Response) => {
                 });
 
                 await commitPreparedMedia(tx, preparedNew);
+                if (existingPost.pageId && preparedNew.assetIds.length) await tx.mediaAsset.updateMany({where:{id:{in:preparedNew.assetIds}},data:{pageId:existingPost.pageId}});
                 await commitMediaScopeChange(tx, preparedRetained);
 
                 const finalOptions = OPTION_POST_TYPES.includes(typeStr)
@@ -1514,8 +1570,10 @@ export const updatePost = async (req: Request, res: Response) => {
             targetGroups: mapTargetGroups(post)
         };
 
+        await attachPagePublishers([mappedPost],trustedUserId);
         res.json(mappedPost);
     } catch (error) {
+        if (respondPagePostError(error,res)) return;
         logPostRequestFailure(req, 'post_update_failed', error);
         if (error instanceof MediaValidationError) {
             res.status(error.statusCode).json({ error: error.message, code: error.code });
@@ -1539,7 +1597,7 @@ export const getDrafts = async (req: Request, res: Response) => {
     const cursor = firstQueryString(req.query.cursor)?.trim() || undefined;
     try {
         const drafts = await prisma.post.findMany({
-            where: { authorId: userId, status: { in: [POST_STATUS.DRAFT, POST_STATUS.PENDING_APPROVAL, POST_STATUS.REJECTED] }, isDeleted: false },
+            where: { authorId: userId, pageId: null, status: { in: [POST_STATUS.DRAFT, POST_STATUS.PENDING_APPROVAL, POST_STATUS.REJECTED] }, isDeleted: false },
             take: limit + 1,
             ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
             include: {
@@ -1602,7 +1660,7 @@ export const getSavedPosts = async (req: Request, res: Response) => {
                         targetedGroups: true,
                         responses: userId ? { where: { userId }, take: 1, include: { answers: true } } : false,
                         likes: userId ? { where: { userId }, take: 1 } : false,
-                        shares: { where: { authorId: userId }, take: 1 },
+                        shares: { where: { authorId: userId, pageId: null }, take: 1 },
                         savedBy: { where: { userId }, take: 1 },
                         sharedFrom: {
                             include: {
@@ -1623,7 +1681,7 @@ export const getSavedPosts = async (req: Request, res: Response) => {
                                 targetedGroups: true,
                                 responses: { where: { userId }, take: 1, include: { answers: true } },
                                 likes: { where: { userId }, take: 1 },
-                                shares: { where: { authorId: userId }, take: 1 },
+                                shares: { where: { authorId: userId, pageId: null }, take: 1 },
                                 savedBy: { where: { userId }, take: 1 }
                             }
                         }
@@ -1637,6 +1695,7 @@ export const getSavedPosts = async (req: Request, res: Response) => {
         if (hasMore && saved.length > 0) {
             res.setHeader('X-Next-Cursor', saved[saved.length - 1].postId);
         }
+        await attachPagePublishers(saved.map(item => item.post), userId);
         const posts = saved.map((s: any) => {
             const p: any = serializePostSocialRecord(s.post, userId);
             const userResponse = p.sharedFrom ? p.sharedFrom.responses?.[0] : p.responses?.[0];
@@ -1700,12 +1759,10 @@ export const votePost = async (req: Request, res: Response) => {
             return;
         }
 
-        const post = await prisma.post.findUnique({
-            where: { id },
-            select: {
+        const votePostSelect = {
                 allowAnonymous: true,
                 forceAnonymous: true,
-                authorId: true,
+                authorId: true, pageId: true,
                 allowMultipleSelection: true,
                 allowUserOptions: true,
                 type: true,
@@ -1714,8 +1771,8 @@ export const votePost = async (req: Request, res: Response) => {
                 status: true,
                 isDeleted: true,
                 expiresAt: true
-            }
-        });
+        } satisfies Prisma.PostSelect;
+        const post = await prisma.post.findUnique({ where: { id }, select: votePostSelect });
 
         if (!post || post.isDeleted || post.status !== 'PUBLISHED') {
             res.status(404).json({ error: 'Post not found' });
@@ -1727,8 +1784,13 @@ export const votePost = async (req: Request, res: Response) => {
             return;
         }
 
-        const isAuthor = !!actorUserId && post.authorId === actorUserId;
         const targetGroupIds = mapTargetGroups(post);
+        // A public, non-group vote has no author-only preflight branch. The locked
+        // interaction guard below still checks current visibility and actor eligibility.
+        const needsPageRole = post.targetAudience !== 'Public' || targetGroupIds.length > 0;
+        const isAuthor = post.pageId
+            ? needsPageRole && await hasPostPageCapability(post.pageId, actorUserId, 'manageContent')
+            : !!actorUserId && post.authorId === actorUserId;
         if (isProfileAndGroups(post.targetAudience) && !(await canInteractWithProfileAndGroups(id, post.authorId, actorUserId, targetGroupIds))) {
             res.status(403).json({ error: 'Forbidden' });
             return;
@@ -1752,7 +1814,7 @@ export const votePost = async (req: Request, res: Response) => {
                 res.status(403).json({ error: 'Forbidden' });
                 return;
             }
-            const follow = await prisma.follow.findUnique({
+            const follow = post.pageId ? await isPageFollower(post.pageId,actorUserId) : await prisma.follow.findUnique({
                 where: { followerId_followingId: { followerId: actorUserId, followingId: post.authorId } }
             });
             if (!follow) {
@@ -1787,15 +1849,26 @@ export const votePost = async (req: Request, res: Response) => {
 
         let createdCustomOption: any = null;
         let shouldNotify = false;
+        let pageVoteNotificationHandled = false;
         let notificationOptionId = optionsToProcess[0];
 
         await prisma.$transaction(async (tx) => {
+            const pageInteraction = await guardPagePostInteractions(tx,[rawId,id],actorUserId,id);
+            // The publisher may have changed vote settings while this request
+            // waited. Read the canonical post again under its row lock, including
+            // when it is a personal source reached through a Page wrapper.
+            const effectivePost = pageInteraction
+                ? await tx.post.findUnique({ where: { id }, select: votePostSelect })
+                : post;
+            if (!effectivePost || effectivePost.isDeleted || effectivePost.status !== 'PUBLISHED') throw new PagePolicyError('PAGE_POST_UNAVAILABLE',404);
+            if (pageInteraction && effectivePost.expiresAt && effectivePost.expiresAt.getTime() <= Date.now()) throw new PagePolicyError('PAGE_POST_ENDED',400);
+            finalIsAnonymous = effectivePost.forceAnonymous === true || parseBoolean(isAnonymous);
             const customClientId = typeof newOption?.id === 'string' ? newOption.id : undefined;
             const customText = typeof newOption?.text === 'string' ? newOption.text.trim() : '';
             let resolvedOptionIds = [...optionsToProcess];
 
             if (customClientId && customText && resolvedOptionIds.includes(customClientId)) {
-                if (!post.allowUserOptions) {
+                if (!effectivePost.allowUserOptions) {
                     throw Object.assign(new Error('This poll does not allow voter-added options'), { statusCode: 400 });
                 }
 
@@ -1838,6 +1911,13 @@ export const votePost = async (req: Request, res: Response) => {
             else if (guestId) whereClause.guestId = guestId;
 
             const existingResponse = await tx.response.findFirst({ where: whereClause });
+
+            // Additional answers must not make a previously anonymous response
+            // identifiable, and current forced anonymity applies to this write.
+            if (pageInteraction && existingResponse) {
+                finalIsAnonymous = finalIsAnonymous || existingResponse.isAnonymous;
+                if (finalIsAnonymous && !existingResponse.isAnonymous) await tx.response.update({where:{id:existingResponse.id},data:{isAnonymous:true}});
+            }
 
             const response = existingResponse || await tx.response.create({
                 data: {
@@ -1913,7 +1993,7 @@ export const votePost = async (req: Request, res: Response) => {
                     }
                 }
             } else {
-                if (!post.allowMultipleSelection && resolvedOptionIds.length > 1) {
+                if (!effectivePost.allowMultipleSelection && resolvedOptionIds.length > 1) {
                     throw Object.assign(new Error('This poll accepts one option only'), { statusCode: 400 });
                 }
 
@@ -1927,7 +2007,7 @@ export const votePost = async (req: Request, res: Response) => {
                 }
 
                 for (const opt of dbOptions) {
-                    if (!post.allowMultipleSelection) {
+                    if (!effectivePost.allowMultipleSelection) {
                         const existingQuestionAnswer = await tx.answer.findFirst({
                             where: { responseId: response.id, questionId: opt.question.id, optionId: { not: null } }
                         });
@@ -1959,14 +2039,18 @@ export const votePost = async (req: Request, res: Response) => {
                     data: { responseCount: { increment: 1 } }
                 });
             }
+            if (actorUserId && shouldNotify && !finalIsAnonymous) {
+                pageVoteNotificationHandled = await notifyPagePostInteraction({ postId: id, actorId: actorUserId, kind: 'vote', optionId: notificationOptionId }, tx);
+            }
         });
 
-        if (actorUserId && shouldNotify && !finalIsAnonymous && post.authorId) {
+        if (actorUserId && shouldNotify && !finalIsAnonymous && post.authorId && !pageVoteNotificationHandled) {
             await notify(actorUserId, post.authorId as string, 'vote', 'voted on your post', 'survey', id, { optionId: notificationOptionId });
         }
 
         res.json({ success: true, newOption: createdCustomOption });
     } catch (error: any) {
+        if (respondPagePostError(error,res)) return;
         console.error(error);
         res.status(error?.statusCode || 500).json({ error: error?.statusCode ? error.message : 'Failed to vote' });
     }
@@ -2041,6 +2125,63 @@ export const getParticipants = async (req: Request, res: Response) => {
     }
 };
 
+// Reuse the existing results DTO for public and explicitly authorized management reads.
+// This contains response answers and demographic bands; it never adds account identities.
+const loadPostResultRows = async (client: Prisma.TransactionClient, postId: string) => {
+    const responses = await client.response.findMany({
+        where: { postId },
+        include: { answers: true, user: { select: { birthday: true, country: true, demographics: true } } }
+    });
+    return responses.map(r => ({
+        id: r.id,
+        isAnonymous: r.isAnonymous,
+        answers: r.answers.map(a => ({ questionId: a.questionId, optionId: a.optionId, textValue: a.textValue })),
+        demographics: {
+            age: calculateAgeGroupFromDate(r.user?.birthday) || 'Unknown',
+            gender: r.user?.demographics?.gender || 'Unknown',
+            country: r.user?.country || 'Unknown',
+            education: r.user?.demographics?.educationLevel || 'Unknown',
+            employment: r.user?.demographics?.employmentType || 'Unknown',
+            industry: r.user?.demographics?.industry || 'Unknown',
+            sector: r.user?.demographics?.employmentSector || 'Unknown'
+        }
+    }));
+};
+
+/** Called only by the private Page route; query/body flags cannot activate this authority. */
+export const getPageManagedPostResults = async (req: Request, res: Response) => {
+    try {
+        const userId = req.user?.userId;
+        if (!userId) throw new PagePolicyError('AUTH_TOKEN_REQUIRED', 401);
+        assertPagesEnabled(userId);
+        const pageId = req.params.id as string;
+        const postId = req.params.postId as string;
+        if (![pageId, postId].every(value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value))) throw new PagePolicyError('PAGE_POST_NOT_FOUND', 404);
+        const rows = await prisma.$transaction(async (tx) => {
+            const page = await lockPage(tx, pageId);
+            await activePageActor(tx, userId);
+            await requirePageCapability(tx, page, userId, 'analytics');
+            if (await pageIsBlocked(tx, pageId, userId)) throw new PagePolicyError('PAGE_POST_NOT_FOUND', 404);
+            const post = await tx.post.findFirst({ where: { id: postId, pageId, isDeleted: false, status: 'PUBLISHED' }, select: { id: true, sharedFromId: true } });
+            if (!post) throw new PagePolicyError('PAGE_POST_NOT_FOUND', 404);
+            let resultPostId = post.id;
+            if (post.sharedFromId) {
+                const source = await tx.post.findFirst({ where: { id: post.sharedFromId, pageId, isDeleted: false, status: 'PUBLISHED' }, select: { id: true } });
+                if (!source) throw new PagePolicyError('PAGE_SOURCE_RESULTS_REQUIRE_OWN_ACCESS', 403);
+                resultPostId = source.id;
+            }
+            return loadPostResultRows(tx, resultPostId);
+        });
+        res.setHeader('Cache-Control', 'private, no-store');
+        res.setHeader('Vary', 'Authorization');
+        res.json(rows);
+    } catch (error) {
+        if (respondPagePostError(error, res)) return;
+        logPostRequestFailure(req, 'page_managed_post_results_failed', error);
+        res.status(500).json({ error: 'Failed to fetch post results' });
+    }
+};
+
 export const getPostResults = async (req: Request, res: Response) => {
     const rawId = req.params.id as string;
     try {
@@ -2050,7 +2191,7 @@ export const getPostResults = async (req: Request, res: Response) => {
         const post = await prisma.post.findFirst({
             where: { id, ...buildVisiblePublishedPostWhere(currentUserId) },
             select: {
-                authorId: true,
+                authorId: true, pageId: true,
                 resultsWho: true,
                 resultsTiming: true,
                 expiresAt: true,
@@ -2062,11 +2203,11 @@ export const getPostResults = async (req: Request, res: Response) => {
             return;
         }
 
-        const isAuthor = !!currentUserId && post.authorId === currentUserId;
+        const isAuthor = post.pageId ? await hasPostPageCapability(post.pageId,currentUserId,'analytics') : !!currentUserId && post.authorId === currentUserId;
         const responseIdentity = currentUserId ? { userId: currentUserId } : guestId ? { guestId } : null;
         const [follow, viewerResponse] = await Promise.all([
             !isAuthor && post.resultsWho === 'Followers' && currentUserId
-                ? prisma.follow.findUnique({
+                ? post.pageId ? isPageFollower(post.pageId,currentUserId).then(follows => follows ? {status:'ACTIVE'} : null) : prisma.follow.findUnique({
                     where: { followerId_followingId: { followerId: currentUserId, followingId: post.authorId } },
                     select: { status: true }
                 })
@@ -2105,42 +2246,7 @@ export const getPostResults = async (req: Request, res: Response) => {
             return;
         }
 
-        const responses = await prisma.response.findMany({
-            where: { postId: id },
-            include: {
-                answers: true,
-                user: {
-                    // Used only to derive the age band below. The DOB itself is
-                    // never copied into the results DTO.
-                    select: {
-                        birthday: true,
-                        country: true,
-                        demographics: true
-                    }
-                }
-            }
-        });
-
-        const results = responses.map(r => ({
-            id: r.id,
-            isAnonymous: r.isAnonymous,
-            answers: r.answers.map(a => ({
-                questionId: a.questionId,
-                optionId: a.optionId,
-                textValue: a.textValue
-            })),
-            demographics: {
-                age: calculateAgeGroupFromDate(r.user?.birthday) || 'Unknown',
-                gender: r.user?.demographics?.gender || 'Unknown',
-                country: r.user?.country || 'Unknown',
-                education: r.user?.demographics?.educationLevel || 'Unknown',
-                employment: r.user?.demographics?.employmentType || 'Unknown',
-                industry: r.user?.demographics?.industry || 'Unknown',
-                sector: r.user?.demographics?.employmentSector || 'Unknown'
-            }
-        }));
-
-        res.json(results);
+        res.json(await loadPostResultRows(prisma, id));
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Failed to fetch post results' });
@@ -2152,8 +2258,10 @@ const mapComment = (c: any, currentUserId?: string) => {
     return {
         id: c.id,
         text: c.text,
+        pageId:c.pageId, pageCapabilities:c.pageCapabilities,
         author: {
             id: user?.id || 'unknown',
+            kind: user?.kind,
             name: user?.name || 'Unknown',
             avatar: user?.avatar || '',
             avatarMediaId: user?.avatarMediaId,
@@ -2229,6 +2337,7 @@ export const getComments = async (req: Request, res: Response) => {
         if (focusedComment && !commentPage.some(comment => comment.id === focusedComment.id)) {
             commentPage.push(focusedComment);
         }
+        await attachPageCommentPublishers(commentPage,userId);
         res.json(commentPage.map(c => mapComment(c, userId)));
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch comments' });
@@ -2246,7 +2355,7 @@ export const createComment = async (req: Request, res: Response) => {
             where: { id },
             select: {
                 allowComments: true,
-                authorId: true,
+                authorId: true, pageId:true,
                 targetAudience: true,
                 targetedGroups: { select: { id: true } },
                 status: true,
@@ -2264,8 +2373,13 @@ export const createComment = async (req: Request, res: Response) => {
             return;
         }
 
-        const isAuthor = commentTarget.authorId === userId;
+        const officialPageId = req.body.pageId || null;
         const targetGroupIds = mapTargetGroups(commentTarget);
+        const needsPageRole = !!officialPageId || commentTarget.targetAudience !== 'Public' || targetGroupIds.length > 0;
+        const isAuthor = commentTarget.pageId
+            ? needsPageRole && await hasPostPageCapability(commentTarget.pageId, userId, 'reply')
+            : commentTarget.authorId === userId;
+        if (officialPageId && (officialPageId !== commentTarget.pageId || !isAuthor)) throw new PagePolicyError('PAGE_PERMISSION_DENIED',403);
         if (isProfileAndGroups(commentTarget.targetAudience) && !(await canInteractWithProfileAndGroups(id, commentTarget.authorId, userId, targetGroupIds))) {
             res.status(403).json({ error: 'Forbidden' });
             return;
@@ -2281,7 +2395,7 @@ export const createComment = async (req: Request, res: Response) => {
         }
 
         if (!isAuthor && commentTarget.targetAudience === 'Followers') {
-            const follow = await prisma.follow.findUnique({
+            const follow = commentTarget.pageId ? await isPageFollower(commentTarget.pageId,userId) : await prisma.follow.findUnique({
                 where: { followerId_followingId: { followerId: userId, followingId: commentTarget.authorId } }
             });
             if (!follow) {
@@ -2298,6 +2412,10 @@ export const createComment = async (req: Request, res: Response) => {
         }
 
         if (!validateMentionRecipientLimit(cleanText, res, 'comment')) return;
+
+        // Only newly inserted Page comments can have no previous text relations.
+        // Editing a comment always reconciles removals, even when its new text is plain.
+        const pageCommentEntities = commentTarget.pageId ? parseTextEntities(cleanText) : null;
 
         let parentComment: { postId: string; userId: string } | null = null;
         if (parentId) {
@@ -2316,14 +2434,24 @@ export const createComment = async (req: Request, res: Response) => {
         }
 
         const transactionResult = await prisma.$transaction(async (tx) => {
+            if (officialPageId) {
+                // Role-authorized replies retain exclusive Page locks throughout.
+                if (rawId !== id) await guardPagePostPersistence(tx,rawId,userId);
+                await guardPagePostPersistence(tx,id,userId);
+                const page=await lockPage(tx,officialPageId);await requirePageCapability(tx,page,userId,'reply');
+            } else await guardPagePostInteractions(tx,[rawId,id],userId);
+            if(commentTarget.pageId && !(await tx.post.findUnique({where:{id},select:{allowComments:true}}))?.allowComments) throw new PagePolicyError('PAGE_COMMENTS_DISABLED',403);
+            if (commentTarget.pageId && parentId && !await tx.comment.count({ where: { id: parentId, postId: id } })) throw new PagePolicyError('COMMENT_NOT_FOUND',404);
             const createdComment = await tx.comment.create({
-                data: { text: cleanText, userId, postId: id, parentId }
+                data: { text: cleanText, userId, postId: id, parentId, pageId:officialPageId }
             });
             const targetPost = await tx.post.update({
                 where: { id },
                 data: { commentsCount: { increment: 1 } }
             });
-            const mentionResult = await reconcileCommentMentions(tx, {
+            const mentionResult = pageCommentEntities && !pageCommentEntities.some(entity => entity.type === 'mention')
+                ? { targetUserIds: [] as string[], notificationIds: [] as string[], created: 0, retained: 0, removed: 0, unresolved: 0, ineligible: 0 }
+                : await reconcileCommentMentions(tx, {
                 postId: id,
                 commentId: createdComment.id,
                 actorUserId: userId,
@@ -2331,7 +2459,9 @@ export const createComment = async (req: Request, res: Response) => {
                 parentCommentId: parentId || undefined,
                 text: cleanText
             });
-            await reconcileCommentHashtags(tx, createdComment.id, cleanText);
+            if (!pageCommentEntities || pageCommentEntities.some(entity => entity.type === 'hashtag')) {
+                await reconcileCommentHashtags(tx, createdComment.id, cleanText);
+            }
             const comment = await tx.comment.findUniqueOrThrow({
                 where: { id: createdComment.id },
                 include: {
@@ -2341,7 +2471,8 @@ export const createComment = async (req: Request, res: Response) => {
                     replies: true
                 }
             });
-            return { comment, targetPost, mentionResult };
+            const pageNotificationHandled = await notifyPagePostInteraction({ postId: id, actorId: userId, kind: parentId ? 'reply' : 'comment', commentId: createdComment.id, parentCommentId: parentId || undefined, excludedRecipientIds: mentionResult.targetUserIds }, tx);
+            return { comment, targetPost, mentionResult, pageNotificationHandled };
         });
         const { comment, targetPost, mentionResult } = transactionResult;
 
@@ -2352,7 +2483,7 @@ export const createComment = async (req: Request, res: Response) => {
             : { postId: id, commentId: comment.id, sourceType: 'comment' };
 
         const conversationalRecipientId = parentComment?.userId || targetPost.authorId;
-        if (conversationalRecipientId && !mentionResult.targetUserIds.includes(conversationalRecipientId)) {
+        if (!transactionResult.pageNotificationHandled && conversationalRecipientId && !mentionResult.targetUserIds.includes(conversationalRecipientId)) {
             await notify(
                 userId,
                 conversationalRecipientId,
@@ -2365,8 +2496,10 @@ export const createComment = async (req: Request, res: Response) => {
             );
         }
 
+        await attachPageCommentPublishers([comment],userId);
         res.json(mapComment(comment, userId));
     } catch (error) {
+        if(respondPagePostError(error,res))return;
         if (error instanceof MentionLimitError || error instanceof HashtagLimitError) {
             res.status(400).json({ error: error.message, code: 'SOCIAL_TEXT_LIMIT_EXCEEDED', limit: error.limit });
             return;
@@ -2381,8 +2514,8 @@ export const likePost = async (req: Request, res: Response) => {
     const userId = req.user!.userId;
     try {
         const id = await resolveInteractionTarget(rawId, 'like');
-        const targetPostCheck = await prisma.post.findUnique({ where: { id }, select: { authorId: true, targetAudience: true } });
-        if (targetPostCheck && targetPostCheck.authorId) {
+        const targetPostCheck = await prisma.post.findUnique({ where: { id }, select: { authorId: true, targetAudience: true, pageId: true } });
+        if (targetPostCheck && !targetPostCheck.pageId && targetPostCheck.authorId) {
             const canView = isProfileAndGroups(targetPostCheck.targetAudience)
                 ? await GroupPermissionService.canViewPost(id, userId)
                 : await PrivacyService.canViewUserContent(userId, targetPostCheck.authorId);
@@ -2391,24 +2524,24 @@ export const likePost = async (req: Request, res: Response) => {
                 return;
             }
         }
-        const existing = await prisma.userLike.findUnique({ where: { userId_postId: { userId, postId: id } } });
-        if (existing) {
-            await prisma.$transaction([
-                prisma.userLike.delete({ where: { userId_postId: { userId, postId: id } } }),
-                prisma.post.update({ where: { id }, data: { likesCount: { decrement: 1 } } })
-            ]);
-            res.json({ isLiked: false });
-        } else {
-            const [_, targetPost] = await prisma.$transaction([
-                prisma.userLike.create({ data: { userId, postId: id } }),
-                prisma.post.update({ where: { id }, data: { likesCount: { increment: 1 } } })
-            ]);
-            if (targetPost.authorId) {
-                await notify(userId, targetPost.authorId, 'like', 'liked your post', 'survey', id);
+        const result = await prisma.$transaction(async (tx) => {
+            await guardPagePostInteractions(tx, [rawId,id], userId);
+            const existing = await tx.userLike.findUnique({ where: { userId_postId: { userId, postId: id } } });
+            if (existing) {
+                await tx.userLike.delete({ where: { userId_postId: { userId, postId: id } } });
+            } else {
+                await tx.userLike.create({ data: { userId, postId: id } });
             }
-            res.json({ isLiked: true });
+            const targetPost = await tx.post.update({ where: { id }, data: { likesCount: existing ? { decrement: 1 } : { increment: 1 } } });
+            const pageNotificationHandled = !existing && await notifyPagePostInteraction({ postId: id, actorId: userId, kind: 'like' }, tx);
+            return { isLiked: !existing, targetPost, pageNotificationHandled };
+        });
+        if (result.isLiked && result.targetPost.authorId && !result.pageNotificationHandled) {
+            await notify(userId, result.targetPost.authorId, 'like', 'liked your post', 'survey', id);
         }
+        res.json({ isLiked: result.isLiked });
     } catch (error) {
+        if (respondPagePostError(error, res)) return;
         res.status(500).json({ error: 'Failed to like post' });
     }
 };
@@ -2417,23 +2550,30 @@ export const likeComment = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const userId = req.user!.userId;
     try {
-        const existing = await prisma.commentLike.findUnique({ where: { userId_commentId: { userId, commentId: id } } });
-        if (existing) {
-            await prisma.commentLike.delete({ where: { userId_commentId: { userId, commentId: id } } });
-            await prisma.comment.update({ where: { id }, data: { likes: { decrement: 1 } } });
-            res.json({ isLiked: false });
-        } else {
-            await prisma.commentLike.create({ data: { userId, commentId: id } });
-            const targetComment = await prisma.comment.update({ where: { id }, data: { likes: { increment: 1 } } });
+        const result = await prisma.$transaction(async (tx) => {
+            const comment = await tx.comment.findUnique({ where: { id }, select: { postId: true } });
+            if (!comment) throw new PagePolicyError('COMMENT_NOT_FOUND', 404);
+            await guardPagePostInteractions(tx, [comment.postId], userId);
+            if (!await tx.comment.count({ where: { id, postId: comment.postId } })) throw new PagePolicyError('COMMENT_NOT_FOUND', 404);
+            const existing = await tx.commentLike.findUnique({ where: { userId_commentId: { userId, commentId: id } } });
+            if (existing) await tx.commentLike.delete({ where: { userId_commentId: { userId, commentId: id } } });
+            else await tx.commentLike.create({ data: { userId, commentId: id } });
+            const targetComment = await tx.comment.update({ where: { id }, data: { likes: existing ? { decrement: 1 } : { increment: 1 } } });
+            const pageNotificationHandled = !existing && await notifyPagePostInteraction({ postId: comment.postId, actorId: userId, kind: 'comment_like', commentId: id }, tx);
+            return { isLiked: !existing, targetComment, pageNotificationHandled };
+        });
+        if (result.isLiked && !result.pageNotificationHandled) {
+            const targetComment = result.targetComment;
             if (targetComment.userId) {
                 const commentNavigation = targetComment.parentId
                     ? { postId: targetComment.postId, commentId: targetComment.parentId, replyId: id, sourceType: 'reply' }
                     : { postId: targetComment.postId, commentId: id, sourceType: 'comment' };
                 await notify(userId, targetComment.userId, 'like', 'liked your comment', 'post', targetComment.postId, commentNavigation);
             }
-            res.json({ isLiked: true });
         }
+        res.json({ isLiked: result.isLiked });
     } catch (error) {
+        if (respondPagePostError(error, res)) return;
         res.status(500).json({ error: 'Failed to like comment' });
     }
 };
@@ -2507,13 +2647,17 @@ export const savePost = async (req: Request, res: Response) => {
             return;
         }
 
-        await prisma.savedPost.upsert({
+        await prisma.$transaction(async (tx) => {
+        await guardPagePostPersistence(tx, id, userId);
+        await tx.savedPost.upsert({
             where: { userId_postId: { userId, postId: id } },
             update: {},
             create: { userId, postId: id }
         });
+        });
         res.json({ isSaved: true });
     } catch (error) {
+        if (respondPagePostError(error, res)) return;
         res.status(500).json({ error: 'Failed to save post' });
     }
 };
@@ -2544,24 +2688,28 @@ export const hidePost = async (req: Request, res: Response) => {
 
         const targetPost = await prisma.post.findFirst({
             where: { id, ...buildVisiblePublishedPostWhere(userId) },
-            select: { id: true, authorId: true }
+            select: { id: true, authorId: true, pageId: true }
         });
         if (!targetPost) {
             res.status(404).json({ error: 'Post not found or unavailable' });
             return;
         }
-        if (targetPost.authorId === userId) {
+        if (!targetPost.pageId && targetPost.authorId === userId) {
             res.status(400).json({ error: 'You cannot hide your own post', code: 'CANNOT_HIDE_OWN_POST' });
             return;
         }
 
-        await prisma.hiddenPost.upsert({
+        await prisma.$transaction(async (tx) => {
+        await guardPagePostPersistence(tx, id, userId);
+        await tx.hiddenPost.upsert({
             where: { userId_postId: { userId, postId: id } },
             update: {},
             create: { userId, postId: id }
         });
+        });
         res.json({ success: true, isHidden: true });
     } catch (error) {
+        if (respondPagePostError(error, res)) return;
         res.status(500).json({ error: 'Failed to hide post' });
     }
 };
@@ -2588,6 +2736,7 @@ export const reportPost = async (req: Request, res: Response) => {
                 id: true,
                 authorId: true,
                 title: true,
+                pageId: true,
                 description: true,
                 type: true,
                 createdAt: true
@@ -2597,7 +2746,7 @@ export const reportPost = async (req: Request, res: Response) => {
             res.status(404).json({ error: 'Post not found or unavailable' });
             return;
         }
-        if (targetPost.authorId === reporterId) {
+        if (!targetPost.pageId && targetPost.authorId === reporterId) {
             res.status(400).json({ error: 'You cannot report your own post', code: 'CANNOT_REPORT_OWN_POST' });
             return;
         }
@@ -2612,7 +2761,9 @@ export const reportPost = async (req: Request, res: Response) => {
             return;
         }
 
-        const report = await prisma.report.upsert({
+        const report = await prisma.$transaction(async (tx) => {
+        await guardPagePostPersistence(tx, id, reporterId);
+        return tx.report.upsert({
             where: { dedupeKey: buildPostReportDedupeKey(reporterId, id) },
             update: {},
             create: {
@@ -2626,14 +2777,16 @@ export const reportPost = async (req: Request, res: Response) => {
                     title: targetPost.title,
                     description: targetPost.description,
                     type: targetPost.type,
-                    authorId: targetPost.authorId,
+                    authorId: targetPost.pageId || targetPost.authorId,
                     createdAt: targetPost.createdAt.toISOString()
                 }
             },
             select: { id: true, status: true, createdAt: true }
         });
+        });
         res.json({ report, alreadyReported: false });
     } catch (error) {
+        if (respondPagePostError(error, res)) return;
         console.error(error);
         if (error instanceof PostOptionValidationError) {
             res.status(error.statusCode).json({ error: error.message, code: error.code });
@@ -2648,6 +2801,16 @@ export const sharePost = async (req: Request, res: Response) => {
     const userId = req.user!.userId;
     const cleanCaption = typeof req.body.caption === 'string' ? req.body.caption.trim() : '';
     try {
+        const publisherPageId = req.body.pageId == null ? null : req.body.pageId;
+        if (publisherPageId !== null && (typeof publisherPageId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(publisherPageId))) {
+            throw new PagePolicyError('PAGE_ID_INVALID', 400);
+        }
+        if (publisherPageId) {
+            assertPageDestination(req.body);
+            await authorizePagePublisher(prisma, publisherPageId, userId, { ...req.body, status: 'PUBLISHED' });
+        }
+        const shareRequestKey = publisherPageId ? pagePostRequestKey(req.body.pageCreateKey) : null;
+        const captionHash = createHash('sha256').update(cleanCaption).digest('hex');
         if (cleanCaption && !validateMentionRecipientLimit(cleanCaption, res, 'post')) return;
 
         const originalPost = await prisma.post.findUnique({
@@ -2667,13 +2830,13 @@ export const sharePost = async (req: Request, res: Response) => {
         if (!['public', ''].includes(originalAudience)
             || originalPost.groupId
             || originalPost.targetedGroups.length > 0
-            || originalPost.author.isPrivate
-            || originalPost.author.mediaPrivacyTarget === true) {
+            || (!originalPost.pageId && originalPost.author.isPrivate)
+            || (!originalPost.pageId && originalPost.author.mediaPrivacyTarget === true)) {
             res.status(403).json({ error: 'Cannot share private or group content' });
             return;
         }
 
-        if (originalPost.authorId) {
+        if (!originalPost.pageId && originalPost.authorId) {
             const canView = await PrivacyService.canViewUserContent(userId, originalPost.authorId);
             if (!canView) {
                 res.status(403).json({ error: 'Forbidden' });
@@ -2693,60 +2856,90 @@ export const sharePost = async (req: Request, res: Response) => {
             return;
         }
 
-        // If it's a direct repost (no caption), check if it already exists to toggle it off
-        if (!cleanCaption) {
-            const existingRepost = await prisma.post.findFirst({
-                where: {
-                    authorId: userId,
-                    sharedFromId: actualSharedFromId,
-                    sharedCaption: null
+        const sourceRefs = await prisma.post.findMany({ where: { id: { in: [...new Set([id, actualSharedFromId])] } }, select: { id: true, authorId: true, pageId: true } });
+        const involvesPage = !!publisherPageId || sourceRefs.some(source => !!source.pageId);
+        const shareAction = async (tx: Prisma.TransactionClient) => {
+            // Lock both publisher and source in the same order as lifecycle mutations.
+            const pageIds = [...new Set([publisherPageId, ...sourceRefs.map(source => source.pageId)].filter((value): value is string => Boolean(value)))].sort();
+            for (const pageId of pageIds) await lockPage(tx, pageId);
+            let sharedTemplate = originalPost;
+            if (involvesPage) {
+                // FOR UPDATE (not FOR SHARE) also conflicts with foreign-key KEY SHARE
+                // taken by a new personal block or group-destination relation.
+                const userIds = [...new Set([userId, ...sourceRefs.filter(source => !source.pageId).map(source => source.authorId)])].sort();
+                await tx.$queryRaw(Prisma.sql`SELECT id FROM users WHERE id IN (${Prisma.join(userIds)}) ORDER BY id FOR UPDATE`);
+                const sourceIds = [...new Set([id, actualSharedFromId])].sort();
+                await tx.$queryRaw(Prisma.sql`SELECT id FROM "Post" WHERE id IN (${Prisma.join(sourceIds)}) ORDER BY id FOR UPDATE`);
+                const currentSources = await tx.post.findMany({ where: { id: { in: sourceIds } }, include: { questions: { include: { options: { orderBy: { order: 'asc' } } } }, targetedGroups: true, author: { select: { isPrivate: true, mediaPrivacyTarget: true } } } });
+                if (currentSources.length !== sourceIds.length) throw new PagePolicyError('PAGE_SHARE_SOURCE_UNAVAILABLE', 404);
+                for (const current of currentSources) {
+                    const prior = sourceRefs.find(source => source.id === current.id);
+                    if (!prior || prior.authorId !== current.authorId || prior.pageId !== current.pageId) throw new PagePolicyError('PAGE_SHARE_SOURCE_CHANGED', 409);
+                    if (current.isDeleted || current.status !== 'PUBLISHED' || !['public', ''].includes((current.targetAudience || '').trim().toLowerCase()) || current.groupId || current.targetedGroups.length || (!current.pageId && (current.author.isPrivate || current.author.mediaPrivacyTarget))) throw new PagePolicyError('PAGE_SHARE_SOURCE_UNAVAILABLE', 403);
                 }
-            });
-
-            if (existingRepost) {
-                // Un-repost!
-                await prisma.$transaction([
-                    prisma.post.delete({ where: { id: existingRepost.id } }),
-                    prisma.post.update({
-                        where: { id: actualSharedFromId },
-                        data: { sharesCount: { decrement: 1 } }
-                    })
-                ]);
-                res.json({ success: true, action: 'unshared' });
-                return;
+                if (await tx.post.count({ where: { id: { in: sourceIds }, ...buildVisiblePublishedPostWhere(userId) } }) !== sourceIds.length) throw new PagePolicyError('PAGE_SHARE_SOURCE_UNAVAILABLE', 403);
+                sharedTemplate = currentSources.find(source => source.id === id)!;
+                if ((sharedTemplate.sharedFromId || sharedTemplate.id) !== actualSharedFromId) throw new PagePolicyError('PAGE_SHARE_SOURCE_CHANGED',409);
             }
-        }
-
-        const transactionResult = await prisma.$transaction(async (tx) => {
+            if (publisherPageId) await authorizePagePublisher(tx, publisherPageId, userId, { ...req.body, status: 'PUBLISHED' });
+            await guardPagePostPersistence(tx,id,userId);
+            await guardPagePostPersistence(tx,actualSharedFromId,userId);
+            if (publisherPageId && shareRequestKey) {
+                const receipt = await tx.pageAuditEvent.findUnique({ where: { id: shareRequestKey } });
+                if (receipt) {
+                    const outcome = receipt.data as { captionHash?: string; postId?: string; unshared?: boolean };
+                    if (receipt.pageId !== publisherPageId || receipt.actorId !== userId || receipt.action !== 'SHARE_COMPLETED' || receipt.targetId !== actualSharedFromId || outcome.captionHash !== captionHash) throw new PagePolicyError('PAGE_REQUEST_KEY_CONFLICT', 409);
+                    if (outcome.unshared) return { newPost: null, notificationIds: [] as string[] };
+                    const replay = outcome.postId ? await tx.post.findUnique({ where: { id: outcome.postId }, select: { id: true, isDeleted: true, pageId: true } }) : null;
+                    if (!replay || replay.isDeleted || replay.pageId !== publisherPageId) throw new PagePolicyError('PAGE_REQUEST_ALREADY_COMPLETED', 409);
+                    return { newPost: { id: replay.id }, notificationIds: [] as string[] };
+                }
+            }
+            if (!cleanCaption) {
+                const existingRepost = await tx.post.findFirst({ where: {
+                    ...(publisherPageId ? { pageId: publisherPageId } : { authorId: userId, pageId: null }),
+                    sharedFromId: actualSharedFromId, sharedCaption: null, isDeleted: false
+                } });
+                if (existingRepost) {
+                    await tx.post.delete({ where: { id: existingRepost.id } });
+                    await tx.post.update({ where: { id: actualSharedFromId }, data: { sharesCount: { decrement: 1 } } });
+                    if (publisherPageId) await pageAudit(tx, publisherPageId, userId, 'CONTENT_UNSHARED', existingRepost.id);
+                    if (publisherPageId && shareRequestKey) await tx.pageAuditEvent.create({ data: { id: shareRequestKey, pageId: publisherPageId, actorId: userId, action: 'SHARE_COMPLETED', targetId: actualSharedFromId, data: { captionHash, unshared: true } } });
+                    return { newPost: null, notificationIds: [] as string[] };
+                }
+            }
             const newPost = await tx.post.create({
                 data: {
-                    title: originalPost.title,
-                    description: originalPost.description,
-                    type: originalPost.type,
+                    title: sharedTemplate.title,
+                    description: sharedTemplate.description,
+                    type: sharedTemplate.type,
                     authorId: userId,
-                    expiresAt: originalPost.expiresAt,
+                    pageId: publisherPageId,
+                    expiresAt: sharedTemplate.expiresAt,
                     image: null,
-                    category: originalPost.category,
-                    targetAudience: originalPost.targetAudience,
-                    pollChoiceType: originalPost.pollChoiceType,
-                    imageLayout: originalPost.imageLayout,
+                    category: sharedTemplate.category,
+                    targetAudience: sharedTemplate.targetAudience,
+                    pollChoiceType: sharedTemplate.pollChoiceType,
+                    imageLayout: sharedTemplate.imageLayout,
                     sharedFromId: actualSharedFromId,
                     sharedCaption: cleanCaption || null,
                     visibility: 'PUBLIC',
                     status: 'PUBLISHED',
-                    allowAnonymous: originalPost.allowAnonymous,
-                    forceAnonymous: originalPost.forceAnonymous,
-                    allowComments: originalPost.allowComments,
-                    allowMultipleSelection: originalPost.allowMultipleSelection,
-                    allowUserOptions: originalPost.allowUserOptions,
-                    randomPairing: (originalPost as any).randomPairing,
-                    resultsWho: originalPost.resultsWho,
-                    resultsTiming: originalPost.resultsTiming,
-                    targetedGroups: (originalPost as any).targetedGroups && (originalPost as any).targetedGroups.length > 0 ? {
-                        connect: (originalPost as any).targetedGroups.map((g: any) => ({ id: g.id }))
+                    allowAnonymous: sharedTemplate.allowAnonymous,
+                    forceAnonymous: sharedTemplate.forceAnonymous,
+                    allowComments: sharedTemplate.allowComments,
+                    allowMultipleSelection: sharedTemplate.allowMultipleSelection,
+                    allowUserOptions: sharedTemplate.allowUserOptions,
+                    randomPairing: (sharedTemplate as any).randomPairing,
+                    resultsWho: sharedTemplate.resultsWho,
+                    resultsTiming: sharedTemplate.resultsTiming,
+                    targetedGroups: sharedTemplate.targetedGroups.length > 0 ? {
+                        connect: sharedTemplate.targetedGroups.map((g: any) => ({ id: g.id }))
                     } : undefined
                 }
             });
+            if (publisherPageId) await pageAudit(tx, publisherPageId, userId, 'CONTENT_CREATED', newPost.id);
+            if (publisherPageId && shareRequestKey) await tx.pageAuditEvent.create({ data: { id: shareRequestKey, pageId: publisherPageId, actorId: userId, action: 'SHARE_COMPLETED', targetId: actualSharedFromId, data: { captionHash, postId: newPost.id, unshared: false } } });
             await tx.post.update({
                 where: { id: actualSharedFromId },
                 data: { sharesCount: { increment: 1 } }
@@ -2762,12 +2955,26 @@ export const sharePost = async (req: Request, res: Response) => {
                 newPost,
                 notificationIds: mentionResult.notificationIds
             };
-        });
+        };
+        let transactionResult;
+        for (let attempt = 0; ; attempt++) {
+            try {
+                transactionResult = await prisma.$transaction(shareAction, involvesPage ? { isolationLevel: 'ReadCommitted', timeout: 15000, maxWait: 5000 } : undefined);
+                break;
+            } catch (error) {
+                const conflict = error instanceof Prisma.PrismaClientKnownRequestError && (error.code === 'P2034' || error.code === 'P2010' && ['40P01','40001'].includes(String(error.meta?.code)));
+                if (!involvesPage || !conflict || attempt >= 2) throw error;
+            }
+        }
         await dispatchNotificationIds(transactionResult.notificationIds);
         const newPost = transactionResult.newPost;
+        if (!newPost) {
+            res.json({ success: true, action: 'unshared' });
+            return;
+        }
 
-        const createdPost = await prisma.post.findUnique({
-            where: { id: newPost.id },
+        const createdPost = await prisma.post.findFirst({
+            where: { id: newPost.id, ...(involvesPage ? buildVisiblePublishedPostWhere(userId) : {}) },
             include: {
                 author: { select: SAFE_USER_SELECT },
                 questions: { include: { options: { orderBy: { order: 'asc' } } } },
@@ -2799,10 +3006,11 @@ export const sharePost = async (req: Request, res: Response) => {
         });
 
         if (!createdPost) {
-            res.status(500).json({ error: 'Failed to retrieve shared post' });
+            res.status(involvesPage ? 404 : 500).json({ error: involvesPage ? 'Shared post is no longer available' : 'Failed to retrieve shared post' });
             return;
         }
 
+        await attachPagePublishers([createdPost],userId);
         const p = serializePostSocialRecord(createdPost as any, userId);
         
         let mappedSharedFrom: any = undefined;
@@ -2847,8 +3055,10 @@ export const sharePost = async (req: Request, res: Response) => {
             targetGroups: mapTargetGroups(p)
         };
 
+        if (involvesPage && !await prisma.post.count({ where: { id: newPost.id, ...buildVisiblePublishedPostWhere(userId) } })) throw new PagePolicyError('PAGE_SHARE_SOURCE_UNAVAILABLE', 404);
         res.json(mappedPost);
     } catch (error) {
+        if (respondPagePostError(error,res)) return;
         if (error instanceof MentionLimitError || error instanceof HashtagLimitError || error instanceof PeopleTagValidationError) {
             res.status(400).json({
                 error: error.message,
@@ -2876,11 +3086,16 @@ export const acceptPeopleTag = async (req: Request, res: Response) => {
         }
 
         const updated = await prisma.$transaction(async (tx) => {
+            await guardPagePostPersistence(tx, tag.postId, userId);
+            const current = await tx.postTaggedUser.findUnique({ where: { id: tagId }, include: { post: { select: { pageId: true } } } });
+            if (!current) throw new PagePolicyError('PEOPLE_TAG_NOT_FOUND', 404);
+            if (current.taggedUserId !== userId) throw new PagePolicyError('PEOPLE_TAG_PERMISSION_DENIED', 403);
+            if (current.status === PeopleTagStatus.REMOVED || current.status === PeopleTagStatus.REJECTED) throw new PagePolicyError('PEOPLE_TAG_NOT_PENDING', 409);
             const accepted = await tx.postTaggedUser.update({
                 where: { id: tagId },
                 data: {
                     status: PeopleTagStatus.ACCEPTED,
-                    acceptedAt: tag.acceptedAt || new Date(),
+                    acceptedAt: current.acceptedAt || new Date(),
                     rejectedAt: null,
                     removedAt: null
                 },
@@ -2888,14 +3103,14 @@ export const acceptPeopleTag = async (req: Request, res: Response) => {
                     taggedUser: { select: SAFE_USER_SELECT }
                 }
             });
-            if (tag.notificationId) {
+            if (current.notificationId) {
                 const notification = await tx.notification.findUnique({
-                    where: { id: tag.notificationId },
+                    where: { id: current.notificationId },
                     select: { payload: true }
                 });
                 if (notification) {
                     await tx.notification.update({
-                        where: { id: tag.notificationId },
+                        where: { id: current.notificationId },
                         data: {
                             payload: JSON.stringify({
                                 ...parseNotificationPayload(notification.payload),
@@ -2905,11 +3120,12 @@ export const acceptPeopleTag = async (req: Request, res: Response) => {
                     });
                 }
             }
-            return accepted;
+            return current.post.pageId ? { ...accepted, taggedByUserId: undefined } : accepted;
         });
 
         res.json(serializePeopleTags([updated])[0]);
     } catch (error) {
+        if (respondPagePostError(error, res)) return;
         console.error('Accept People Tag Error:', error);
         res.status(500).json({ error: 'Failed to accept people tag' });
     }
@@ -2929,15 +3145,22 @@ export const rejectPeopleTag = async (req: Request, res: Response) => {
         }
 
         const updated = await prisma.$transaction(async (tx) => {
-            if (tag.notificationId) {
-                await tx.notification.deleteMany({ where: { id: tag.notificationId } });
+            const post = await tx.post.findUnique({ where: { id: tag.postId }, select: { pageId: true } });
+            if (post?.pageId) { await lockPage(tx, post.pageId); await activePageActor(tx, userId); }
+            // Removing one's own tag remains possible after the Page is hidden.
+            const current = await tx.postTaggedUser.findUnique({ where: { id: tagId } });
+            if (!current) throw new PagePolicyError('PEOPLE_TAG_NOT_FOUND', 404);
+            if (current.taggedUserId !== userId) throw new PagePolicyError('PEOPLE_TAG_PERMISSION_DENIED', 403);
+            if (current.status === PeopleTagStatus.REMOVED) throw new PagePolicyError('PEOPLE_TAG_ALREADY_REMOVED', 409);
+            if (current.notificationId) {
+                await tx.notification.deleteMany({ where: { id: current.notificationId } });
             }
-            return tx.postTaggedUser.update({
+            const rejected = await tx.postTaggedUser.update({
                 where: { id: tagId },
                 data: {
                     status: PeopleTagStatus.REJECTED,
                     acceptedAt: null,
-                    rejectedAt: tag.rejectedAt || new Date(),
+                    rejectedAt: current.rejectedAt || new Date(),
                     removedAt: null,
                     notificationId: null
                 },
@@ -2945,10 +3168,12 @@ export const rejectPeopleTag = async (req: Request, res: Response) => {
                     taggedUser: { select: SAFE_USER_SELECT }
                 }
             });
+            return post?.pageId ? { ...rejected, taggedByUserId: undefined } : rejected;
         });
 
         res.json(serializePeopleTags([updated])[0]);
     } catch (error) {
+        if (respondPagePostError(error, res)) return;
         console.error('Reject People Tag Error:', error);
         res.status(500).json({ error: 'Failed to reject people tag' });
     }
@@ -2960,33 +3185,45 @@ export const removePeopleTag = async (req: Request, res: Response) => {
     try {
         const tag = await prisma.postTaggedUser.findUnique({
             where: { id: tagId },
-            include: { post: { select: { authorId: true } } }
+            include: { post: { select: { authorId: true, pageId: true } } }
         });
         if (!tag) return res.status(404).json({ error: 'People tag not found' });
         const canRemove = tag.taggedUserId === userId
-            || tag.taggedByUserId === userId
-            || tag.post.authorId === userId;
+            || (tag.post.pageId ? await hasPostPageCapability(tag.post.pageId, userId, 'manageContent')
+                : tag.taggedByUserId === userId || tag.post.authorId === userId);
         if (!canRemove) {
             return res.status(403).json({ error: 'You cannot remove this people tag' });
         }
 
         await prisma.$transaction(async (tx) => {
-            if (tag.notificationId) {
-                await tx.notification.deleteMany({ where: { id: tag.notificationId } });
+            if (tag.post.pageId) {
+                const page = await lockPage(tx, tag.post.pageId);
+                await activePageActor(tx, userId);
+                if (tag.taggedUserId !== userId) await requirePageCapability(tx, page, userId, 'manageContent');
+            }
+            const current = await tx.postTaggedUser.findUnique({ where: { id: tagId }, include: { post: { select: { authorId: true, pageId: true } } } });
+            if (!current) throw new PagePolicyError('PEOPLE_TAG_NOT_FOUND', 404);
+            if (current.taggedUserId !== userId && !(current.post.pageId
+                ? await hasPostPageCapability(current.post.pageId, userId, 'manageContent', tx)
+                : current.taggedByUserId === userId || current.post.authorId === userId)) throw new PagePolicyError('PEOPLE_TAG_PERMISSION_DENIED', 403);
+            if (current.notificationId) {
+                await tx.notification.deleteMany({ where: { id: current.notificationId } });
             }
             await tx.postTaggedUser.update({
                 where: { id: tagId },
                 data: {
                     status: PeopleTagStatus.REMOVED,
                     acceptedAt: null,
-                    removedAt: tag.removedAt || new Date(),
+                    removedAt: current.removedAt || new Date(),
                     notificationId: null
                 }
             });
+            if (current.post.pageId && current.taggedUserId !== userId) await pageAudit(tx, current.post.pageId, userId, 'PEOPLE_TAG_REMOVED', tagId);
         });
 
         res.json({ success: true, id: tagId, status: PeopleTagStatus.REMOVED });
     } catch (error) {
+        if (respondPagePostError(error, res)) return;
         console.error('Remove People Tag Error:', error);
         res.status(500).json({ error: 'Failed to remove people tag' });
     }
@@ -3001,13 +3238,18 @@ export const updateComment = async (req: Request, res: Response) => {
         if (!comment) {
             return res.status(404).json({ error: 'Comment not found' });
         }
-        if (comment.userId !== userId) {
+        if (comment.pageId ? !await hasPostPageCapability(comment.pageId,userId,'reply') : comment.userId !== userId) {
             return res.status(403).json({ error: 'Unauthorized to edit this comment' });
         }
         if (!cleanText) return res.status(400).json({ error: 'Comment text is required' });
         if (!validateMentionRecipientLimit(cleanText, res, 'comment')) return;
 
         const result = await prisma.$transaction(async (tx) => {
+            await guardPagePostPersistence(tx,comment.postId,userId);
+            const current = await tx.comment.findUnique({ where: { id } });
+            if (!current) throw new PagePolicyError('COMMENT_NOT_FOUND', 404);
+            if(current.pageId){const page=await lockPage(tx,current.pageId);await requirePageCapability(tx,page,userId,'reply');}
+            else if (current.userId !== userId) throw new PagePolicyError('COMMENT_PERMISSION_DENIED', 403);
             await tx.comment.update({ where: { id }, data: { text: cleanText } });
             const mentionResult = await reconcileCommentMentions(tx, {
                 postId: comment.postId,
@@ -3037,8 +3279,10 @@ export const updateComment = async (req: Request, res: Response) => {
         });
 
         await dispatchNotificationIds(result.mentionResult.notificationIds);
+        await attachPageCommentPublishers([result.updated],userId);
         res.json(mapComment(result.updated, userId));
     } catch (error) {
+        if(respondPagePostError(error,res))return;
         if (error instanceof MentionLimitError || error instanceof HashtagLimitError) {
             res.status(400).json({ error: error.message, code: 'SOCIAL_TEXT_LIMIT_EXCEEDED', limit: error.limit });
             return;
@@ -3056,11 +3300,18 @@ export const deleteComment = async (req: Request, res: Response) => {
         if (!comment) {
             return res.status(404).json({ error: 'Comment not found' });
         }
-        if (comment.userId !== userId) {
+        const parentPost=await prisma.post.findUnique({where:{id:comment.postId},select:{pageId:true}});
+        const mayModerate=await hasPostPageCapability(parentPost?.pageId,userId,'moderateComments');
+        if (comment.pageId ? !mayModerate : comment.userId !== userId && !mayModerate) {
             return res.status(403).json({ error: 'Unauthorized to delete this comment' });
         }
 
         await prisma.$transaction(async (tx) => {
+            await guardPagePostPersistence(tx,comment.postId,userId);
+            const current = await tx.comment.findUnique({ where: { id }, include: { post: { select: { pageId: true } } } });
+            if (!current) throw new PagePolicyError('COMMENT_NOT_FOUND', 404);
+            if(current.post.pageId && (current.pageId || current.userId !== userId)){const page=await lockPage(tx,current.post.pageId);await requirePageCapability(tx,page,userId,'moderateComments');await pageAudit(tx,page.id,userId,'COMMENT_DELETED',id);}
+            else if (current.userId !== userId) throw new PagePolicyError('COMMENT_PERMISSION_DENIED', 403);
             const replies = await tx.comment.findMany({ where: { parentId: id } });
             const replyIds = replies.map(r => r.id);
             const deletedCommentIds = [id, ...replyIds];
@@ -3103,6 +3354,7 @@ export const deleteComment = async (req: Request, res: Response) => {
 
         res.json({ success: true, message: 'Comment deleted successfully' });
     } catch (error) {
+        if(respondPagePostError(error,res))return;
         console.error("Delete Comment Error:", error);
         res.status(500).json({ error: 'Failed to delete comment' });
     }
@@ -3123,7 +3375,7 @@ export const deletePost = async (req: Request, res: Response) => {
             res.status(404).json({ error: 'Post not found' });
             return;
         }
-        if (post.authorId !== userId) {
+        if (post.pageId ? !await hasPostPageCapability(post.pageId,userId,'manageContent') : post.authorId !== userId) {
             res.status(403).json({ error: 'Unauthorized to delete this post' });
             return;
         }
@@ -3149,6 +3401,7 @@ export const deletePost = async (req: Request, res: Response) => {
         ]).filter((mediaAssetId): mediaAssetId is string => Boolean(mediaAssetId))));
 
         await prisma.$transaction(async (tx) => {
+            if (post.pageId) await authorizePagePublisher(tx,post.pageId,userId,{status:post.status},false);
             await tx.notification.deleteMany({
                 where: { targetId: { in: postIds }, targetType: { in: ['survey', 'post'] } }
             });
@@ -3195,6 +3448,7 @@ export const deletePost = async (req: Request, res: Response) => {
 
         res.json({ success: true, message: 'Post permanently deleted', deletedPostIds: postIds });
     } catch (error) {
+        if (respondPagePostError(error,res)) return;
         console.error("Hard delete failed:", error);
         res.status(500).json({ error: 'Failed to delete post permanently' });
     }

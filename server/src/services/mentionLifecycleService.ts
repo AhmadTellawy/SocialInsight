@@ -203,11 +203,15 @@ const resolveTargets = async (
     else targetsById.set(target.id, { ...target, occurrences: [...target.occurrences] });
   }
   const resolvedTargets = Array.from(targetsById.values());
+  const pageSource = source.postId ? await tx.post.findUnique({ where: { id: source.postId }, select: { pageId: true } }) : null;
+  const officialComment = pageSource?.pageId && source.commentId
+    ? await tx.comment.findUnique({ where: { id: source.commentId }, select: { pageId: true } }) : null;
+  const pageActor = !!pageSource?.pageId && (!source.commentId || officialComment?.pageId === pageSource.pageId);
   const targetIds = resolvedTargets
     .map((target) => target.id)
-    .filter((targetId) => targetId !== source.actorUserId);
+    .filter((targetId) => pageActor || targetId !== source.actorUserId);
 
-  const blocks = targetIds.length > 0
+  const blocks = targetIds.length > 0 && !pageActor
     ? await tx.userBlock.findMany({
         where: {
           OR: [
@@ -221,9 +225,14 @@ const resolveTargets = async (
   const blockedIds = new Set(blocks.map((block) =>
     block.blockerId === source.actorUserId ? block.blockedId : block.blockerId
   ));
+  if (pageSource?.pageId && targetIds.length) {
+    const pageBlocks = await tx.pageBlock.findMany({ where: { pageId: pageSource.pageId, userId: { in: targetIds } }, select: { userId: true } });
+    for (const block of pageBlocks) blockedIds.add(block.userId);
+  }
 
   let postContext: {
     authorId: string;
+    pageId?: string | null;
     status: string;
     isDeleted: boolean;
     targetAudience: string | null;
@@ -238,6 +247,7 @@ const resolveTargets = async (
       where: { id: source.postId },
       select: {
         authorId: true,
+        pageId: true,
         status: true,
         isDeleted: true,
         targetAudience: true,
@@ -255,7 +265,7 @@ const resolveTargets = async (
 
       const [follows, memberships] = await Promise.all([
         targetIds.length > 0
-          ? tx.follow.findMany({
+          ? post.pageId ? tx.pageFollow.findMany({ where: { pageId: post.pageId, userId: { in: targetIds } }, select: { userId: true } }).then(rows => rows.map(row => ({ followerId: row.userId }))) : tx.follow.findMany({
               where: {
                 followerId: { in: targetIds },
                 followingId: post.authorId,
@@ -281,16 +291,16 @@ const resolveTargets = async (
   }
 
   const isEligible = (targetId: string): boolean => {
-    if (targetId === source.actorUserId || blockedIds.has(targetId)) return false;
+    if ((!pageActor && targetId === source.actorUserId) || blockedIds.has(targetId)) return false;
     if (!source.postId || source.state === MentionState.STAGED) return true;
     if (!postContext || postContext.isDeleted || postContext.status !== POST_STATUS.PUBLISHED) return false;
-    if (targetId === postContext.authorId) return true;
+    if (!postContext.pageId && targetId === postContext.authorId) return true;
     if (postContext.groupIds.length > 0) return groupMemberIds.has(targetId);
 
     const audience = (postContext.targetAudience || 'Public').trim().toLowerCase();
     if (audience === 'followers' && !followerIds.has(targetId)) return false;
     if (!['public', 'followers', ''].includes(audience)) return false;
-    if (postContext.author.isPrivate || postContext.author.mediaPrivacyTarget === true) {
+    if (!postContext.pageId && (postContext.author.isPrivate || postContext.author.mediaPrivacyTarget === true)) {
       return followerIds.has(targetId);
     }
     return true;
