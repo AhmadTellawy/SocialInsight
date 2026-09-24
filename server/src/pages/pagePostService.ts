@@ -65,16 +65,32 @@ export async function attachPagePublishers(posts:any[],viewerId?:string|null):Pr
   const visit=(post:any)=>{if(!post)return;if(post.pageId)targets.push(post);if(post.sharedFrom)visit(post.sharedFrom);};
   posts.forEach(visit);
   if(!targets.length)return;
-  const pages=await prisma.page.findMany({where:{id:{in:[...new Set(targets.map(post=>post.pageId))] as string[]}},
-    include:{members:{where:{userId:viewerId||''},select:{role:true}},follows:{where:{userId:viewerId||''},select:{userId:true}}}});
+  // A single statement keeps publisher identity and viewer presentation together
+  // without separate reads for Page, membership and follow.
+  // This only attaches presentation; endpoint authorization remains server-side.
+  const pageIds = [...new Set(targets.map(post => post.pageId))] as string[];
+  const viewer = viewerId || '';
+  const pages = await prisma.$queryRaw<Array<{
+    id: string; ownerId: string; name: string; handle: string; avatarMediaId: string | null;
+    _viewerRole: string | null; _isFollowing: boolean;
+  }>>(Prisma.sql`
+    SELECT p."id", p."ownerId", p."name", p."handle", p."avatarMediaId",
+      membership."role" AS "_viewerRole", (following."userId" IS NOT NULL) AS "_isFollowing"
+    FROM "Page" p
+    LEFT JOIN "PageMembership" membership
+      ON membership."pageId" = p."id" AND membership."userId" = ${viewer}
+    LEFT JOIN "PageFollow" following
+      ON following."pageId" = p."id" AND following."userId" = ${viewer}
+    WHERE p."id" IN (${Prisma.join(pageIds)})
+  `);
   const pagesById=new Map(pages.map(page=>[page.id,page]));
   for(const post of targets){
     const page=pagesById.get(post.pageId);
     if(!page)throw new PagePolicyError('PAGE_NOT_FOUND',404);
-    const role:PageRole|null=viewerId===page.ownerId?'OWNER':page.members[0]?.role as PageRole||null;
+    const role:PageRole|null=viewerId===page.ownerId?'OWNER':page._viewerRole as PageRole||null;
     post.authorId=page.id;
     post.author={id:page.id,kind:'PAGE',name:page.name,handle:page.handle,avatar:'',avatarMediaId:page.avatarMediaId,
-      verifiedBadge:false,isPrivate:false,isFollowing:page.follows.length>0};
+      verifiedBadge:false,isPrivate:false,isFollowing:page._isFollowing};
     post.pageCapabilities=(['manageContent','reply','moderateComments','analytics'] as PageCapability[]).filter(capability=>hasPageCapability(role,capability));
     delete post.lastPageActorId;
     delete post.pageCreateKey;
