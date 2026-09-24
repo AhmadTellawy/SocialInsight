@@ -7,6 +7,7 @@ RUN apt-get update \
 
 WORKDIR /build
 COPY native/confine.c /build/confine.c
+COPY native/process-control.h /build/process-control.h
 RUN cc -O2 -pthread -Wall -Wextra -Werror -Wno-sign-compare -o /native-confine /build/confine.c
 RUN git init libde265 \
     && git -C libde265 remote add origin https://github.com/strukturag/libde265.git \
@@ -93,6 +94,7 @@ COPY --from=node-dependencies --chown=root:root /app/node_modules ./node_modules
 COPY --chown=root:root package.json ./
 COPY --chown=root:root src ./src
 COPY --chown=root:root self-test /opt/heif-converter/self-test
+COPY --chown=converter:converter self-test/confinement-write-canary /opt/heif-converter/landlock-write-canary
 COPY --from=native-builder /native-confine /usr/local/bin/si-heif-confine
 COPY --from=native-builder /native/heif-convert /usr/local/bin/heif-convert
 COPY --from=native-builder /native/heif-convert.sha256 /tmp/heif-convert.sha256
@@ -105,11 +107,12 @@ RUN HEIF_SHA="$(cat /tmp/heif-convert.sha256)" \
       "${HEIF_COMMIT}" "${DE265_COMMIT}" "${HEIF_SHA}" > /opt/heif-converter/native-versions.json \
     && chmod 0444 /opt/heif-converter/native-versions.json \
     && chmod 0444 /opt/heif-converter/self-test/*.base64 \
+    && chmod 0600 /opt/heif-converter/landlock-write-canary \
+    && chmod -R go-w /app /opt/heif-converter \
     && rm /app/src/converter.js /app/src/processRunner.js \
     && rm /tmp/heif-convert.sha256 /tmp/libheif.commit /tmp/libde265.commit
 
 ENV NODE_ENV=production \
-    HOST=0.0.0.0 \
     PORT=8080 \
     TEMP_ROOT=/tmp/heif-converter \
     HEIF_CONVERT_PATH=/usr/local/bin/heif-convert \
@@ -120,5 +123,5 @@ ENV NODE_ENV=production \
 USER 10001:10001
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD ["/usr/bin/env", "UV_THREADPOOL_SIZE=1", "node", "--v8-pool-size=1", "-e", "fetch('http://127.0.0.1:'+process.env.PORT+'/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+  CMD ["/usr/local/bin/si-heif-confine", "--healthcheck"]
 CMD ["/usr/local/bin/si-heif-confine", "--supervise"]

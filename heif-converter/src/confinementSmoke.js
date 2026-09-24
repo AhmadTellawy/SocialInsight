@@ -7,6 +7,10 @@ import { spawn } from 'node:child_process';
 import { runConfinedJob } from './confinedRunner.js';
 import { verifyBootstrap, verifyTempRoot, TEMP_ROOT } from './confinementBootstrap.js';
 import { ConfinedHeifConverter } from './confinedService.js';
+import { runEntrypointMatrix } from './confinementEntrypointProbe.js';
+import { runStartupProcessControl } from './processControl.js';
+import { IMMUTABLE_ROOT_CANARY_PATH } from './confinementProbePolicy.js';
+import { inspectHeif } from './bmff.js';
 
 const cases=[];
 let assertions=0;
@@ -27,14 +31,21 @@ try {
   await record('actual-bootstrap-envelope',async()=>{
     let envelope;
     try{envelope=await verifyBootstrap({supervisorMode:'--supervise-probe'});}catch(e){console.log(JSON.stringify({bootstrapFailurePhase:e.phase??'UNKNOWN'}));throw e;}
-    assert.ok(envelope.resources.pids<=512);assert.equal(envelope.resources.swapBytes,0);return{envelope};
+    assert.ok(Number.isSafeInteger(envelope.resources.pids)&&envelope.resources.pids>0);assert.equal(envelope.resources.swapBytes,0);
+    const processControl=await runStartupProcessControl(envelope.resources);return{envelope,processControl};
   });
   await record('enforced-container-memory',async()=>{
     const limit=(await fs.readFile('/sys/fs/cgroup/memory.max','utf8')).trim();
     assert.notEqual(limit,'max');assert.ok(Number(limit)>0&&Number(limit)<=512*1024*1024);
     return{bytes:Number(limit)};
   });
-  await record('whole-worker-confinement',async()=>{const probe=await runConfinedJob(Buffer.alloc(0),{probe:true,onDiagnostic:code=>console.log(JSON.stringify({diagnostic:code}))});assert.equal(probe.ok,true);assert.equal(probe.checks.length,19);assert.equal(probe.syscallReport.negativeSyscalls,31);return{probe};});
+  await record('whole-worker-confinement',async()=>{
+    const probe=await runConfinedJob(Buffer.alloc(0),{probe:true,onDiagnostic:code=>console.log(JSON.stringify({diagnostic:code}))});
+    assert.equal(probe.ok,true);assert.equal(probe.checks.length,19);assert.equal(probe.syscallReport.negativeSyscalls,31);
+    assert.ok(['EACCES','EPERM','EROFS'].includes(probe.immutableRootWriteErrno));
+    assert.equal(probe.immutableRootCanaryUnchanged,true);
+    return{probe};
+  });
   await record('actual-stale-and-permission-startup-rejection',async()=>{
     await fs.writeFile(TEMP_ROOT+'/synthetic-stale','synthetic',{flag:'wx',mode:0o600});
     try{await assert.rejects(verifyTempRoot(),e=>e.code==='CONFINEMENT_UNAVAILABLE');assert.equal(await fs.readFile(TEMP_ROOT+'/synthetic-stale','utf8'),'synthetic');}finally{await fs.unlink(TEMP_ROOT+'/synthetic-stale');}
@@ -48,15 +59,7 @@ try {
     try{await fs.symlink(saved,TEMP_ROOT);await assert.rejects(verifyTempRoot(),e=>e.code==='CONFINEMENT_UNAVAILABLE');}
     finally{await fs.unlink(TEMP_ROOT);await fs.rename(saved,TEMP_ROOT);}
   });
-  await record('actual-non-pid1-parent-adoption-race',async()=>{
-    const report=await new Promise((resolve,reject)=>{
-      const child=spawn(helper,['--parent-race-probe'],{env:{},stdio:['ignore','pipe','ignore']});
-      let output='';const timer=setTimeout(()=>{child.kill('SIGKILL');reject(Error('Race deadline'));},5000);
-      child.stdout.on('data',b=>{output+=b.toString();});child.on('error',reject);
-      child.on('close',code=>{clearTimeout(timer);try{assert.equal(code,0);resolve(JSON.parse(output));}catch(e){reject(e);}});
-    });
-    assert.equal(report.actualAdoption,true);assert.equal(report.nonPid1Subreaper,true);return report;
-  });
+  await record('fixed-entrypoint-gateway-and-legacy-rejection',runEntrypointMatrix);
   await record('actual-orphaned-fork-reaped',async()=>{
     let worker,descendant;
     await assert.rejects(runConfinedJob(Buffer.alloc(0),{fault:'orphan',onSpawn:pid=>{worker=pid;},onLifetime:pid=>{descendant=pid;}}),e=>e.code==='IMAGE_PROCESSING_FAILED');
@@ -107,7 +110,11 @@ try {
     assert.equal(result.width,451);assert.equal(result.height,461);assert.equal(result.mime,'image/webp');return{inputBytes:15*1024*1024};
   });
   const unsupported=Buffer.from(camera);unsupported.write('avif',8,4,'ascii');
-  for(const [name,input] of [['unsupported-codec',unsupported],['truncated',camera.subarray(0,48)],['malformed',Buffer.alloc(64)]])await record('reject-'+name,async()=>{
+  await record('reject-avif-at-product-boundary',async()=>{
+    assert.throws(()=>inspectHeif(unsupported),error=>error.code==='AVIF_NOT_ALLOWED');
+    return{code:'AVIF_NOT_ALLOWED',workerInvoked:false};
+  });
+  for(const [name,input] of [['truncated',camera.subarray(0,48)],['malformed',Buffer.alloc(64)]])await record('reject-'+name,async()=>{
     await assert.rejects(runConfinedJob(input),e=>e.code==='IMAGE_PROCESSING_FAILED');
   });
   await record('actual-cancel-and-reap',async()=>{

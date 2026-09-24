@@ -35,12 +35,35 @@ const nativeBuild = {
 };
 
 const confinement = {
-  schemaVersion: 1,
+  schemaVersion: 2,
+  policy: 'rlimit-nproc-v2',
   status: 'passed',
+  processControl: {
+    supervisorLimit: 128,
+    workerLimit: 32,
+    brokerFilterInstalled: true,
+    forkBoundsPassed: true,
+    threadBoundsPassed: true,
+    raiseDenied: true,
+    inheritancePassed: true,
+    escapeDenied: true,
+    countersUnchanged: true,
+    cleanupPassed: true,
+    attribution: 'UNCLAIMED',
+  },
   checks: Array.from({ length: 19 }, (_, index) => `check-${index}`),
   syscallReport: { negativeSyscalls: 31, limitsVerified: 5 },
   envelope: { uid: 10001, noNewPrivileges: true, swapBytes: 0 },
 };
+
+const readinessBody = () => structuredClone({
+  status: 'ready',
+  service: 'heif-converter',
+  versions: { libheif: '1.23.4', libde265: '1.1.1', sharp: '0.35.4' },
+  nativeBuild,
+  nativeProbe,
+  confinement,
+});
 
 test.afterEach(() => {
   resetHeifReadinessForTests();
@@ -87,6 +110,121 @@ const configure = () => {
   process.env.HEIF_CONVERTER_URL = 'http://heif-converter:10000';
   process.env.HEIF_CONVERTER_SECRET = 'unit-test-secret-at-least-32-bytes';
 };
+
+test('requires schema 2 and the exact process policy', async () => {
+  configure();
+  for (const schemaVersion of [undefined, null, 0, 1, 3, '2', true]) {
+    const body = readinessBody();
+    Object.assign(body.confinement, { schemaVersion });
+    assert.equal(await verifyHeifConversionReadiness(true, async () => Response.json(body)), false, `schema ${schemaVersion}`);
+  }
+  for (const policy of [undefined, null, '', 'rlimit-nproc-v1', 'rlimit-nproc-v3', 'RLIMIT-NPROC-V2', true]) {
+    const body = readinessBody();
+    Object.assign(body.confinement, { policy });
+    assert.equal(await verifyHeifConversionReadiness(true, async () => Response.json(body)), false, `policy ${policy}`);
+  }
+});
+
+test('rejects every missing process-control field and every nonliteral proof boolean', async () => {
+  configure();
+  for (const [key, expected] of Object.entries(confinement.processControl)) {
+    const values = expected === true ? [undefined, null, false, 0, 1, 'true', {}, []] : [undefined, null];
+    for (const value of values) {
+      const body = readinessBody();
+      Object.assign(body.confinement.processControl, { [key]: value });
+      assert.equal(await verifyHeifConversionReadiness(true, async () => Response.json(body)), false, `${key}=${JSON.stringify(value)}`);
+    }
+  }
+});
+
+test('requires exact numeric 128 and 32 limits and unclaimed attribution', async () => {
+  configure();
+  for (const [key, values] of [
+    ['supervisorLimit', [0, 32, 127, 129, 512, '128', true]],
+    ['workerLimit', [0, 31, 33, 128, 512, '32', true]],
+    ['attribution', ['CLAIMED', 'VERIFIED', 'UNVERIFIED', 'EXACT', 'unclaimed', true, 0]],
+  ] as const) {
+    for (const value of values) {
+      const body = readinessBody();
+      Object.assign(body.confinement.processControl, { [key]: value });
+      assert.equal(await verifyHeifConversionReadiness(true, async () => Response.json(body)), false, `${key}=${value}`);
+    }
+  }
+});
+
+test('rejects malformed or expanded process proof, including provider inventory', async () => {
+  configure();
+  for (const processControl of [
+    undefined, null, {}, [], true, 'passed', Object.values(confinement.processControl),
+    { ...confinement.processControl, pid: 123 },
+    { ...confinement.processControl, sharedUidTasks: 1 },
+    { ...confinement.processControl, namespace: 'provider-namespace' },
+  ]) {
+    const body = readinessBody();
+    Object.assign(body.confinement, { processControl });
+    assert.equal(await verifyHeifConversionReadiness(true, async () => Response.json(body)), false);
+  }
+});
+
+test('schema 2 preserves mandatory confinement and pinned native evidence', async () => {
+  configure();
+  const mutations: Array<(body: ReturnType<typeof readinessBody>) => void> = [
+    body => { body.confinement.status = 'failed'; },
+    body => { body.confinement.checks.pop(); },
+    body => { Object.assign(body.confinement, { checks: { length: 19 } }); },
+    body => { body.confinement.syscallReport.negativeSyscalls = 30; },
+    body => { body.confinement.syscallReport.limitsVerified = 4; },
+    body => { body.confinement.envelope.uid = 0; },
+    body => { body.confinement.envelope.noNewPrivileges = false; },
+    body => { body.confinement.envelope.swapBytes = 1; },
+    body => { body.nativeProbe.status = 'failed'; },
+    body => { body.nativeProbe.cases[0].fixtureSha256 = 'unverified'; },
+    body => { body.nativeProbe.cases.pop(); },
+    body => { body.nativeBuild.libheifCommit = 'unverified'; },
+    body => { body.versions.sharp = '0.0.0'; },
+  ];
+  for (const [index, mutate] of mutations.entries()) {
+    const body = readinessBody();
+    mutate(body);
+    assert.equal(await verifyHeifConversionReadiness(true, async () => Response.json(body)), false, `retained guard ${index}`);
+  }
+});
+
+test('requires HTTP 200, rejects malformed responses, and uses only the fixed readiness path', async () => {
+  configure();
+  assert.equal(await verifyHeifConversionReadiness(true, async (url, init) => {
+    assert.equal(String(url), 'http://heif-converter:10000/health/ready');
+    assert.equal(init?.method, 'GET');
+    assert.equal(init?.redirect, 'error');
+    assert.ok(init?.signal instanceof AbortSignal);
+    assert.equal(init?.headers, undefined);
+    return Response.json(readinessBody());
+  }), true);
+  for (const status of [201, 202, 400, 503]) {
+    assert.equal(await verifyHeifConversionReadiness(true, async () => Response.json(readinessBody(), { status })), false, `HTTP ${status}`);
+  }
+  for (const value of [null, [], true, 'ready']) {
+    assert.equal(await verifyHeifConversionReadiness(true, async () => Response.json(value)), false);
+  }
+  assert.equal(await verifyHeifConversionReadiness(true, async () => new Response('{')), false);
+  assert.equal(await verifyHeifConversionReadiness(true, async () => { throw new Error('unavailable'); }), false);
+});
+
+test('a forced incompatible proof invalidates cached readiness until a complete v2 response', async () => {
+  configure();
+  let calls = 0;
+  const readyFetch: typeof fetch = async () => { calls += 1; return Response.json(readinessBody()); };
+  assert.equal(await verifyHeifConversionReadiness(false, readyFetch), true);
+  assert.equal(await verifyHeifConversionReadiness(false, readyFetch), true);
+  assert.equal(calls, 1);
+  const incompatible = readinessBody();
+  incompatible.confinement.schemaVersion = 1;
+  assert.equal(await verifyHeifConversionReadiness(true, async () => Response.json(incompatible)), false);
+  assert.equal(await verifyHeifConversionReadiness(false, readyFetch), false);
+  assert.equal(calls, 1);
+  assert.equal(await verifyHeifConversionReadiness(true, readyFetch), true);
+  assert.equal(calls, 2);
+});
 
 test('fails closed unless the feature flag, URL, and secret are all valid', async () => {
   delete process.env.MEDIA_HEIF_SERVER_ENABLED;

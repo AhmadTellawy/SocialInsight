@@ -4,6 +4,22 @@ import { ConfinedHeifConverter } from './confinedService.js';
 import { loadHealthEvidence } from './health.js';
 import { createConverterServer } from './server.js';
 import { runStartupNativeProbe } from './startupNativeProbe.js';
+import { validateProcessControl } from './processControl.js';
+
+export function createFatalLifecycle({ getServer, stop, exit = code => process.exit(code), setTimer = setTimeout, clearTimer = clearTimeout }) {
+  let started = false, exited = false;
+  const finish = () => { if (!exited) { exited = true; exit(1); } };
+  return () => {
+    if (started) return;
+    started = true;
+    // Close admission/listener synchronously; cleanup owns the bounded tail.
+    const server = getServer();
+    server?.close();
+    server?.closeAllConnections?.();
+    const deadline = setTimer(finish, 4500);
+    Promise.resolve().then(stop).then(() => { clearTimer(deadline); finish(); }, () => { clearTimer(deadline); finish(); });
+  };
+}
 
 export async function bootstrapConverterService(dependencies = {}) {
   const config = (dependencies.loadConfig ?? loadConfig)();
@@ -14,12 +30,15 @@ export async function bootstrapConverterService(dependencies = {}) {
   });
   try {
     const initialized = await converter.initialize();
+    const processControl = validateProcessControl(initialized.processControl);
     const baseHealthEvidence = await (dependencies.loadHealthEvidence ?? loadHealthEvidence)(config, {
       sharpVersions: initialized.probe.versions,
     });
     const nativeProbe = await (dependencies.runStartupNativeProbe ?? runStartupNativeProbe)(config, converter);
     const confinement = Object.freeze({
-      schemaVersion: 1,
+      schemaVersion: 2,
+      policy: 'rlimit-nproc-v2',
+      processControl,
       status: 'passed',
       checks: initialized.probe.checks,
       syscallReport: initialized.probe.syscallReport,
@@ -44,6 +63,7 @@ export async function bootstrapConverterService(dependencies = {}) {
       instance: process.env.RENDER_INSTANCE_ID ?? null,
     }));
     const server = (dependencies.createConverterServer ?? createConverterServer)({ config, converter, healthEvidence });
+    converter.setFatalHandler?.(createFatalLifecycle({ getServer: () => server, stop: () => converter.stop(), exit: dependencies.exit }));
     server.listen(config.port, config.host, () => {
       logger.info(JSON.stringify({ event: 'heif_converter_started', port: config.port, protocolVersion: 2 }));
     });

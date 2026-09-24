@@ -6,6 +6,9 @@ import { loadHealthEvidence } from '../src/health.js';
 const binary = Buffer.from('pinned-heif-convert-binary');
 const digest = createHash('sha256').update(binary).digest('hex');
 const config = { versionManifestPath: '/manifest.json', converterPath: '/heif-convert' };
+test('health evidence refuses missing confined versions without loading a native library',async()=>{
+  await assert.rejects(loadHealthEvidence(config),/Confined Sharp version evidence/);
+});
 
 test('verifies native version, immutable binary digest, and Sharp version', async () => {
   const manifest = JSON.stringify({

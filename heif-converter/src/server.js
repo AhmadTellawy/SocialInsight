@@ -89,6 +89,7 @@ export function createConverterServer({ config, converter, healthEvidence, clock
         ? error
         : new ServiceError(500, 'INTERNAL_ERROR', 'The conversion request could not be completed');
       if (serviceError.status >= 500) {
+        converter.markUnhealthy?.();
         logger.error?.({ event: 'heif_conversion_failed', code: serviceError.code, requestId });
       }
       json(

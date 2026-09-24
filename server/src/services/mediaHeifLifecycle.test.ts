@@ -34,8 +34,22 @@ const nativeBuild = {
 };
 
 const confinement = {
-  schemaVersion: 1,
+  schemaVersion: 2,
+  policy: 'rlimit-nproc-v2',
   status: 'passed',
+  processControl: {
+    supervisorLimit: 128,
+    workerLimit: 32,
+    brokerFilterInstalled: true,
+    forkBoundsPassed: true,
+    threadBoundsPassed: true,
+    raiseDenied: true,
+    inheritancePassed: true,
+    escapeDenied: true,
+    countersUnchanged: true,
+    cleanupPassed: true,
+    attribution: 'UNCLAIMED',
+  },
   checks: Array.from({ length: 19 }, (_, index) => `check-${index}`),
   syscallReport: { negativeSyscalls: 31, limitsVerified: 5 },
   envelope: { uid: 10001, noNewPrivileges: true, swapBytes: 0 },

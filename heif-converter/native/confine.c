@@ -13,6 +13,7 @@
 #include <pthread.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,9 +39,11 @@
 #define __NR_fchmodat2 452
 #endif
 static const char *phase = "ENTRY";
-static void fail(void) { fprintf(stderr,"CONFINEMENT_UNAVAILABLE:%s\n",phase); _exit(78); }
+static _Noreturn void fail(void) { fprintf(stderr,"CONFINEMENT_UNAVAILABLE:%s\n",phase); _exit(78); }
 static volatile sig_atomic_t broker_pid;
 static volatile sig_atomic_t shutdown_requested;
+static void broker_filter(void);
+static void validate_port(char result[6]);
 static void forward_signal(int sig) { shutdown_requested=1; if (broker_pid > 0) kill(broker_pid, sig); }
 static long long monotonic_ms(void) {
   struct timespec now; if (clock_gettime(CLOCK_MONOTONIC,&now)) fail();
@@ -75,6 +78,7 @@ static int supervise(int probe) {
   pid_t expected_parent=getpid(), pid = fork(); if (pid < 0) fail();
   if (!pid) {
     if (prctl(PR_SET_PDEATHSIG, SIGKILL) || getppid() != expected_parent) fail();
+    broker_filter();
     execl("/usr/local/bin/node", "node", probe ? "/app/src/confinementSmoke.js" : "/app/src/index.js", NULL);
     fail();
   }
@@ -111,7 +115,8 @@ static void supervisor_boundary(void) {
   phase="SUPERVISOR_BOUNDARY";no_capabilities();
   limit(RLIMIT_NPROC,128);
   struct rlimit r;if(getrlimit(RLIMIT_NPROC,&r)||r.rlim_cur!=128||r.rlim_max!=128)fail();
-  if(prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0)||prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)!=1)fail();
+  if(prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)!=1 && prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0))fail();
+  if(prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)!=1)fail();
 }
 static void *sleep_thread(void *unused) {(void)unused;for(;;)pause();return NULL;}
 static int exhaustion_probe(int threads) {
@@ -163,6 +168,8 @@ static void filesystem(const char *job, const char *input, const char *decoded) 
   allow_path(rules, "/app/src", dir);
   allow_path(rules, "/app/node_modules", dir | LANDLOCK_ACCESS_FS_EXECUTE);
   allow_path(rules, "/app/package.json", read);
+  allow_path(rules, "/opt/heif-converter/native-versions.json", read);
+  allow_path(rules, "/opt/heif-converter/landlock-write-canary", read);
   allow_path(rules, "/usr/local/bin/node", read | LANDLOCK_ACCESS_FS_EXECUTE);
   allow_path(rules, "/usr/local/bin/heif-convert", read | LANDLOCK_ACCESS_FS_EXECUTE);
   allow_path(rules, "/usr/local/bin/si-heif-confine", read | LANDLOCK_ACCESS_FS_EXECUTE);
@@ -175,8 +182,8 @@ static void filesystem(const char *job, const char *input, const char *decoded) 
   allow_path(rules, job, LANDLOCK_ACCESS_FS_READ_DIR);
   allow_path(rules, input, read);
   allow_path(rules, decoded, read | LANDLOCK_ACCESS_FS_WRITE_FILE | LANDLOCK_ACCESS_FS_TRUNCATE);
-  if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
-      || syscall(SYS_landlock_restrict_self, rules, 0)) fail();
+  if (prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)!=1 && prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0)) fail();
+  if (syscall(SYS_landlock_restrict_self, rules, 0)) fail();
   close(rules);
 }
 
@@ -339,7 +346,15 @@ static void system_calls(void) {
     BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, 0, 0, 1),
     BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ALLOW),
     BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ERRNO|EPERM),
-    BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, __NR_prctl, 0, 10),
+    /* Helpers must read ambient capabilities when reapplying the boundary. */
+    BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, __NR_prctl, 0, 17),
+    BPF_STMT(BPF_LD|BPF_W|BPF_ABS, ARGLO(0)),
+    BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, PR_CAP_AMBIENT, 0, 5),
+    BPF_STMT(BPF_LD|BPF_W|BPF_ABS, ARGLO(1)),
+    BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, PR_CAP_AMBIENT_IS_SET, 0, 1),
+    BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ALLOW),
+    BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ERRNO|EPERM),
+    BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ERRNO|EPERM),
     BPF_STMT(BPF_LD|BPF_W|BPF_ABS, ARGLO(0)),
     BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, PR_SET_NAME, 7, 0),
     BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, PR_GET_NAME, 6, 0),
@@ -353,101 +368,130 @@ static void system_calls(void) {
     BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ALLOW)
   };
   struct sock_fprog program = { .len = sizeof(filter)/sizeof(filter[0]), .filter = filter };
-  if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &program)) fail();
+  if (syscall(SYS_seccomp, SECCOMP_SET_MODE_FILTER, 0, &program)) fail();
 }
-/* Test-only, credential-free real parent-death race. The grandchild is held
- * until its spawning parent has been reaped by this non-PID1 subreaper. */
-static int parent_race_probe(void) {
-  phase="PARENT_RACE";
-  if(getpid()==1 || prctl(PR_SET_CHILD_SUBREAPER,1))fail();
-  int gate[2], identity[2], status;
-  if(pipe2(gate,O_CLOEXEC)||pipe2(identity,O_CLOEXEC))fail();
-  pid_t parent=fork();if(parent<0)fail();
-  if(!parent) {
-    close(gate[1]);close(identity[0]);
-    pid_t expected=getpid(),child=fork();if(child<0)fail();
-    if(!child) {
-      close(identity[1]);char byte;
-      if(read(gate[0],&byte,1)!=1 || getppid()==expected || getppid()==1)fail();
-      char value[32];snprintf(value,sizeof(value),"%d",expected);
-      execl("/usr/local/bin/si-heif-confine","si-heif-confine","--group-probe",value,NULL);fail();
-    }
-    if(write(identity[1],&child,sizeof(child))!=sizeof(child))fail();
-    _exit(0);
+#include "process-control.h"
+
+/* Every worker/helper is enumerated here. Unknown and legacy shapes fail before
+ * any dispatch; adding a mode cannot introduce a branch above the gateway. */
+enum worker_mode { WORKER, PROBE, FAULT, NATIVE, NATIVE_VERSION, SYSCALL, GROUP, SLEEPER, PROCESS };
+struct mode_spec { const char *name; int argc; enum worker_mode mode; };
+static const struct mode_spec modes[] = {
+  {"--worker",4,WORKER}, {"--probe",4,PROBE}, {"--fault-probe",5,FAULT},
+  {"--native",6,NATIVE}, {"--syscall-probe",4,SYSCALL}, {"--group-probe",4,GROUP},
+  {"--native-version",4,NATIVE_VERSION},
+  {"--fault-helper",5,SLEEPER}, {"--worker-process-probe",5,PROCESS}
+};
+static void expected_parent(const char *value) {
+  if(!*value)fail();
+  for(const char *p=value;*p;p++)if(*p<'0'||*p>'9')fail();
+  char *end;errno=0;long parent=strtol(value,&end,10);
+  if(errno||*end||parent<1||parent>INT_MAX||getppid()!=parent
+    ||prctl(PR_SET_PDEATHSIG,SIGKILL)||getppid()!=parent)fail();
+}
+static void worker_gateway(const char *job,char input[PATH_MAX],char decoded[PATH_MAX],int empty) {
+  phase="WORKER_CAPABILITIES";
+  if(getuid()!=10001||geteuid()!=10001||getgid()!=10001||getegid()!=10001)fail();
+  no_capabilities();
+  limit(RLIMIT_NPROC,32);exact_nproc(32);
+  char canonical[PATH_MAX];struct stat s;
+  phase="JOB_PATHS";
+  const char *prefix="/tmp/heif-converter/job-";size_t prefix_size=strlen(prefix);
+  if(!realpath(job,canonical)||strcmp(job,canonical)||strncmp(job,prefix,prefix_size)
+    ||!job[prefix_size]||strchr(job+prefix_size,'/')||lstat(job,&s)||!S_ISDIR(s.st_mode)
+    ||s.st_uid!=10001||(s.st_mode&077))fail();
+  if(snprintf(input,PATH_MAX,"%s/input.heic",job)>=PATH_MAX
+    ||snprintf(decoded,PATH_MAX,"%s/decoded.png",job)>=PATH_MAX)fail();
+  job_file(input,job,0);job_file(decoded,job,empty);
+  const char *paths[]={"/app/src","/app/node_modules","/app/package.json","/usr/local/bin/node",
+    "/usr/local/bin/heif-convert","/usr/local/bin/si-heif-confine","/opt/heif-converter/native-versions.json",
+    "/usr/lib","/etc/ld.so.cache"};
+  phase="IMMUTABLE_RUNTIME";
+  const char *path_phases[]={"IMMUTABLE_CODE","IMMUTABLE_MODULES","IMMUTABLE_PACKAGE","IMMUTABLE_NODE",
+    "IMMUTABLE_DECODER","IMMUTABLE_LAUNCHER","IMMUTABLE_MANIFEST","IMMUTABLE_LIBRARIES","IMMUTABLE_LOADER"};
+  for(unsigned i=0;i<sizeof(paths)/sizeof(paths[0]);i++){phase=path_phases[i];immutable(paths[i]);}
+  if(chdir(job)||syscall(SYS_close_range,3,~0U,0))fail();
+  if((getpgrp()!=getpid()&&getpgrp()!=getppid())||getsid(0)!=getpgrp())fail();
+  limit(RLIMIT_CORE,0);limit(RLIMIT_NOFILE,64);limit(RLIMIT_FSIZE,128*1024*1024);limit(RLIMIT_CPU,30);
+  if(prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)!=1&&prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0))fail();
+  phase="LANDLOCK";filesystem(job,input,decoded);
+  phase="SECCOMP";system_calls();
+  exact_nproc(32);
+  if(prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)!=1||prctl(PR_GET_SECCOMP)!=2)fail();
+  static const char installed[]="CONFINEMENT_GATEWAY:32_LANDLOCK_SECCOMP\n";
+  if(write(STDERR_FILENO,installed,sizeof(installed)-1)!=(ssize_t)(sizeof(installed)-1))fail();
+}
+int main(int argc,char **argv) {
+  if(getuid()!=10001||geteuid()!=10001||getgid()!=10001||getegid()!=10001)fail();
+  if(argc==2&&(!strcmp(argv[1],"--supervise")||!strcmp(argv[1],"--supervise-probe"))) {
+    char port[6];validate_port(port);
+    if(setenv("PORT",port,1))fail();
+    supervisor_boundary();return supervise(!strcmp(argv[1],"--supervise-probe"));
   }
-  close(gate[0]);close(identity[1]);pid_t adopted;
-  if(read(identity[0],&adopted,sizeof(adopted))!=sizeof(adopted)
-    ||waitpid(parent,&status,0)!=parent||!WIFEXITED(status)||WEXITSTATUS(status))fail();
-  if(write(gate[1],"x",1)!=1 || waitpid(adopted,&status,0)!=adopted
-    || !WIFEXITED(status)||WEXITSTATUS(status)!=78)fail();
-  close(gate[1]);close(identity[0]);
-  puts("{\"status\":\"PASS\",\"actualAdoption\":true,\"nonPid1Subreaper\":true,\"rejectedExit\":78}");
-  return 0;
-}
-int main(int argc, char **argv) {
-  if (getuid() != 10001 || geteuid() != getuid() || getgid() != 10001 || getegid()!=getgid()) fail();
-  if (argc == 2 && !strcmp(argv[1], "--supervise")) {supervisor_boundary();return supervise(0);}
-  if (argc == 2 && !strcmp(argv[1], "--supervise-probe")) {supervisor_boundary();return supervise(1);}
-  if (argc == 2 && !strcmp(argv[1], "--parent-race-probe")) return parent_race_probe();
-  if(argc<3)fail();
-  char *end;long expected_parent=strtol(argv[argc-1],&end,10);
-  if(*end || expected_parent<1 || expected_parent>INT_MAX
-    || getppid()!=expected_parent || prctl(PR_SET_PDEATHSIG,SIGKILL)
-    || getppid()!=expected_parent)fail();
-  if(argc==3 && !strcmp(argv[1],"--syscall-probe"))return syscall_probe();
-  if(argc==3 && !strcmp(argv[1],"--fork-exhaust-probe"))return exhaustion_probe(0);
-  if(argc==3 && !strcmp(argv[1],"--thread-exhaust-probe"))return exhaustion_probe(1);
-  if(argc==3 && !strcmp(argv[1],"--group-probe")) {
-    if(prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)!=1 || prctl(PR_GET_SECCOMP)!=2)fail();
+  if(argc==2&&!strcmp(argv[1],"--healthcheck")){healthcheck();fail();}
+  if(argc==4&&!strcmp(argv[1],"--supervisor-process-proof")) {
+    expected_parent(argv[3]);
+    int readback=!strcmp(argv[2],"readback");
+    if(readback)exact_nproc(128);
+    if(!readback&&strcmp(argv[2],"forks")&&strcmp(argv[2],"threads"))fail();
+    supervisor_boundary();broker_filter();
+    if(clearenv()||syscall(SYS_close_range,3,~0U,0))fail();
+    if(readback)return 0;
+    return process_proof(128,!strcmp(argv[2],"threads"),NULL);
+  }
+  const struct mode_spec *spec=NULL;
+  for(unsigned i=0;i<sizeof(modes)/sizeof(modes[0]);i++)
+    if(argc==modes[i].argc&&!strcmp(argv[1],modes[i].name))spec=&modes[i];
+  if(!spec)fail();
+  expected_parent(argv[argc-1]);
+  int readback=spec->mode==PROCESS&&!strcmp(argv[3],"readback");
+  if(readback)exact_nproc(32);
+  char input[PATH_MAX],decoded[PATH_MAX];
+  worker_gateway(argv[2],input,decoded,spec->mode==WORKER||spec->mode==PROBE||spec->mode==FAULT||spec->mode==NATIVE);
+  if(clearenv())fail();
+  if(spec->mode==PROCESS) {
+    if(readback)return 0;
+    if(strcmp(argv[3],"forks")&&strcmp(argv[3],"threads"))fail();
+    return process_proof(32,!strcmp(argv[3],"threads"),argv[2]);
+  }
+  if(spec->mode==SYSCALL)return syscall_probe();
+  if(spec->mode==GROUP) {
     printf("{\"pid\":%d,\"group\":%d,\"session\":%d}\n",getpid(),getpgrp(),getsid(0));return 0;
   }
-  if(argc==4 && !strcmp(argv[1],"--fork-sleeper")) {
-    if(prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)!=1 || prctl(PR_GET_SECCOMP)!=2)fail();
+  if(spec->mode==SLEEPER) {
+    if(!strcmp(argv[3],"fork-exhaust"))return exhaustion_probe(0);
+    if(!strcmp(argv[3],"thread-exhaust"))return exhaustion_probe(1);
+    if(strcmp(argv[3],"hold")&&strcmp(argv[3],"orphan"))fail();
     pid_t child=fork();if(child<0)fail();
-    if(!child) {close(0);close(1);close(2);alarm(60);for(;;)pause();}
+    if(!child){close(0);close(1);close(2);alarm(60);for(;;)pause();}
     printf("{\"descendant\":%d}\n",child);fflush(stdout);
-    if(!strcmp(argv[2],"orphan")){usleep(200000);return 0;}
-    if(strcmp(argv[2],"hold"))fail();
+    if(!strcmp(argv[3],"orphan")){usleep(200000);return 0;}
     alarm(60);for(;;)pause();
   }
-  char *env[] = { "LANG=C.UTF-8", "LC_ALL=C.UTF-8", "TZ=UTC", "NODE_ENV=production",
-    "UV_THREADPOOL_SIZE=1", "UV_USE_IO_URING=0", "MALLOC_ARENA_MAX=2", NULL };
-  limit(RLIMIT_CORE, 0); limit(RLIMIT_NOFILE, 64); limit(RLIMIT_NPROC, 32);
-  limit(RLIMIT_FSIZE, 128 * 1024 * 1024);
-  if (argc == 5 && !strcmp(argv[1], "--native")) {
-    /* This mode is useful only under the inherited parent boundary. */
-    if (prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) != 1 || prctl(PR_GET_SECCOMP) != 2) fail();
-    limit(RLIMIT_AS, 768 * 1024 * 1024); limit(RLIMIT_CPU, 12);
-    char *args[] = { "/usr/local/bin/heif-convert", "--codec-threads", "1", "--tile-threads", "0", "--png-compression-level", "1", argv[2], argv[3], NULL };
-    execve(args[0], args, env); fail();
+  char *env[]={"LANG=C.UTF-8","LC_ALL=C.UTF-8","TZ=UTC","NODE_ENV=production",
+    "UV_THREADPOOL_SIZE=1","UV_USE_IO_URING=0","MALLOC_ARENA_MAX=2",NULL};
+  if(spec->mode==NATIVE_VERSION) {
+    limit(RLIMIT_AS,768*1024*1024);limit(RLIMIT_CPU,12);
+    if(dup2(STDOUT_FILENO,STDERR_FILENO)<0)fail();
+    char *args[]={"/usr/local/bin/heif-convert","--version",NULL};
+    execve(args[0],args,env);fail();
   }
-  int fault=argc==5 && !strcmp(argv[1],"--fault-probe");
-  if (!fault && (argc != 4 || (strcmp(argv[1], "--worker") && strcmp(argv[1], "--probe")))) fail();
-  if(fault && strcmp(argv[3],"orphan") && strcmp(argv[3],"hold")
-    && strcmp(argv[3],"hang") && strcmp(argv[3],"stdout") && strcmp(argv[3],"stderr")
-    && strcmp(argv[3],"fork-exhaust") && strcmp(argv[3],"thread-exhaust"))fail();
-  phase="WORKER_CAPABILITIES";no_capabilities();
-  const char *job = argv[2]; char canonical[PATH_MAX], input[PATH_MAX], decoded[PATH_MAX]; struct stat s;
-  phase="JOB_PATHS";
-  if (!realpath(job, canonical) || strcmp(job, canonical)
-      || strncmp(job, "/tmp/heif-converter/job-", 24)
-      || strchr(job + 24, '/') || lstat(job, &s) || !S_ISDIR(s.st_mode)
-      || s.st_uid != getuid() || (s.st_mode & 077)) fail();
-  if (snprintf(input, sizeof(input), "%s/input.heic", job) >= sizeof(input)
-      || snprintf(decoded, sizeof(decoded), "%s/decoded.png", job) >= sizeof(decoded)) fail();
-  job_file(input, job, 0); job_file(decoded, job, 1);
-  const char *paths[] = { "/app/src", "/app/node_modules", "/app/package.json", "/usr/local/bin/node",
-    "/usr/local/bin/heif-convert", "/usr/local/bin/si-heif-confine", "/opt/heif-converter/native-versions.json", "/usr/lib", "/etc/ld.so.cache" };
-  phase="IMMUTABLE_RUNTIME";
-  for (unsigned i=0; i<sizeof(paths)/sizeof(paths[0]); i++) immutable(paths[i]);
-  limit(RLIMIT_CPU, 30);
-  if (chdir(job)) fail();
-  /* A process-group leader created by the broker cannot join another group. */
-  if (getpgrp() != getpid()) fail();
-  if (syscall(SYS_close_range, 3, ~0U, 0)) fail();
-  phase="LANDLOCK";filesystem(job, input, decoded);
-  phase="SECCOMP";system_calls();
-  char *args[] = { "/usr/local/bin/node", "--max-old-space-size=96", "--v8-pool-size=1",
-    fault ? "/app/src/confinedFaultProbe.js" : !strcmp(argv[1], "--probe") ? "/app/src/confinedProbe.js" : "/app/src/confinedWorker.js", input, decoded, fault ? argv[3] : NULL, NULL };
-  phase="NODE_EXEC";execve(args[0], args, env); fail();
+  if(spec->mode==NATIVE) {
+    if(strcmp(argv[3],input)||strcmp(argv[4],decoded))fail();
+    limit(RLIMIT_AS,768*1024*1024);limit(RLIMIT_CPU,12);
+    char *args[]={"/usr/local/bin/heif-convert","--codec-threads","1","--tile-threads","0",
+      "--png-compression-level","1",input,decoded,NULL};
+    execve(args[0],args,env);fail();
+  }
+  int fault=spec->mode==FAULT;
+  if(fault&&strcmp(argv[3],"orphan")&&strcmp(argv[3],"hold")&&strcmp(argv[3],"hang")
+    &&strcmp(argv[3],"stdout")&&strcmp(argv[3],"stderr")&&strcmp(argv[3],"fork-exhaust")
+    &&strcmp(argv[3],"thread-exhaust"))fail();
+  /* Top-level workers must be the broker-created session/group leader.
+   * Re-executed helpers keep that same group under the inherited strict filter. */
+  if(getpgrp()!=getpid())fail();
+  char *args[]={"/usr/local/bin/node","--max-old-space-size=96","--v8-pool-size=1",
+    fault?"/app/src/confinedFaultProbe.js":spec->mode==PROBE?"/app/src/confinedProbe.js":"/app/src/confinedWorker.js",
+    input,decoded,fault?argv[3]:NULL,NULL};
+  phase="NODE_EXEC";execve(args[0],args,env);fail();
 }

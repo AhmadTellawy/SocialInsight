@@ -23,15 +23,14 @@
         "node": ">=24.13.0 <25"
     },
     "dependencies": {
-        "@prisma/client": "^6.3.1",
-        "@supabase/supabase-js": "2.49.8",
-        "@types/node-fetch": "^2.6.13",
+        "@prisma/client": "6.12.0",
+        "@supabase/supabase-js": "^2.116.0",
         "bcryptjs": "^3.0.3",
         "compression": "^1.8.1",
         "cors": "^2.8.5",
         "dotenv": "^16.4.7",
-        "express": "^4.21.2",
-        "express-rate-limit": "^8.3.2",
+        "express": "^5.2.1",
+        "express-rate-limit": "^8.7.0",
         "helmet": "^8.1.0",
         "hpp": "^0.2.3",
         "jsonwebtoken": "^9.0.3",
@@ -39,7 +38,6 @@
         "node-fetch": "^2.7.0",
         "sharp": "0.35.4",
         "socket.io": "^4.8.3",
-        "uuid": "^13.0.0",
         "web-push": "^3.6.7",
         "zod": "^3.24.1"
     },
@@ -52,12 +50,17 @@
         "@types/jsonwebtoken": "^9.0.10",
         "@types/node": "^22.13.0",
         "@types/node-cron": "^3.0.11",
-        "@types/uuid": "^10.0.0",
+        "@types/node-fetch": "^2.6.13",
         "@types/web-push": "^3.6.4",
         "nodemon": "^3.1.9",
-        "prisma": "^6.3.1",
+        "prisma": "6.12.0",
         "socket.io-client": "^4.8.3",
         "ts-node": "^10.9.2",
         "typescript": "^5.7.3"
+    },
+    "overrides": {
+        "engine.io": "6.6.10",
+        "socket.io-parser": "4.2.7",
+        "ws": "8.21.3"
     }
 }

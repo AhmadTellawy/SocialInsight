@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { runConfinedJob } from './confinedRunner.js';
-import { verifyBootstrap, verifyTempRoot } from './confinementBootstrap.js';
+import { verifyBootstrap, verifyTempRoot, verifyResourceCounters } from './confinementBootstrap.js';
+import { runStartupProcessControl, validateProcessControl } from './processControl.js';
 import { ServiceError } from './errors.js';
 
 const unavailable=()=>new ServiceError(503,'CONVERTER_UNAVAILABLE','Image processing is unavailable');
@@ -9,21 +10,28 @@ export class ConfinedHeifConverter {
   #active=false;
   #shutdown=new AbortController();
   #idle=Promise.resolve();
-  constructor({runJob=runConfinedJob,bootstrap=verifyBootstrap,checkRoot=verifyTempRoot,io=fs,onDiagnostic=()=>{}}={}) {
+  #fatalNotified=false;
+  constructor({runJob=runConfinedJob,bootstrap=verifyBootstrap,checkRoot=verifyTempRoot,io=fs,onDiagnostic=()=>{},onFatal=()=>{},processProof=runStartupProcessControl,checkCounters=verifyResourceCounters}={}) {
     this.runJob=runJob;this.bootstrap=bootstrap;this.checkRoot=checkRoot;this.io=io;this.onDiagnostic=onDiagnostic;
+    this.onFatal=onFatal;this.processProof=processProof;this.checkCounters=checkCounters;
   }
+  setFatalHandler(handler){this.onFatal=handler;}
   isReady(){return this.#state==='ready';}
-  markUnhealthy(){this.#state='unhealthy';}
-  stop(){this.markUnhealthy();this.#shutdown.abort();return this.#idle;}
+  markUnhealthy(){
+    this.#state='unhealthy';this.#shutdown.abort();
+    if(!this.#fatalNotified){this.#fatalNotified=true;this.onFatal();}
+  }
+  stop(){this.#state='unhealthy';this.#shutdown.abort();return this.#idle;}
   async initialize() {
     if(this.#state!=='starting')throw unavailable();
     try {
       this.envelope=await this.bootstrap();
+      this.processControl=validateProcessControl(await this.processProof(this.envelope.resources,{signal:this.#shutdown.signal}));
       this.probe=await this.runJob(Buffer.alloc(0),{probe:true,signal:this.#shutdown.signal});
       if(this.probe.ok!==true||this.probe.checks.length!==19||this.probe.syscallReport.negativeSyscalls!==31)throw unavailable();
       await this.checkRoot();
       if(this.#state!=='starting'||this.#shutdown.signal.aborted)throw unavailable();
-      this.#state='ready';return {probe:this.probe,envelope:this.envelope};
+      this.#state='ready';return {probe:this.probe,envelope:this.envelope,processControl:this.processControl};
     } catch(error) {
       this.markUnhealthy();
       const phases=['IDENTITY','CAPABILITIES','PROCESS_LIMIT','SUPERVISOR','STORAGE','RESOURCES','CGROUP_LAYOUT','MEMORY_LIMIT','SWAP_LIMIT','PIDS_LIMIT','CPU_LIMIT'];
@@ -46,8 +54,7 @@ export class ConfinedHeifConverter {
     } finally {
       try {
         await this.checkRoot();
-        const events=Object.fromEntries((await this.io.readFile(this.envelope.resources.memoryEventsPath,'utf8')).trim().split('\n').map(line=>line.split(/\s+/)));
-        if(Number(events.oom)!==this.envelope.resources.oom||Number(events.oom_kill)!==this.envelope.resources.oomKill)throw unavailable();
+        await this.checkCounters(this.envelope.resources,this.io);
       } catch {this.markUnhealthy();}
       this.#active=false;
       completed();

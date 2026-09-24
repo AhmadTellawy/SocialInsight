@@ -21,9 +21,9 @@ export default defineConfig({
     navigationTimeout: 30_000,
   },
   webServer: {
-    command: `npm run dev -- --host 127.0.0.1 --port ${port}`,
+    command: `npm.cmd run build && npm.cmd run preview -- --configLoader runner --host 127.0.0.1 --port ${port}`,
     url: baseURL,
-    reuseExistingServer: false,
-    timeout: 120_000,
+    reuseExistingServer: !process.env.CI,
+    timeout: 300_000,
   },
 });

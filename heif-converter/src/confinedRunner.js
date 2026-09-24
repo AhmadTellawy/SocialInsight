@@ -12,7 +12,8 @@ async function gone(pid) {
   }
   throw new ServiceError(503,'WORKER_CLEANUP_FAILED','Image processing is unavailable');
 }
-export async function runConfinedJob(input,{signal,probe=false,fault,timeoutMs=45_000,onSpawn=()=>{},onDiagnostic=()=>{},onLifetime=()=>{},onExhaustion=()=>{}}={}) {
+export async function runConfinedJob(input,{signal,probe=false,nativeVersion=false,fault,timeoutMs=45_000,onSpawn=()=>{},onDiagnostic=()=>{},onLifetime=()=>{},onExhaustion=()=>{}}={}) {
+  if(nativeVersion&&(probe||fault))throw new TypeError('Invalid fixture');
   if(fault!==undefined&&!['orphan','hold','hang','stdout','stderr','fork-exhaust','thread-exhaust'].includes(fault))throw new TypeError('Invalid fixture');
   if (!Buffer.isBuffer(input) || input.length>15*1024*1024) throw new ServiceError(413,'IMAGE_TOO_LARGE','Image exceeds the limit');
   if(signal?.aborted) throw new ServiceError(499,'CONVERSION_CANCELLED','Image processing cancelled');
@@ -26,7 +27,7 @@ export async function runConfinedJob(input,{signal,probe=false,fault,timeoutMs=4
     // before untrusted code starts; descriptor 63 is unused by the worker.
     if(probe)canary=await open('/etc/passwd','r');
     const result=await new Promise((resolve,reject)=>{
-      const args=fault?['--fault-probe',job,fault,String(process.pid)]:[probe?'--probe':'--worker',job,String(process.pid)];
+      const args=fault?['--fault-probe',job,fault,String(process.pid)]:[nativeVersion?'--native-version':probe?'--probe':'--worker',job,String(process.pid)];
       const stdio=['ignore','pipe','pipe'];
       if(canary){while(stdio.length<63)stdio.push('ignore');stdio.push(canary.fd);}
       child=spawn('/usr/local/bin/si-heif-confine',args,{
@@ -48,9 +49,14 @@ export async function runConfinedJob(input,{signal,probe=false,fault,timeoutMs=4
           let index;
           while((index=diagnostics.indexOf('\n'))>=0) {
             const line=diagnostics.slice(0,index);diagnostics=diagnostics.slice(index+1);
+            // Latch before callbacks: a disconnect in the native-close / worker
+            // failure-frame gap must not downgrade an observed boundary failure.
+            if(line==='CONFINEMENT_NATIVE_EXIT:78')reason='CONFINEMENT_UNAVAILABLE';
             if(/^(CONFINEMENT_UNAVAILABLE:[A-Z_]+|CONFINEMENT_PROBE_FAILED:[A-Z_0-9]+)$/.test(line))onDiagnostic(line);
             if(/^(CONFINEMENT_PHASE:(NATIVE_STARTED|ENCODE_STARTED|ENCODE_FINISHED)|CONFINEMENT_NATIVE_EXIT:([0-9]{1,3}|SIG[A-Z]+|UNKNOWN))$/.test(line))onDiagnostic(line);
-            if(/^CONFINEMENT_FAILURE:(THREAD_RESOURCE|NATIVE_START|NATIVE_REJECT|ENCODE_REJECT)$/.test(line))onDiagnostic(line);
+            if(/^CONFINEMENT_FAILURE:(THREAD_RESOURCE|NATIVE_START|NATIVE_CONFINEMENT|NATIVE_REJECT|ENCODE_REJECT)$/.test(line))onDiagnostic(line);
+            if(/^CONFINEMENT_FAILURE:(THREAD_RESOURCE|NATIVE_START|NATIVE_CONFINEMENT)$/.test(line)
+              || /^CONFINEMENT_UNAVAILABLE:[A-Z_]+$/.test(line))reason='CONFINEMENT_UNAVAILABLE';
             if(line==='CONFINEMENT_NATIVE_TIMEOUT'){onDiagnostic(line);stop('CONVERSION_TIMEOUT');}
             if(fault&&/^CONFINEMENT_LIFETIME:[0-9]{1,10}$/.test(line))onLifetime(Number(line.split(':')[1]));
             if(['fork-exhaust','thread-exhaust'].includes(fault)&&line.startsWith('CONFINEMENT_EXHAUSTION:')){
@@ -63,7 +69,7 @@ export async function runConfinedJob(input,{signal,probe=false,fault,timeoutMs=4
       child.once('error',()=>{reason??='CONFINEMENT_UNAVAILABLE';});
       child.once('close',code=>{
         clearTimeout(timer);signal?.removeEventListener('abort',abort);
-        if(code===78)reason??='CONFINEMENT_UNAVAILABLE';
+        if(code===78)reason='CONFINEMENT_UNAVAILABLE';
         if(reason || code!==0)reject(new ServiceError(reason==='CONVERSION_CANCELLED'?499:['CONFINEMENT_UNAVAILABLE','INVALID_WORKER_OUTPUT'].includes(reason)?503:422,reason??'IMAGE_PROCESSING_FAILED','Image processing did not finish'));
         else resolve(Buffer.concat(parts));
       });
@@ -72,6 +78,10 @@ export async function runConfinedJob(input,{signal,probe=false,fault,timeoutMs=4
     if(((await stat('/tmp/heif-converter')).mode&0o777)!==0o700||((await stat(job)).mode&0o777)!==0o700)throw new ServiceError(503,'WORKER_CLEANUP_FAILED','Image processing is unavailable');
     const files=(await readdir(job)).sort();
     if(files.join(',')!=='decoded.png,input.heic' || (await stat(job+'/decoded.png')).size>128*1024*1024) throw new ServiceError(503,'INVALID_WORKER_OUTPUT','Image processing is unavailable');
+    if(nativeVersion) {
+      if(!result.length||result.length>4096)throw new ServiceError(503,'INVALID_WORKER_OUTPUT','Image processing is unavailable');
+      return result.toString('utf8').trim();
+    }
     if(result.length<4)throw new ServiceError(503,'INVALID_WORKER_OUTPUT','Image processing is unavailable');
     const length=result.readUInt32BE(0);
     if(length<2 || length>1024 || result.length<length+4)throw new ServiceError(503,'INVALID_WORKER_OUTPUT','Image processing is unavailable');
@@ -86,7 +96,11 @@ export async function runConfinedJob(input,{signal,probe=false,fault,timeoutMs=4
       || data.length>12*1024*1024 || !Number.isInteger(header.width) || !Number.isInteger(header.height)
       || header.width<1 || header.height<1 || header.width>2400 || header.height>2400)
       throw new ServiceError(503,'INVALID_WORKER_OUTPUT','Image processing is unavailable');
-    return Object.freeze({data,mime:header.mime,width:header.width,height:header.height});
+    const verification=header.verification;
+    if(!verification||verification.metadataStripped!==true
+      ||['hasAlpha','alphaHasTransparent','alphaHasNonzero'].some(key=>typeof verification[key]!=='boolean')
+      ||Object.keys(verification).length!==4)throw new ServiceError(503,'INVALID_WORKER_OUTPUT','Image processing is unavailable');
+    return Object.freeze({data,mime:header.mime,width:header.width,height:header.height,verification:Object.freeze({...verification})});
   } finally {
     try{await canary?.close();}catch{cleanupFailure=new ServiceError(503,'WORKER_CLEANUP_FAILED','Image processing is unavailable');}
     if(child?.pid) { try { killGroup(child.pid);await gone(child.pid); } catch(e) { cleanupFailure=e; } }

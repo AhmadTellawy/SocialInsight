@@ -1,3 +1,4 @@
+import { parsePort } from './port.js';
 const integer = (value, fallback, minimum, maximum, name) => {
   const parsed = value === undefined ? fallback : Number.parseInt(value, 10);
   if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
@@ -7,14 +8,15 @@ const integer = (value, fallback, minimum, maximum, name) => {
 };
 
 export function loadConfig(env = process.env) {
+  if (env.HOST !== undefined) throw new Error('HOST overrides are not supported');
   const hmacSecret = env.HEIF_CONVERTER_HMAC_SECRET;
   if (typeof hmacSecret !== 'string' || Buffer.byteLength(hmacSecret, 'utf8') < 32) {
     throw new Error('HEIF_CONVERTER_HMAC_SECRET must contain at least 32 UTF-8 bytes');
   }
 
   return Object.freeze({
-    host: env.HOST ?? '0.0.0.0',
-    port: integer(env.PORT, 8080, 1, 65535, 'PORT'),
+    host: '0.0.0.0',
+    port: parsePort(env.PORT),
     hmacSecret,
     signatureWindowSeconds: integer(
       env.SIGNATURE_WINDOW_SECONDS,

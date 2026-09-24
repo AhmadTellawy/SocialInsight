@@ -50,33 +50,25 @@ function asGenericHeif(input) {
   return output;
 }
 
-async function verifyOutput(output, expected, imageFactory) {
+function verifyOutput(output, expected) {
   if (output.mime !== 'image/webp' || output.width !== expected.width || output.height !== expected.height || !output.data?.length) {
     throw new Error('Native probe conversion output is invalid');
   }
-  const image = imageFactory(output.data, { failOn: 'error', limitInputPixels: 40_000_000 });
-  const metadata = await image.metadata();
-  if (metadata.format !== 'webp' || metadata.width !== expected.width || metadata.height !== expected.height) {
-    throw new Error('Native probe WebP metadata is invalid');
+  const evidence = output.verification;
+  if (!evidence || evidence.metadataStripped !== true || typeof evidence.hasAlpha !== 'boolean'
+    || typeof evidence.alphaHasTransparent !== 'boolean' || typeof evidence.alphaHasNonzero !== 'boolean') {
+    throw new Error('Confined output verification evidence is required');
   }
-  for (const field of ['exif', 'xmp', 'iptc', 'icc', 'orientation']) {
-    if (metadata[field] !== undefined) throw new Error('Native probe output retained source metadata');
+  if (expected.alpha && (!evidence.hasAlpha || !evidence.alphaHasTransparent || !evidence.alphaHasNonzero)) {
+    throw new Error('Native probe alpha channel is invalid');
   }
-  if (expected.alpha) {
-    if (metadata.hasAlpha !== true) throw new Error('Native probe output lost transparency');
-    const alpha = await imageFactory(output.data).extractChannel('alpha').raw().toBuffer();
-    if (!alpha.some((value) => value < 255) || !alpha.some((value) => value > 0)) {
-      throw new Error('Native probe alpha channel is invalid');
-    }
-  }
-  return Boolean(metadata.hasAlpha);
+  return evidence.hasAlpha;
 }
 
 export async function runStartupNativeProbe(config, converter, dependencies = {}) {
   const startedAt = performance.now();
   const read = dependencies.readFile ?? readFile;
   const inspect = dependencies.inspectHeif ?? inspectHeif;
-  const imageFactory = dependencies.imageFactory ?? (await import('sharp')).default;
   if ((await readdir(config.tempRoot)).length !== 0) throw new Error('Native probe temp root is not empty');
 
   const loaded = new Map();
@@ -99,7 +91,7 @@ export async function runStartupNativeProbe(config, converter, dependencies = {}
       throw new Error('Native probe input inspection failed');
     }
     const output = await converter.convert(item.input);
-    const hasAlpha = await verifyOutput(output, item, imageFactory);
+    const hasAlpha = verifyOutput(output, item);
     reports.push(Object.freeze({
       id: item.id,
       fixtureSha256: digest(item.input),

@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import sharp from 'sharp';
 import { runStartupNativeProbe } from '../src/startupNativeProbe.js';
+import { inspectConfinedOutput } from '../src/confinedOutputEvidence.js';
 
 const fixtureRoot = path.resolve('self-test');
 
@@ -34,7 +35,7 @@ test('proves HEIC, generic HEIF, alpha presence, source metadata stripping, and 
             background: alpha ? { r: 12, g: 34, b: 56, alpha: 0.5 } : { r: 12, g: 34, b: 56 },
           },
         }).webp().toBuffer();
-        return { data, mime: 'image/webp', width, height };
+        return { data, mime: 'image/webp', width, height, ...(await inspectConfinedOutput(data,sharp)) };
       },
     };
     const evidence = await runStartupNativeProbe({ tempRoot, nativeProbeFixtureRoot: fixtureRoot }, converter);
@@ -63,5 +64,13 @@ test('fails closed when a pinned native fixture is changed', async () => {
       ),
       /integrity check failed/,
     );
+  });
+});
+
+test('startup rejects outputs lacking confined metadata/alpha verification',async()=>{
+  await withTempRoot(async tempRoot=>{
+    await assert.rejects(runStartupNativeProbe({tempRoot,nativeProbeFixtureRoot:fixtureRoot},{
+      convert:async()=>({data:Buffer.from('webp'),mime:'image/webp',width:451,height:461}),
+    }),/Confined output verification evidence/);
   });
 });

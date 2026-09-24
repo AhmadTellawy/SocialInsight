@@ -4,6 +4,30 @@ import { MediaValidationError } from './mediaProcessor';
 
 type FetchLike = typeof fetch;
 
+// This allowlist is the public process-control contract, not raw probe output.
+// Never accept hosted UID attribution or provider process inventory as proof.
+const PROCESS_CONTROL_V2 = Object.freeze({
+  supervisorLimit: 128,
+  workerLimit: 32,
+  brokerFilterInstalled: true,
+  forkBoundsPassed: true,
+  threadBoundsPassed: true,
+  raiseDenied: true,
+  inheritancePassed: true,
+  escapeDenied: true,
+  countersUnchanged: true,
+  cleanupPassed: true,
+  attribution: 'UNCLAIMED',
+});
+
+const hasProcessControlV2 = (value: unknown): boolean => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const expected = Object.entries(PROCESS_CONTROL_V2);
+  return Object.keys(record).length === expected.length
+    && expected.every(([key, required]) => Object.prototype.hasOwnProperty.call(record, key) && record[key] === required);
+};
+
 const configuredUrl = (): URL | null => {
   const raw = process.env.HEIF_CONVERTER_URL?.trim();
   if (!raw) return null;
@@ -49,7 +73,7 @@ export const verifyHeifConversionReadiness = async (
       redirect: 'error',
       signal: controller.signal
     });
-    if (response.ok) {
+    if (response.status === 200) {
       const body = await response.json() as {
         status?: unknown;
         service?: unknown;
@@ -71,7 +95,9 @@ export const verifyHeifConversionReadiness = async (
         };
         confinement?: {
           schemaVersion?: unknown;
+          policy?: unknown;
           status?: unknown;
+          processControl?: unknown;
           checks?: unknown[];
           syscallReport?: { negativeSyscalls?: unknown; limitsVerified?: unknown };
           envelope?: { uid?: unknown; noNewPrivileges?: unknown; swapBytes?: unknown };
@@ -107,8 +133,11 @@ export const verifyHeifConversionReadiness = async (
         && body.nativeProbe?.schemaVersion === 1
         && body.nativeProbe?.status === 'passed'
         && body.nativeProbe?.fixtureSet === 'native-still-v1'
-        && body.confinement?.schemaVersion === 1
+        && body.confinement?.schemaVersion === 2
+        && body.confinement?.policy === 'rlimit-nproc-v2'
         && body.confinement?.status === 'passed'
+        && hasProcessControlV2(body.confinement?.processControl)
+        && Array.isArray(body.confinement?.checks)
         && body.confinement?.checks?.length === 19
         && body.confinement?.syscallReport?.negativeSyscalls === 31
         && body.confinement?.syscallReport?.limitsVerified === 5

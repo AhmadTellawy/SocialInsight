@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { bootstrapConverterService } from '../src/bootstrap.js';
+import { processControlFixture } from './processControlFixture.js';
 
 const config = { tempRoot: '/tmp/test', port: 8080, host: '127.0.0.1' };
 const initialized = {
+  processControl: processControlFixture,
   probe: {
     versions: { sharp: '0.35.4', vips: '8.18.0' },
     checks: Array.from({ length: 19 }, (_, index) => `check-${index}`),

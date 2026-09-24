@@ -81,6 +81,7 @@ test('rejects unauthenticated, AVIF, and replayed requests', async () => {
       method: 'POST', headers: signedHeaders(avif, 'request_avif_0123456789'), body: avif,
     });
     assert.equal(avifResponse.status, 400);
+    assert.equal((await avifResponse.json()).error.code, 'AVIF_NOT_ALLOWED');
 
     const headers = signedHeaders(input, 'request_replay_01234567');
     const first = await fetch(`${url}/v1/convert`, { method: 'POST', headers, body: input });

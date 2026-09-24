@@ -417,7 +417,7 @@ test.describe('local mocked mobile profile editing', () => {
     await expect(page.locator('#profile-display-name')).toHaveValue('Profile E2E User');
 
     await page.locator('#profile-display-name').fill('Draft retained through Links');
-    await page.getByRole('button', { name: /^Links\b/i }).click();
+    await page.getByRole('button', { name: /^Links/i }).click();
     await expect(page).toHaveURL(/\/settings\/profile\/links$/);
     const linksBeforeUnloadIsGuarded = await page.evaluate(() => {
       const event = new Event('beforeunload', { cancelable: true });

@@ -6,14 +6,16 @@ import { createConverterServer } from '../src/server.js';
 import { ServiceError } from '../src/errors.js';
 import { bodySha256, signRequest } from '../src/auth.js';
 import { heifFixture } from './fixtures.js';
+import { processControlFixture } from './processControlFixture.js';
 
 const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return{promise,resolve};};
 const probe={ok:true,checks:Array(19).fill('synthetic'),syscallReport:{negativeSyscalls:31}};
 const unavailable=()=>new ServiceError(503,'WORKER_CLEANUP_FAILED','Unavailable');
 function fixture(overrides={}) {
   return new ConfinedHeifConverter({
-    bootstrap:async()=>({resources:{memoryEventsPath:'/synthetic/events',oom:0,oomKill:0}}),
-    checkRoot:async()=>{}, io:{readFile:async()=> 'oom 0\noom_kill 0\n'},
+    bootstrap:async()=>({resources:{counterPaths:[{memoryEventsPath:'/synthetic/events',pidsEventsPath:'/synthetic/pids.events',pidsCurrentPath:'/synthetic/pids.current'}],counterBaselines:[{oom:0,oomKill:0,pidsMaxEvents:0}]}}),
+    processProof:async()=>processControlFixture,
+    checkRoot:async()=>{}, io:{readFile:async name=> name.endsWith('pids.current')?'2':name.endsWith('pids.events')?'max 0':'oom 0\noom_kill 0\n'},
     runJob:async(_input,{probe:isProbe})=>isProbe?probe:{data:Buffer.from('webp'),mime:'image/webp',width:1,height:1},
     ...overrides,
   });
@@ -41,6 +43,24 @@ test('readiness requires a completed confined probe and refuses stale startup wi
   await assert.rejects(fixture({runJob:async()=>({...probe,syscallReport:{negativeSyscalls:30}})}).initialize(),e=>e.status===503);
 });
 
+test('partial process proof prevents the first image worker and a fatal latch notifies once',async()=>{
+  let jobs=0,fatals=0;
+  const service=fixture({processProof:async()=>({...processControlFixture,cleanupPassed:false}),runJob:async()=>{jobs++;},onFatal:()=>{fatals++;}});
+  await assert.rejects(service.initialize(),e=>e.status===503);
+  assert.equal(jobs,0);assert.equal(fatals,1);service.markUnhealthy();service.markUnhealthy();assert.equal(fatals,1);
+});
+
+test('ordinary input failures do not invoke fatal lifecycle; an internal failure invokes it exactly once',async()=>{
+  let fatal=0,status=422;
+  const service=fixture({onFatal:()=>{fatal++;},runJob:async(_input,{probe:isProbe})=>{
+    if(isProbe)return probe;throw new ServiceError(status,'SYNTHETIC','Synthetic');
+  }});
+  await service.initialize();await assert.rejects(service.convert(Buffer.alloc(0)),e=>e.status===422);
+  assert.equal(fatal,0);assert.equal(service.isReady(),true);
+  status=500;await assert.rejects(service.convert(Buffer.alloc(0)),e=>e.status===503);
+  assert.equal(fatal,1);assert.equal(service.isReady(),false);
+});
+
 test('cleanup verification owns capacity; a failed cleanup latches readiness before later admission',async()=>{
   const cleaning=deferred(),release=deferred();let checks=0,calls=0;
   const service=fixture({checkRoot:async()=>{if(++checks===3){cleaning.resolve();await release.promise;throw unavailable();}},runJob:async(_input,{probe:isProbe})=>{calls++;return isProbe?probe:{};}});
@@ -57,7 +77,7 @@ test('cleanup verification owns capacity; a failed cleanup latches readiness bef
 
 test('ordinary decode rejection recovers only after root and OOM checks, while OOM permanently disables service',async()=>{
   let oom=false;
-  const service=fixture({io:{readFile:async()=>`oom ${oom?1:0}\noom_kill 0\n`},runJob:async(_input,{probe:isProbe})=>{if(isProbe)return probe;throw new ServiceError(422,'IMAGE_PROCESSING_FAILED','Invalid image');}});
+  const service=fixture({io:{readFile:async name=>name.endsWith('pids.current')?'2':name.endsWith('pids.events')?'max 0':`oom ${oom?1:0}\noom_kill 0\n`},runJob:async(_input,{probe:isProbe})=>{if(isProbe)return probe;throw new ServiceError(422,'IMAGE_PROCESSING_FAILED','Invalid image');}});
   await service.initialize();
   await assert.rejects(service.convert(Buffer.alloc(0)),e=>e.status===422);
   assert.equal(service.isReady(),true);oom=true;

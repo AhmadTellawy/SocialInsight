@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { stat, readdir } from 'node:fs/promises';
 import sharp from 'sharp';
+import { inspectConfinedOutput } from './confinedOutputEvidence.js';
 
 sharp.block({operation:['VipsForeignLoad']});
 sharp.unblock({operation:['VipsForeignLoadPngFile','VipsForeignLoadWebpBuffer']});
@@ -15,15 +16,18 @@ function frame(header, data = Buffer.alloc(0)) {
 try {
   await new Promise((resolve,reject)=>{
     // Never detached: the launcher sealed the worker group before Node started.
-    const child=spawn('/usr/local/bin/si-heif-confine',['--native',input,decoded,String(process.pid)],{
-      env:{}, shell:false, detached:false, stdio:'ignore',
-    });
+    let child;
+    try {
+      child=spawn('/usr/local/bin/si-heif-confine',['--native',process.cwd(),input,decoded,String(process.pid)],{
+        env:{}, shell:false, detached:false, stdio:'ignore',
+      });
+    } catch { reject(new Error('NATIVE_START_FAILED')); return; }
     process.stderr.write('CONFINEMENT_PHASE:NATIVE_STARTED\n');
     // The broker still enforces 45 seconds for this complete fresh worker.
     // Reserve the remainder for Sharp after bounded native decoding on 0.1CPU.
     const timer=setTimeout(()=>{process.stderr.write('CONFINEMENT_NATIVE_TIMEOUT\n');process.kill(0,'SIGKILL');},30_000);
     child.once('error',()=>{clearTimeout(timer);reject(new Error('NATIVE_START_FAILED'));});
-    child.once('close',(code,signal)=>{clearTimeout(timer);process.stderr.write('CONFINEMENT_NATIVE_EXIT:'+String(code??signal??'UNKNOWN')+'\n');code===0?resolve():reject(new Error('INVALID_HEIF'));});
+    child.once('close',(code,signal)=>{clearTimeout(timer);process.stderr.write('CONFINEMENT_NATIVE_EXIT:'+String(code??signal??'UNKNOWN')+'\n');code===0?resolve():reject(new Error(code===78?'NATIVE_CONFINEMENT_FAILED':'INVALID_HEIF'));});
   });
   const files=(await readdir(process.cwd())).sort();
   const output=await stat(decoded);
@@ -35,16 +39,15 @@ try {
     .resize({width:2400,height:2400,fit:'inside',withoutEnlargement:true})
     .webp({quality:92,alphaQuality:100,smartSubsample:true,effort:4})
     .toBuffer({resolveWithObject:true});
-  const meta=await sharp(data,{failOn:'error',limitInputPixels:40_000_000}).metadata();
-  if(info.format!=='webp' || meta.format!=='webp' || !meta.width || !meta.height
-    || meta.width>2400 || meta.height>2400 || data.length>12*1024*1024
-    || meta.exif || meta.xmp || meta.iptc || meta.icc) throw new Error('INVALID_ENCODED_OUTPUT');
+  if(info.format!=='webp')throw new Error('INVALID_ENCODED_OUTPUT');
+  const evidence=await inspectConfinedOutput(data,sharp);
   process.stderr.write('CONFINEMENT_PHASE:ENCODE_FINISHED\n');
-  frame({ok:true,mime:'image/webp',width:meta.width,height:meta.height,bytes:data.length},data);
+  frame({ok:true,mime:'image/webp',...evidence,bytes:data.length},data);
  } catch (error) {
   // Report only a fixed classification, never a native message or file path.
-  const reason=error?.code==='EAGAIN'||/thread|Resource temporarily unavailable/i.test(String(error?.message))?'THREAD_RESOURCE':error?.message==='NATIVE_START_FAILED'?'NATIVE_START':error?.message==='INVALID_HEIF'?'NATIVE_REJECT':'ENCODE_REJECT';
+  const reason=error?.code==='EAGAIN'||/thread|Resource temporarily unavailable/i.test(String(error?.message))?'THREAD_RESOURCE':error?.message==='NATIVE_START_FAILED'?'NATIVE_START':error?.message==='NATIVE_CONFINEMENT_FAILED'?'NATIVE_CONFINEMENT':error?.message==='INVALID_HEIF'?'NATIVE_REJECT':'ENCODE_REJECT';
+  const fatal=['NATIVE_START','NATIVE_CONFINEMENT','THREAD_RESOURCE'].includes(reason);
   process.stderr.write('CONFINEMENT_FAILURE:'+reason+'\n');
-  frame({ok:false,code:'IMAGE_PROCESSING_FAILED',bytes:0});
-  process.exitCode=1;
+  frame({ok:false,code:fatal?'CONFINEMENT_UNAVAILABLE':'IMAGE_PROCESSING_FAILED',bytes:0});
+  process.exitCode=fatal?78:1;
 }

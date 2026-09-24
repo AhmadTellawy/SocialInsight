@@ -1,19 +1,28 @@
 // Credential-free fault fixture; no HTTP route imports or selects this file.
 import { spawn } from 'node:child_process';
 const mode=process.argv[4];
+function spawnHelper() {
+  try{return spawn('/usr/local/bin/si-heif-confine',['--fault-helper',process.cwd(),mode,String(process.pid)],{env:{},stdio:['ignore','pipe','ignore']});}
+  catch{process.exit(78);}
+}
+function observeHelper(child) {
+  // The child handle keeps a held fixture alive. Once it closes, the worker
+  // must close too so the broker can kill/reap the remaining synthetic group.
+  child.once('error',()=>{process.exitCode=78;});
+  child.once('close',code=>{if(process.exitCode!==78)process.exitCode=code===78?78:1;});
+}
 if(mode==='fork-exhaust'||mode==='thread-exhaust') {
-  const child=spawn('/usr/local/bin/si-heif-confine',['--'+mode+'-probe',String(process.pid)],{env:{},stdio:['ignore','pipe','ignore']});
+  const child=spawnHelper();
   let output='';child.stdout.on('data',data=>{output+=data.toString();if(output.length>1024)process.exit(1);if(output.endsWith('\n'))process.stderr.write('CONFINEMENT_EXHAUSTION:'+output);});
-  child.on('error',()=>process.exit(1));setInterval(()=>{},1000);
+  observeHelper(child);
 } else if(mode==='orphan'||mode==='hold') {
-  const child=spawn('/usr/local/bin/si-heif-confine',['--fork-sleeper',mode,String(process.pid)],{env:{},stdio:['ignore','pipe','ignore']});
+  const child=spawnHelper();
   child.stdout.once('data',data=>{
     const {descendant}=JSON.parse(data.toString());
     if(!Number.isSafeInteger(descendant)||descendant<2)process.exit(1);
     process.stderr.write('CONFINEMENT_LIFETIME:'+descendant+'\n');
   });
-  child.on('error',()=>process.exit(1));
-  setInterval(()=>{},1000);
+  observeHelper(child);
 } else if(mode==='hang') {
   // Includes the actual native Sharp module in the bounded worker lifetime.
   const sharp=(await import('sharp')).default;
