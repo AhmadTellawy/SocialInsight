@@ -36,7 +36,7 @@ services:
     runtime: node
     plan: free
     region: singapore
-    buildCommand: cd server && npm ci && npx prisma generate && npx prisma migrate deploy && npm run build
+    buildCommand: cd server && npm ci --include=dev && npx prisma generate && npx prisma migrate deploy && npm run build
     startCommand: node stage-hosted/start-api.cjs
     healthCheckPath: /api/health
     envVars:
