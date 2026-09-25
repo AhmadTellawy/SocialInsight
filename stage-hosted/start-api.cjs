@@ -24,6 +24,8 @@ const {setMediaStorageForTests}=require('../server/dist/services/mediaStorage.js
 setMediaStorageForTests(require('./stage-media-adapter.cjs')());
 require('./seed-synthetic.cjs')().then(()=>{
  const {httpServer}=require('../server/dist/app.js');
+ require('../server/dist/pages/pageNotificationService.js').startPageOutboxWorker();
+ require('../server/dist/pages/pageLifecycleWorker.js').startPageLifecycleWorker();
  const port=process.env.PORT||3001;
  httpServer.listen(port,()=>console.log(`Stage API listening on port ${port}`));
 }).catch(()=>{process.exitCode=1;});
