@@ -9,6 +9,11 @@ const base=`https://${process.env.RENDER_EXTERNAL_HOSTNAME}`;
 if(base!==`https://${NAME}.onrender.com`)throw Error('STAGE_MEDIA_PUBLIC_IDENTITY');
 const port=Number(process.env.PORT);if(!Number.isInteger(port)||port<=0)throw Error('STAGE_MEDIA_PORT');
 const root=path.join(os.tmpdir(),'si-pages-qa-media');
+const databaseUrl=process.env.DATABASE_URL;
+if(databaseUrl){
+ if(new URL(databaseUrl).pathname!=='/si_pages_qa'||/supabase/i.test(databaseUrl))throw Error('STAGE_MEDIA_DATABASE_IDENTITY');
+}
+const db=databaseUrl?new (require('../server/node_modules/@prisma/client').PrismaClient)():null;
 const buckets=new Set(['media-originals','media-private','media-public']),signed=new Map();
 let bytesWritten=0,uploads=0,downloads=0;
 function objectPath(bucket,key){
@@ -25,8 +30,21 @@ function json(res,status,data){res.writeHead(status,{'Content-Type':'application
 function safeError(res,error){json(res,error.message==='BAD_OBJECT'?400:error.code==='ENOENT'?404:error.code==='EEXIST'?409:500,{error:'STAGE_MEDIA_OPERATION_FAILED'});}
 async function body(req,max=15*1024*1024){let chunks=[],size=0;for await(const c of req){size+=c.length;if(size>max)throw Error('BODY_TOO_LARGE');chunks.push(c);}return Buffer.concat(chunks);}
 async function parsed(req){return JSON.parse((await body(req,4096)).toString('utf8'));}
-async function write(bucket,key,data,mime,replace){const file=objectPath(bucket,key);await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,data,{flag:replace?'w':'wx'});await fs.writeFile(file+'.meta',JSON.stringify({mime:mime||'application/octet-stream'}));bytesWritten+=data.length;uploads++;}
-async function read(bucket,key){const file=objectPath(bucket,key),[data,meta]=await Promise.all([fs.readFile(file),fs.readFile(file+'.meta','utf8')]);downloads++;return {data,mime:JSON.parse(meta).mime};}
+async function write(bucket,key,data,mime,replace){
+ const file=objectPath(bucket,key);mime=mime||'application/octet-stream';
+ if(db){
+  if(replace)await db.$executeRaw`INSERT INTO stage_media_objects (bucket,object_key,bytes,mime) VALUES (${bucket},${key},${data},${mime}) ON CONFLICT (bucket,object_key) DO UPDATE SET bytes=EXCLUDED.bytes,mime=EXCLUDED.mime`;
+  else{const rows=await db.$queryRaw`INSERT INTO stage_media_objects (bucket,object_key,bytes,mime) VALUES (${bucket},${key},${data},${mime}) ON CONFLICT (bucket,object_key) DO NOTHING RETURNING object_key`;if(!rows.length){const error=Error('EXISTS');error.code='EEXIST';throw error;}}
+ }else{await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,data,{flag:replace?'w':'wx'});await fs.writeFile(file+'.meta',JSON.stringify({mime}));}
+ bytesWritten+=data.length;uploads++;
+}
+async function read(bucket,key){
+ const file=objectPath(bucket,key);let data,mime;
+ if(db){const rows=await db.$queryRaw`SELECT bytes,mime FROM stage_media_objects WHERE bucket=${bucket} AND object_key=${key}`;if(!rows.length){const error=Error('MISSING');error.code='ENOENT';throw error;}data=Buffer.from(rows[0].bytes);mime=rows[0].mime;}
+ else{const result=await Promise.all([fs.readFile(file),fs.readFile(file+'.meta','utf8')]);data=result[0];mime=JSON.parse(result[1]).mime;}
+ downloads++;return {data,mime};
+}
+async function remove(bucket,key){const file=objectPath(bucket,key);if(db)await db.$executeRaw`DELETE FROM stage_media_objects WHERE bucket=${bucket} AND object_key=${key}`;else for(const target of [file,file+'.meta'])await fs.unlink(target).catch(e=>{if(e.code!=='ENOENT')throw e;});}
 function cors(req,res){const origin=req.headers.origin;if(!origin)return true;if(origin!==WEB){json(res,403,{error:'ORIGIN_FORBIDDEN'});return false;}res.setHeader('Access-Control-Allow-Origin',WEB);res.setHeader('Vary','Origin');return true;}
 const server=http.createServer(async(req,res)=>{
  if(!cors(req,res))return;
@@ -55,7 +73,7 @@ const server=http.createServer(async(req,res)=>{
    }
    if(req.method==='POST'&&parts[1]==='remove'){
     const q=await parsed(req);if(!Array.isArray(q.keys)||q.keys.length>100)throw Error('BAD_OBJECT');
-    for(const key of q.keys){const file=objectPath(q.bucket,key);for(const target of [file,file+'.meta'])await fs.unlink(target).catch(e=>{if(e.code!=='ENOENT')throw e;});}return json(res,200,{ok:true});
+    for(const key of q.keys)await remove(q.bucket,key);return json(res,200,{ok:true});
    }
    if(req.method==='GET'&&parts[1]==='metrics')return json(res,200,{uploads,downloads,bytesWritten});
    return json(res,404,{error:'NOT_FOUND'});
@@ -74,5 +92,8 @@ const server=http.createServer(async(req,res)=>{
   return json(res,404,{error:'NOT_FOUND'});
  }catch(error){safeError(res,error);}
 });
-if(require.main===module){fs.mkdir(root,{recursive:true}).then(()=>server.listen(port,'0.0.0.0')).catch(()=>{process.exitCode=1;});}
+if(require.main===module){
+ const ready=db?db.$executeRawUnsafe('CREATE TABLE IF NOT EXISTS stage_media_objects (bucket TEXT NOT NULL, object_key TEXT NOT NULL, bytes BYTEA NOT NULL, mime TEXT NOT NULL, PRIMARY KEY (bucket,object_key))'):fs.mkdir(root,{recursive:true});
+ ready.then(()=>server.listen(port,'0.0.0.0')).catch(()=>{process.exitCode=1;});
+}
 module.exports={server,objectPath,authorized};
