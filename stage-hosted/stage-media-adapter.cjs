@@ -12,7 +12,7 @@ module.exports=function createStageAdapter(){
   const headers={Authorization:`Bearer ${secret}`};let body;
   if(data!==undefined){if(Buffer.isBuffer(data)){body=data;headers['Content-Type']='application/octet-stream';}else{body=JSON.stringify(data);headers['Content-Type']='application/json';}}
   let response;
-  try{response=await fetch(`${publicBase}/admin/${action}${query}`,{method,headers,body,signal:AbortSignal.timeout(12000)});}
+  try{response=await fetch(`${publicBase}/admin/${action}${query}`,{method,headers,body,signal:AbortSignal.timeout(90000)});}
   catch(error){console.error(JSON.stringify({event:'stage_media_call_failed',action,reason:error?.name||'NETWORK'}));throw error;}
   if(!response.ok){console.error(JSON.stringify({event:'stage_media_call_failed',action,status:response.status}));throw Error(`STAGE_MEDIA_HTTP_${response.status}`);}
   if(action==='object'&&method==='GET')return Buffer.from(await response.arrayBuffer());
