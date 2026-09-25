@@ -1,5 +1,6 @@
 {
   "buildCommand": "vite build",
+  "ignoreCommand": "node stage-hosted/ignore-vercel-preview.cjs",
   "functions": { "api/pages-document.js": { "includeFiles": "dist/index.html" } },
   "headers": [
     { "source": "/pages/manage/:path*", "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }] },
