@@ -22,4 +22,8 @@ process.env.VAPID_PRIVATE_KEY=vapid.privateKey;
 process.env.VAPID_SUBJECT='mailto:privacy@opiniup.com';
 const {setMediaStorageForTests}=require('../server/dist/services/mediaStorage.js');
 setMediaStorageForTests(require('./stage-media-adapter.cjs')());
-require('./seed-synthetic.cjs')().then(()=>require('../server/dist/app.js')).catch(()=>{process.exitCode=1;});
+require('./seed-synthetic.cjs')().then(()=>{
+ const {httpServer}=require('../server/dist/app.js');
+ const port=process.env.PORT||3001;
+ httpServer.listen(port,()=>console.log(`Stage API listening on port ${port}`));
+}).catch(()=>{process.exitCode=1;});
