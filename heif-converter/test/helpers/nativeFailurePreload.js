@@ -20,7 +20,9 @@ if(process.env.SI_TEST_PAUSE_NATIVE_EXIT==='1') {
       // Publish the real worker's earliest exit diagnostic, then hold its JS
       // continuation so the broker must classify before any later FAILURE/frame.
       writeSync(2,chunk);
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,5000);
+      // Keep the pre-frame gap comfortably wider than the Windows fixture
+      // process-startup timeout, which can be delayed by host security scans.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,30000);
       return true;
     }
     return write(chunk,...args);

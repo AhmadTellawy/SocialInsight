@@ -53,14 +53,23 @@ test('opens the listener only after health and native evidence pass', async () =
       return { status: 'ready' };
     },
     runStartupNativeProbe: async () => { order.push('native'); return nativeProbe; },
+    createReadinessEvidence: ({ nativeEvidence, nativeProbe: probe, processControl }) => {
+      order.push('readiness');
+      assert.deepEqual(nativeEvidence, { status: 'ready' });
+      assert.equal(probe, nativeProbe);
+      assert.deepEqual(processControl, processControlFixture);
+      return { status: 'ready', service: 'heif-converter', versions: {}, nativeBuild: {}, nativeProbe: {}, confinement: { schemaVersion: 2, policy: 'rlimit-nproc-v2', status: 'passed', processControl } };
+    },
     createConverterServer: ({ healthEvidence }) => {
       order.push('server');
-      assert.equal(healthEvidence.nativeProbe, nativeProbe);
-      assert.equal(healthEvidence.confinement.status, 'passed');
+      assert.equal(healthEvidence.confinement.schemaVersion, 2);
+      assert.equal(healthEvidence.confinement.policy, 'rlimit-nproc-v2');
+      assert.deepEqual(healthEvidence.confinement.processControl, processControlFixture);
       return { listen(_port, _host, callback) { order.push('listen'); callback(); } };
     },
     logger: { info() {} },
   });
-  assert.deepEqual(order, ['mkdir', 'confinement', 'health', 'native', 'server', 'listen']);
-  assert.equal(result.healthEvidence.nativeProbe, nativeProbe);
+  assert.deepEqual(order, ['mkdir', 'confinement', 'health', 'native', 'readiness', 'server', 'listen']);
+  assert.deepEqual(Object.keys(result.healthEvidence), ['status', 'service', 'versions', 'nativeBuild', 'nativeProbe', 'confinement']);
+  assert.deepEqual(Object.keys(result.healthEvidence.confinement), ['schemaVersion', 'policy', 'status', 'processControl']);
 });

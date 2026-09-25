@@ -42,11 +42,17 @@ test('finite large PID backstop is accepted but malformed, missing and ambiguous
   }}),error=>error.phase==='CGROUP_WRITABLE');
   assert.equal(closed,true);
 });
-test('strict PID/OOM baseline checking rejects changed, duplicate, missing and malformed counters',async()=>{
+test('strict PID/OOM baseline checking accepts the observed PID baseline without assuming a provider count',async()=>{
   const resources=await verifyResourceEnvelope(io());
-  await verifyResourceCounters(resources,io());
-  for(const [name,value] of [['pids.events','max 1'],['memory.events','oom 1\noom_kill 0'],
-    ['memory.events','oom 0\noom_kill 1'],['pids.current','max'],['pids.events','max 0\nmax 0']]) {
+  assert.equal(resources.counterBaselines[0].pidsCurrent,2);
+  assert.deepEqual(await verifyResourceCounters(resources,io()),resources.counterBaselines);
+});
+
+test('strict PID/OOM reconciliation rejects unreaped PID drift and changed or malformed counters',async()=>{
+  const resources=await verifyResourceEnvelope(io());
+  for(const [name,value] of [['pids.current','3'],['pids.current','1'],['pids.events','max 1'],
+    ['memory.events','oom 1\noom_kill 0'],['memory.events','oom 0\noom_kill 1'],
+    ['pids.current','max'],['pids.events','max 0\nmax 0']]) {
     await assert.rejects(verifyResourceCounters(resources,io({[`/sys/fs/cgroup/${name}`]:value})));
   }
   for(const text of ['max 0\nmax 0','max -1','max 01','max 1x','other 0','max 9007199254740992'])assert.throws(()=>parseCounters(text,['max']));

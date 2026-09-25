@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { loadConfig } from './config.js';
 import { ConfinedHeifConverter } from './confinedService.js';
-import { loadHealthEvidence } from './health.js';
+import { createReadinessEvidence, loadHealthEvidence } from './health.js';
 import { createConverterServer } from './server.js';
 import { runStartupNativeProbe } from './startupNativeProbe.js';
 import { validateProcessControl } from './processControl.js';
@@ -35,30 +35,18 @@ export async function bootstrapConverterService(dependencies = {}) {
       sharpVersions: initialized.probe.versions,
     });
     const nativeProbe = await (dependencies.runStartupNativeProbe ?? runStartupNativeProbe)(config, converter);
-    const confinement = Object.freeze({
-      schemaVersion: 2,
-      policy: 'rlimit-nproc-v2',
+    const healthEvidence = (dependencies.createReadinessEvidence ?? createReadinessEvidence)({
+      nativeEvidence: baseHealthEvidence,
+      nativeProbe,
       processControl,
-      status: 'passed',
-      checks: initialized.probe.checks,
-      syscallReport: initialized.probe.syscallReport,
-      envelope: Object.freeze({
-        uid: 10001,
-        noNewPrivileges: true,
-        storage: initialized.envelope.storage.storage,
-        memoryBytes: initialized.envelope.resources.memoryBytes,
-        swapBytes: initialized.envelope.resources.swapBytes,
-        pids: initialized.envelope.resources.pids,
-        cpuQuota: initialized.envelope.resources.cpuQuota,
-      }),
     });
-    const healthEvidence = Object.freeze({ ...baseHealthEvidence, confinement, nativeProbe });
     logger.info(JSON.stringify({
       event: 'heif_native_startup_probe_passed',
       fixtureSet: nativeProbe.fixtureSet,
       cases: nativeProbe.cases,
       elapsedMs: nativeProbe.elapsedMs,
-      confinement: { checks: confinement.checks.length, negativeSyscalls: confinement.syscallReport.negativeSyscalls },
+      readinessSchema: healthEvidence.confinement.schemaVersion,
+      processPolicy: healthEvidence.confinement.policy,
       commit: process.env.RENDER_GIT_COMMIT ?? null,
       instance: process.env.RENDER_INSTANCE_ID ?? null,
     }));

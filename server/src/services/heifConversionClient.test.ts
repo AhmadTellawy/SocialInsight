@@ -34,11 +34,7 @@ const nativeBuild = {
   libde265Commit: '4dd701fffac01632ffd5cabc5ef10deb56accba1',
 };
 
-const confinement = {
-  schemaVersion: 2,
-  policy: 'rlimit-nproc-v2',
-  status: 'passed',
-  processControl: {
+const processControl = {
     supervisorLimit: 128,
     workerLimit: 32,
     brokerFilterInstalled: true,
@@ -50,10 +46,6 @@ const confinement = {
     countersUnchanged: true,
     cleanupPassed: true,
     attribution: 'UNCLAIMED',
-  },
-  checks: Array.from({ length: 19 }, (_, index) => `check-${index}`),
-  syscallReport: { negativeSyscalls: 31, limitsVerified: 5 },
-  envelope: { uid: 10001, noNewPrivileges: true, swapBytes: 0 },
 };
 
 const readinessBody = () => structuredClone({
@@ -62,7 +54,7 @@ const readinessBody = () => structuredClone({
   versions: { libheif: '1.23.4', libde265: '1.1.1', sharp: '0.35.4' },
   nativeBuild,
   nativeProbe,
-  confinement,
+  confinement: { schemaVersion: 2, policy: 'rlimit-nproc-v2', status: 'passed', processControl },
 });
 
 test.afterEach(() => {
@@ -80,27 +72,24 @@ test('advertises readiness only for the pinned converter runtime', async () => {
   const ready = await verifyHeifConversionReadiness(true, async () => Response.json({
     status: 'ready',
     service: 'heif-converter',
-    versions: { libheif: '1.23.4', libde265: '1.1.1', sharp: '0.35.4' },
-    nativeBuild,
-    nativeProbe,
-    confinement
+    versions: { libheif: '1.23.4', libde265: '1.1.1', sharp: '0.35.4' }, nativeBuild, nativeProbe,
+    confinement: { schemaVersion: 2, policy: 'rlimit-nproc-v2', status: 'passed', processControl }
   }));
   assert.equal(ready, true);
   resetHeifReadinessForTests();
   const stale = await verifyHeifConversionReadiness(true, async () => Response.json({
     status: 'ready',
     service: 'heif-converter',
-    versions: { libheif: '1.23.2', libde265: '1.1.1', sharp: '0.35.4' },
-    nativeBuild,
-    nativeProbe
+    versions: { libheif: '1.23.2', libde265: '1.1.1', sharp: '0.35.4' }, nativeBuild, nativeProbe,
+    confinement: { schemaVersion: 2, policy: 'rlimit-nproc-v2', status: 'passed', processControl }
   }));
   assert.equal(stale, false);
   resetHeifReadinessForTests();
   const unproven = await verifyHeifConversionReadiness(true, async () => Response.json({
     status: 'ready',
     service: 'heif-converter',
-    versions: { libheif: '1.23.4', libde265: '1.1.1', sharp: '0.35.4' },
-    nativeBuild
+    versions: { libheif: '1.23.4', libde265: '1.1.1', sharp: '0.35.4' }, nativeBuild,
+    confinement: { schemaVersion: 2, policy: 'rlimit-nproc-v2', status: 'passed', processControl }
   }));
   assert.equal(unproven, false);
 });
@@ -127,7 +116,7 @@ test('requires schema 2 and the exact process policy', async () => {
 
 test('rejects every missing process-control field and every nonliteral proof boolean', async () => {
   configure();
-  for (const [key, expected] of Object.entries(confinement.processControl)) {
+  for (const [key, expected] of Object.entries(processControl)) {
     const values = expected === true ? [undefined, null, false, 0, 1, 'true', {}, []] : [undefined, null];
     for (const value of values) {
       const body = readinessBody();
@@ -154,29 +143,21 @@ test('requires exact numeric 128 and 32 limits and unclaimed attribution', async
 
 test('rejects malformed or expanded process proof, including provider inventory', async () => {
   configure();
-  for (const processControl of [
-    undefined, null, {}, [], true, 'passed', Object.values(confinement.processControl),
-    { ...confinement.processControl, pid: 123 },
-    { ...confinement.processControl, sharedUidTasks: 1 },
-    { ...confinement.processControl, namespace: 'provider-namespace' },
+  for (const candidate of [
+    undefined, null, {}, [], true, 'passed', Object.values(processControl),
+    { ...processControl, pid: 123 },
+    { ...processControl, sharedUidTasks: 1 },
+    { ...processControl, namespace: 'provider-namespace' },
   ]) {
     const body = readinessBody();
-    Object.assign(body.confinement, { processControl });
+    Object.assign(body.confinement, { processControl: candidate });
     assert.equal(await verifyHeifConversionReadiness(true, async () => Response.json(body)), false);
   }
 });
 
-test('schema 2 preserves mandatory confinement and pinned native evidence', async () => {
+test('schema 2 preserves the pinned native evidence', async () => {
   configure();
   const mutations: Array<(body: ReturnType<typeof readinessBody>) => void> = [
-    body => { body.confinement.status = 'failed'; },
-    body => { body.confinement.checks.pop(); },
-    body => { Object.assign(body.confinement, { checks: { length: 19 } }); },
-    body => { body.confinement.syscallReport.negativeSyscalls = 30; },
-    body => { body.confinement.syscallReport.limitsVerified = 4; },
-    body => { body.confinement.envelope.uid = 0; },
-    body => { body.confinement.envelope.noNewPrivileges = false; },
-    body => { body.confinement.envelope.swapBytes = 1; },
     body => { body.nativeProbe.status = 'failed'; },
     body => { body.nativeProbe.cases[0].fixtureSha256 = 'unverified'; },
     body => { body.nativeProbe.cases.pop(); },
@@ -187,6 +168,38 @@ test('schema 2 preserves mandatory confinement and pinned native evidence', asyn
     const body = readinessBody();
     mutate(body);
     assert.equal(await verifyHeifConversionReadiness(true, async () => Response.json(body)), false, `retained guard ${index}`);
+  }
+});
+
+test('rejects every missing or additional schema field, including legacy confinement inventory', async () => {
+  configure();
+  const paths: Array<readonly [string, ...string[]]> = [
+    ['status'], ['service'], ['versions'], ['nativeBuild'], ['nativeProbe'], ['confinement'],
+    ['versions', 'sharp'], ['versions', 'libheif'], ['versions', 'libde265'],
+    ['nativeBuild', 'libheifRef'], ['nativeBuild', 'libde265Ref'], ['nativeBuild', 'libheifCommit'], ['nativeBuild', 'libde265Commit'],
+    ['nativeProbe', 'schemaVersion'], ['nativeProbe', 'status'], ['nativeProbe', 'fixtureSet'], ['nativeProbe', 'cases'],
+    ['confinement', 'schemaVersion'], ['confinement', 'policy'], ['confinement', 'status'], ['confinement', 'processControl'],
+  ];
+  for (const path of paths) {
+    const body = readinessBody() as Record<string, any>;
+    const parent = path.slice(0, -1).reduce((value, key) => value[key], body);
+    delete parent[path.at(-1)!];
+    assert.equal(await verifyHeifConversionReadiness(true, async () => Response.json(body)), false, `missing ${path.join('.')}`);
+  }
+  const additions: Array<(body: ReturnType<typeof readinessBody>) => void> = [
+    body => { Object.assign(body, { providerResources: {} }); },
+    body => { Object.assign(body.confinement, { checks: [] }); },
+    body => { Object.assign(body.confinement, { syscallReport: {} }); },
+    body => { Object.assign(body.confinement, { envelope: {} }); },
+    body => { Object.assign(body.versions, { node: '24.0.0' }); },
+    body => { Object.assign(body.nativeBuild, { heifConvertSha256: 'inventory' }); },
+    body => { Object.assign(body.nativeProbe, { elapsedMs: 1 }); },
+    body => { Object.assign(body.nativeProbe.cases[0], { providerDetail: true }); },
+  ];
+  for (const [index, add] of additions.entries()) {
+    const body = readinessBody();
+    add(body);
+    assert.equal(await verifyHeifConversionReadiness(true, async () => Response.json(body)), false, `additional field ${index}`);
   }
 });
 

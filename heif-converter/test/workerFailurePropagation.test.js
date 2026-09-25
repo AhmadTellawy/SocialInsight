@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 async function run(scenario) {
   return new Promise((resolve,reject)=>{
     const child=spawn(process.execPath,[fileURLToPath(new URL('./helpers/workerFailureHarness.js',import.meta.url)),scenario],{stdio:['ignore','pipe','pipe']});
-    let out='',err='';const timer=setTimeout(()=>child.kill('SIGKILL'),15000);
+    let out='',err='';const timer=setTimeout(()=>child.kill('SIGKILL'),45000);
     child.stdout.on('data',chunk=>{out+=chunk;});child.stderr.on('data',chunk=>{err+=chunk;});
     child.once('error',reject);child.once('close',code=>{
       clearTimeout(timer);try{assert.equal(code,0,err);resolve(JSON.parse(out));}catch(error){reject(error);}

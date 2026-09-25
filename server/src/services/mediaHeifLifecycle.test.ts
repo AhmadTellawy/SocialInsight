@@ -50,9 +50,6 @@ const confinement = {
     cleanupPassed: true,
     attribution: 'UNCLAIMED',
   },
-  checks: Array.from({ length: 19 }, (_, index) => `check-${index}`),
-  syscallReport: { negativeSyscalls: 31, limitsVerified: 5 },
-  envelope: { uid: 10001, noNewPrivileges: true, swapBytes: 0 },
 };
 
 test.afterEach(() => {

@@ -46,3 +46,42 @@ export async function loadHealthEvidence(config, dependencies = {}) {
     }),
   });
 }
+
+export function createReadinessEvidence({ nativeEvidence, nativeProbe, processControl }) {
+  const cases = nativeProbe.cases.map(item => Object.freeze({
+    id: item.id,
+    fixtureSha256: item.fixtureSha256,
+    inputMime: item.inputMime,
+    outputMime: item.outputMime,
+    width: item.width,
+    height: item.height,
+    hasAlpha: item.hasAlpha,
+  }));
+  return Object.freeze({
+    status: nativeEvidence.status,
+    service: nativeEvidence.service,
+    versions: Object.freeze({
+      sharp: nativeEvidence.versions.sharp,
+      libheif: nativeEvidence.versions.libheif,
+      libde265: nativeEvidence.versions.libde265,
+    }),
+    nativeBuild: Object.freeze({
+      libheifRef: nativeEvidence.nativeBuild.libheifRef,
+      libde265Ref: nativeEvidence.nativeBuild.libde265Ref,
+      libheifCommit: nativeEvidence.nativeBuild.libheifCommit,
+      libde265Commit: nativeEvidence.nativeBuild.libde265Commit,
+    }),
+    nativeProbe: Object.freeze({
+      schemaVersion: nativeProbe.schemaVersion,
+      status: nativeProbe.status,
+      fixtureSet: nativeProbe.fixtureSet,
+      cases: Object.freeze(cases),
+    }),
+    confinement: Object.freeze({
+      schemaVersion: 2,
+      policy: 'rlimit-nproc-v2',
+      status: 'passed',
+      processControl,
+    }),
+  });
+}

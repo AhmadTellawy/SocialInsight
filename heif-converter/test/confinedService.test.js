@@ -13,7 +13,7 @@ const probe={ok:true,checks:Array(19).fill('synthetic'),syscallReport:{negativeS
 const unavailable=()=>new ServiceError(503,'WORKER_CLEANUP_FAILED','Unavailable');
 function fixture(overrides={}) {
   return new ConfinedHeifConverter({
-    bootstrap:async()=>({resources:{counterPaths:[{memoryEventsPath:'/synthetic/events',pidsEventsPath:'/synthetic/pids.events',pidsCurrentPath:'/synthetic/pids.current'}],counterBaselines:[{oom:0,oomKill:0,pidsMaxEvents:0}]}}),
+    bootstrap:async()=>({resources:{counterPaths:[{memoryEventsPath:'/synthetic/events',pidsEventsPath:'/synthetic/pids.events',pidsCurrentPath:'/synthetic/pids.current'}],counterBaselines:[{pidsCurrent:2,oom:0,oomKill:0,pidsMaxEvents:0}]}}),
     processProof:async()=>processControlFixture,
     checkRoot:async()=>{}, io:{readFile:async name=> name.endsWith('pids.current')?'2':name.endsWith('pids.events')?'max 0':'oom 0\noom_kill 0\n'},
     runJob:async(_input,{probe:isProbe})=>isProbe?probe:{data:Buffer.from('webp'),mime:'image/webp',width:1,height:1},

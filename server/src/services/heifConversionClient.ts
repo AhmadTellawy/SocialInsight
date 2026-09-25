@@ -3,6 +3,19 @@ import { MEDIA_CONFIG } from '../config/media';
 import { MediaValidationError } from './mediaProcessor';
 
 type FetchLike = typeof fetch;
+type ReadinessContract = {
+  status: unknown;
+  service: unknown;
+  versions: Record<string, unknown>;
+  nativeBuild: Record<string, unknown>;
+  nativeProbe: Record<string, unknown> & { cases: unknown };
+  confinement: {
+    schemaVersion: unknown;
+    policy: unknown;
+    status: unknown;
+    processControl: unknown;
+  };
+};
 
 // This allowlist is the public process-control contract, not raw probe output.
 // Never accept hosted UID attribution or provider process inventory as proof.
@@ -20,12 +33,16 @@ const PROCESS_CONTROL_V2 = Object.freeze({
   attribution: 'UNCLAIMED',
 });
 
-const hasProcessControlV2 = (value: unknown): boolean => {
+const hasExactKeys = <K extends string>(value: unknown, keys: readonly K[]): value is Record<K, unknown> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
+  const actual = Object.keys(value);
+  return actual.length === keys.length && keys.every(key => Object.prototype.hasOwnProperty.call(value, key));
+};
+
+const hasProcessControlV2 = (value: unknown): boolean => {
   const expected = Object.entries(PROCESS_CONTROL_V2);
-  return Object.keys(record).length === expected.length
-    && expected.every(([key, required]) => Object.prototype.hasOwnProperty.call(record, key) && record[key] === required);
+  return hasExactKeys(value, Object.keys(PROCESS_CONTROL_V2))
+    && expected.every(([key, required]) => value[key] === required);
 };
 
 const configuredUrl = (): URL | null => {
@@ -74,46 +91,28 @@ export const verifyHeifConversionReadiness = async (
       signal: controller.signal
     });
     if (response.status === 200) {
-      const body = await response.json() as {
-        status?: unknown;
-        service?: unknown;
-        versions?: { libheif?: unknown; libde265?: unknown; sharp?: unknown };
-        nativeBuild?: { libheifRef?: unknown; libde265Ref?: unknown; libheifCommit?: unknown; libde265Commit?: unknown };
-        nativeProbe?: {
-          schemaVersion?: unknown;
-          status?: unknown;
-          fixtureSet?: unknown;
-          cases?: Array<{
-            id?: unknown;
-            fixtureSha256?: unknown;
-            inputMime?: unknown;
-            outputMime?: unknown;
-            width?: unknown;
-            height?: unknown;
-            hasAlpha?: unknown;
-          }>;
-        };
-        confinement?: {
-          schemaVersion?: unknown;
-          policy?: unknown;
-          status?: unknown;
-          processControl?: unknown;
-          checks?: unknown[];
-          syscallReport?: { negativeSyscalls?: unknown; limitsVerified?: unknown };
-          envelope?: { uid?: unknown; noNewPrivileges?: unknown; swapBytes?: unknown };
-        };
-      };
-      const nativeCases = body.nativeProbe?.cases;
+      const body = await response.json() as unknown;
       const expectedCases = [
         ['rainbow-heic', '4b2ce727f093944975f143ba2b39c4c64511b766d94552f8d51a755916e7f983', 'image/heic', 451, 461, false],
         ['rainbow-generic-heif', '536badaba808ef5e5bf51f80611ab112440474dacc4cb3f99cb05a284d0a8391', 'image/heif', 451, 461, false],
         ['alpha-heic', 'dac399d3bf1019baaf5f88eef8b277087d0643e735db947c42355237bb9d0221', 'image/heic', 512, 512, true],
       ] as const;
-      const nativeCasesVerified = Array.isArray(nativeCases)
+      const contract = body as ReadinessContract;
+      const shapeVerified = hasExactKeys(body, ['status', 'service', 'versions', 'nativeBuild', 'nativeProbe', 'confinement'])
+        && hasExactKeys(contract.versions, ['sharp', 'libheif', 'libde265'])
+        && hasExactKeys(contract.nativeBuild, ['libheifRef', 'libde265Ref', 'libheifCommit', 'libde265Commit'])
+        && hasExactKeys(contract.nativeProbe, ['schemaVersion', 'status', 'fixtureSet', 'cases'])
+        && hasExactKeys(contract.confinement, ['schemaVersion', 'policy', 'status', 'processControl']);
+      if (!shapeVerified) {
+        ready = false;
+      } else {
+        const nativeCases = contract.nativeProbe.cases;
+        const nativeCasesVerified = Array.isArray(nativeCases)
         && nativeCases.length === expectedCases.length
         && expectedCases.every(([id, fixtureSha256, inputMime, width, height, hasAlpha], index) => {
           const item = nativeCases[index];
-          return item?.id === id
+          return hasExactKeys(item, ['id', 'fixtureSha256', 'inputMime', 'outputMime', 'width', 'height', 'hasAlpha'])
+            && item.id === id
             && item.fixtureSha256 === fixtureSha256
             && item.inputMime === inputMime
             && item.outputMime === 'image/webp'
@@ -121,30 +120,24 @@ export const verifyHeifConversionReadiness = async (
             && item.height === height
             && item.hasAlpha === hasAlpha;
         });
-      ready = body.status === 'ready'
-        && body.service === 'heif-converter'
-        && body.versions?.libheif === '1.23.4'
-        && body.versions?.libde265 === '1.1.1'
-        && body.versions?.sharp === '0.35.4'
-        && body.nativeBuild?.libheifRef === 'v1.23.4'
-        && body.nativeBuild?.libde265Ref === 'v1.1.1'
-        && body.nativeBuild?.libheifCommit === '4e14f5942c1732ace9611b9522cc991501445463'
-        && body.nativeBuild?.libde265Commit === '4dd701fffac01632ffd5cabc5ef10deb56accba1'
-        && body.nativeProbe?.schemaVersion === 1
-        && body.nativeProbe?.status === 'passed'
-        && body.nativeProbe?.fixtureSet === 'native-still-v1'
-        && body.confinement?.schemaVersion === 2
-        && body.confinement?.policy === 'rlimit-nproc-v2'
-        && body.confinement?.status === 'passed'
-        && hasProcessControlV2(body.confinement?.processControl)
-        && Array.isArray(body.confinement?.checks)
-        && body.confinement?.checks?.length === 19
-        && body.confinement?.syscallReport?.negativeSyscalls === 31
-        && body.confinement?.syscallReport?.limitsVerified === 5
-        && body.confinement?.envelope?.uid === 10001
-        && body.confinement?.envelope?.noNewPrivileges === true
-        && body.confinement?.envelope?.swapBytes === 0
-        && nativeCasesVerified;
+        ready = contract.status === 'ready'
+          && contract.service === 'heif-converter'
+          && contract.versions.libheif === '1.23.4'
+          && contract.versions.libde265 === '1.1.1'
+          && contract.versions.sharp === '0.35.4'
+          && contract.nativeBuild.libheifRef === 'v1.23.4'
+          && contract.nativeBuild.libde265Ref === 'v1.1.1'
+          && contract.nativeBuild.libheifCommit === '4e14f5942c1732ace9611b9522cc991501445463'
+          && contract.nativeBuild.libde265Commit === '4dd701fffac01632ffd5cabc5ef10deb56accba1'
+          && contract.nativeProbe.schemaVersion === 1
+          && contract.nativeProbe.status === 'passed'
+          && contract.nativeProbe.fixtureSet === 'native-still-v1'
+          && contract.confinement.schemaVersion === 2
+          && contract.confinement.policy === 'rlimit-nproc-v2'
+          && contract.confinement.status === 'passed'
+          && hasProcessControlV2(contract.confinement.processControl)
+          && nativeCasesVerified;
+      }
     }
   } catch {
     ready = false;

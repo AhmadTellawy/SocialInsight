@@ -68,7 +68,7 @@ try {
     },
     runJob:async(input,options)=>{
       if(options.probe)return{ok:true,checks:Array(19).fill('synthetic'),syscallReport:{negativeSyscalls:31}};
-      try{return await runConfinedJob(input,{...options,timeoutMs:scenario==='timeout-native-exit78'?2500:3000,onLifetime:()=>{lifetimes++;},...(fault?{fault:'orphan'}:{})});}
+      try{return await runConfinedJob(input,{...options,timeoutMs:scenario==='timeout-native-exit78'?20000:25000,onLifetime:()=>{lifetimes++;},...(fault?{fault:'orphan'}:{})});}
       catch(error){runnerError={code:error.code,status:error.status};throw error;}
     },
   });

@@ -31,7 +31,7 @@ export async function readResourceCounters(resources, io = fs) {
 export async function verifyResourceCounters(resources, io = fs) {
   const now = await readResourceCounters(resources, io);
   if (now.length !== resources.counterBaselines.length || now.some((v, i) =>
-    ['pidsMaxEvents', 'oom', 'oomKill'].some(k => v[k] !== resources.counterBaselines[i][k]))) throw unavailable('RESOURCE_COUNTERS');
+    ['pidsCurrent', 'pidsMaxEvents', 'oom', 'oomKill'].some(k => v[k] !== resources.counterBaselines[i][k]))) throw unavailable('RESOURCE_COUNTERS');
   return now;
 }
 
