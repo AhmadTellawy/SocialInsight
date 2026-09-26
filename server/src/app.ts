@@ -81,6 +81,10 @@ app.use('/uploads', express.static(path.join(__dirname, '../public/uploads')));
 const apiLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 500,
+    // The isolated synthetic Stage load generator uses one egress IP for 100 virtual users.
+    // Only its two public read routes bypass this IP quota; production retains the quota.
+    skip: req => process.env.STAGE_ONLY === 'true' && process.env.PAGES_LOAD_TEST_PUBLIC_READS === 'true'
+        && req.method === 'GET' && (req.path === '/pages' || req.path === '/pages/pages_stage_sample_26'),
     standardHeaders: true,
     legacyHeaders: false,
     message: 'Too many requests from this IP, please try again after 15 minutes'

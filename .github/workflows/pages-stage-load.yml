@@ -5,12 +5,14 @@ on:
     paths:
       - .github/workflows/pages-stage-load.yml
       - stage-hosted/pages-read-load.mjs
+      - stage-hosted/render.yaml
+      - server/src/app.ts
 permissions:
   contents: read
 jobs:
   pages-read-load:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

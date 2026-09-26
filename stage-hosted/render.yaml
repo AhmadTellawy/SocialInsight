@@ -56,6 +56,8 @@ services:
         value: 'true'
       - key: STAGE_ONLY
         value: 'true'
+      - key: PAGES_LOAD_TEST_PUBLIC_READS
+        value: 'true'
       - key: CLIENT_URL
         value: https://si-pages-qa-web-20260926.onrender.com
       - key: DATABASE_URL

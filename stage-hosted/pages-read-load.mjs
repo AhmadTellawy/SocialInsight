@@ -11,6 +11,21 @@ const thinkMs = 150;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const percentile = (sorted, p) => sorted.length ? Math.round(sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * p) - 1)] * 10) / 10 : null;
 
+async function waitForStageLoadMode() {
+  const until = performance.now() + 9 * 60_000;
+  let ready = 0;
+  while (performance.now() < until) {
+    try {
+      const response = await fetch(base + routes[0], { signal: AbortSignal.timeout(timeoutMs) });
+      await response.arrayBuffer();
+      ready = response.status === 200 && !response.headers.has('ratelimit-limit') ? ready + 1 : 0;
+      if (ready === 3) return;
+    } catch { ready = 0; }
+    await sleep(10_000);
+  }
+  throw new Error('Stage load mode was not ready; no measured traffic was sent');
+}
+
 async function runLevel(users) {
   const results = [];
   const start = performance.now();
@@ -67,6 +82,8 @@ async function runLevel(users) {
 
 const receipt = { kind: 'HOSTED_STAGE_PUBLIC_PAGES_READ_LOAD', target: base, generator: 'GitHub-hosted Ubuntu runner',
   started_at: new Date().toISOString(), workload: { routes, warmup_seconds: warmupMs / 1000, sample_seconds: sampleMs / 1000, think_ms: thinkMs, timeout_ms: timeoutMs }, levels: [] };
+await waitForStageLoadMode();
+receipt.stage_load_mode_ready_at = new Date().toISOString();
 for (const users of levels) {
   const level = await runLevel(users);
   receipt.levels.push(level);
