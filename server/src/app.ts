@@ -26,8 +26,10 @@ import { initSocket } from './services/socketService';
 import { isMediaStorageConfigured } from './services/mediaStorage';
 import prisma from './prisma';
 import { requestContext } from './middleware/requestContext';
+import { configureProxyTrust } from './middleware/proxyTrust';
 
 const app = express();
+configureProxyTrust(app);
 const httpServer = createServer(app);
 initSocket(httpServer);
 
