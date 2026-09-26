@@ -10,9 +10,10 @@
 | Data migration | PASSED LOCALLY | Fresh 20-migration deploy plus OTP/media PostgreSQL rehearsal passed |
 | Dependency security | PASSED | Both npm audit trees report 0 vulnerabilities |
 | Repository governance validator | BLOCKED | 655 checks passed; one unrelated task-staging root-drift utility contract failed |
-| External penetration test | BLOCKED | Qualified independent human test/retest required by audit point 26 is unavailable |
-| Representative staging | BLOCKED | No isolated Render backend/data/storage target is available; preview remains disabled to protect production |
-| Production release | BLOCKED | External security and staging gates have not passed |
-| Production verification and monitoring | NOT RUN | No production deployment of this release occurred |
+| External penetration test | BLOCKED — RISK ACCEPTED FOR ONE RELEASE | Qualified independent human test/retest required by audit point 26 is unavailable; founder instructed deployment without it after disclosure |
+| Representative staging | WAIVED FOR ONE RELEASE | Founder instructed direct production deployment because current users and data are experimental; this is an exception record, not a staging PASS |
+| Production release | EXECUTED UNDER FOUNDER EXCEPTION | Exact candidate `0a95d10` is live on Render and Vercel; the ordinary release gate remained blocked and was not represented as approved |
+| Production verification and monitoring | PASSED | Render health, migrations, storage, auth rejection, CORS, frontend/PWA and post-release logs verified; trust-proxy warning corrected and reverified |
+| Primary domain alias | OPEN | `socialinsightapp.com` is live; `opiniup.com` still resolves outside Vercel and refuses HTTPS |
 
-Release decision: `BLOCKED_ENVIRONMENT`. The code is locally release-candidate quality, but production publication would bypass explicit audit and repository release controls.
+Release outcome: `DEPLOYED_UNDER_EXPLICIT_FOUNDER_RISK_ACCEPTANCE`. This records what occurred and does not convert the missing audit-point-26 human penetration test into PASS or security certification.
