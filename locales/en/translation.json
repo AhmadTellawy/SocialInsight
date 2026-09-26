@@ -653,6 +653,7 @@
       "tryEmail": "Social sign-in could not be completed. Please try again or use email."
     },
     "signup": {
+      "cta": "Sign up",
       "genericError": "We could not continue registration. Please try again.",
       "sessionUnavailable": "Your registration session is no longer available. Please start again.",
       "dismiss": "Dismiss"

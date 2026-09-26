@@ -49,10 +49,10 @@ export const Header: React.FC<HeaderProps> = ({ onProfileClick, userProfile, onL
         ) : (
           <div className="flex items-center gap-4 mr-2">
             <button onClick={onLoginClick} className="text-[15px] font-bold text-[#0070BA] hover:text-blue-700 transition-colors">
-              {t('auth.login', 'Login')}
+              {t('auth.login.signIn')}
             </button>
             <button onClick={onSignUpClick} className="bg-[#0070BA] hover:bg-[#005ea3] text-white text-[15px] font-bold py-1.5 px-5 rounded-full transition-all active:scale-95 shadow-sm">
-              {t('auth.signup', 'Sign Up')}
+              {t('auth.signup.cta')}
             </button>
           </div>
         )}

@@ -9,11 +9,12 @@ import i18n from '../../i18n';
 import { SurveyCard } from '../../components/SurveyCard';
 import { SurveyQuestion } from '../../components/Survey/SurveyQuestion';
 import { MediaCarousel } from '../../components/media/MediaCarousel';
+import { Header } from '../../components/Header';
 import { SurveyType, type Survey, type MediaPresentation } from '../../types';
 
 const params = new URLSearchParams(location.search);
 document.documentElement.dir = params.get('dir') || 'ltr';
-void i18n.changeLanguage('en');
+void i18n.changeLanguage(params.get('lang') || 'en');
 const picture = (color: string, width = 800, height = 500) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="100%" height="100%" fill="${color}"/><circle cx="${width / 2}" cy="${height / 2}" r="100" fill="white"/></svg>`)}`;
 const media: MediaPresentation[] = ['#2563eb', '#0d9488', '#b45309'].map((color, i) => ({ id: `image-${i}`, access: 'PUBLIC', src: picture(color, i === 1 ? 500 : 800, i === 1 ? 800 : 500), width: i === 1 ? 500 : 800, height: i === 1 ? 800 : 500, aspectRatio: i === 1 ? 0.625 : 1.6, altText: `Fixture image ${i + 1}` }));
 const names = ['... 123 الخيار العربي الكامل يحتاج إلى سطرين دون اختصار', '... 123 English option name remains fully readable across multiple lines'];
@@ -83,6 +84,7 @@ function Harness() {
   const [voted, setVoted] = useState(false);
   const mode = params.get('create');
   const Creator = ({ poll: CreatePollScreen, survey: CreateSurveyModal, quiz: CreateQuizModal, challenge: CreateChallengeScreen } as any)[mode || ''];
+  if (params.has('header')) return <Header onLoginClick={() => {}} onSignUpClick={() => {}} />;
   if (params.has('blankTimedQuiz')) return <MemoryRouter><main data-testid="timed-preview" className="max-w-[680px] mx-auto"><SurveyCard survey={{ ...survey, title: '', description: '', isTrending: true, type: SurveyType.QUIZ, config: { timeLimit: 5 }, quizTimeLimit: 5, sections: [{ id: 'timed-section', title: '', questions: [{ id: 'timed-question', text: 'Timed fixture question', type: 'multiple_choice', options, correctOptionId: 'option-0' }] }] }} isDetailView /></main></MemoryRouter>;
   if (Creator && params.has('creatorSteps')) return <StepCreator Creator={Creator} mode={mode!} />;
   if (params.has('challenge')) return <MemoryRouter><main className="max-w-[680px] mx-auto bg-white" data-testid="challenge"><SurveyCard survey={{ ...survey, type: SurveyType.CHALLENGE }} isDetailView onVote={() => true} /></main></MemoryRouter>;
