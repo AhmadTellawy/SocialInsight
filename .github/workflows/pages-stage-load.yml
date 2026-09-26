@@ -5,8 +5,6 @@ on:
     paths:
       - .github/workflows/pages-stage-load.yml
       - stage-hosted/pages-read-load.mjs
-      - stage-hosted/render.yaml
-      - server/src/app.ts
 permissions:
   contents: read
 jobs:
