@@ -31,9 +31,21 @@ export async function preparePageAccountDeletion(tx: PageTx, userId: string, con
   // A deleted account cannot reappear with the same identity. Both block
   // directions and delivery records are no longer needed for enforcement.
   await tx.pageBlock.deleteMany({where:{userId}});
-  await tx.pageEvent.deleteMany({where:{recipientId:userId}});
-  await tx.$executeRaw`DELETE FROM "PageEvent" WHERE kind IN ('PAGE_ACTIVITY','PAGE_ACTIVITY_DELIVERY')
-    AND context->>'actorId' = ${userId}`;
+  // Delete both pending and delivered outbox records associated with this account,
+  // including invitations/transfers whose context deliberately contains no actor.
+  // Remove their rendered inbox rows in the same transaction.
+  await tx.$executeRaw`WITH removed AS (
+    DELETE FROM "PageEvent" e WHERE e."recipientId" = ${userId}
+      OR (e.kind IN ('PAGE_ACTIVITY','PAGE_ACTIVITY_DELIVERY') AND e.context->>'actorId' = ${userId})
+      OR EXISTS (SELECT 1 FROM "PageInvitation" i WHERE i."senderId" = ${userId}
+        AND e.kind LIKE 'PAGE_INVITATION%' AND e."targetId" = i.id)
+      OR EXISTS (SELECT 1 FROM "PageOwnershipTransfer" t WHERE t."senderId" = ${userId}
+        AND e.kind LIKE 'PAGE_TRANSFER%'
+        AND (e."targetId" = t.id OR e."dedupeKey" LIKE t.id || ':%'))
+      OR EXISTS (SELECT 1 FROM "PageAuditEvent" a WHERE a."actorId" = ${userId}
+        AND e."dedupeKey" = a.id)
+    RETURNING id
+  ) DELETE FROM notifications n WHERE n.dedupe_key IN (SELECT 'page-event:' || id FROM removed)`;
   // Preserve exclusions for other recipients while removing this user ID.
   await tx.$executeRaw`UPDATE "PageEvent" AS e SET context = jsonb_set(e.context, '{excludedRecipientIds}',
     COALESCE((SELECT jsonb_agg(value) FROM jsonb_array_elements(e.context->'excludedRecipientIds') AS value

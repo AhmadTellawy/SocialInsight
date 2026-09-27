@@ -4,6 +4,7 @@ import { Survey, UserProfile } from '../../types';
 import { BusinessPage, pagesApi } from '../../services/pagesApi';
 import { PageAvatar, usePageText } from './PageUi';
 import { usePagesAvailability } from '../../hooks/usePagesAvailability';
+import { pagePublisherEligibility } from '../../utils/pagePublisherEligibility';
 import './pages.css';
 
 /** One publisher context shared by the existing editors; no duplicate post settings. */
@@ -32,10 +33,10 @@ export function usePagePublisher(user: UserProfile, draft: Survey | undefined,
     setPages([]); setLoading(true); setError(false);
     (async () => {
       const result=await pagesApi.mine('',controller.signal);
-      const collected=result.items.filter(page=>page.capabilities?.includes('manageContent'));
+      const collected=result.items.filter(page=>pagePublisherEligibility(page).canDraft);
       if(initial&&!collected.some(page=>page.id===initial)){
         const selected=await pagesApi.manage(initial,controller.signal);
-        if(selected.capabilities?.includes('manageContent'))collected.unshift(selected);
+        if(pagePublisherEligibility(selected).canDraft)collected.unshift(selected);
       }
       if (!controller.signal.aborted){setPages(collected);setNext(result.nextCursor);}
     })().catch(() => { if (!controller.signal.aborted) setError(true); })
@@ -46,12 +47,13 @@ export function usePagePublisher(user: UserProfile, draft: Survey | undefined,
   useEffect(()=>{
     if(!pageId || !availability.available)return;const controller=new AbortController();
     const refresh=async()=>{try{const current=await pagesApi.manage(pageId,controller.signal);
-      if(!controller.signal.aborted)setPages(previous=>current.capabilities?.includes('manageContent')?previous.map(value=>value.id===pageId?current:value):previous.filter(value=>value.id!==pageId));
+      if(!controller.signal.aborted)setPages(previous=>pagePublisherEligibility(current).canDraft?previous.map(value=>value.id===pageId?current:value):previous.filter(value=>value.id!==pageId));
     }catch{if(!controller.signal.aborted)setPages(previous=>previous.filter(value=>value.id!==pageId));}};
     const timer=setInterval(()=>void refresh(),30000);window.addEventListener('focus',refresh);
     return()=>{controller.abort();clearInterval(timer);window.removeEventListener('focus',refresh);};
   },[pageId,user.id,availability.available]);
-  const loadMore=async()=>{const controller=requests.current;if(!next||moreBusy||!availability.available||!controller||controller.signal.aborted)return;setMoreBusy(true);try{const result=await pagesApi.mine(next,controller.signal);if(!controller.signal.aborted){setPages(previous=>[...previous,...result.items.filter(value=>value.capabilities?.includes('manageContent')&&!previous.some(item=>item.id===value.id))]);setNext(result.nextCursor);}}catch{if(!controller.signal.aborted)setError(true);}finally{setMoreBusy(false);}};
+  const loadMore=async()=>{const controller=requests.current;if(!next||moreBusy||!availability.available||!controller||controller.signal.aborted)return;setMoreBusy(true);try{const result=await pagesApi.mine(next,controller.signal);if(!controller.signal.aborted){setPages(previous=>[...previous,...result.items.filter(value=>pagePublisherEligibility(value).canDraft&&!previous.some(item=>item.id===value.id))]);setNext(result.nextCursor);}}catch{if(!controller.signal.aborted)setError(true);}finally{setMoreBusy(false);}};
+  const canPublish = !!page && pagePublisherEligibility(page).canPublish;
   const enrich = (data: Partial<Survey>) => {
     if (pageId && (!availability.available || loading || !page)) throw new Error(text('تحقق من صلاحية النشر باسم الصفحة ثم أعد المحاولة.', 'Verify your Page publishing access and try again.'));
     if (pageId && (data.groupId || data.targetGroups?.length || ['Groups', 'ProfileAndGroups'].includes(data.targetAudience || ''))) {
@@ -59,9 +61,12 @@ export function usePagePublisher(user: UserProfile, draft: Survey | undefined,
     }
     return { ...data, pageId: pageId || null, pageCreateKey: requestKey.current };
   };
-  return { pageId, page, pages: availability.available ? pages : [], available: availability.available, loading, error: availability.available && error, next, moreBusy, loadMore, accessLost:!!pageId&&!loading&&!page, writeBlocked:!!pageId&&(loading||!availability.available||!page), locked: !!draft?.id,
+  return { pageId, page, pages: availability.available ? pages : [], available: availability.available, loading, error: availability.available && error, next, moreBusy, loadMore, accessLost:!!pageId&&!loading&&!page, writeBlocked:!!pageId&&(loading||!availability.available||!page), publishBlocked:!!pageId&&(loading||!availability.available||!canPublish), draftOnly:!!pageId&&!!page&&!canPublish, draftActionLabel:text('حفظ مسودة','Save draft'), locked: !!draft?.id,
     select: (id: string) => { if (!draft?.id && (!id || availability.available)) setPageId(id); }, retry: () => { availability.retry(); setRetry(value => value + 1); },
-    submit: async (data: Partial<Survey>) => submit(enrich(data)),
+    submit: async (data: Partial<Survey>) => {
+      if(pageId && !canPublish)throw new Error(text('هذه الصفحة متاحة للمسودات فقط حاليًا. انشر الصفحة أو أزل القيود قبل نشر المحتوى.', 'This Page can save drafts only. Publish the Page or clear its restrictions before posting.'));
+      return submit(enrich(data));
+    },
     save: save ? async (data: Partial<Survey>) => save(enrich(data)) : undefined };
 }
 
@@ -88,6 +93,7 @@ export function PagePublisher({ publisher, user, groupDestination }: {
     {publisher.accessLost&&<p role="alert" className="text-sm text-red-700">{publisher.locked
       ? text('صلاحية إدارة هذه الصفحة غير متاحة. تحقق من الاتصال ثم أعد التحقق من الصلاحية.','Page management access is unavailable. Check your connection, then check access again.')
       : text('صلاحية إدارة هذه الصفحة غير متاحة. تحقق من الاتصال أو اختر ناشراً متاحاً.','Page management access is unavailable. Check your connection or choose an available publisher.')}</p>}
+    {publisher.draftOnly&&<p role="status" className="text-sm text-amber-800">{text('يمكن حفظ مسودة باسم هذه الصفحة. لا يمكن نشرها حتى تُنشر الصفحة وتُزال القيود.', 'You can save a draft as this Page. Posting becomes available after the Page is published and restrictions are cleared.')}</p>}
     {publisher.pageId && <p className="text-xs text-gray-600">{text('يظهر اسم الصفحة للجمهور. يبقى منفّذ النشر في سجل الإدارة فقط.', 'The public sees the Page name. The publishing team member is recorded only in management history.')}</p>}
     {groupDestination && <p className="text-xs text-gray-600">{text('النشر داخل المجموعات متاح باسم حسابك الشخصي.', 'Group publishing uses your personal account.')}</p>}
     {publisher.error && <p role="alert" className="text-xs text-red-700">{text('تعذر تحميل صفحاتك.', 'Unable to load your Pages.')} <button type="button" className="min-h-11 underline" onClick={publisher.retry}>{text('إعادة المحاولة', 'Retry')}</button></p>}

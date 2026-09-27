@@ -467,7 +467,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
         </button>
         <div className="text-center"><h1 className="text-[12px] font-bold text-gray-800">New Challenge</h1><p className="text-xs text-gray-500">Step {composerStep} of 2</p></div>
         <button
-          onClick={() => composerStep === 1 ? handleNext() : handleFinalPost()}
+          onClick={() => composerStep === 1 ? handleNext() : publisher.draftOnly ? handleSaveDraft() : handleFinalPost()}
           disabled={isSaving || isSubmitting || (composerStep === 2 && publisher.writeBlocked)}
           aria-disabled={isSaving || isSubmitting || (composerStep === 2 && publisher.writeBlocked)}
           className={`text-white font-bold text-[12px] px-5 py-2.5 rounded-full transition-all uppercase tracking-widest ${
@@ -476,7 +476,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
               : 'bg-gray-300 shadow-none cursor-not-allowed'
           }`}
         >
-          {composerStep === 1 ? 'Next' : 'Post'}
+          {composerStep === 1 ? 'Next' : publisher.draftOnly ? publisher.draftActionLabel : 'Post'}
         </button>
       </div>
 

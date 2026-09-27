@@ -584,10 +584,10 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
           </button>
           <button
             onClick={() => composerStep === 1 ? handleNext() : handlePost()}
-            disabled={!mediaReady || isSaving || isSubmitting || (composerStep === 2 && publisher.writeBlocked)}
-            aria-disabled={!mediaReady || isSaving || isSubmitting || (composerStep === 2 && publisher.writeBlocked)}
+            disabled={!mediaReady || isSaving || isSubmitting || (composerStep === 2 && publisher.publishBlocked)}
+            aria-disabled={!mediaReady || isSaving || isSubmitting || (composerStep === 2 && publisher.publishBlocked)}
             className={`text-white font-bold text-[12px] px-4 py-2 rounded-full transition-all uppercase tracking-widest ${
-              mediaReady && !isSubmitting && !(composerStep === 2 && publisher.writeBlocked)
+              mediaReady && !isSubmitting && !(composerStep === 2 && publisher.publishBlocked)
                 ? 'bg-purple-600 hover:bg-purple-700 shadow-md active:scale-95 shadow-purple-200/50'
                 : 'bg-gray-300 shadow-none cursor-not-allowed'
             }`}

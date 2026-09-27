@@ -9,7 +9,7 @@ import { pageErasureHeld, pageLifecycleLimit, pageRetentionCutoff, processPageRe
 
 const phases = ['NOTIFICATIONS', 'ANSWERS', 'RESPONSES', 'COMMENT_LIKES', 'COMMENT_MENTIONS',
   'COMMENT_HASHTAGS', 'COMMENTS', 'OPTIONS', 'QUESTIONS', 'SECTIONS', 'SAVES', 'HIDES', 'LIKES',
-  'VIEWS', 'POST_MENTIONS', 'POST_HASHTAGS', 'POST_TAGS', 'POST_MEDIA', 'INTERACTIONS', 'POSTS',
+  'VIEWS', 'POST_MENTIONS', 'POST_HASHTAGS', 'POST_TAGS', 'POST_MEDIA', 'INTERACTIONS', 'REPORTS', 'POSTS',
   'MEMBERS', 'FOLLOWS', 'BLOCKS', 'INVITATIONS', 'TRANSFERS', 'EVENTS', 'MEDIA', 'MEDIA_ROWS', 'FINALIZE'] as const;
 type Phase = typeof phases[number];
 type Job = { pageId: string; phase: Phase; attempts: number; availableAt: Date; completedAt: Date | null };
@@ -70,6 +70,9 @@ async function erasePhase(tx: PageTx, job: Job, size: number, now: Date): Promis
     case 'POST_TAGS': return erase(tx, 'PostTaggedUser', Prisma.sql`t."postId" IN (${p})`, size);
     case 'POST_MEDIA': return erase(tx, 'PostMedia', Prisma.sql`t."postId" IN (${p})`, size);
     case 'INTERACTIONS': return erase(tx, 'InteractionEvent', Prisma.sql`t.post_id IN (${p})`, size);
+    // Report snapshots contain the Page post text and publisher identity. A legal
+    // hold pauses this worker; after release, erase reports before their targets.
+    case 'REPORTS': return erase(tx, 'reports', Prisma.sql`t.target_type = 'POST' AND t.target_id IN (${p})`, size);
     case 'POSTS': {
       // Remove internal share edges in bounded batches before deleting roots. External shares are untouched.
       const detached = await tx.$executeRaw(Prisma.sql`UPDATE "Post" SET "sharedFromId" = NULL WHERE id IN

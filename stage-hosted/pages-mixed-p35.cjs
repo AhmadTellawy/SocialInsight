@@ -245,13 +245,46 @@ async function postLoadSecuritySmokes() {
   const addressedEvent = await prisma.pageEvent.create({ data: { pageId: pages[0].id, recipientId: actor.id,
     kind: 'PAGE_INVITATION', targetId: pages[0].id,
     dedupeKey: `${prefix}:addressed-event`, deliveredAt: new Date() } });
+  const invitation = await prisma.pageInvitation.create({ data: { pageId: pages[actor.index % 5].id,
+    senderId: actor.id, recipientId: recipient.id, role: 'EDITOR',
+    expiresAt: new Date(Date.now() + 86400000) } });
+  const invitationEvent = await prisma.pageEvent.create({ data: { pageId: invitation.pageId,
+    recipientId: recipient.id, kind: 'PAGE_INVITATION', targetId: invitation.id,
+    dedupeKey: `${prefix}:sender-invitation`, deliveredAt: new Date() } });
+  await prisma.notification.create({ data: { userId: recipient.id, type: 'PAGE_INVITATION',
+    message: 'Synthetic invitation', dedupeKey: `page-event:${invitationEvent.id}` } });
+  const transfer = await prisma.pageOwnershipTransfer.create({ data: { pageId: invitation.pageId,
+    senderId: actor.id, recipientId: recipient.id, expiresAt: new Date(Date.now() + 86400000) } });
+  const transferEvent = await prisma.pageEvent.create({ data: { pageId: transfer.pageId,
+    recipientId: recipient.id, kind: 'PAGE_TRANSFER', targetId: transfer.id,
+    dedupeKey: `${prefix}:sender-transfer`, deliveredAt: new Date() } });
   await ok(actor, `/users/${actor.id}`, 'DELETE', { deleteOwnedPages: [] });
   assert.equal(await prisma.pageEvent.findUnique({ where: { id: actorEvent.id } }), null);
   assert.equal(await prisma.pageEvent.findUnique({ where: { id: addressedEvent.id } }), null);
+  assert.equal(await prisma.pageEvent.findUnique({ where: { id: invitationEvent.id } }), null);
+  assert.equal(await prisma.pageEvent.findUnique({ where: { id: transferEvent.id } }), null);
+  assert.equal(await prisma.notification.findUnique({ where: { dedupeKey: `page-event:${invitationEvent.id}` } }), null);
   const excludedAfter = await prisma.pageEvent.findUniqueOrThrow({ where: { id: excludedEvent.id }, select: { context: true } });
   assert.deepEqual(excludedAfter.context.excludedRecipientIds, [clients[96].id]);
+  const erasurePage = await ok(clients[0], '/pages', 'POST', { requestId: crypto.randomUUID(),
+    name: `${prefix} Erasure Page`, handle: `${prefix}_erasure`, category: 'company',
+    bio: 'Synthetic erasure check', representationConfirmed: true }, 201);
+  const erasurePost = await ok(clients[0], '/posts', 'POST', postPayload('Poll',
+    { pageId: erasurePage.id, pageCreateKey: crypto.randomUUID(), status: 'DRAFT' }));
+  const storedReport = await prisma.report.create({ data: { reporterId: recipient.id, targetType: 'POST',
+    targetId: erasurePost.id, reason: 'OTHER', description: 'Synthetic Page report',
+    targetSnapshot: { title: erasurePost.title, description: erasurePost.description } } });
+  const holdUntil = new Date(Date.now() + 86400000);
+  await prisma.page.update({ where: { id: erasurePage.id }, data: { purgedAt: new Date(), legalHoldUntil: holdUntil } });
+  await prisma.pagePurgeJob.create({ data: { pageId: erasurePage.id, phase: 'REPORTS' } });
+  const { processPagePurgeBatch } = serverRequire('./dist/pages/pageLifecycleWorker.js');
+  assert.equal((await processPagePurgeBatch(erasurePage.id)).state, 'held');
+  assert.ok(await prisma.report.findUnique({ where: { id: storedReport.id } }));
+  await prisma.page.update({ where: { id: erasurePage.id }, data: { legalHoldUntil: null } });
+  assert.equal((await processPagePurgeBatch(erasurePage.id, { now: new Date(Date.now() + 120000) })).state, 'progress');
+  assert.equal(await prisma.report.findUnique({ where: { id: storedReport.id } }), null);
   report.securitySmokes = { externalSharePreserved: true, sourceTombstoned: true, accountOutboxErasure: true,
-    otherRecipientExclusionsPreserved: true };
+    otherRecipientExclusionsPreserved: true, senderEventsAndInboxErased: true, reportSnapshotErasedAfterHold: true };
 }
 
 async function main() {

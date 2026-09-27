@@ -572,7 +572,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
         </button>
         <div className="text-center"><h1 className="text-[12px] font-bold text-gray-800">New Poll</h1><p className="text-xs text-gray-500">Step {composerStep} of 2</p></div>
         <button
-          onClick={() => composerStep === 1 ? handleNext() : handleSubmit()}
+          onClick={() => composerStep === 1 ? handleNext() : publisher.draftOnly ? handleSaveDraft() : handleSubmit()}
           disabled={isSaving || isSubmitting || (composerStep === 2 && publisher.writeBlocked)}
           aria-disabled={isSaving || isSubmitting || (composerStep === 2 && publisher.writeBlocked)}
           className={`text-white font-bold text-[12px] px-5 py-2.5 rounded-full transition-all uppercase tracking-widest ${
@@ -581,7 +581,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               : 'bg-gray-300 text-white shadow-none cursor-not-allowed'
           }`}
         >
-          {composerStep === 1 ? 'Next' : 'Post'}
+          {composerStep === 1 ? 'Next' : publisher.draftOnly ? publisher.draftActionLabel : 'Post'}
         </button>
       </div>
 

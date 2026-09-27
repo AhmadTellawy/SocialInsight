@@ -1269,10 +1269,10 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
         </button>
         <button
           onClick={() => composerStep === 1 ? handleNext() : handlePost(false)}
-          disabled={!mediaReady || isSaving || isSubmitting || (composerStep === 2 && publisher.writeBlocked)}
-          aria-disabled={!mediaReady || isSaving || isSubmitting || (composerStep === 2 && publisher.writeBlocked)}
+            disabled={!mediaReady || isSaving || isSubmitting || (composerStep === 2 && publisher.publishBlocked)}
+            aria-disabled={!mediaReady || isSaving || isSubmitting || (composerStep === 2 && publisher.publishBlocked)}
           className={`flex-1 py-3 text-white rounded-2xl font-bold uppercase tracking-wider text-[12px] transition-all ${
-            mediaReady && !isSubmitting && !(composerStep === 2 && publisher.writeBlocked)
+              mediaReady && !isSubmitting && !(composerStep === 2 && publisher.publishBlocked)
               ? 'bg-blue-600 hover:bg-blue-700 active:scale-[0.98] shadow-lg shadow-blue-200'
               : 'bg-gray-300 shadow-none cursor-not-allowed'
           }`}
