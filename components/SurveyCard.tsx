@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PostAnswerPayload, Survey, SurveyType, Option, LogicRule, UserProfile, MediaPresentation } from '../types';
-import { Clock, Users, TrendingUp, MoreHorizontal, Share2, CheckCircle2, Flag, Eye, EyeOff, Bookmark, Link as LinkIcon, UserMinus, ThumbsUp, MessageCircle, FileText, PieChart, HelpCircle, Globe, Lock, Plus, AlertCircle, ImageIcon, ChevronLeft, ChevronRight, Check, ArrowRight, XCircle, Trophy, Target, X, ListChecks, Zap, Timer, Play, Repeat, UserPlus, PlusCircle, Shield, Shuffle, Heart, Search, Send, Star, Maximize2, BarChart3, Trash2, Edit3 } from 'lucide-react';
+import { Clock, Users, TrendingUp, MoreHorizontal, Share2, CheckCircle2, Flag, Eye, EyeOff, Bookmark, Link as LinkIcon, UserMinus, ThumbsUp, MessageCircle, FileText, PieChart, HelpCircle, Globe, Lock, Plus, AlertCircle, ChevronLeft, ChevronRight, Check, ArrowRight, XCircle, Trophy, Target, X, ListChecks, Zap, Timer, Play, Repeat, UserPlus, PlusCircle, Shield, Shuffle, Heart, Search, Send, Star, Maximize2, BarChart3, Trash2, Edit3 } from 'lucide-react';
 import { Analytics } from '../utils/analytics';
 import { BottomSheet } from './BottomSheet';
 import { RichTextRenderer } from './RichTextRenderer';
@@ -1329,7 +1329,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           <div className="bg-white p-4 rounded-xl border border-amber-200 shadow-sm flex items-center gap-4 text-left">
             {hasOptionImage(winner) && <MediaImage media={winner.imageMedia} mediaId={winner.imageMediaId} fallbackSrc={winner.image} className="w-16 h-16 rounded-lg object-cover" alt="" />}
             <div className="flex-1">
-              {displayOptionNames && <h4 dir="auto" className="text-[12px] text-start font-normal text-gray-900 leading-relaxed break-words">{winner.text}</h4>}
+              {(displayOptionNames || !hasOptionImage(winner)) && <h4 dir="auto" className="text-[12px] text-start font-normal text-gray-900 leading-relaxed break-words">{winner.text}</h4>}
               <div className="flex items-center gap-1.5 mt-1 text-green-600 font-bold text-[10px] uppercase">
                 <CheckCircle2 size={12} /> {t('Winner')}
               </div>
@@ -1360,47 +1360,43 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             if (!opt) return null;
             const isLeaving = isChallengeTransitioning === opt.id;
             const imageKey = optionImageKey(opt);
-            const isPortrait = hasOptionImage(opt) && portraitImages.has(imageKey);
+            const hasImage = hasOptionImage(opt);
+            const showName = displayOptionNames || !hasImage;
+            const isPortrait = hasImage && portraitImages.has(imageKey);
             return (
               <button
                 key={opt.id}
                 disabled={isChallengeTransitioning !== null}
-                aria-label={displayOptionNames ? opt.text : t('answerType.imageOption', { number: pairOptions.indexOf(opt) + 1 })}
+                aria-label={showName ? opt.text : t('answerType.imageOption', { number: pairOptions.indexOf(opt) + 1 })}
                 onClick={() => handleChallengeVote(opt.id)}
                 className={`relative flex flex-col items-stretch text-left group overflow-hidden rounded-2xl border bg-white transition-all duration-300 ${isLeaving ? 'scale-90 opacity-0 -translate-y-4' : 'hover:border-amber-400 hover:shadow-md active:scale-95 border-gray-100 shadow-sm animate-in zoom-in fade-in'}`}
               >
-                <div className="aspect-[4/5] w-full bg-gray-50 relative overflow-hidden">
-                  {hasOptionImage(opt) ? (
-                    <>
-                      <MediaImage
-                        media={opt.imageMedia}
-                        mediaId={opt.imageMediaId}
-                        fallbackSrc={opt.image}
-                        onLoad={(e) => handleDetectOrientation(imageKey, e)}
-                        className="w-full h-full object-cover transition-transform group-hover:scale-110"
-                        alt=""
-                      />
-                      {isPortrait && (
-                        <div
-                          className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-zoom-in"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setExpandedImage(opt);
-                          }}
-                        >
-                          <Maximize2 size={24} className="text-white drop-shadow-md" />
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-gray-200">
-                      <ImageIcon size={32} />
-                    </div>
-                  )}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 pointer-events-none" />
-                </div>
-                {displayOptionNames && (
-                  <div className="p-3 bg-white flex-1 flex flex-col justify-center border-t border-gray-50 min-h-[60px]">
+                {hasImage && (
+                  <div className="aspect-[4/5] w-full bg-gray-50 relative overflow-hidden">
+                    <MediaImage
+                      media={opt.imageMedia}
+                      mediaId={opt.imageMediaId}
+                      fallbackSrc={opt.image}
+                      onLoad={(e) => handleDetectOrientation(imageKey, e)}
+                      className="w-full h-full object-cover transition-transform group-hover:scale-110"
+                      alt=""
+                    />
+                    {isPortrait && (
+                      <div
+                        className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-zoom-in"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setExpandedImage(opt);
+                        }}
+                      >
+                        <Maximize2 size={24} className="text-white drop-shadow-md" />
+                      </div>
+                    )}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 pointer-events-none" />
+                  </div>
+                )}
+                {showName && (
+                  <div className={`p-3 bg-white flex-1 flex flex-col justify-center ${hasImage ? 'border-t border-gray-50 min-h-[60px]' : 'min-h-[120px]'}`}>
                     <span dir="auto" className="text-[12px] text-start font-normal text-gray-800 leading-relaxed break-words">{opt.text}</span>
                   </div>
                 )}
