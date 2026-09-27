@@ -38,7 +38,9 @@ const stats = rows => {
     p50Ms: pct(latencies, .5), p95Ms: pct(latencies, .95), p99Ms: pct(latencies, .99),
     timeouts: rows.filter(row => row.timeout).length, transportErrors: rows.filter(row => row.status === 0).length,
     apiErrors: rows.filter(row => row.status >= 400).length, fiveXx: rows.filter(row => row.status >= 500).length,
-    databaseErrorsVisible: rows.filter(row => /DATABASE|PRISMA|P20\d\d|CONNECTION|POOL/i.test(row.code)).length };
+    databaseErrorsVisible: rows.filter(row => /DATABASE|PRISMA|P20\d\d|CONNECTION|POOL/i.test(row.code)).length,
+    successRate: rows.length ? rows.filter(row => row.status >= 200 && row.status < 300).length / rows.length : 0,
+    errorRate: rows.length ? rows.filter(row => row.status < 200 || row.status >= 300).length / rows.length : 0 };
 };
 
 async function call(client, url, method = 'GET', body, kind, started = 0) {
@@ -218,6 +220,40 @@ async function integrity() {
     duplicateResponses: keys.length - new Set(keys).size };
 }
 
+async function postLoadSecuritySmokes() {
+  const source = await ok(clients[0], '/posts', 'POST', postPayload('Poll',
+    { pageId: pages[0].id, pageCreateKey: crypto.randomUUID() }));
+  const foreignShare = await ok(clients[1], `/posts/${source.id}/share`, 'POST',
+    { pageId: pages[1].id, pageCreateKey: crypto.randomUUID() });
+  assert.ok(foreignShare.id);
+  await ok(clients[0], `/posts/${source.id}`, 'DELETE');
+  const sourceAfter = await prisma.post.findUnique({ where: { id: source.id }, select: { isDeleted: true, title: true } });
+  const shareAfter = await prisma.post.findUnique({ where: { id: foreignShare.id },
+    select: { pageId: true, sharedFromId: true, isDeleted: true } });
+  assert.deepEqual(sourceAfter, { isDeleted: true, title: '' });
+  assert.deepEqual(shareAfter, { pageId: pages[1].id, sharedFromId: source.id, isDeleted: false });
+
+  const actor = clients[98], recipient = clients[1], otherExcluded = clients[97];
+  const actorEvent = await prisma.pageEvent.create({ data: { pageId: pages[0].id, recipientId: recipient.id,
+    kind: 'PAGE_ACTIVITY_DELIVERY', targetId: source.id,
+    context: { kind: 'like', actorId: actor.id, postId: source.id },
+    dedupeKey: `${prefix}:actor-event`, deliveredAt: new Date() } });
+  const excludedEvent = await prisma.pageEvent.create({ data: { pageId: pages[0].id, recipientId: recipient.id,
+    kind: 'PAGE_ACTIVITY_DELIVERY', targetId: source.id,
+    context: { kind: 'like', actorId: otherExcluded.id, postId: source.id, excludedRecipientIds: [actor.id, clients[96].id] },
+    dedupeKey: `${prefix}:excluded-event`, deliveredAt: new Date() } });
+  const addressedEvent = await prisma.pageEvent.create({ data: { pageId: pages[0].id, recipientId: actor.id,
+    kind: 'PAGE_INVITATION', targetId: pages[0].id,
+    dedupeKey: `${prefix}:addressed-event`, deliveredAt: new Date() } });
+  await ok(actor, `/users/${actor.id}`, 'DELETE', { deleteOwnedPages: [] });
+  assert.equal(await prisma.pageEvent.findUnique({ where: { id: actorEvent.id } }), null);
+  assert.equal(await prisma.pageEvent.findUnique({ where: { id: addressedEvent.id } }), null);
+  const excludedAfter = await prisma.pageEvent.findUniqueOrThrow({ where: { id: excludedEvent.id }, select: { context: true } });
+  assert.deepEqual(excludedAfter.context.excludedRecipientIds, [clients[96].id]);
+  report.securitySmokes = { externalSharePreserved: true, sourceTombstoned: true, accountOutboxErasure: true,
+    otherRecipientExclusionsPreserved: true };
+}
+
 async function main() {
   save();
   assert.ok(report.runner.cpus >= 3 && report.runner.freeMemoryAtStartBytes >= 8 * 1024 ** 3,
@@ -227,6 +263,7 @@ async function main() {
   await level(100, 30000, 600000, true);
   await sleep(30000);
   await integrity();
+  await postLoadSecuritySmokes();
   if (process.env.P35_API_LOG && fs.existsSync(process.env.P35_API_LOG)) {
     const log = fs.readFileSync(process.env.P35_API_LOG, 'utf8');
     report.targetLogSignals = {
@@ -242,6 +279,7 @@ async function main() {
     { name: 'No transport errors', pass: p35.transportErrors === 0 },
     { name: 'No unexpected HTTP 4xx', pass: p35.apiErrors === p35.fiveXx },
     { name: 'Counters and votes match actual database rows', pass: !report.integrity.counterMismatches && !report.integrity.optionMismatches && !report.integrity.duplicateResponses },
+    { name: 'Cross-publisher deletion and account outbox cleanup', pass: Object.values(report.securitySmokes).every(Boolean) },
   ];
   report.status = report.checks.every(check => check.pass) ? 'PASS' : 'FAIL';
 }

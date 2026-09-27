@@ -6,6 +6,7 @@ export const PAGE_POLICY = Object.freeze({
   deletionGraceDays: 30,
   handleChangeDays: 30,
   auditRetentionDays: 180,
+  deliveredEventRetentionDays: 30,
   closedCaseRetentionDays: 180,
   maxLinks: 3,
   pageSize: 24,

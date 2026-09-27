@@ -19,6 +19,7 @@ test('scheduled Page lifecycle touches no data while disabled or paused and resu
   replace(prisma.page, 'findMany'); replace(prisma, '$queryRaw');
   replace(prisma.pageInvitation, 'findMany'); replace(prisma.pageOwnershipTransfer, 'findMany');
   replace(prisma.pageAuditEvent, 'findMany');
+  replace(prisma.pageEvent, 'findMany');
   let stop: (() => void) | undefined;
   try {
     process.env.PAGES_ENABLED = 'false'; process.env.PAGES_TEST_USERS = 'pilot-only';
@@ -28,9 +29,9 @@ test('scheduled Page lifecycle touches no data while disabled or paused and resu
     process.env.PAGES_ENABLED = 'true'; process.env.PAGES_LIFECYCLE_PAUSED = 'true';
     await tick(); assert.equal(reads, 0, 'operational pause performs no DB work');
     process.env.PAGES_LIFECYCLE_PAUSED = 'false';
-    await tick(); assert.equal(reads, 6, 'enabled cycle reads admission, jobs and retention');
+    await tick(); assert.equal(reads, 7, 'enabled cycle reads admission, jobs and retention');
     process.env.PAGES_ENABLED = 'false';
-    await tick(); assert.equal(reads, 6, 'rollback stops subsequent cycles');
+    await tick(); assert.equal(reads, 7, 'rollback stops subsequent cycles');
     stop(); stop = undefined; assert.equal(stopped, true);
   } finally {
     stop?.(); restore.reverse().forEach(reset => reset());

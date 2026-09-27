@@ -74,7 +74,12 @@ export async function processPageOutbox(limit=40) {
     attemptedIds=events.map(event=>event.id);
     for(const {id} of events){
       const event=await tx.pageEvent.findUniqueOrThrow({where:{id}});
-      if(!pagesEnabled(event.recipientId))continue;
+      if(!pagesEnabled(event.recipientId)){
+        // Suppress this recipient's event so an ineligible head batch cannot
+        // starve later eligible deliveries forever.
+        await tx.pageEvent.update({where:{id},data:{deliveredAt:new Date(),attempts:{increment:1},lastError:null}});
+        continue;
+      }
       await tx.$queryRaw`SELECT id FROM "Page" WHERE id=${event.pageId} FOR SHARE`;
       const page=await tx.page.findUnique({where:{id:event.pageId},select:{isTestFixture:true,purgedAt:true}});
       const user=await tx.user.findUnique({where:{id:event.recipientId},select:{status:true,language:true}});

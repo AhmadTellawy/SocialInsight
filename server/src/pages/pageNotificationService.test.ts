@@ -2,7 +2,33 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import prisma from '../prisma';
 import { eligiblePageActivityIds, pageActivityNotification } from './pageActivityNotifications';
-import { pageEventDeepLink, presentPageNotifications } from './pageNotificationService';
+import { pageEventDeepLink, presentPageNotifications, processPageOutbox } from './pageNotificationService';
+process.env.JWT_SECRET ||= 'page-notification-isolated-test';
+
+test('an ineligible recipient does not starve eligible events in the same outbox batch', async () => {
+  const previousEnabled=process.env.PAGES_ENABLED,previousUsers=process.env.PAGES_TEST_USERS;
+  const originalTransaction=prisma.$transaction;
+  const seen:string[]=[];
+  const tx:any={
+    $queryRaw:async()=>seen.length? [{id:'page'}]:[{id:'excluded'},{id:'allowed'}],
+    pageEvent:{
+      findUniqueOrThrow:async({where}:any)=>({id:where.id,pageId:'page',recipientId:where.id,kind:'PAGE_INVITATION',targetId:'request'}),
+      update:async({where,data}:any)=>{assert.ok(data.deliveredAt instanceof Date);seen.push(where.id);return {};}
+    },
+    page:{findUnique:async()=>({isTestFixture:false,purgedAt:null})},
+    user:{findUnique:async()=>({status:'SUSPENDED',language:'en'})}
+  };
+  try{
+    process.env.PAGES_ENABLED='false';process.env.PAGES_TEST_USERS='allowed';
+    (prisma as any).$transaction=async(work:(tx:any)=>Promise<unknown>)=>work(tx);
+    assert.deepEqual(await processPageOutbox(2),{persisted:0});
+    assert.deepEqual(seen,['excluded','allowed']);
+  }finally{
+    (prisma as any).$transaction=originalTransaction;
+    if(previousEnabled===undefined)delete process.env.PAGES_ENABLED;else process.env.PAGES_ENABLED=previousEnabled;
+    if(previousUsers===undefined)delete process.env.PAGES_TEST_USERS;else process.env.PAGES_TEST_USERS=previousUsers;
+  }
+});
 
 test('completed invitation notifications send their sender to the Page team, while pending requests retain their action destination',()=>{
   const event={pageId:'page-id',targetId:'request-id'};

@@ -221,7 +221,10 @@ export async function pageBlockAction(actorId: string, pageId: string, userId: s
     await activePageActor(tx, actorId);
     if (direction === 'PAGE_TO_USER') await requirePageCapability(tx, page, actorId, 'block');
     else if (userId !== actorId) throw new PagePolicyError('PAGE_PERMISSION_DENIED', 403);
-    if (blocked && await pageRole(tx, page, userId)) throw new PagePolicyError('PAGE_TEAM_MEMBER_BLOCK_FORBIDDEN', 409);
+    // A suspended member still owns a stored membership and can be reactivated.
+    // The active-role helper is deliberately insufficient for this invariant.
+    if (blocked && (page.ownerId === userId || await tx.pageMembership.count({where:{pageId,userId}})))
+      throw new PagePolicyError('PAGE_TEAM_MEMBER_BLOCK_FORBIDDEN', 409);
     const where = { pageId_userId_direction: { pageId, userId, direction } };
     if (blocked) {
       await tx.pageBlock.upsert({ where, update: {}, create: { pageId, userId, direction } });

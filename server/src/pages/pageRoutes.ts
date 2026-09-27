@@ -56,7 +56,8 @@ router.post('/content-access',handle(async(req,res)=>{
   const input=z.object({items:z.array(z.object({id:uuid,management:z.boolean().optional()}).strict()).max(50)}).strict().parse(req.body);
   const visible=await prisma.post.findMany({where:{id:{in:input.items.map(item=>item.id)},...buildVisiblePublishedPostWhere(req.user?.userId)},select:{id:true}});
   const publicIds=new Set(visible.map(post=>post.id));
-  const allowed=new Set(input.items.filter(item=>publicIds.has(item.id)).map(item=>item.id+':'+(item.management?'management':'public')));
+  // Public visibility never grants the client's requested management scope.
+  const allowed=new Set(input.items.filter(item=>!item.management&&publicIds.has(item.id)).map(item=>item.id+':public'));
   if(req.user){
     const privatePosts=await prisma.post.findMany({where:{id:{in:input.items.filter(item=>item.management).map(item=>item.id)},pageId:{not:null},isDeleted:false,status:'PUBLISHED'},include:{page:true}});
     const roleCache=new Map<string,boolean>();

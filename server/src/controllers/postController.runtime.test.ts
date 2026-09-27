@@ -4,7 +4,48 @@ import test, { after } from 'node:test';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'post-controller-runtime-test-secret';
 
 const prisma = require('../prisma').default as typeof import('../prisma').default;
-const { getComments, likePost, likeComment, savePost, hidePost, reportPost, getPageManagedPostResults } = require('./postController') as typeof import('./postController');
+const { getComments, likePost, likeComment, savePost, hidePost, reportPost, getPageManagedPostResults, deletePost } = require('./postController') as typeof import('./postController');
+
+test('deleting a source post preserves another publisher share and tombstones only the source', async () => {
+    const originalFind = prisma.post.findUnique;
+    const originalTransaction = prisma.$transaction;
+    const calls: string[] = [];
+    let tombstone: any;
+    const tx: any = {
+        $queryRaw: async () => { calls.push('lock-source'); return [{ id: 'source' }]; },
+        post: {
+            count: async ({ where }: any) => { assert.deepEqual(where, { sharedFromId: 'source' }); calls.push('count-shares'); return 1; },
+            update: async ({ where, data }: any) => { assert.deepEqual(where, { id: 'source' }); tombstone = data; calls.push('tombstone'); },
+            delete: async () => { throw new Error('source with an external share must not be hard-deleted'); },
+            deleteMany: async () => { throw new Error('external share must not be deleted'); }
+        },
+        notification: { deleteMany: async () => ({ count: 0 }) },
+        savedPost: { deleteMany: async () => ({ count: 0 }) },
+        hiddenPost: { deleteMany: async () => ({ count: 0 }) },
+        userLike: { deleteMany: async () => ({ count: 0 }) },
+        comment: { findMany: async () => [] },
+        response: { findMany: async () => [] },
+        question: { findMany: async () => [] },
+        section: { deleteMany: async () => ({ count: 0 }) },
+        postMedia: { deleteMany: async ({ where }: any) => { assert.deepEqual(where, { postId: 'source' }); calls.push('remove-source-media'); } }
+    };
+    try {
+        (prisma.post as any).findUnique = async () => ({ id: 'source', authorId: 'owner', pageId: null,
+            sharedFromId: null, media: [], questions: [] });
+        (prisma as any).$transaction = async (work: (client: any) => Promise<unknown>) => work(tx);
+        const { response, state } = responseState();
+        await deletePost({ params: { id: 'source' }, user: { userId: 'owner' } } as any, response);
+        assert.equal(state.statusCode, 200);
+        assert.deepEqual(state.body.deletedPostIds, ['source']);
+        assert.equal(tombstone.isDeleted, true);
+        assert.equal(tombstone.title, '');
+        assert.ok(calls.indexOf('lock-source') < calls.indexOf('count-shares'));
+        assert.ok(calls.includes('remove-source-media'));
+    } finally {
+        (prisma.post as any).findUnique = originalFind;
+        (prisma as any).$transaction = originalTransaction;
+    }
+});
 
 after(async () => {
     await prisma.$disconnect();

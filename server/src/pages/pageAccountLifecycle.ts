@@ -28,7 +28,18 @@ export async function preparePageAccountDeletion(tx: PageTx, userId: string, con
   const follows=await tx.pageFollow.findMany({where:{userId},select:{pageId:true}});
   await tx.pageFollow.deleteMany({where:{userId}});
   for(const follow of follows) await pageAudit(tx,follow.pageId,null,'FOLLOW_CHANGED',undefined,{delta:-1});
-  await tx.pageBlock.deleteMany({where:{userId,direction:'USER_TO_PAGE'}});
+  // A deleted account cannot reappear with the same identity. Both block
+  // directions and delivery records are no longer needed for enforcement.
+  await tx.pageBlock.deleteMany({where:{userId}});
+  await tx.pageEvent.deleteMany({where:{recipientId:userId}});
+  await tx.$executeRaw`DELETE FROM "PageEvent" WHERE kind IN ('PAGE_ACTIVITY','PAGE_ACTIVITY_DELIVERY')
+    AND context->>'actorId' = ${userId}`;
+  // Preserve exclusions for other recipients while removing this user ID.
+  await tx.$executeRaw`UPDATE "PageEvent" AS e SET context = jsonb_set(e.context, '{excludedRecipientIds}',
+    COALESCE((SELECT jsonb_agg(value) FROM jsonb_array_elements(e.context->'excludedRecipientIds') AS value
+      WHERE value <> to_jsonb(${userId}::text)), '[]'::jsonb))
+    WHERE jsonb_typeof(e.context->'excludedRecipientIds') = 'array'
+      AND e.context->'excludedRecipientIds' ? ${userId}`;
   return memberships.map(member=>member.pageId);
 }
 

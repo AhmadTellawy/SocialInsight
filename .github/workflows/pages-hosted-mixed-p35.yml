@@ -6,6 +6,12 @@ on:
     paths:
       - .github/workflows/pages-hosted-mixed-p35.yml
       - stage-hosted/pages-mixed-p35.cjs
+      - server/src/pages/**
+      - server/src/controllers/postController.ts
+      - server/src/controllers/postController.runtime.test.ts
+      - server/src/middleware/proxyTrust.ts
+      - components/pages/**
+      - hooks/usePageContentAccess.ts
 
 permissions:
   contents: read

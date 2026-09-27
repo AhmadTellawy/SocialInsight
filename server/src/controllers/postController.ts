@@ -843,7 +843,7 @@ export const createPost = async (req: Request, res: Response) => {
             if (publisherPageId) await authorizePagePublisher(tx, publisherPageId, authorId, data);
             if(publisherPageId && pageRequestKey){
                 const replay=await pagePostReplay(tx,publisherPageId,authorId,pageRequestKey);
-                if(replay)return {post:replay,createdOptions:replay.questions[0]?.options || [],createdSections:replay.sections,notificationIds:[] as string[]};
+                if(replay)return {post:replay,createdOptions:replay.questions[0]?.options || [],createdSections:replay.sections,notificationIds:[] as string[],replayed:true as const};
             }
             const newPost = await tx.post.create({
                 data: postData,
@@ -968,14 +968,19 @@ export const createPost = async (req: Request, res: Response) => {
                 post: newPost,
                 createdOptions: optionsList,
                 createdSections: sectionsList,
-                notificationIds: [...mentionResult.notificationIds, ...peopleTagResult.notificationIds]
+                notificationIds: [...mentionResult.notificationIds, ...peopleTagResult.notificationIds],
+                replayed: false as const
             };
         });
         } catch (error) {
             await rollbackPreparedMedia(prepared);
             throw error;
         }
+        if (transactionResult.replayed) await rollbackPreparedMedia(prepared);
         const { post, createdOptions, createdSections, notificationIds } = transactionResult;
+        const responseMediaAssetIds = transactionResult.replayed
+            ? transactionResult.post.media.map(({ mediaAssetId }) => mediaAssetId)
+            : postMediaAssetIds;
 
         console.log(`[CREATE POST] Saved to DB:`, JSON.stringify({ id: post.id, allowAnonymous: postData.allowAnonymous, forceAnonymous: postData.forceAnonymous }));
 
@@ -996,7 +1001,7 @@ export const createPost = async (req: Request, res: Response) => {
             console.error('Post created, but notifications failed:', notificationError instanceof Error ? notificationError.message : 'unknown error');
         }
 
-        const media = (await Promise.all(postMediaAssetIds.map((id) => getStoredMediaPresentation(id)))).filter(Boolean);
+        const media = (await Promise.all(responseMediaAssetIds.map((id) => getStoredMediaPresentation(id)))).filter(Boolean);
         const socialRelations = await prisma.post.findUnique({
             where: { id: post.id },
             select: {
@@ -3380,28 +3385,23 @@ export const deletePost = async (req: Request, res: Response) => {
             return;
         }
 
-        const dependentShares = post.sharedFromId
-            ? []
-            : await prisma.post.findMany({
-                where: { sharedFromId: id },
-                include: {
-                    media: { select: { mediaAssetId: true } },
-                    questions: { include: { options: { select: { imageMediaId: true } } } }
-                }
-            });
-        const postsToDelete = [post, ...dependentShares];
-        const postIds = postsToDelete.map(({ id: postId }) => postId);
-        const dependentShareIds = dependentShares.map(({ id: postId }) => postId);
-        const mediaAssetIds = Array.from(new Set(postsToDelete.flatMap((postToDelete) => [
-            ...postToDelete.media.map(({ mediaAssetId }) => mediaAssetId),
-            ...postToDelete.questions.flatMap((question) => [
+        // A share belongs to its own author or Page. Removing the source must
+        // never erase another publisher's share, comments, votes or media.
+        const postIds = [id];
+        const mediaAssetIds = Array.from(new Set([
+            ...post.media.map(({ mediaAssetId }) => mediaAssetId),
+            ...post.questions.flatMap((question) => [
                 question.imageMediaId,
                 ...question.options.map((option) => option.imageMediaId)
             ])
-        ]).filter((mediaAssetId): mediaAssetId is string => Boolean(mediaAssetId))));
+        ].filter((mediaAssetId): mediaAssetId is string => Boolean(mediaAssetId))));
 
         await prisma.$transaction(async (tx) => {
             if (post.pageId) await authorizePagePublisher(tx,post.pageId,userId,{status:post.status},false);
+            // Lock the source before checking incoming FK edges. A concurrent
+            // share insertion then waits until deletion/tombstoning completes.
+            await tx.$queryRaw`SELECT id FROM "Post" WHERE id = ${id} FOR UPDATE`;
+            const hasDependentShares = await tx.post.count({ where: { sharedFromId: id } }) > 0;
             await tx.notification.deleteMany({
                 where: { targetId: { in: postIds }, targetType: { in: ['survey', 'post'] } }
             });
@@ -3431,10 +3431,21 @@ export const deletePost = async (req: Request, res: Response) => {
             }
             await tx.section.deleteMany({ where: { postId: { in: postIds } } });
 
-            if (dependentShareIds.length > 0) {
-                await tx.post.deleteMany({ where: { id: { in: dependentShareIds } } });
+            if (hasDependentShares) {
+                // Keep the smallest invisible FK target, matching Page purge.
+                // Its publisher content and assets are removed; external shares
+                // retain their separate ownership and are hidden by source guards.
+                await tx.postMedia.deleteMany({ where: { postId: id } });
+                await tx.post.update({ where: { id }, data: {
+                    title: '', description: '', image: null, sharedCaption: null,
+                    isDeleted: true, deletedAt: new Date(), demographics: null,
+                    approvedById: null, rejectedById: null, rejectionReason: null,
+                    likesCount: 0, commentsCount: 0, responseCount: 0,
+                    sharesCount: 0, viewCount: 0, uniqueViewCount: 0
+                } });
+            } else {
+                await tx.post.delete({ where: { id } });
             }
-            await tx.post.delete({ where: { id } });
 
             if (post.sharedFromId) {
                 await tx.post.updateMany({

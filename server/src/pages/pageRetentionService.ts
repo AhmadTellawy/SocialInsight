@@ -17,14 +17,17 @@ export async function processPageRetention(limit = 100, now = new Date()) {
   const size = pageLifecycleLimit(limit);
   const auditCutoff = pageRetentionCutoff(PAGE_POLICY.auditRetentionDays, now);
   const caseCutoff = pageRetentionCutoff(PAGE_POLICY.closedCaseRetentionDays, now);
-  const totals = { invitationsExpired: 0, transfersExpired: 0, auditsDeleted: 0, casesDeleted: 0 };
-  for (const kind of ['invitation', 'transfer', 'audit', 'case'] as const) {
+  const eventCutoff = pageRetentionCutoff(PAGE_POLICY.deliveredEventRetentionDays, now);
+  const totals = { invitationsExpired: 0, transfersExpired: 0, auditsDeleted: 0, casesDeleted: 0, eventsDeleted: 0 };
+  for (const kind of ['invitation', 'transfer', 'audit', 'case', 'event'] as const) {
     const candidates = kind === 'invitation'
       ? await prisma.pageInvitation.findMany({ where: { status: 'PENDING', expiresAt: { lte: now } }, take: size, orderBy: { expiresAt: 'asc' }, select: { id: true, pageId: true } })
       : kind === 'transfer'
         ? await prisma.pageOwnershipTransfer.findMany({ where: { status: 'PENDING', expiresAt: { lte: now } }, take: size, orderBy: { expiresAt: 'asc' }, select: { id: true, pageId: true } })
         : kind === 'audit'
           ? await prisma.pageAuditEvent.findMany({ where: { createdAt: { lte: auditCutoff }, page: { OR: [{ legalHoldUntil: null }, { legalHoldUntil: { lte: now } }], cases: { none: { legalHoldUntil: { gt: now } } } } }, take: size, orderBy: { createdAt: 'asc' }, select: { id: true, pageId: true } })
+          : kind === 'event'
+            ? await prisma.pageEvent.findMany({ where: { deliveredAt: { lte: eventCutoff }, page: { OR: [{ legalHoldUntil: null }, { legalHoldUntil: { lte: now } }], cases: { none: { legalHoldUntil: { gt: now } } } } }, take: size, orderBy: { deliveredAt: 'asc' }, select: { id: true, pageId: true } })
           : await prisma.$queryRaw<Array<{ id: string; pageId: string }>>(Prisma.sql`
             SELECT c.id, c."pageId" FROM "PageCase" c JOIN "Page" p ON p.id = c."pageId"
             WHERE c.status = 'CLOSED' AND c."closedAt" <= ${caseCutoff}
@@ -43,6 +46,12 @@ export async function processPageRetention(limit = 100, now = new Date()) {
           if (!await pageErasureHeld(tx, candidate.pageId, now)) {
             return (await tx.pageAuditEvent.deleteMany({ where: { id: candidate.id, createdAt: { lte: auditCutoff } } })).count;
           }
+        } else if (kind === 'event') {
+          if (!await pageErasureHeld(tx, candidate.pageId, now)) {
+            const deleted = await tx.pageEvent.deleteMany({ where: { id: candidate.id, deliveredAt: { lte: eventCutoff } } });
+            if (deleted.count) await tx.notification.deleteMany({ where: { dedupeKey: 'page-event:' + candidate.id } });
+            return deleted.count;
+          }
         } else {
           const legalPageHold = await tx.page.count({ where: { id: candidate.pageId, legalHoldUntil: { gt: now } } });
           // An unresolved appeal still needs its original decision, even when that decision is old.
@@ -53,7 +62,7 @@ export async function processPageRetention(limit = 100, now = new Date()) {
         }
         return 0;
       });
-      const counter = { invitation: 'invitationsExpired', transfer: 'transfersExpired', audit: 'auditsDeleted', case: 'casesDeleted' } as const;
+      const counter = { invitation: 'invitationsExpired', transfer: 'transfersExpired', audit: 'auditsDeleted', case: 'casesDeleted', event: 'eventsDeleted' } as const;
       totals[counter[kind]] += changed;
     }
   }
