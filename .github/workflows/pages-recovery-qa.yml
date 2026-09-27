@@ -1,0 +1,56 @@
+name: Pages recovery rehearsal
+on:
+  push:
+    branches: [codex/pages-recovery-qa]
+    paths:
+      - .github/workflows/pages-recovery-qa.yml
+      - stage-hosted/pages-recovery-qa.cjs
+permissions:
+  contents: read
+jobs:
+  recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres?schema=public&connection_limit=12
+      DIRECT_URL: postgresql://postgres@127.0.0.1:5432/postgres?schema=public
+      NODE_ENV: test
+      DISABLE_BACKGROUND_JOBS: 'true'
+      RENDER: 'false'
+      RELEASE_COMMIT: 9b3e60413f77c88bac56c6e4310e1f1196699109
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.13.0'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: Build Page-aware release candidate
+        run: |
+          npm ci --prefix server
+          npm run build --prefix server
+      - name: Apply Pages additive migrations
+        working-directory: server
+        run: npx prisma migrate deploy
+      - name: Generate ephemeral signing key
+        run: echo "JWT_SECRET=$(openssl rand -hex 48)" >> "$GITHUB_ENV"
+      - name: Rehearse feature-off and forward recovery on migrated Page data
+        run: node stage-hosted/pages-recovery-qa.cjs
+      - name: Upload recovery receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pages-recovery-receipt
+          path: recovery-receipt.json
+          if-no-files-found: warn
