@@ -1329,7 +1329,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           <div className="bg-white p-4 rounded-xl border border-amber-200 shadow-sm flex items-center gap-4 text-left">
             {hasOptionImage(winner) && <MediaImage media={winner.imageMedia} mediaId={winner.imageMediaId} fallbackSrc={winner.image} className="w-16 h-16 rounded-lg object-cover" alt="" />}
             <div className="flex-1">
-              {(displayOptionNames || !hasOptionImage(winner)) && <h4 dir="auto" className="text-[12px] text-start font-normal text-gray-900 leading-relaxed break-words">{winner.text}</h4>}
+              {(displayOptionNames || !hasOptionImage(winner)) && (
+                <h4 dir="auto" className="text-[12px] text-start font-normal text-gray-900 leading-relaxed break-words">
+                  {displayOptionNames ? winner.text : t('answerType.imageOption', { number: localOptions.findIndex(option => option.id === winner.id) + 1 })}
+                </h4>
+              )}
               <div className="flex items-center gap-1.5 mt-1 text-green-600 font-bold text-[10px] uppercase">
                 <CheckCircle2 size={12} /> {t('Winner')}
               </div>
@@ -1361,13 +1365,14 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             const isLeaving = isChallengeTransitioning === opt.id;
             const imageKey = optionImageKey(opt);
             const hasImage = hasOptionImage(opt);
-            const showName = displayOptionNames || !hasImage;
+            const showLabel = displayOptionNames || !hasImage;
+            const optionLabel = displayOptionNames ? opt.text : t('answerType.imageOption', { number: pairOptions.indexOf(opt) + 1 });
             const isPortrait = hasImage && portraitImages.has(imageKey);
             return (
               <button
                 key={opt.id}
                 disabled={isChallengeTransitioning !== null}
-                aria-label={showName ? opt.text : t('answerType.imageOption', { number: pairOptions.indexOf(opt) + 1 })}
+                aria-label={optionLabel}
                 onClick={() => handleChallengeVote(opt.id)}
                 className={`relative flex flex-col items-stretch text-left group overflow-hidden rounded-2xl border bg-white transition-all duration-300 ${isLeaving ? 'scale-90 opacity-0 -translate-y-4' : 'hover:border-amber-400 hover:shadow-md active:scale-95 border-gray-100 shadow-sm animate-in zoom-in fade-in'}`}
               >
@@ -1395,9 +1400,9 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 pointer-events-none" />
                   </div>
                 )}
-                {showName && (
+                {showLabel && (
                   <div className={`p-3 bg-white flex-1 flex flex-col justify-center ${hasImage ? 'border-t border-gray-50 min-h-[60px]' : 'min-h-[120px]'}`}>
-                    <span dir="auto" className="text-[12px] text-start font-normal text-gray-800 leading-relaxed break-words">{opt.text}</span>
+                    <span dir="auto" className="text-[12px] text-start font-normal text-gray-800 leading-relaxed break-words">{optionLabel}</span>
                   </div>
                 )}
               </button>

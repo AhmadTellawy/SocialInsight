@@ -183,6 +183,35 @@ test('image challenge retains option images', async ({ page }) => {
   await expect(card.getByRole('button', { name: names[1], exact: true }).locator('img')).toHaveCount(1);
 });
 
+test('image challenge with hidden names keeps option text concealed', async ({ page }) => {
+  await page.goto('/tests/post-ui-e2e/index.html?challenge&legacyHidden');
+  const card = page.getByTestId('challenge');
+  const first = card.getByRole('button', { name: 'Image option 1', exact: true });
+  await expect(first.locator('img')).toHaveCount(1);
+  await expect(card.getByText(names[0], { exact: true })).toHaveCount(0);
+  await expect(card.getByText(names[1], { exact: true })).toHaveCount(0);
+  await first.click();
+  await expect(card.getByText('Your Final Choice', { exact: true })).toBeVisible();
+  await expect(card.getByText(names[0], { exact: true })).toHaveCount(0);
+});
+
+test('image challenge with hidden names and missing media uses neutral option labels', async ({ page }) => {
+  await page.goto('/tests/post-ui-e2e/index.html?challenge&layout=text&forceImageMode&legacyHidden');
+  const card = page.getByTestId('challenge');
+  const first = card.getByRole('button', { name: 'Image option 1', exact: true });
+  const second = card.getByRole('button', { name: 'Image option 2', exact: true });
+  await expect(first.getByText('Image option 1', { exact: true })).toBeVisible();
+  await expect(second.getByText('Image option 2', { exact: true })).toBeVisible();
+  await expect(first.locator('img')).toHaveCount(0);
+  await expect(second.locator('img')).toHaveCount(0);
+  await expect(card.getByText(names[0], { exact: true })).toHaveCount(0);
+  await expect(card.getByText(names[1], { exact: true })).toHaveCount(0);
+  await first.click();
+  await expect(card.getByText('Your Final Choice', { exact: true })).toBeVisible();
+  await expect(card.getByText('Image option 1', { exact: true })).toBeVisible();
+  await expect(card.getByText(names[0], { exact: true })).toHaveCount(0);
+});
+
 test('embedded repost media fills embedded post and caption has independent direction', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 900 });
   await page.goto('/tests/post-ui-e2e/index.html?repost&dir=ltr');
