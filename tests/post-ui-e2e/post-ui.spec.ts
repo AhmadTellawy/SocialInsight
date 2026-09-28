@@ -212,6 +212,20 @@ test('image challenge with hidden names and missing media uses neutral option la
   await expect(card.getByText(names[0], { exact: true })).toHaveCount(0);
 });
 
+test('hidden image challenge keeps neutral option number through later rounds', async ({ page }) => {
+  await page.goto('/tests/post-ui-e2e/index.html?challenge&layout=text&forceImageMode&legacyHidden&threeOptions');
+  const card = page.getByTestId('challenge');
+  await card.getByRole('button', { name: 'Image option 1', exact: true }).click();
+  const third = card.getByRole('button', { name: 'Image option 3', exact: true });
+  await expect(third).toBeVisible();
+  await expect(third.locator('img')).toHaveCount(0);
+  await expect(card.getByText('Third hidden option', { exact: true })).toHaveCount(0);
+  await third.click();
+  await expect(card.getByText('Your Final Choice', { exact: true })).toBeVisible();
+  await expect(card.locator('h4')).toHaveText('Image option 3');
+  await expect(card.getByText('Third hidden option', { exact: true })).toHaveCount(0);
+});
+
 test('embedded repost media fills embedded post and caption has independent direction', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 900 });
   await page.goto('/tests/post-ui-e2e/index.html?repost&dir=ltr');

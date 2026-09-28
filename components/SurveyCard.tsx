@@ -1366,7 +1366,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             const imageKey = optionImageKey(opt);
             const hasImage = hasOptionImage(opt);
             const showLabel = displayOptionNames || !hasImage;
-            const optionLabel = displayOptionNames ? opt.text : t('answerType.imageOption', { number: pairOptions.indexOf(opt) + 1 });
+            const optionLabel = displayOptionNames ? opt.text : t('answerType.imageOption', { number: localOptions.findIndex(option => option.id === opt.id) + 1 });
             const isPortrait = hasImage && portraitImages.has(imageKey);
             return (
               <button
