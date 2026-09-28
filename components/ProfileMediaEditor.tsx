@@ -5,20 +5,21 @@ import { useBlocker } from 'react-router-dom';
 import type { MediaCropSelection, UserProfile } from '../types';
 import { api } from '../services/api';
 import { mediaApi, MediaUploadError } from '../services/mediaApi';
-import { validateAndNormalizeImageFile, PROFILE_COVER_MAX_INPUT_BYTES, DEFAULT_MEDIA_MAX_INPUT_BYTES } from '../utils/mediaFileValidation';
+import { validateAndNormalizeImageFile, MediaFileValidationError, PROFILE_COVER_MAX_INPUT_BYTES, DEFAULT_MEDIA_MAX_INPUT_BYTES } from '../utils/mediaFileValidation';
 import { BottomSheet } from './BottomSheet';
 import { MediaCropEditor } from './media/MediaCropEditor';
 
-type Source = { file: File; url: string; altText?: string };
+type Source = { file: File; url: string; altText?: string; preparedAssetId?: string };
 
 // This editor creates a new owned asset, then attaches it with optimistic concurrency.
 // It never mutates the currently published image while the user is still cropping.
 export const ProfileMediaEditor: React.FC<{
   kind: 'avatar' | 'cover';
   profile: UserProfile;
+  initialFile?: File | null;
   onSaved: (profile: UserProfile) => void;
   onClose: () => void;
-}> = ({ kind, profile, onSaved, onClose }) => {
+}> = ({ kind, profile, initialFile, onSaved, onClose }) => {
   const { t, i18n } = useTranslation();
   const purpose = kind === 'avatar' ? 'PROFILE_AVATAR' : 'PROFILE_COVER';
   const ratio = kind === 'avatar' ? 1 : 3;
@@ -39,6 +40,9 @@ export const ProfileMediaEditor: React.FC<{
   const [pendingCrop, setPendingCrop] = useState<MediaCropSelection | null>(null);
   const saveLatch = useRef(false);
   const temporaryAsset = useRef<string | null>(null);
+  const preparation = useRef<AbortController | null>(null);
+  const selectionId = useRef(0);
+  const failedFile = useRef<File | null>(null);
   const active = useRef(true);
   const assetId = kind === 'avatar' ? loadedProfile.avatarMediaId : loadedProfile.coverMediaId;
   const hasLegacyAvatar = kind === 'avatar' && !assetId && loadedProfile.hasLegacyAvatar === true;
@@ -53,14 +57,33 @@ export const ProfileMediaEditor: React.FC<{
     return () => window.removeEventListener('beforeunload', beforeUnload);
   }, [saving]);
 
-  const prepare = async (file: File): Promise<Source> => {
-    const validated = await validateAndNormalizeImageFile(file, { maxInputBytes: kind === 'cover' ? PROFILE_COVER_MAX_INPUT_BYTES : DEFAULT_MEDIA_MAX_INPUT_BYTES });
+  const prepare = async (file: File, signal?: AbortSignal): Promise<Source> => {
+    const validated = await validateAndNormalizeImageFile(file, {
+      maxInputBytes: kind === 'cover' ? PROFILE_COVER_MAX_INPUT_BYTES : DEFAULT_MEDIA_MAX_INPUT_BYTES,
+      heifHandling: 'server'
+    });
+    if (signal?.aborted) throw new DOMException('Image preparation canceled.', 'AbortError');
+    if (validated.requiresServerPreparation) {
+      const prepared = await mediaApi.uploadAndPrepare(validated.file, purpose, (value) => {
+        if (active.current && !signal?.aborted) setProgress(value);
+      }, signal);
+      return { file: validated.file, url: prepared.preview.src, preparedAssetId: prepared.id };
+    }
     return { file: validated.file, url: URL.createObjectURL(validated.file) };
   };
   const publishSource = (next: Source) => {
-    if (!active.current) { URL.revokeObjectURL(next.url); return; }
-    if (sourceRef.current) URL.revokeObjectURL(sourceRef.current.url);
+    if (!active.current) {
+      if (next.preparedAssetId) void mediaApi.cancel(next.preparedAssetId).catch(() => undefined);
+      if (next.url.startsWith('blob:')) URL.revokeObjectURL(next.url);
+      return;
+    }
+    if (sourceRef.current?.url.startsWith('blob:')) URL.revokeObjectURL(sourceRef.current.url);
+    if (temporaryAsset.current && temporaryAsset.current !== next.preparedAssetId) {
+      void mediaApi.cancel(temporaryAsset.current).catch(() => undefined);
+    }
+    temporaryAsset.current = next.preparedAssetId || null;
     sourceRef.current = next;
+    failedFile.current = null;
     setSource(next);
     setCropping(true);
     setPendingCrop(null);
@@ -78,6 +101,10 @@ export const ProfileMediaEditor: React.FC<{
         if (controller.signal.aborted) return;
         setLoadedProfile(fresh);
         const currentId = kind === 'avatar' ? fresh.avatarMediaId : fresh.coverMediaId;
+        if (initialFile) {
+          await chooseFile(initialFile);
+          return;
+        }
         if (!currentId) return;
         // get() is authenticated; its presentation supplies a limited image URL.
         const presentation = await mediaApi.get(currentId, true);
@@ -100,7 +127,8 @@ export const ProfileMediaEditor: React.FC<{
 
   useEffect(() => () => {
     active.current = false;
-    if (sourceRef.current) URL.revokeObjectURL(sourceRef.current.url);
+    preparation.current?.abort();
+    if (sourceRef.current?.url.startsWith('blob:')) URL.revokeObjectURL(sourceRef.current.url);
     if (temporaryAsset.current) void mediaApi.cancel(temporaryAsset.current).catch(() => undefined);
   }, []);
 
@@ -113,11 +141,13 @@ export const ProfileMediaEditor: React.FC<{
     setError(null);
     setProgress(0);
     try {
-      if (temporaryAsset.current) {
+      if (temporaryAsset.current && temporaryAsset.current !== source.preparedAssetId) {
         await mediaApi.cancel(temporaryAsset.current).catch(() => undefined);
         temporaryAsset.current = null;
       }
-      const uploaded = await mediaApi.upload(source.file, purpose, crop, (value) => { if (active.current) setProgress(value); });
+      const uploaded = source.preparedAssetId
+        ? await mediaApi.finalize(source.preparedAssetId, crop)
+        : await mediaApi.upload(source.file, purpose, crop, (value) => { if (active.current) setProgress(value); });
       temporaryAsset.current = uploaded.id;
       const updated = await api.updateUser(loadedProfile.id, { [`${kind}MediaId`]: uploaded.id, expectedUpdatedAt: loadedProfile.updatedAt });
       temporaryAsset.current = null;
@@ -161,21 +191,68 @@ export const ProfileMediaEditor: React.FC<{
   };
   const chooseFile = async (file?: File) => {
     if (!file || saveLatch.current) return;
+    failedFile.current = file;
+    const currentSelection = ++selectionId.current;
+    preparation.current?.abort();
+    const controller = new AbortController();
+    preparation.current = controller;
     setLoading(true);
+    setProgress(0);
+    setError(null);
     try {
-      publishSource(await prepare(file));
-    } catch {
-      setError(t('mediaEdit.invalidImage', { defaultValue: 'Choose a valid JPEG, PNG or WebP image within the image size limit.' }));
-    } finally { setLoading(false); }
+      const next = await prepare(file, controller.signal);
+      if (controller.signal.aborted || currentSelection !== selectionId.current || !active.current) {
+        if (next.preparedAssetId) void mediaApi.cancel(next.preparedAssetId).catch(() => undefined);
+        if (next.url.startsWith('blob:')) URL.revokeObjectURL(next.url);
+        return;
+      }
+      publishSource(next);
+    } catch (error) {
+      if (!controller.signal.aborted && currentSelection === selectionId.current && active.current) {
+        if (error instanceof MediaFileValidationError) {
+          switch (error.code) {
+            case 'FILE_TOO_LARGE':
+              setError(t(kind === 'cover' ? 'profile.cover.tooLarge' : 'media.tooLarge', {
+                max: kind === 'cover' ? 10 : 15,
+                defaultValue: `Images must be ${kind === 'cover' ? 10 : 15} MB or smaller.`
+              }));
+              break;
+            case 'PIXEL_LIMIT_EXCEEDED':
+              setError(t('media.tooManyPixels', { defaultValue: 'This image is too large to process safely.' }));
+              break;
+            case 'MIME_MISMATCH':
+              setError(t('media.mimeMismatch', { defaultValue: 'The image content does not match its file type.' }));
+              break;
+            case 'HEIF_CODEC_UNAVAILABLE':
+              setError(t('media.heifUnavailable', { defaultValue: 'HEIC/HEIF preparation is temporarily unavailable. Please retry.' }));
+              break;
+            case 'INVALID_IMAGE':
+            case 'EMPTY_FILE':
+              setError(t('media.invalidImage', { defaultValue: 'This image could not be opened.' }));
+              break;
+            default:
+              setError(t('media.invalidType', { defaultValue: 'Use a JPEG, PNG, WebP, HEIC, or HEIF image.' }));
+          }
+        } else {
+          setError(error instanceof MediaUploadError && error.phase === 'preparation'
+            ? t('media.heifPreparationFailed', { defaultValue: 'We could not prepare this image right now. Try again.' })
+            : t('media.invalidImage', { defaultValue: 'This image could not be opened.' }));
+        }
+      }
+    } finally {
+      if (preparation.current === controller) preparation.current = null;
+      if (currentSelection === selectionId.current && active.current) setLoading(false);
+    }
   };
 
   return <>
-    <input ref={input} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" aria-label={t('mediaEdit.choose', { defaultValue: 'Choose image' })} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; void chooseFile(file); }} />
+    <input ref={input} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" className="hidden" aria-label={t('mediaEdit.choose', { defaultValue: 'Choose image' })} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; void chooseFile(file); }} />
     {cropping && source && <MediaCropEditor imageSrc={source.url} purpose={purpose} lockedAspectRatio={ratio} initialAltText={source.altText} onApply={(crop) => void saveCrop(crop)} onCancel={() => setCropping(false)} />}
-    {!cropping && <BottomSheet isOpen onClose={() => { if (!saving && !loading) onClose(); }} title={title}>
+    {!cropping && <BottomSheet isOpen onClose={() => { if (!saving) onClose(); }} title={title}>
       <div className="space-y-3 pb-4" dir={i18n.dir()}>
         {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm leading-relaxed text-red-800">{error}</p>}
         {(loading || saving) && <p role="status" className="flex min-h-16 items-center justify-center gap-2 text-sm font-semibold text-gray-700"><Loader2 className="animate-spin" size={20} />{loading ? t('mediaEdit.loading', { defaultValue: 'Opening photo editor...' }) : t('mediaEdit.saving', { progress, defaultValue: `Saving photo, ${progress}%` })}</p>}
+        {loading && !saving && <button type="button" onClick={onClose} className="min-h-12 w-full rounded-xl bg-gray-100 px-4 text-sm font-bold text-gray-700">{t('Cancel', { defaultValue: 'Cancel' })}</button>}
         {!loading && !saving && <>
           {hasLegacyAvatar && !source && <p role="status" className="rounded-xl bg-blue-50 p-3 text-sm leading-relaxed text-blue-950">{t('mediaEdit.legacyUnavailable', { defaultValue: 'Your existing photo cannot be opened in the editor. You can replace it or remove it.' })}</p>}
           {confirmRemove ? <>
@@ -187,7 +264,7 @@ export const ProfileMediaEditor: React.FC<{
             {source && <button type="button" onClick={() => setCropping(true)} className="flex min-h-12 w-full items-center gap-3 rounded-xl border border-gray-200 px-4 text-sm font-bold text-gray-800"><Crop size={20} />{t('mediaEdit.crop', { defaultValue: 'Adjust crop' })}</button>}
             <button type="button" onClick={() => input.current?.click()} className="flex min-h-12 w-full items-center gap-3 rounded-xl border border-gray-200 px-4 text-sm font-bold text-gray-800"><Camera size={20} />{hasLegacyAvatar ? t('mediaEdit.replace', { defaultValue: 'Replace photo' }) : t('mediaEdit.choose', { defaultValue: 'Choose image' })}</button>
             {hasCurrentImage && <button ref={removeAction} type="button" onClick={() => setConfirmRemove(true)} className="flex min-h-12 w-full items-center gap-3 rounded-xl border border-gray-200 px-4 text-sm font-bold text-red-700"><Trash2 size={20} />{t('mediaEdit.remove', { defaultValue: 'Remove photo' })}</button>}
-            {error && !source && <button type="button" onClick={() => setRetryKey((value) => value + 1)} className="flex min-h-12 w-full items-center gap-3 rounded-xl border border-gray-200 px-4 text-sm font-bold"><RefreshCw size={20} />{t('common.retry', { defaultValue: 'Retry' })}</button>}
+            {error && !source && <button type="button" onClick={() => { if (failedFile.current) void chooseFile(failedFile.current); else setRetryKey((value) => value + 1); }} className="flex min-h-12 w-full items-center gap-3 rounded-xl border border-gray-200 px-4 text-sm font-bold"><RefreshCw size={20} />{t('common.retry', { defaultValue: 'Retry' })}</button>}
             <button type="button" onClick={onClose} className="min-h-12 w-full rounded-xl bg-gray-100 px-4 text-sm font-bold text-gray-700">{t('Cancel', { defaultValue: 'Cancel' })}</button>
           </>}
         </>}

@@ -1512,7 +1512,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             <div className="p-5 pb-8 no-scrollbar scroll-smooth">
               {(currentQuestion.imageMediaId || currentQuestion.imageMedia || currentQuestion.image) && (
                 <div className="w-[calc(100%+2.5rem)] -mx-5 rounded-none overflow-hidden mb-3 bg-gray-100">
-                  <MediaImage media={currentQuestion.imageMedia} mediaId={currentQuestion.imageMediaId} fallbackSrc={currentQuestion.image} className="w-full h-auto object-contain block" alt="Question context" />
+                  <MediaImage media={currentQuestion.imageMedia} mediaId={currentQuestion.imageMediaId} fallbackSrc={currentQuestion.image} className="w-full h-auto object-contain block" style={{ aspectRatio: currentQuestion.imageMedia?.aspectRatio || 3 / 2 }} alt="Question context" />
                 </div>
               )}
               <div className="flex items-start justify-between gap-4 mb-3">
@@ -1834,6 +1834,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
               fallbackSrc={sourceSurvey.coverImage}
               alt="Cover"
               className="w-full h-auto object-contain block"
+              style={{ aspectRatio: 3 / 2 }}
             />
           </div>
         )}
@@ -2250,7 +2251,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 ? renderCoverImagePollCard()
                 : sourceSurvey.media?.length
                   ? <MediaCarousel media={sourceSurvey.media} onClick={onContentClick} className={`mb-3 !w-[calc(100%+2rem)] -mx-4 rounded-none ${onContentClick ? 'cursor-pointer hover:opacity-95 transition-opacity' : ''}`} />
-                  : (sourceSurvey.coverImage && <div onClick={onContentClick} className={`w-[calc(100%+2rem)] -mx-4 rounded-none overflow-hidden mb-3 bg-gray-100 ${onContentClick ? 'cursor-pointer hover:opacity-95 transition-opacity' : ''}`}><MediaImage fallbackSrc={sourceSurvey.coverImage} alt="Cover" className="w-full h-auto object-contain block" /></div>)
+                  : (sourceSurvey.coverImage && <div onClick={onContentClick} className={`w-[calc(100%+2rem)] -mx-4 rounded-none overflow-hidden mb-3 bg-gray-100 ${onContentClick ? 'cursor-pointer hover:opacity-95 transition-opacity' : ''}`}><MediaImage fallbackSrc={sourceSurvey.coverImage} alt="Cover" className="w-full h-auto object-contain block" style={{ aspectRatio: 3 / 2 }} /></div>)
               }
 
               {hasDescription && (

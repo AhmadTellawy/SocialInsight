@@ -99,6 +99,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [isFollowLoading, setIsFollowLoading] = useState(false);
   const [targetUser, setTargetUser] = useState<UserProfile | null>(null);
   const [editingMedia, setEditingMedia] = useState<'avatar' | 'cover' | null>(null);
+  const avatarFileInput = useRef<HTMLInputElement>(null);
+  const [selectedAvatarFile, setSelectedAvatarFile] = useState<File | null>(null);
   const [showBlockDialog, setShowBlockDialog] = useState(false);
   const [blocking, setBlocking] = useState(false);
   const [blockError, setBlockError] = useState(false);
@@ -1159,6 +1161,20 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
         <div className="px-6 flex flex-col items-center">
           <div className="relative -mt-14 mb-5 z-10">
+            {isMe && <input
+              ref={avatarFileInput}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
+              className="hidden"
+              aria-label={t('mediaEdit.choose', { defaultValue: 'Choose image' })}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (!file) return;
+                setSelectedAvatarFile(file);
+                setEditingMedia('avatar');
+              }}
+            />}
             <div className="w-28 h-28 rounded-[22%] p-1 bg-white shadow-xl border border-gray-100 ring-4 ring-white/80">
               <MediaImage
                 mediaId={profileUser.avatarMediaId}
@@ -1171,9 +1187,22 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             </div>
             {isMe && (
               <button
+                type="button"
                 onClick={() => setEditingMedia('avatar')}
-                className="absolute -bottom-2 -end-2 flex h-11 w-11 items-center justify-center bg-blue-600 text-white rounded-2xl shadow-lg hover:bg-blue-700 transition-colors border-[3px] border-white active:scale-90 z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+                className="absolute inset-0 z-10 cursor-pointer rounded-[22%] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
                 aria-label={t('mediaEdit.avatar', { defaultValue: 'Edit profile photo' })}
+              >
+                <span aria-hidden="true" className="absolute bottom-2 start-2 rounded-lg border border-white/70 bg-white/95 px-2 py-0.5 text-xs font-bold leading-tight text-gray-900 shadow-sm">
+                  {t('Edit', { defaultValue: 'Edit' })}
+                </span>
+              </button>
+            )}
+            {isMe && (
+              <button
+                type="button"
+                onClick={() => avatarFileInput.current?.click()}
+                className="absolute -bottom-2 -end-2 flex h-11 w-11 items-center justify-center bg-blue-600 text-white rounded-2xl shadow-lg hover:bg-blue-700 transition-colors border-[3px] border-white active:scale-90 z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+                aria-label={t('mediaEdit.choose', { defaultValue: 'Choose image' })}
               >
                 <Edit3 size={18} />
               </button>
@@ -1390,7 +1419,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         </div>
       </BottomSheet>
 
-      {editingMedia && isMe && <ProfileMediaEditor kind={editingMedia} profile={userProfile} onSaved={(updated) => { onUpdateCurrentUser?.(updated); setTargetUser((current) => current ? { ...current, ...updated } : current); }} onClose={() => setEditingMedia(null)} />}
+      {editingMedia && isMe && <ProfileMediaEditor kind={editingMedia} profile={userProfile} initialFile={editingMedia === 'avatar' ? selectedAvatarFile : null} onSaved={(updated) => { onUpdateCurrentUser?.(updated); setTargetUser((current) => current ? { ...current, ...updated } : current); }} onClose={() => { setEditingMedia(null); setSelectedAvatarFile(null); }} />}
 
       <BottomSheet isOpen={showBlockDialog && !isMe} onClose={() => { if (!blocking) setShowBlockDialog(false); }} title={t('settingsV2.block.title', { defaultValue: 'Block account?' })}>
         <div className="space-y-4 pb-4">

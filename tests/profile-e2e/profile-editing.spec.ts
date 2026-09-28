@@ -51,6 +51,21 @@ type MockProfile = {
 
 const facebookUrl = 'https://www.facebook.com/share/19LFpJK7Y5';
 const fixtureImage = path.resolve(process.cwd(), 'public/pwa-192x192.png');
+const syntheticHeic = () => {
+  const bytes = Buffer.alloc(57);
+  bytes.writeUInt32BE(20, 0); bytes.write('ftyp', 4); bytes.write('heic', 8); bytes.write('heic', 16);
+  bytes.writeUInt32BE(8, 20); bytes.write('hvcC', 24);
+  bytes.writeUInt32BE(20, 28); bytes.write('ispe', 32); bytes.writeUInt32BE(640, 40); bytes.writeUInt32BE(480, 44);
+  bytes.writeUInt32BE(9, 48); bytes.write('mdat', 52); bytes[56] = 1;
+  return { name: 'phone-photo.heic', mimeType: 'image/heic', buffer: bytes };
+};
+const syntheticPngHeader = (width: number, height: number) => {
+  const bytes = Buffer.alloc(24);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes);
+  bytes.writeUInt32BE(13, 8); bytes.write('IHDR', 12);
+  bytes.writeUInt32BE(width, 16); bytes.writeUInt32BE(height, 20);
+  return bytes;
+};
 
 const ageGroupFor = (birthday: string): string => {
   const [year, month, day] = birthday.split('-').map(Number);
@@ -559,7 +574,8 @@ test.describe('settings critical acceptance', () => {
     expect(state.profileSaveCalls).toBe(0);
   });
 
-  test('profile photo controls open current image cropping directly and preserve its description in dark theme at 390px', async ({ page }, testInfo) => {
+  test('profile photo tap opens the phone picker before cropping, then cover editing and removal stay available at 390px', async ({ page }, testInfo) => {
+    test.setTimeout(90_000);
     const state = settingsState();
     state.profile.theme = 'dark';
     await page.setViewportSize({ width: 390, height: 844 });
@@ -573,7 +589,14 @@ test.describe('settings critical acceptance', () => {
     await page.goto('/profile');
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
     await expect(page.locator('html')).toHaveCSS('--si-surface', '#111827');
-    await page.getByRole('button', { name: 'Edit profile photo', exact: true }).click();
+    const chooseAvatar = page.getByRole('button', { name: 'Choose image', exact: true });
+    await expect(chooseAvatar).toBeVisible({ timeout: 30_000 });
+    const [chooser] = await Promise.all([
+      page.waitForEvent('filechooser', { timeout: 20_000 }),
+      chooseAvatar.click()
+    ]);
+    await expect(page.getByTestId('media-crop-editor')).toHaveCount(0);
+    await chooser.setFiles(fixtureImage);
     await expect(page.getByTestId('media-crop-editor')).toHaveAttribute('data-media-purpose', 'PROFILE_AVATAR');
     const avatarRatio = page.getByRole('button', { name: '1:1', exact: true });
     await expect(avatarRatio).toHaveAttribute('aria-pressed', 'true');
@@ -581,11 +604,31 @@ test.describe('settings critical acceptance', () => {
     await testInfo.attach('avatar-crop-contrast.json', { body: JSON.stringify(await computedTextContrast(avatarRatio), null, 2), contentType: 'application/json' });
     await page.screenshot({ path: testInfo.outputPath('profile-current-avatar-dark-390.png') });
     await expect(page).toHaveURL(/\/profile$/);
-    await expect(page.getByLabel('Image description', { exact: true })).toHaveValue('Existing accessible image description');
+    await page.getByLabel('Image description', { exact: true }).fill('New accessible image description');
     await page.getByRole('button', { name: 'Done', exact: true }).click();
     await expect.poll(() => state.profile.avatarMediaId).toBe('asset-1');
     expect(Object.keys(state.lastProfilePayload || {}).sort()).toEqual(['avatarMediaId', 'expectedUpdatedAt']);
-    expect(state.lastMediaPayload?.altText).toBe('Existing accessible image description');
+    expect(state.lastMediaPayload?.altText).toBe('New accessible image description');
+    const [replacementChooser] = await Promise.all([
+      page.waitForEvent('filechooser'),
+      chooseAvatar.click()
+    ]);
+    await replacementChooser.setFiles([]);
+    await expect(page.getByTestId('media-crop-editor')).toHaveCount(0);
+    const manageAvatar = page.getByRole('button', { name: 'Edit profile photo', exact: true });
+    await expect(manageAvatar).toContainText('Edit');
+    await manageAvatar.tap();
+    await expect(page.getByTestId('media-crop-editor')).toHaveAttribute('data-media-purpose', 'PROFILE_AVATAR');
+    await expect(page.getByLabel('Image description', { exact: true })).toHaveValue('');
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await manageAvatar.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('media-crop-editor')).toHaveAttribute('data-media-purpose', 'PROFILE_AVATAR');
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.getByRole('button', { name: 'Remove photo', exact: true }).click();
+    await page.getByRole('button', { name: 'Remove photo', exact: true }).click();
+    await expect.poll(() => state.profile.avatarMediaId).toBe(null);
     await page.getByRole('button', { name: 'Edit cover photo', exact: true }).click();
     await expect(page.getByTestId('media-crop-editor')).toHaveAttribute('data-media-purpose', 'PROFILE_COVER');
     await expect(page.getByRole('button', { name: '3:1' })).toHaveAttribute('aria-pressed', 'true');
@@ -606,6 +649,86 @@ test.describe('settings critical acceptance', () => {
     await page.getByRole('button', { name: 'Remove photo', exact: true }).click();
     await expect.poll(() => state.profile.coverMediaId).toBe(null);
     expect(Object.keys(state.lastProfilePayload || {}).sort()).toEqual(['coverMediaId', 'expectedUpdatedAt']);
+  });
+
+  for (const language of ['en', 'ar'] as const) {
+    test(`profile image errors use precise ${language} messages and the visible avatar control respects direction`, async ({ page }) => {
+      test.setTimeout(90_000);
+      const state = settingsState();
+      state.profile.language = language;
+      state.profile.avatarMediaId = 'initial-avatar';
+      state.profile.avatarMedia = { id: 'initial-avatar', access: 'PUBLIC', aspectRatio: 1, width: 192, height: 192, src: '/pwa-192x192.png' };
+      state.mediaPurposeById.set('initial-avatar', 'PROFILE_AVATAR');
+      await installAuthenticatedMockApi(page, state);
+      await page.addInitScript(lang => localStorage.setItem('i18nextLng', lang), language);
+      await page.goto('/profile');
+      await expect(page.locator('html')).toHaveAttribute('dir', language === 'ar' ? 'rtl' : 'ltr');
+      const manage = page.getByRole('button', { name: language === 'ar' ? 'تعديل الصورة الشخصية' : 'Edit profile photo', exact: true });
+      await expect(manage.locator('span')).toHaveText(language === 'ar' ? 'تعديل' : 'Edit');
+      const manageBox = await manage.boundingBox();
+      const badgeBox = await manage.locator('span').boundingBox();
+      expect(manageBox && badgeBox).toBeTruthy();
+      expect(language === 'ar' ? badgeBox!.x > manageBox!.x + manageBox!.width / 2 : badgeBox!.x < manageBox!.x + manageBox!.width / 2).toBe(true);
+
+      const [chooser] = await Promise.all([
+        page.waitForEvent('filechooser'),
+        page.getByRole('button', { name: language === 'ar' ? 'اختيار صورة' : 'Choose image', exact: true }).click()
+      ]);
+      await chooser.setFiles({ name: 'too-large.png', mimeType: 'image/png', buffer: Buffer.alloc(15 * 1024 * 1024 + 1) });
+      const alert = page.getByRole('alert');
+      await expect(alert).toHaveText(language === 'ar' ? 'يجب ألا يتجاوز حجم الصورة 15 ميجابايت.' : 'Images must be 15 MB or smaller.');
+      const editorInput = page.locator('input[type=file]').last();
+      await editorInput.setInputFiles({ name: 'too-many-pixels.png', mimeType: 'image/png', buffer: syntheticPngHeader(10000, 10000) });
+      await expect(alert).toHaveText(language === 'ar' ? 'أبعاد هذه الصورة كبيرة جدًا ولا يمكن معالجتها بأمان.' : 'This image is too large to process safely.');
+      await editorInput.setInputFiles({ name: 'mismatch.jpg', mimeType: 'image/jpeg', buffer: syntheticPngHeader(200, 200) });
+      await expect(alert).toHaveText(language === 'ar' ? 'محتوى الصورة لا يطابق نوع الملف المعلن.' : 'The image content does not match its file type.');
+      await editorInput.setInputFiles({ name: 'corrupt.png', mimeType: 'image/png', buffer: syntheticPngHeader(0, 200) });
+      await expect(alert).toHaveText(language === 'ar' ? 'تعذر فتح هذه الصورة.' : 'This image could not be opened.');
+      await page.getByRole('button', { name: language === 'ar' ? 'إلغاء' : 'Cancel', exact: true }).click();
+      await page.getByRole('button', { name: language === 'ar' ? 'تعديل صورة الغلاف' : 'Edit cover photo', exact: true }).click();
+      const coverInput = page.locator('input[type=file]').last();
+      await expect(coverInput).toHaveCount(1);
+      await coverInput.setInputFiles({ name: 'large-cover.png', mimeType: 'image/png', buffer: Buffer.alloc(10 * 1024 * 1024 + 1) });
+      await expect(page.getByRole('alert')).toHaveText(language === 'ar' ? 'يجب ألا يتجاوز حجم صورة الغلاف 10 ميجابايت.' : 'Cover photos must be 10 MB or smaller.');
+    });
+  }
+
+  test('HEIC profile selection retries server preparation without duplicate uploads, then finalizes and attaches', async ({ page }) => {
+    const state = settingsState();
+    state.profile.avatarMediaId = 'initial-avatar';
+    state.profile.avatarMedia = { id: 'initial-avatar', access: 'PUBLIC', aspectRatio: 1, width: 192, height: 192, src: '/pwa-192x192.png' };
+    state.mediaPurposeById.set('initial-avatar', 'PROFILE_AVATAR');
+    await installAuthenticatedMockApi(page, state);
+    let warmups = 0;
+    let preparations = 0;
+    let finalizations = 0;
+    await page.route('**/api/media/config', route => json(route, { heifServerPreparationConfigured: true, heifServerPreparationEnabled: false }));
+    await page.route('**/api/media/heif/warmup', route => json(route, { heifServerPreparationEnabled: ++warmups > 1 }));
+    await page.route('**/api/media/*/prepare', route => {
+      preparations += 1;
+      const id = new URL(route.request().url()).pathname.split('/')[3];
+      return json(route, { id, status: 'TEMPORARY', sourceMime: 'image/heic', preview: { src: '/pwa-192x192.png', mime: 'image/webp', width: 192, height: 192, aspectRatio: 1, expiresInSeconds: 300 } });
+    });
+    page.on('request', request => {
+      if (/\/api\/media\/[^/]+\/finalize$/.test(new URL(request.url()).pathname)) finalizations += 1;
+    });
+    await page.goto('/profile');
+    const [chooser] = await Promise.all([
+      page.waitForEvent('filechooser'),
+      page.getByRole('button', { name: 'Choose image', exact: true }).click()
+    ]);
+    await chooser.setFiles(syntheticHeic());
+    await expect(page.getByRole('alert')).toContainText('could not prepare');
+    expect({ warmups, uploads: state.mediaSequence, preparations }).toEqual({ warmups: 1, uploads: 0, preparations: 0 });
+    await page.getByRole('button', { name: 'Retry', exact: true }).click();
+    await expect(page.getByTestId('media-crop-editor')).toHaveAttribute('data-media-purpose', 'PROFILE_AVATAR');
+    expect({ warmups, uploads: state.mediaSequence, preparations }).toEqual({ warmups: 2, uploads: 1, preparations: 1 });
+    await page.getByRole('button', { name: 'Done', exact: true }).click();
+    await expect.poll(() => state.profile.avatarMediaId).toBe('asset-1');
+    expect(finalizations).toBe(1);
+    expect(state.mediaSequence).toBe(1);
+    expect(state.lastMediaPayload).toMatchObject({ purpose: 'PROFILE_AVATAR', mime: 'image/heic' });
+    expect(state.lastProfilePayload).toEqual({ avatarMediaId: 'asset-1', expectedUpdatedAt: '2026-09-01T00:00:00.000Z' });
   });
 
   test('finding-resolution:SI-AS-E03-002', async ({ page }) => {

@@ -58,6 +58,8 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
   const { t } = useTranslation();
   const isQuiz = sourceSurvey.type === SurveyType.QUIZ;
   const firstQuestion = sourceSurvey.sections?.[0]?.questions?.[0];
+  // imageLayout controls the options, not the question image dimensions.
+  const questionFrameRatio = firstQuestion?.imageMedia?.aspectRatio || 3 / 2;
   const isTextOnlyPoll = !hasImages;
   const hasOptionImage = (option: Option): boolean => Boolean(option.imageMediaId || option.imageMedia || option.image);
   const optionImageKey = (option: Option): string => option.imageMediaId || option.image || option.id;
@@ -67,7 +69,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
       <div className="mb-2">
         {isQuiz && (firstQuestion?.imageMediaId || firstQuestion?.imageMedia || firstQuestion?.image) && (
           <div className="-mx-4 w-[calc(100%+2rem)] rounded-none overflow-hidden mb-3 bg-gray-100">
-            <MediaImage media={firstQuestion.imageMedia} mediaId={firstQuestion.imageMediaId} fallbackSrc={firstQuestion.image} className="w-full h-auto rounded-none object-contain block" alt="Question context" />
+            <MediaImage media={firstQuestion.imageMedia} mediaId={firstQuestion.imageMediaId} fallbackSrc={firstQuestion.image} className="w-full h-auto rounded-none object-contain block" style={{ aspectRatio: questionFrameRatio }} alt="Question context" />
           </div>
         )}
         <RatingScaleQuestion
@@ -419,7 +421,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
     <div className={isTextOnlyPoll ? "mb-2" : "mb-4"}>
       {isQuiz && (firstQuestion?.imageMediaId || firstQuestion?.imageMedia || firstQuestion?.image) && (
         <div className="-mx-4 w-[calc(100%+2rem)] rounded-none overflow-hidden mb-3 bg-gray-100">
-          <MediaImage media={firstQuestion.imageMedia} mediaId={firstQuestion.imageMediaId} fallbackSrc={firstQuestion.image} className="w-full h-auto rounded-none object-contain block" alt="Question context" />
+          <MediaImage media={firstQuestion.imageMedia} mediaId={firstQuestion.imageMediaId} fallbackSrc={firstQuestion.image} className="w-full h-auto rounded-none object-contain block" style={{ aspectRatio: questionFrameRatio }} alt="Question context" />
         </div>
       )}
       {isHorizontal ? renderHorizontal() : renderVertical()}
