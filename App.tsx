@@ -3,9 +3,10 @@ import { Analytics } from './utils/analytics';
 import React, { useState, useRef, useMemo } from 'react';
 import { clearSessionMetadata } from './services/api';
 import { demographicSnapshot } from './utils/demographicSettings';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { api, ApiError } from './services/api';
+import { useAppNavigation } from './hooks/useAppNavigation';
 import { Header } from './components/Header';
 import { usePagesAvailability } from './hooks/usePagesAvailability';
 import { BottomNav } from './components/BottomNav';
@@ -128,7 +129,7 @@ const decodePathSegment = (value: string) => {
 };
 
 const App: React.FC = () => {
-  const navigate = useNavigate();
+  const { navigate, back, setQuery } = useAppNavigation();
   const location = useLocation();
   const { t, i18n } = useTranslation();
   const isPagesRoute = location.pathname === '/pages' || location.pathname.startsWith('/pages/');
@@ -879,7 +880,8 @@ const App: React.FC = () => {
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const detailRequestRef = useRef(0);
-  const [detailTab, setDetailTab] = useState<'post' | 'analysis'>('post');
+  const detailTab = new URLSearchParams(location.search).get('tab') === 'analysis' ? 'analysis' : 'post';
+  const setDetailTab = (tab: 'post' | 'analysis') => setQuery('tab', tab === 'post' ? null : tab);
 
   const [selectedProfile, setSelectedProfile] = useState<(Partial<UserProfile> & { id: string; name: string; avatar: string; handle?: string }) | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
@@ -1388,7 +1390,6 @@ const App: React.FC = () => {
     if (selectedSurveyId && ids.has(selectedSurveyId)) {
       setSelectedSurveyId(null);
       setDetailSurvey(null);
-      setDetailTab('post');
       setActiveTab('home');
       navigate('/');
     }
@@ -1453,9 +1454,8 @@ const App: React.FC = () => {
 
   const handleSurveyClick = (id: string, surface: any = 'FEED', tab: 'post' | 'analysis' = 'post') => {
     setSelectedSurveySurface(surface);
-    setDetailTab(tab);
     setIsNavVisible(false);
-    navigate(`/post/${id}`);
+    navigate(`/post/${id}${tab === 'analysis' ? '?tab=analysis' : ''}`);
   };
 
   const navigateToProfile = (user: { id: string; name?: string; handle?: string; avatar?: string; kind?: string } | null) => {
@@ -1721,7 +1721,7 @@ const App: React.FC = () => {
           name={name}
           userProfile={userProfile || undefined}
           contextGroups={userGroups}
-          onBack={() => window.history.length > 2 ? navigate(-1) : navigate('/search', { replace: true })}
+          onBack={() => back('/search')}
           onSurveyClick={handleSurveyClick}
           onVote={handleVote}
           onSurveyProgress={handleSurveyProgress}
@@ -1887,7 +1887,7 @@ const App: React.FC = () => {
 
   React.useEffect(() => {
     if (detailTab === 'analysis' && selectedSurvey && !canSeeAnalysis) {
-      setDetailTab('post');
+      setQuery('tab', null, true);
     }
   }, [detailTab, selectedSurvey, canSeeAnalysis]);
 
@@ -2144,7 +2144,7 @@ const App: React.FC = () => {
               <>
               <div className="bg-white z-10 sticky top-0 border-b border-gray-100">
                 <div className="flex items-center px-4 py-3">
-                  <button onClick={() => navigate(-1)} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-600 transition-colors"><ArrowLeft size={24} /></button>
+                  <button onClick={() => { const parentQuery = new URLSearchParams(location.search); parentQuery.delete('tab'); back(detailTab === 'analysis' ? location.pathname + (parentQuery.size ? '?' + parentQuery.toString() : '') : '/'); }} aria-label={t('common.back', { defaultValue: 'Back' })} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-600 transition-colors"><ArrowLeft size={24} /></button>
                   <span className="font-bold text-lg ml-2">Detail View</span>
                 </div>
                 {/* Detail Tabs */}

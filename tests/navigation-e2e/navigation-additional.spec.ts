@@ -52,18 +52,18 @@ test('direct messages reload and app Back return home without leaving applicatio
 });
 
 for (const route of ['/profile', '/settings/profile/edit-profile']) {
-  test(`guest private entry ${route} replaces with login and closes safely to home`, async ({ page, boot, state }) => {
+  test(`guest private entry ${route} replaces with login and closes safely to home`, async ({ page, boot, state, word }) => {
     state.guest = true;
     await boot(route);
     await expect(page).toHaveURL('/login');
-    await expect(page.getByRole('heading', { name: 'Welcome Back', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: word('auth.login.title'), exact: true })).toBeVisible();
     await expect(page.locator('#profile-display-name')).toHaveCount(0);
     expect(state.calls.filter(call => call === 'GET /api/users/me' || call === `GET /api/users/${profile.id}/notifications`)).toEqual([]);
     await page.reload();
-    await expect(page.getByRole('heading', { name: 'Welcome Back', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: word('auth.login.title'), exact: true })).toBeVisible();
     await page.locator('button').filter({ has: page.locator('svg.lucide-x') }).first().click();
     await expect(page).toHaveURL('/');
-    await expect(page.getByRole('heading', { name: 'Welcome Back', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: word('auth.login.title'), exact: true })).toHaveCount(0);
     expect(await page.evaluate(() => localStorage.getItem('si_token'))).toBeNull();
   });
 }
