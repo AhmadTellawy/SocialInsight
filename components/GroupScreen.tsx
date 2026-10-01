@@ -1,3 +1,5 @@
+import { useLocation } from 'react-router-dom';
+import { useAppNavigation } from '../hooks/useAppNavigation';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   ArrowLeft, Users, Settings, Plus, Globe, Share2, Info, Lock,
@@ -54,7 +56,11 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
   onDelete,
   onEditDraft,
 }) => {
-  const [activeTab, setActiveTab] = useState<'posts' | 'about' | 'members'>('posts');
+  const { setQuery } = useAppNavigation();
+  const location = useLocation();
+  const requestedTab = new URLSearchParams(location.search).get('tab');
+  const activeTab = requestedTab === 'about' || requestedTab === 'members' ? requestedTab : 'posts';
+  const setActiveTab = (tab: 'posts' | 'about' | 'members') => setQuery('tab', tab === 'posts' ? null : tab);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -90,7 +96,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
   const {
     members, isLoading: isMembersLoading, isFetchingNextPage: isMembersFetchingNextPage,
     error: membersError, hasMore: hasMoreMembers, fetchNextPage: fetchNextPageMembers
-  } = useGroupMembers(group.id, activeTab === 'members' || showInviteModal);
+  } = useGroupMembers(group.id, group.permissions?.canViewMembers !== false && (activeTab === 'members' || showInviteModal));
 
   const isJoined = membershipStatus === 'JOINED';
 
@@ -114,7 +120,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
   };
 
   useEffect(() => {
-    if (activeTab === 'members' && !permissions.canViewMembers) setActiveTab('posts');
+    if (activeTab === 'members' && !permissions.canViewMembers) setQuery('tab', null, true);
   }, [activeTab, permissions.canViewMembers]);
 
   useEffect(() => {
@@ -691,12 +697,12 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
             {inviteResults.some(user => !invitedIds.has(user.id)) && (
               <div className="px-5 py-2 flex items-center justify-between border-b border-gray-50 shrink-0 bg-gray-50/50">
                 <span className="text-[10px] font-bold text-gray-400 uppercase">Select multiple users to bulk invite</span>
-                <button 
+                <button
                   onClick={toggleSelectAllVisible}
                   className="text-xs font-bold text-blue-600 hover:text-blue-700"
                 >
-                  {inviteResults.filter(user => !invitedIds.has(user.id)).every(user => selectedInviteIds.has(user.id)) 
-                    ? 'Deselect All' 
+                  {inviteResults.filter(user => !invitedIds.has(user.id)).every(user => selectedInviteIds.has(user.id))
+                    ? 'Deselect All'
                     : 'Select All'}
                 </button>
               </div>
@@ -802,7 +808,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
               onClick={() => {
                 const url = getGroupShareUrl
                   ? getGroupShareUrl(group.id)
-                  : (typeof window !== 'undefined' ? `${window.location.origin}/groups/${group.id}` : '');
+                  : (typeof window !== 'undefined' ? `${window.location.origin}/group/${encodeURIComponent(group.id)}` : '');
                 if (url) copyText(url);
               }}
               className="p-2 bg-white/20 backdrop-blur-md text-white rounded-full hover:bg-white/30 transition-colors"

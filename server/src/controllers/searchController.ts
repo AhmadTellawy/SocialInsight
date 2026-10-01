@@ -1,4 +1,6 @@
 import { Request, Response } from 'express';
+import { attachPagePublishers } from '../pages/pagePostService';
+import { pageDiscoveryPostWhere } from '../pages/pageFeature';
 import prisma from '../prisma';
 import {
     POST_MEDIA_INCLUDE,
@@ -13,6 +15,10 @@ import { normalizeHashtag } from '../utils/textEntities';
 import { z } from 'zod';
 
 export const MAX_SEARCH_QUERY_LENGTH = 120;
+
+const buildSearchVisiblePostWhere = (viewerId?: string | null) => ({
+    AND: [buildVisiblePublishedPostWhere(viewerId), pageDiscoveryPostWhere()]
+});
 
 const searchQuerySchema = z.string().max(MAX_SEARCH_QUERY_LENGTH);
 
@@ -52,7 +58,7 @@ export const searchAll = async (req: Request, res: Response) => {
                     _count: {
                         select: {
                             posts: {
-                                where: { post: buildVisiblePublishedPostWhere(viewerId) }
+                                where: { post: buildSearchVisiblePostWhere(viewerId) }
                             }
                         }
                     }
@@ -62,7 +68,7 @@ export const searchAll = async (req: Request, res: Response) => {
             prisma.post.findMany({
                 where: {
                     AND: [
-                        buildVisiblePublishedPostWhere(viewerId),
+                        buildSearchVisiblePostWhere(viewerId),
                         {
                             OR: [
                                 { title: { contains: query, mode: 'insensitive' } },
@@ -121,6 +127,7 @@ export const searchAll = async (req: Request, res: Response) => {
             })
         ]);
 
+        await attachPagePublishers(posts, viewerId);
         // Extract categories from matching posts
         const categoriesSet = new Set<string>();
         posts.forEach(p => {

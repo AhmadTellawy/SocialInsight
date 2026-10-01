@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
+import { useAppNavigation } from '../hooks/useAppNavigation';
 import { useTranslation } from 'react-i18next';
-import { 
-  Search, X, Clock, TrendingUp, ChevronRight, User, Users, 
-  FileText, PieChart, Hash, ArrowLeft, Shield, Lock, Globe, 
-  Trophy, Sparkles, Flame, HelpCircle 
+import {
+  Search, X, Clock, TrendingUp, ChevronRight, User, Users,
+  FileText, PieChart, Hash, ArrowLeft, Shield, Lock, Globe,
+  Trophy, Sparkles, Flame, HelpCircle
 } from 'lucide-react';
 import { Survey, SurveyType } from '../types';
 import { UserAvatar } from './UserAvatar';
@@ -66,9 +68,16 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
   const navigate = useNavigate();
   const isRtl = ['ar', 'ur'].includes(i18n.language?.split('-')[0]);
 
-  const [query, setQuery] = useState('');
+  const location = useLocation();
+  const { setQuery: setRouteQuery } = useAppNavigation();
+  const routeQuery = new URLSearchParams(location.search);
+  const query = routeQuery.get('q') || '';
+  const setQuery = (value: string) => setRouteQuery('q', value || null, true);
   const [debouncedQuery, setDebouncedQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState<'All' | 'Topics' | 'Surveys' | 'Polls' | 'Groups' | 'Categories' | 'People'>('All');
+  type SearchFilter = 'All' | 'Topics' | 'Surveys' | 'Polls' | 'Groups' | 'Categories' | 'People';
+  const requestedFilter = routeQuery.get('filter');
+  const activeFilter: SearchFilter = ['Topics', 'Surveys', 'Polls', 'Groups', 'Categories', 'People'].includes(requestedFilter || '') ? requestedFilter as SearchFilter : 'All';
+  const setActiveFilter = (value: SearchFilter) => setRouteQuery('filter', value === 'All' ? null : value);
   const [isLoading, setIsLoading] = useState(false);
   const [trendingTopics, setTrendingTopics] = useState<any[]>(readCachedTrendingTopics);
 
@@ -273,7 +282,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                         <Clock size={16} className="text-gray-400 group-hover:text-gray-600" />
                         <span className="text-sm text-gray-700 font-medium group-hover:text-gray-900">{term}</span>
                       </div>
-                      <span 
+                      <span
                         onClick={(e) => handleDeleteRecentSearch(e, term)}
                         className="p-1 rounded-full text-gray-305 hover:text-gray-600 hover:bg-gray-200/50 shrink-0"
                       >
@@ -310,9 +319,9 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                 {POPULAR_CATEGORIES.map((c) => {
                   const Icon = c.icon;
                   return (
-                    <button 
-                      key={c.id} 
-                      onClick={() => setQuery(c.name)} 
+                    <button
+                      key={c.id}
+                      onClick={() => setQuery(c.name)}
                       className={`bg-gradient-to-br ${c.gradient} text-white p-4 rounded-2xl text-left shadow-sm hover:shadow-md transition-all flex flex-col justify-between h-24`}
                     >
                       <Icon className="opacity-80 shrink-0" size={20} />
@@ -440,14 +449,14 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({ surveys, onSurveyCli
                       {(activeFilter === 'All' ? searchResults.people.slice(0, 3) : searchResults.people).map((person, i) => (
                         <div key={i} className="flex items-center justify-between p-3.5 hover:bg-gray-50 border-b border-gray-55 last:border-0 transition-colors">
                           <div className="flex items-center gap-3">
-                            <UserAvatar 
-                              src={person.avatar} 
+                            <UserAvatar
+                              src={person.avatar}
                               mediaId={person.avatarMediaId}
                               media={person.avatarMedia}
                               name={person.name}
-                              alt={person.name} 
-                              size={40} 
-                              className="border border-gray-100" 
+                              alt={person.name}
+                              size={40}
+                              className="border border-gray-100"
                             />
                             <div>
                               <div className="text-sm font-bold text-gray-900"><HighlightedText text={person.name} highlight={debouncedQuery} /></div>

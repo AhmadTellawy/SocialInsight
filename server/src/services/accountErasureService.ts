@@ -2,8 +2,9 @@ import { Prisma } from '@prisma/client';
 import { lockAccountSecurity } from './mfaService';
 import { countOtherActiveOwners, lockGroupRow } from './groupOwnershipService';
 import { appendDeletionDecision, captureDeletionMediaPointer, DeletionDecisionInput, DeletionJournalError, normalizeDeletionDecision } from './deletionJournalService';
+import { preparePageAccountDeletion, finishPageAccountDeletion } from '../pages/pageAccountLifecycle';
 
-export type AccountErasureOptions = { decisionId: string; replay?: DeletionDecisionInput };
+export type AccountErasureOptions = { decisionId: string; replay?: DeletionDecisionInput; deleteOwnedPages?: unknown };
 
 // Trusted core only. HTTP callers must first check recent authentication,
 // active session and group ownership. Offline restore tooling supplies a
@@ -19,8 +20,13 @@ export async function purgeAccount(tx: Prisma.TransactionClient, id: string, opt
     if (!replay) throw new DeletionJournalError('INVALID_DELETION_DECISION');
     return { decision: await appendDeletionDecision(tx, replay), unresolvedGroupIds: [] as string[] };
   }
+  const affectedPageIds = await preparePageAccountDeletion(tx, id, options.replay
+    ? (await tx.page.findMany({ where: { ownerId: id, purgedAt: null, deletionRequestedAt: null }, select: { id: true } })).map(page => page.id)
+    : options.deleteOwnedPages);
   const now = user.deletedAt || new Date();
-  const media = await tx.mediaAsset.findMany({ where: { ownerId: id, status: { not: 'DELETED' } }, include: { variants: true } });
+  // A Page keeps its media during the deletion grace period and after a former
+  // contributor leaves. The personal cleanup journal must never capture it.
+  const media = await tx.mediaAsset.findMany({ where: { ownerId: id, pageId: null, status: { not: 'DELETED' } }, include: { variants: true } });
   const existing = await tx.deletionDecision.findUnique({ where: { id: options.decisionId } });
   const input = replay || (existing ? normalizeDeletionDecision({ id: existing.id, subjectKind: existing.subjectKind, subjectId: existing.subjectId,
     action: existing.action, actionVersion: existing.actionVersion, resourcePointers: existing.resourcePointers }) : {
@@ -30,10 +36,10 @@ export async function purgeAccount(tx: Prisma.TransactionClient, id: string, opt
   if (input.subjectKind !== 'ACCOUNT' || input.subjectId !== id || input.action !== 'ACCOUNT_ERASE') throw new DeletionJournalError('DELETION_DECISION_CONFLICT');
   const decision = await appendDeletionDecision(tx, input);
   const mediaIds = [...new Set([...media.map(asset => asset.id), ...input.resourcePointers.media.map(pointer => pointer.assetId)])];
-  if (await tx.mediaAsset.count({ where: { id: { in: mediaIds }, ownerId: { not: id } } })) throw new DeletionJournalError('DELETION_DECISION_CONFLICT');
+  if (await tx.mediaAsset.count({ where: { id: { in: mediaIds }, OR: [{ ownerId: { not: id } }, { pageId: { not: null } }] } })) throw new DeletionJournalError('DELETION_DECISION_CONFLICT');
   await tx.accountCleanupJob.upsert({ where: { userId: id }, create: { userId: id, mediaIds }, update: { mediaIds, completedAt: null } });
-  await tx.mediaAsset.updateMany({ where: { ownerId: id }, data: { altText: null, checksum: null, moderationMetadata: Prisma.DbNull, errorCode: null } });
-  await tx.mediaAsset.updateMany({ where: { ownerId: id, status: { not: 'DELETED' } }, data: { status: 'PENDING_DELETE' } });
+  await tx.mediaAsset.updateMany({ where: { ownerId: id, pageId: null }, data: { altText: null, checksum: null, moderationMetadata: Prisma.DbNull, errorCode: null } });
+  await tx.mediaAsset.updateMany({ where: { ownerId: id, pageId: null, status: { not: 'DELETED' } }, data: { status: 'PENDING_DELETE' } });
   // Only published contributions are retained. Remove the complete private
   // questionnaire graph, including rows protected by restrictive foreign keys.
   const unpublished = await tx.post.findMany({ where: { authorId: id, status: { not: 'PUBLISHED' } }, select: { id: true } });
@@ -109,5 +115,6 @@ export async function purgeAccount(tx: Prisma.TransactionClient, id: string, opt
     const group = await tx.group.findUnique({ where: { id: member.groupId }, select: { isDeleted: true } });
     if (group && !group.isDeleted && !(await countOtherActiveOwners(tx, member.groupId, id))) unresolvedGroupIds.push(member.groupId);
   }
+  await finishPageAccountDeletion(tx, affectedPageIds);
   return { decision, unresolvedGroupIds };
 }

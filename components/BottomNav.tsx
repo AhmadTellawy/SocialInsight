@@ -11,31 +11,33 @@ interface BottomNavProps {
   isAddMenuOpen: boolean;
   onAddMenuOption: (option: 'survey' | 'poll' | 'quiz' | 'challenge' | 'group' | 'business') => void;
   unreadNotificationsCount?: number;
+  pagesAvailable?: boolean;
 }
 
-export const BottomNav: React.FC<BottomNavProps> = ({ 
-  activeTab, 
-  onTabChange, 
-  onAddClick, 
+export const BottomNav: React.FC<BottomNavProps> = ({
+  activeTab,
+  onTabChange,
+  onAddClick,
   isVisible,
   isAddMenuOpen,
   onAddMenuOption,
-  unreadNotificationsCount = 0
+  unreadNotificationsCount = 0,
+  pagesAvailable = false
 }) => {
   const { t } = useTranslation();
-  
+
   return (
     <nav data-testid="bottom-navigation" className={`fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-100 pb-safe h-[60px] max-w-md mx-auto shadow-[0_-5px_10px_rgba(0,0,0,0.02)] transition-transform duration-300 ease-in-out ${
       isVisible ? 'translate-y-0' : 'translate-y-[110%]'
     }`}>
-      
+
       {isAddMenuOpen && (
         <>
         <div className="fixed inset-0 z-40" onClick={onAddClick} />
-        
+
         <div className="absolute bottom-[75px] left-1/2 -translate-x-1/2 w-56 bg-white rounded-2xl shadow-xl border border-gray-100 z-50 overflow-hidden animate-in slide-in-from-bottom-2 fade-in duration-200 origin-bottom">
            <div className="p-1">
-             <button 
+             <button
                onClick={() => onAddMenuOption('poll')}
                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-xl transition-colors text-left"
              >
@@ -45,7 +47,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                <span className="font-semibold text-gray-700 text-sm">{t('create_menu.poll', 'Create Poll')}</span>
              </button>
 
-             <button 
+             <button
                onClick={() => onAddMenuOption('quiz')}
                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-xl transition-colors text-left"
              >
@@ -55,7 +57,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                <span className="font-semibold text-gray-700 text-sm">{t('create_menu.quiz', 'Create Quiz')}</span>
              </button>
 
-             <button 
+             <button
                onClick={() => onAddMenuOption('challenge')}
                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-xl transition-colors text-left"
              >
@@ -65,7 +67,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                <span className="font-semibold text-gray-700 text-sm">{t('create_menu.challenge', 'Create Challenge')}</span>
              </button>
 
-             <button 
+             <button
                onClick={() => onAddMenuOption('survey')}
                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-xl transition-colors text-left"
              >
@@ -77,7 +79,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
 
              <div className="h-px bg-gray-100 my-1 mx-2" />
 
-             <button 
+             <button
                onClick={() => onAddMenuOption('group')}
                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-xl transition-colors text-left"
              >
@@ -87,7 +89,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                <span className="font-semibold text-gray-700 text-sm">{t('create_menu.group', 'Create Group')}</span>
              </button>
 
-             <button 
+             {pagesAvailable && <button
                onClick={() => onAddMenuOption('business')}
                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-xl transition-colors text-left"
              >
@@ -95,22 +97,22 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                  <Building2 size={16} />
                </div>
                <span className="font-semibold text-gray-700 text-sm">{t('create_menu.business', 'Create Business Page')}</span>
-             </button>
+             </button>}
            </div>
         </div>
         </>
       )}
 
       <div className="relative flex items-center justify-between px-6 h-full z-50 bg-white">
-        
-        <button 
+
+        <button
           onClick={() => onTabChange('home')}
           className={`flex flex-col items-center justify-center w-12 h-full transition-colors ${activeTab === 'home' ? 'text-blue-600' : 'text-gray-400'}`}
         >
           <Home size={24} strokeWidth={activeTab === 'home' ? 2.5 : 2} />
         </button>
 
-        <button 
+        <button
           onClick={() => onTabChange('search')}
           className={`flex flex-col items-center justify-center w-12 h-full transition-colors ${activeTab === 'search' ? 'text-blue-600' : 'text-gray-400'}`}
         >
@@ -118,7 +120,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         </button>
 
         <div className="relative -top-5">
-          <button 
+          <button
             onClick={onAddClick}
             className={`w-14 h-14 bg-gradient-to-tr from-blue-600 to-green-500 rounded-full flex items-center justify-center shadow-lg shadow-blue-500/30 transform transition-all active:scale-95 ${isAddMenuOpen ? 'rotate-45 scale-105' : 'hover:scale-105'}`}
           >
@@ -126,14 +128,14 @@ export const BottomNav: React.FC<BottomNavProps> = ({
           </button>
         </div>
 
-        <button 
+        <button
           onClick={() => onTabChange('trends')}
           className={`flex flex-col items-center justify-center w-12 h-full transition-colors ${activeTab === 'trends' ? 'text-blue-600' : 'text-gray-400'}`}
         >
           <TrendingUp size={24} strokeWidth={activeTab === 'trends' ? 2.5 : 2} />
         </button>
 
-        <button 
+        <button
           onClick={() => onTabChange('notifications')}
           className={`relative flex flex-col items-center justify-center w-12 h-full transition-colors ${activeTab === 'notifications' ? 'text-blue-600' : 'text-gray-400'}`}
         >

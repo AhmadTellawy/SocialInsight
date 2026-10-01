@@ -1,14 +1,18 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { api } from '../services/api';
 import { syncFollowState } from './useFollowState';
+import { pageRequest, pagesApi } from '../services/pagesApi';
 
 type FollowStatus = 'NONE' | 'PENDING' | 'ACTIVE';
 type Snapshot = { status: FollowStatus; loading: boolean; ready: boolean };
 const entries = new Map<string, { snapshot: Snapshot; listeners: Set<() => void>; revision: number; refreshQueued: boolean }>();
 
 // Scope both cached state and asynchronous completion to the signed-in viewer.
-export function usePostFollowState(viewerId: string | undefined, targetId: string | undefined, initialFollowing: boolean, menuOpen = false) {
-  const key = JSON.stringify([viewerId, targetId]);
+export function usePostFollowState(viewerId: string | undefined, targetId: string | undefined, initialFollowing: boolean, menuOpen = false, isPage = false) {
+  const key = JSON.stringify([viewerId, targetId, isPage]);
+  const readStatus = () => isPage
+    ? pageRequest<{followStatus:string;isFollowing:boolean}>('/' + targetId + '/follow')
+    : api.getFollowStatus(targetId!, viewerId!);
   const scopeRef = useRef({ key, active: true });
   if (scopeRef.current.key !== key) {
     scopeRef.current.active = false;
@@ -36,7 +40,7 @@ export function usePostFollowState(viewerId: string | undefined, targetId: strin
       entry.refreshQueued = false;
       const revision = entry.revision;
       publish({ loading: true });
-      api.getFollowStatus(targetId, viewerId).then(result => {
+      readStatus().then(result => {
         if (!scope.active || entry.revision !== revision) return;
         const status = result.followStatus === 'ACTIVE' || result.followStatus === 'PENDING' ? result.followStatus : 'NONE';
         publish({ status, ready: true });
@@ -52,6 +56,7 @@ export function usePostFollowState(viewerId: string | undefined, targetId: strin
     if (!viewerId || !targetId || viewerId === targetId) return;
     const listener = (event: Event) => {
       const detail = (event as CustomEvent).detail;
+      if (!!detail.isPage !== isPage) return;
       if (!scope.active || detail.targetUserId !== targetId) return;
       if (detail.viewerId && detail.viewerId !== viewerId) return;
       if (detail.viewerId === viewerId && detail.followStatus) {
@@ -78,17 +83,19 @@ export function usePostFollowState(viewerId: string | undefined, targetId: strin
     publish({ loading: true });
     try {
       if (!entry.snapshot.ready) {
-        const result = await api.getFollowStatus(targetId, viewerId);
+        const result = await readStatus();
         if (!scope.active || entry.revision !== revision) return false;
         const status = result.followStatus === 'ACTIVE' || result.followStatus === 'PENDING' ? result.followStatus : 'NONE';
         publish({ status, ready: true });
         return false;
       }
-      const result = await api.followUser(targetId, viewerId);
+      const result = isPage ? await pagesApi.follow(targetId, entry.snapshot.status === 'ACTIVE' ? 'unfollow' : 'follow')
+        .then(value => ({isFollowing:value.following,followStatus:value.following?'ACTIVE':'NONE'})) : await api.followUser(targetId, viewerId);
       if (!scope.active || entry.revision !== revision) return false;
       const status: FollowStatus = result.followStatus === 'PENDING' ? 'PENDING' : result.isFollowing ? 'ACTIVE' : 'NONE';
       publish({ status, ready: true });
-      syncFollowState(targetId, status === 'ACTIVE', status, viewerId);
+      if (isPage) window.dispatchEvent(new CustomEvent('onFollowStateChange', {detail:{isPage:true,targetUserId:targetId,viewerId,followStatus:status}}));
+      else syncFollowState(targetId, status === 'ACTIVE', status, viewerId);
       return true;
     } catch (error) {
       if (!scope.active) return false;

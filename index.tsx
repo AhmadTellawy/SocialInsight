@@ -5,6 +5,7 @@ import App from './App';
 import { registerSW } from 'virtual:pwa-register';
 import './i18n';
 import './styles/theme.css';
+import './styles/tailwind.css';
 
 // Register the PWA service worker
 registerSW({ 

@@ -1,0 +1,94 @@
+name: Pages hosted mixed P35
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/pages-staging, codex/pages-prod-integration]
+    paths:
+      - .github/workflows/pages-hosted-mixed-p35.yml
+      - stage-hosted/pages-mixed-p35.cjs
+      - stage-hosted/pages-account-erasure.cjs
+      - server/src/pages/**
+      - server/src/controllers/postController.ts
+      - server/src/controllers/postController.runtime.test.ts
+      - server/src/middleware/proxyTrust.ts
+      - components/pages/**
+      - hooks/usePageContentAccess.ts
+
+permissions:
+  contents: read
+
+jobs:
+  mixed-p35:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres?schema=public&connection_limit=12
+      DIRECT_URL: postgresql://postgres@127.0.0.1:5432/postgres?schema=public
+      NODE_ENV: test
+      DISABLE_BACKGROUND_JOBS: 'true'
+      PAGES_ENABLED: 'true'
+      STAGE_ONLY: 'false'
+      PAGES_LOAD_TEST_PUBLIC_READS: 'false'
+      RENDER: 'false'
+      PORT: '3001'
+      P35_REPORT: ${{ github.workspace }}/p35-receipt.json
+      P35_API_LOG: ${{ github.workspace }}/p35-api.log
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.13.0'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: Record hosted target capacity
+        run: |
+          nproc
+          free -h
+      - name: Install and build API
+        run: |
+          npm ci --prefix server
+          npm run build --prefix server
+      - name: Apply additive migrations to ephemeral PostgreSQL
+        id: migrate
+        working-directory: server
+        run: npx prisma migrate deploy
+      - name: Generate ephemeral signing key
+        run: echo "JWT_SECRET=$(openssl rand -hex 48)" >> "$GITHUB_ENV"
+      - name: Start isolated API target
+        run: |
+          cd server
+          nohup node dist/app.js > "$GITHUB_WORKSPACE/p35-api.log" 2>&1 &
+          echo "P35_API_PID=$!" >> "$GITHUB_ENV"
+          for i in {1..40}; do
+            if curl --silent --fail http://127.0.0.1:3001/api/health > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          echo 'API target did not become healthy'
+          exit 1
+      - name: Run progressive and 600-second mixed Pages load
+        run: node stage-hosted/pages-mixed-p35.cjs
+      - name: Verify Page-aware account erasure on disposable database
+        if: ${{ always() && steps.migrate.outcome == 'success' }}
+        env:
+          PAGES_EPHEMERAL_ERASURE_TEST: 'true'
+        run: node stage-hosted/pages-account-erasure.cjs
+      - name: Upload sanitized metrics receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pages-mixed-p35-receipt
+          path: p35-receipt.json
+          if-no-files-found: warn

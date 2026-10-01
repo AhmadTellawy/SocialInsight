@@ -1,4 +1,6 @@
 import { Request, Response } from 'express';
+import { pageAccountDeletionImpact } from '../pages/pageAccountLifecycle';
+import { presentPageNotifications } from '../pages/pageNotificationService';
 import { PeopleTagPermission, Prisma } from '@prisma/client';
 import prisma from '../prisma';
 import { PrivacyService } from '../services/privacyService';
@@ -33,6 +35,7 @@ import { MediaValidationError } from '../services/mediaProcessor';
 import { withNotificationDeepLink } from '../utils/notificationTarget';
 import { evaluateNotificationVisibility } from '../services/notificationVisibilityService';
 import { buildVisiblePublishedPostWhere } from '../services/postVisibilityService';
+import { getProfileAnalytics } from '../services/profileAnalyticsAccess';
 import { buildMentionSearchWhere, MENTION_SUGGESTION_LIMIT, MENTION_USER_SELECT } from '../utils/mentionSearch';
 import {
     ACTIVE_MENTION_REFERENCE_INCLUDE,
@@ -265,8 +268,8 @@ const sendPublicProfile = async (req: Request, res: Response, user: any): Promis
         || (!isPrivateProfile && !isBlocked)
         || followStatus === 'ACTIVE';
     const [postsCount, responsesCount, profileLinks, coverMedia] = await Promise.all([
-        prisma.post.count({ where: { authorId: user.id, isDeleted: false, status: 'PUBLISHED', sharedFromId: null } }),
-        prisma.response.count({ where: { post: { authorId: user.id, isDeleted: false, status: 'PUBLISHED' } } }),
+        prisma.post.count({ where: { authorId: user.id, pageId: null, isDeleted: false, status: 'PUBLISHED', sharedFromId: null } }),
+        prisma.response.count({ where: { post: { authorId: user.id, pageId: null, isDeleted: false, status: 'PUBLISHED' } } }),
         canViewPrivateDetails
             ? prisma.profileLink.findMany({ where: { userId: user.id }, orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }], select: PROFILE_LINK_SELECT })
             : Promise.resolve([]),
@@ -331,8 +334,8 @@ export const getMe = async (req: Request, res: Response) => {
         if (!user) return res.status(404).json({ error: 'User not found' });
         const [demographics, postsCount, responsesCount, coverMedia] = await Promise.all([
             prisma.userDemographics.findUnique({ where: { userId: user.id } }),
-            prisma.post.count({ where: { authorId: user.id, isDeleted: false, status: 'PUBLISHED', sharedFromId: null } }),
-            prisma.response.count({ where: { post: { authorId: user.id, isDeleted: false, status: 'PUBLISHED' } } }),
+            prisma.post.count({ where: { authorId: user.id, pageId: null, isDeleted: false, status: 'PUBLISHED', sharedFromId: null } }),
+            prisma.response.count({ where: { post: { authorId: user.id, pageId: null, isDeleted: false, status: 'PUBLISHED' } } }),
             profileCoverForViewer(user.coverMediaId, user.id)
         ]);
         const serializedUser = publicUserPayload(serializeUserMediaRecord(user) as any);
@@ -565,10 +568,10 @@ export const updateUser = async (req: Request, res: Response) => {
 
         const [postsCount, responsesCount] = await Promise.all([
             prisma.post.count({
-                where: { authorId: id as string, isDeleted: false, status: 'PUBLISHED', sharedFromId: null }
+                where: { authorId: id as string, pageId: null, isDeleted: false, status: 'PUBLISHED', sharedFromId: null }
             }),
             prisma.response.count({
-                where: { post: { authorId: id as string, isDeleted: false, status: 'PUBLISHED' } }
+                where: { post: { authorId: id as string, pageId: null, isDeleted: false, status: 'PUBLISHED' } }
             })
         ]);
 
@@ -629,88 +632,17 @@ export const updateUser = async (req: Request, res: Response) => {
 export const getUserAnalytics = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const currentUserId = req.user?.userId;
-    if (currentUserId !== id) { return res.status(403).json({ error: 'Detailed profile analytics are available only to the account owner.' }); }
+    if (!currentUserId) return res.status(401).json({ error: 'Unauthorized' });
+    // Production analytics are owner-only. The scoped query additionally prevents
+    // unpublished, hidden, Page-authored and unavailable source posts from leaking.
+    if (currentUserId !== id) return res.status(403).json({ error: 'Detailed profile analytics are available only to the account owner.' });
     try {
-        if (currentUserId) {
-            const canView = await PrivacyService.canViewUserContent(currentUserId, id);
-            if (!canView) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-        } else if (id !== currentUserId) { // No auth provided and they are not the same
-            const targetUser = await prisma.user.findUnique({ where: { id }, select: { isPrivate: true } });
-            if (targetUser?.isPrivate) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-        }
-        const rows = await prisma.$queryRaw<Array<{
-            dimension: string; category: string; count: bigint; participants: bigint;
-        }>>(Prisma.sql`
-          WITH responses AS (
-            SELECT post."type", response."userId", viewer."country", demographics."gender",
-                CASE
-                    WHEN viewer."birthday" IS NULL THEN NULL
-                    WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) < 18 THEN 'Under 18'
-                    WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) <= 24 THEN '18-24'
-                    WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) <= 34 THEN '25-34'
-                    WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) <= 44 THEN '35-44'
-                    WHEN EXTRACT(YEAR FROM age((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, viewer."birthday"::date)) <= 54 THEN '45-54'
-                    ELSE '55+'
-                END AS "ageGroup"
-            FROM "Response" response
-            INNER JOIN "Post" post ON post."id" = response."postId"
-            LEFT JOIN "users" viewer ON viewer."id" = response."userId"
-            LEFT JOIN "user_demographics" demographics ON demographics."user_id" = viewer."id"
-            WHERE post."authorId" = ${id}
-              AND post."isDeleted" = FALSE
-              AND post."status" = 'PUBLISHED'
-              AND post."sharedFromId" IS NULL
-          )
-          SELECT dimensions.dimension, dimensions.category,
-                 COUNT(*)::bigint AS count, COUNT(DISTINCT responses."userId")::bigint AS participants
-          FROM responses
-          CROSS JOIN LATERAL (VALUES
-            ('type', COALESCE(responses.type, 'Survey')),
-            ('country', COALESCE(NULLIF(responses.country, ''), 'Unknown')),
-            ('gender', COALESCE(NULLIF(responses.gender, ''), 'Unknown')),
-            ('age', COALESCE(responses."ageGroup", 'Unknown'))
-          ) AS dimensions(dimension, category)
-          GROUP BY dimensions.dimension, dimensions.category
-        `);
-
-        let totalResponses = 0;
-        const byType: Record<string, number> = {};
-        const byCountry: Record<string, number> = {};
-        const byGender: Record<string, number> = {};
-        const byAge: Record<string, number> = {};
-        const support: Record<string, Record<string, number>> = { country: {}, gender: {}, age: {} };
-
-        ['Poll', 'Survey', 'Quiz', 'Challenge'].forEach(k => byType[k] = 0);
-        ['Male', 'Female'].forEach(k => byGender[k] = 0);
-
-        rows.forEach(row => {
-            const count = Number(row.count);
-            if (row.dimension === 'type') {
-                totalResponses += count;
-                byType[row.category] = count;
-            } else {
-                const counts = row.dimension === 'country' ? byCountry : row.dimension === 'gender' ? byGender : byAge;
-                counts[row.category] = count;
-                support[row.dimension][row.category] = Number(row.participants);
-            }
-        });
-
-        res.setHeader('Cache-Control', 'private, no-store');
-        const protectPeople = (counts: Record<string, number>, dimension: string) =>
-            Object.entries(counts).some(([category, count]) => count > 0 && (support[dimension][category] || 0) < 5)
-                ? { counts: {}, suppressionReason: 'SMALL_CELLS' as const }
-                : protectDistribution(counts, totalResponses);
-        res.json({ version: 2, totalResponses, byType,
-            byCountry: protectPeople(byCountry, 'country'), byGender: protectPeople(byGender, 'gender'), byAge: protectPeople(byAge, 'age') });
+        const analytics = await getProfileAnalytics(id, currentUserId);
+        if (!analytics) return res.status(403).json({ error: 'Forbidden' });
+        return res.json(analytics);
     } catch (error) {
         logUserRequestFailure(req, 'profile_analytics_read_failed', error);
-        res.status(500).json({ error: 'Failed to fetch analytics' });
+        return res.status(500).json({ error: 'Failed to fetch analytics' });
     }
 };
 
@@ -845,6 +777,7 @@ export const getNotifications = async (req: Request, res: Response) => {
                     targetId: true,
                     targetType: true,
                     payload: true,
+                    dedupeKey: true,
                     isRead: true,
                     createdAt: true,
                     actor: {
@@ -859,7 +792,8 @@ export const getNotifications = async (req: Request, res: Response) => {
             if (page.length === 0) break;
             scanCursor = page[page.length - 1].id;
 
-            const decisions = await Promise.all(page.map((notification: any) => {
+            const safePage = await presentPageNotifications(page, id);
+            const decisions = await Promise.all(safePage.map((notification: any) => {
                 const targetType = notification.targetType === 'user' ? 'profile' : notification.targetType;
                 const payload = withNotificationDeepLink(targetType, notification.targetId, notification.payload);
                 return evaluateNotificationVisibility({
@@ -1034,21 +968,21 @@ export const getSuggestedUsers = async (req: Request, res: Response) => {
                 (SELECT post."authorId", likes."createdAt" AS "interactedAt"
                  FROM "UserLike" likes
                  INNER JOIN "Post" post ON post."id" = likes."postId"
-                 WHERE likes."userId" = ${viewerId}
+                 WHERE likes."userId" = ${viewerId} AND post."pageId" IS NULL
                  ORDER BY likes."createdAt" DESC
                  LIMIT ${SUGGESTION_INTERACTION_SAMPLE_LIMIT})
                 UNION ALL
                 (SELECT post."authorId", comment."createdAt" AS "interactedAt"
                  FROM "Comment" comment
                  INNER JOIN "Post" post ON post."id" = comment."postId"
-                 WHERE comment."userId" = ${viewerId}
+                 WHERE comment."userId" = ${viewerId} AND post."pageId" IS NULL
                  ORDER BY comment."createdAt" DESC
                  LIMIT ${SUGGESTION_INTERACTION_SAMPLE_LIMIT})
                 UNION ALL
                 (SELECT post."authorId", response."timestamp" AS "interactedAt"
                  FROM "Response" response
                  INNER JOIN "Post" post ON post."id" = response."postId"
-                 WHERE response."userId" = ${viewerId}
+                 WHERE response."userId" = ${viewerId} AND post."pageId" IS NULL
                  ORDER BY response."timestamp" DESC
                  LIMIT ${SUGGESTION_INTERACTION_SAMPLE_LIMIT})
             )
@@ -1105,6 +1039,17 @@ export const getSuggestedUsers = async (req: Request, res: Response) => {
     } catch (error) {
         logUserRequestFailure(req, 'suggested_users_read_failed', error);
         res.status(500).json({ error: 'Failed to fetch suggested users' });
+    }
+};
+
+export const getPageDeletionImpact = async (req: Request, res: Response) => {
+    if (req.user?.userId !== req.params.id) return res.status(403).json({ error: 'Forbidden' });
+    res.setHeader('Cache-Control', 'private, no-store');
+    try {
+        return res.json({ pages: await pageAccountDeletionImpact(req.user.userId) });
+    } catch (error) {
+        logUserRequestFailure(req, 'page_deletion_impact_failed', error);
+        return res.status(500).json({ error: 'Unable to check owned Pages' });
     }
 };
 
@@ -1175,72 +1120,4 @@ export const unblockAccount = async (req: Request, res: Response) => {
         await prisma.userBlock.deleteMany({ where: { blockerId: req.user!.userId, blockedId: req.params.blockedId as string } });
         return res.json({ success: true });
     } catch (error) { logUserRequestFailure(req, 'account_unblock_failed', error); return res.status(500).json({ error: 'Failed to unblock account.' }); }
-};
-
-export const deleteAccount = async (req: Request, res: Response) => {
-    const id = req.params.id as string;
-
-    if (req.user?.userId !== id) {
-        return res.status(403).json({ error: 'Forbidden: You can only delete your own account' });
-    }
-    try {
-        const ownedMediaIds = (await prisma.mediaAsset.findMany({
-            where: { ownerId: id, status: { not: 'DELETED' } },
-            select: { id: true }
-        })).map((asset) => asset.id);
-        await prisma.$transaction(async (tx) => {
-            // Nullify user PII and soft delete
-            await tx.user.update({
-                where: { id },
-                data: {
-                    status: 'DELETED',
-                    deletedAt: new Date(),
-                    name: 'Deleted User',
-                    handle: `deleted_${id.substring(0, 8)}`,
-                    email: null,
-                    phone: null,
-                    passwordHash: null,
-                    avatar: null,
-                    avatarMediaId: null,
-                    coverMediaId: null,
-                    bio: null,
-                    location: null,
-                    website: null,
-                    birthday: null,
-                    language: null,
-                    country: null,
-                    authProvider: null
-                }
-            });
-
-            // Delete demographics
-            await tx.userDemographics.deleteMany({ where: { userId: id } });
-            await tx.profileLink.deleteMany({ where: { userId: id } });
-
-            // Delete relationships
-            await tx.follow.deleteMany({ where: { OR: [{ followerId: id }, { followingId: id }] } });
-            
-            // Delete likes & saves to clear private data
-            await tx.userLike.deleteMany({ where: { userId: id } });
-            await tx.commentLike.deleteMany({ where: { userId: id } });
-            await tx.savedPost.deleteMany({ where: { userId: id } });
-            await tx.hiddenPost.deleteMany({ where: { userId: id } });
-            
-            // Delete notifications and settings
-            await tx.notification.deleteMany({ where: { OR: [{ userId: id }, { actorId: id }] } });
-            await tx.notificationSettings.deleteMany({ where: { userId: id } });
-            
-            // Remove from groups
-            await tx.groupMember.deleteMany({ where: { userId: id } });
-            
-            // Leave posts, comments, responses intact to preserve survey integrity
-        });
-
-        await scheduleMediaDeletion(ownedMediaIds);
-
-        res.json({ success: true, message: 'Account deleted and anonymized successfully' });
-    } catch (error) {
-        logUserRequestFailure(req, 'account_delete_failed', error);
-        res.status(500).json({ error: 'Failed to delete account' });
-    }
 };

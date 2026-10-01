@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Settings, Users, Grid, CheckCircle2, MoreHorizontal, MapPin, Link as LinkIcon, Edit3, UserPlus, Shield, ExternalLink, ArrowLeft, Mail, FileText, PieChart, Building2, Globe as GlobeIcon, Plus, ChevronRight, Search, X, UserCircle2, Zap, Info, Lock, BarChart3, TrendingUp, Bookmark, PenTool, Activity, Repeat, Image as ImageIcon, Camera, Trash2, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router-dom';
 
 import { Analytics } from '../utils/analytics';
 import { PostAnswerPayload, Survey, SurveyType, Group, UserProfile } from '../types';
@@ -10,6 +11,7 @@ import { ProfileAnalysis } from './ProfileAnalysis';
 import { api } from '../services/api';
 import { accountApi } from '../services/accountApi';
 import { useFollowState } from '../hooks/useFollowState';
+import { usePagesAvailability } from '../hooks/usePagesAvailability';
 import { UserAvatar } from './UserAvatar';
 import { MediaImage } from './media/MediaImage';
 import { ProfileMediaEditor } from './ProfileMediaEditor';
@@ -25,8 +27,8 @@ interface ProfileScreenProps {
   onSurveyProgress?: (surveyId: string, progress: { index: number, answers: Record<string, any>, followUpAnswers?: Record<string, string>, historyStack?: number[], isAnonymous?: boolean }) => void;
   user?: Partial<UserProfile> & { id?: string; name: string; avatar: string; handle?: string; isFollowing?: boolean; followStatus?: string; isPrivate?: boolean };
   onBack?: () => void;
-  onAuthorClick?: (author: { id: string; name: string; avatar: string; handle?: string }) => void;
-  onShareToFeed?: (survey: Survey, caption: string) => Promise<'shared' | 'unshared'>;
+  onAuthorClick?: (author: { id: string; name: string; avatar: string; handle?: string; kind?: string }) => void;
+  onShareToFeed?: (survey: Survey, caption: string, publisher?: { pageId: string; pageCreateKey: string }) => Promise<'shared' | 'unshared'>;
   contextGroups?: any[];
   onSettingsClick?: () => void;
   onEditProfileClick?: () => void;
@@ -91,6 +93,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onLoadMore
 }) => {
   const { t } = useTranslation();
+  const { available: pagesAvailable } = usePagesAvailability(userProfile?.id);
   const [activeStatSheet, setActiveStatSheet] = useState<'following' | 'followers' | 'posts' | null>(null);
   const [showProfileAnalysis, setShowProfileAnalysis] = useState(false);
   const [statSearch, setStatSearch] = useState('');
@@ -1185,6 +1188,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             {profileUser.isPrivate && <Lock size={18} className="text-gray-400" />}
           </h2>
           <p className="text-xs text-blue-600 font-black tracking-[0.12em] mb-3" dir="ltr">@{profileUser.handle}</p>
+          {isMe && pagesAvailable && (
+            <Link to="/pages/mine" className="mb-4 inline-flex min-h-11 items-center gap-2 rounded-xl border border-blue-100 px-4 py-2 text-sm font-bold text-[#0070BA]">
+              <Building2 size={18} />
+              {t('pages.myPages', { defaultValue: document.documentElement.lang.startsWith('ar') ? 'صفحاتي' : 'My pages' })}
+            </Link>
+          )}
 
           {profileUser.bio && (
             <p className="text-sm text-gray-600 text-center max-w-md leading-relaxed whitespace-pre-wrap break-words mb-4 px-2">

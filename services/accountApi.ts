@@ -18,5 +18,5 @@ export const accountApi = {
   unblock: (id: string) => accountRequest<void>(`/users/me/blocks/${encodeURIComponent(id)}`, 'DELETE'),
   blockAccount: (blockedId: string) => accountRequest<void>('/users/me/blocks', 'POST', { blockedId }),
   deactivate: () => accountRequest<void>('/account/deactivate', 'POST'),
-  deleteAccount: () => accountRequest<void>('/account', 'DELETE'),
+  deleteAccount: (deleteOwnedPages: string[] = []) => accountRequest<void>('/account', 'DELETE', { deleteOwnedPages }),
 };

@@ -1,0 +1,20 @@
+name: Pages hosted Stage read load
+on:
+  push:
+    branches: [codex/pages-staging]
+    paths:
+      - .github/workflows/pages-stage-load.yml
+      - stage-hosted/pages-read-load.mjs
+permissions:
+  contents: read
+jobs:
+  pages-read-load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Measure Pages public reads from a separate runner
+        run: node stage-hosted/pages-read-load.mjs

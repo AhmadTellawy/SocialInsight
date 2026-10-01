@@ -12,6 +12,7 @@ import { AccountSecurityError, lockAccountSecurity } from '../services/mfaServic
 import { assertActiveAccountSession } from '../services/accountSecurityPolicy';
 import { readNotificationSettings } from '../services/notificationPolicy';
 import { assertOtherActiveOwner, GroupOwnershipError, lockGroupRow } from '../services/groupOwnershipService';
+import { PagePolicyError } from '../pages/pagePolicy';
 
 class LifecycleError extends Error { constructor(public code: string, public status = 409) { super(code); } }
 async function lockAccount(tx: Prisma.TransactionClient, req: Request) {
@@ -33,6 +34,7 @@ async function lockAccount(tx: Prisma.TransactionClient, req: Request) {
   return user;
 }
 function failure(res: Response, error: unknown) {
+  if (error instanceof PagePolicyError) return res.status(error.status).json({ code: error.code, error: error.code });
   if (error instanceof AccountSecurityError) return res.status(error.status).json({code:error.code,error:'Sign in again to continue.'});
   if (error instanceof GroupOwnershipError) return res.status(error.status).json({code:error.code,error:'Transfer ownership or delete groups where you are the only active owner first.'});
   if (error instanceof LifecycleError) return res.status(error.status).json({ code: error.code, error: error.code === 'GROUP_OWNERSHIP_REQUIRED' ? 'Transfer ownership or delete groups where you are the only active owner first.' : 'Sign in again to continue.' });
@@ -65,7 +67,7 @@ export async function deleteAccount(req: Request, res: Response) {
   try {
     await prisma.$transaction(async tx => {
       const user = await lockAccount(tx, req);
-      await purgeAccount(tx, user.id, { decisionId });
+      await purgeAccount(tx, user.id, { decisionId, deleteOwnedPages: req.body?.deleteOwnedPages });
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 20_000 });
     notifyUserSessionsRevoked(req.user!.userId); clearSessionCookies(res);
     void resumeAccountCleanupJobs().catch(() => {});
