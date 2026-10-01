@@ -157,10 +157,15 @@ async function permissionSmokes() {
     await prisma.pageMembership.update({ where: { pageId_userId: { pageId: page.id, userId: analyst.id } }, data: { role: 'ANALYST' } });
     await denied(analyst, 'PATCH', [403, 404]);
     await prisma.pageMembership.update({ where: { pageId_userId: { pageId: page.id, userId: analyst.id } }, data: { role: 'ADMIN' } });
+    const inactive = clients[99];
+    await prisma.user.update({ where: { id: inactive.id }, data: { status: 'SUSPENDED' } });
+    assert.equal((await call(inactive, '/pages/mine')).status, 401,
+      'inactive accounts cannot read stored Page roles through HTTP');
+    await prisma.user.update({ where: { id: inactive.id }, data: { status: 'ACTIVE' } });
     assert.equal((await prisma.page.findUniqueOrThrow({ where: { id: page.id } })).bio, bio,
       'denied HTTP writes must not reach the database');
     report.permissionSmokes = { guestDenied: true, otherPageDenied: true, revokedMemberDenied: true,
-      analystWriteDenied: true, deniedWritesUnchanged: true };
+      analystWriteDenied: true, inactiveAccountDenied: true, deniedWritesUnchanged: true };
     save();
   } finally { guest.agent.destroy(); }
 }
@@ -358,7 +363,7 @@ async function main() {
     { name: 'No unexpected HTTP 4xx', pass: p35.apiErrors === p35.fiveXx },
     { name: 'Counters and votes match actual database rows', pass: !report.integrity.counterMismatches && !report.integrity.optionMismatches && !report.integrity.duplicateResponses },
     { name: 'Cross-publisher deletion and account outbox cleanup', pass: Object.values(report.securitySmokes).every(Boolean) },
-    { name: 'HTTP and PostgreSQL Page permission matrix', pass: Object.values(report.permissionSmokes || {}).length === 5 &&
+    { name: 'HTTP and PostgreSQL Page permission matrix', pass: Object.values(report.permissionSmokes || {}).length === 6 &&
       Object.values(report.permissionSmokes).every(Boolean) },
   ];
   report.status = report.checks.every(check => check.pass) ? 'PASS' : 'FAIL';

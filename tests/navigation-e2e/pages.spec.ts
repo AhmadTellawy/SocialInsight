@@ -83,7 +83,12 @@ test('extra public and management Page path segments are rejected', async ({ pag
 });
 
 test('unknown public Page tab falls back to posts without endless loading', async ({ page, boot, state }, testInfo) => {
-  state.pages = {};
+  state.pages = { page: { id: '00000000-0000-4000-8000-000000000101', kind: 'PAGE',
+    handle: 'navigation_test_studio', name: 'Navigation Test Studio', bio: 'Questions and ideas',
+    description: '', category: 'company', country: '', city: '', links: [],
+    publicationState: 'PUBLISHED', platformState: 'NONE', followersCount: 0,
+    website: null, publicEmail: null, publicPhone: null, cta: null,
+    avatarMediaId: null, coverMediaId: null } };
   const ar = testInfo.project.name.startsWith('ar');
   await boot('/pages/navigation_test_studio?tab=unknown');
   await expect(page.getByRole('heading', { name: 'Navigation Test Studio' })).toBeVisible();
