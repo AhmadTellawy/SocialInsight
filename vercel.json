@@ -8,15 +8,15 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://socialinsight-api.onrender.com/api/:path*"
+      "destination": "https://socialinsight-media-e2e-api-20261001.onrender.com/api/:path*"
     },
     {
       "source": "/socket.io/:path*",
-      "destination": "https://socialinsight-api.onrender.com/socket.io/:path*"
+      "destination": "https://socialinsight-media-e2e-api-20261001.onrender.com/socket.io/:path*"
     },
     {
       "source": "/uploads/:path*",
-      "destination": "https://socialinsight-api.onrender.com/uploads/:path*"
+      "destination": "https://socialinsight-media-e2e-api-20261001.onrender.com/uploads/:path*"
     },
     {
       "source": "/(.*)",
