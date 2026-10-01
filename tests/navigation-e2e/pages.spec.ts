@@ -94,13 +94,17 @@ test('unknown public Page tab falls back to posts without endless loading', asyn
   await expect(page.getByRole('heading', { name: 'Navigation Test Studio' })).toBeVisible();
   await expect(page.getByRole('link', { name: ar ? 'المنشورات' : 'Posts', exact: true })).toHaveAttribute('aria-current', 'page');
   await expect.poll(() => state.calls.includes('GET /api/posts')).toBe(true);
+  await expect(page.getByText(ar ? 'الحوار يبدأ من هنا' : 'The conversation starts here')).toBeVisible();
 });
 
-test('guest cannot reach an extra-segment Page management path', async ({ page, boot, state }, testInfo) => {
+test('guest cannot reach extra-segment public or management Page paths', async ({ page, boot, state }, testInfo) => {
   state.guest = true;
   state.pages = {};
   const ar = testInfo.project.name.startsWith('ar');
-  await boot('/pages/manage/00000000-0000-4000-8000-000000000101/extra');
-  await expect(page.getByText(ar ? 'الصفحة غير متاحة' : 'Page unavailable', { exact: true })).toBeVisible();
+  for (const path of ['/pages/navigation_test_studio/extra', '/pages/manage/00000000-0000-4000-8000-000000000101/extra']) {
+    await boot(path);
+    await expect(page.getByText(ar ? 'الصفحة غير متاحة' : 'Page unavailable', { exact: true })).toBeVisible();
+  }
   expect(state.calls.some(call => call.includes('/api/pages/manage/'))).toBe(false);
+  expect(state.calls).not.toContain('GET /api/pages/navigation_test_studio');
 });

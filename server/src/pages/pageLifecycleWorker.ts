@@ -9,7 +9,7 @@ import { pageErasureHeld, pageLifecycleLimit, pageRetentionCutoff, processPageRe
 
 const phases = ['NOTIFICATIONS', 'ANSWERS', 'RESPONSES', 'COMMENT_LIKES', 'COMMENT_MENTIONS',
   'COMMENT_HASHTAGS', 'COMMENT_REPORTS', 'COMMENTS', 'OPTIONS', 'QUESTIONS', 'SECTIONS', 'SAVES', 'HIDES', 'LIKES',
-  'VIEWS', 'POST_MENTIONS', 'POST_HASHTAGS', 'POST_TAGS', 'POST_MEDIA', 'INTERACTIONS', 'REPORTS', 'CASES', 'POSTS',
+  'VIEWS', 'POST_MENTIONS', 'POST_HASHTAGS', 'POST_TAGS', 'POST_MEDIA', 'INTERACTIONS', 'REPORTS', 'CASES', 'EXTERNAL_SHARES', 'POSTS',
   'MEMBERS', 'FOLLOWS', 'BLOCKS', 'INVITATIONS', 'TRANSFERS', 'EVENTS', 'MEDIA', 'MEDIA_ROWS', 'HANDLES', 'FINALIZE'] as const;
 type Phase = typeof phases[number];
 type Job = { pageId: string; phase: Phase; attempts: number; availableAt: Date; completedAt: Date | null };
@@ -86,6 +86,27 @@ async function erasePhase(tx: PageTx, job: Job, size: number, now: Date): Promis
     case 'REPORTS': return erase(tx, 'reports', Prisma.sql`t.target_type = 'POST' AND t.target_id IN (${p})`, size);
     case 'CASES': return erase(tx, 'PageCase', Prisma.sql`t."pageId" = ${job.pageId} AND NOT EXISTS
       (SELECT 1 FROM "PageCase" child WHERE child."parentId" = t.id)`, size);
+    case 'EXTERNAL_SHARES': {
+      // Shares copy the source title/description into their own Post rows.
+      // Traverse the full share chain before deleting Page roots; preserve the
+      // share author's independent caption and media while erasing copied text.
+      const copied = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        WITH RECURSIVE descendants(id) AS (
+          SELECT id FROM "Post" WHERE "pageId" = ${job.pageId}
+          UNION
+          SELECT child.id FROM "Post" child JOIN descendants parent ON child."sharedFromId" = parent.id
+        )
+        SELECT post.id FROM "Post" post JOIN descendants tree ON tree.id = post.id
+        WHERE post."pageId" IS DISTINCT FROM ${job.pageId}
+          AND (post.title <> '' OR post.description <> '')
+        ORDER BY post.id LIMIT ${size}`);
+      if (!copied.length) return 0;
+      const ids = copied.map(post => post.id);
+      await tx.mention.deleteMany({ where: { postId: { in: ids } } });
+      await tx.postHashtag.deleteMany({ where: { postId: { in: ids } } });
+      await tx.post.updateMany({ where: { id: { in: ids } }, data: { title: '', description: '', category: null } });
+      return ids.length;
+    }
     case 'POSTS': {
       // Remove internal share edges in bounded batches before deleting roots. External shares are untouched.
       const detached = await tx.$executeRaw(Prisma.sql`UPDATE "Post" SET "sharedFromId" = NULL WHERE id IN

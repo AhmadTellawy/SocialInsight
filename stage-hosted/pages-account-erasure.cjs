@@ -126,9 +126,12 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
   await db.post.create({ data: { id: expiredPostId, pageId: expiredPageId, authorId: anonymousOwnerId,
     title: 'Synthetic old Page post', description: 'Erase this', resultsDetail: 'Private result text',
     type: 'Poll', expiresAt: new Date(Date.now() + 86400000) } });
-  const externalShareId = randomUUID();
+  const externalShareId = randomUUID(), externalReshareId = randomUUID();
   await db.post.create({ data: { id: externalShareId, authorId: anonymousOwnerId, sharedFromId: expiredPostId,
-    title: 'External share remains', description: 'Synthetic independent text',
+    title: 'Synthetic old Page post', description: 'Erase this', sharedCaption: 'Independent user commentary',
+    type: 'Poll', expiresAt: new Date(Date.now() + 86400000) } });
+  await db.post.create({ data: { id: externalReshareId, authorId: anonymousOwnerId, sharedFromId: externalShareId,
+    title: 'Synthetic old Page post', description: 'Erase this', sharedCaption: 'Second independent commentary',
     type: 'Poll', expiresAt: new Date(Date.now() + 86400000) } });
   await db.comment.create({ data: { id: expiredCommentId, postId: expiredPostId, userId: anonymousOwnerId, text: 'Synthetic Page comment' } });
   await db.report.create({ data: { id: expiredReportId, reporterId: anonymousOwnerId, targetType: 'COMMENT', targetId: expiredCommentId,
@@ -169,12 +172,17 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
   assert.deepEqual([tombstone.title, tombstone.description, tombstone.resultsDetail], ['', '', null]);
   assert.notEqual(tombstone.authorId, anonymousOwnerId);
   assert.equal((await db.user.findUniqueOrThrow({ where: { id: tombstone.authorId } })).status, 'DELETED');
-  assert.equal((await db.post.findUniqueOrThrow({ where: { id: externalShareId } })).sharedFromId, expiredPostId);
+  const share = await db.post.findUniqueOrThrow({ where: { id: externalShareId } });
+  const reshare = await db.post.findUniqueOrThrow({ where: { id: externalReshareId } });
+  assert.deepEqual([share.sharedFromId, share.title, share.description, share.sharedCaption],
+    [expiredPostId, '', '', 'Independent user commentary']);
+  assert.deepEqual([reshare.sharedFromId, reshare.title, reshare.description, reshare.sharedCaption],
+    [externalShareId, '', '', 'Second independent commentary']);
   process.stdout.write(JSON.stringify({ result: 'PASS', scenarios: ['missing-owner-confirmation', 'former-editor-media-retained',
     'personal-media-journaled', 'revoked-editor-export-excludes-page', 'former-editor-page-draft-retained', 'personal-draft-erased',
     'erased-account-case-and-cursor-identifiers',
     'owner-page-hidden-with-grace', 'owner-page-media-retained', 'open-case-blocks-purge',
     'completed-purge-detaches-identifiers', 'purge-erases-case-and-comment-report',
-    'external-share-keeps-anonymous-source-tombstone'] }) + '\n');
+    'external-share-keeps-anonymous-source-tombstone', 'external-share-chain-copied-text-erased'] }) + '\n');
 })().catch(error => { process.stderr.write(`${stage}: ${error?.message?.startsWith('PAGE_PURGE_INCOMPLETE:') ? error.message : error?.name || 'Error'}: ${error?.code || 'CHECK_FAILED'}\n`); process.exitCode = 1; })
   .finally(() => db.$disconnect());

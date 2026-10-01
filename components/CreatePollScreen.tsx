@@ -34,6 +34,20 @@ const POLL_CATEGORIES = [
   "Legal", "Sports", "Business / Commercial", "Government / Public",
   "Community / Development", "Family", "Youth", "Quality of Life", "Other"
 ];
+const CATEGORY_AR: Record<string, string> = {
+  Entertainment:'ترفيه', Social:'اجتماعي', Economic:'اقتصادي', Political:'سياسي', Health:'صحة',
+  Educational:'تعليم', Cultural:'ثقافي', Environmental:'بيئة', Technology:'تقنية', Media:'إعلام',
+  Legal:'قانون', Sports:'رياضة', 'Business / Commercial':'أعمال وتجارة', 'Government / Public':'حكومي وعام',
+  'Community / Development':'مجتمع وتنمية', Family:'أسرة', Youth:'شباب', 'Quality of Life':'جودة الحياة', Other:'أخرى',
+};
+const DEMOGRAPHIC_AR: Record<string, string> = {
+  gender:'النوع', maritalStatus:'الحالة الاجتماعية', residence:'بلد الإقامة', nationality:'الجنسية',
+  ageGroup:'الفئة العمرية', education:'المستوى التعليمي', household:'حجم الأسرة', familyRole:'الدور الأسري',
+  employment:'نوع العمل', sector:'قطاع العمل', industry:'مجال العمل', occupation:'المهنة',
+};
+const DURATION_AR: Record<string, string> = {
+  none:'بدون مدة', '1h':'ساعة', '24h':'24 ساعة', '3d':'3 أيام', '1w':'أسبوع', '1m':'شهر', custom:'مخصص',
+};
 
 const DEMOGRAPHIC_OPTIONS = [
   { id: 'gender', label: 'Gender', desc: 'Understand response patterns by gender' },
@@ -348,8 +362,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
     }
   }, [duration]);
 
-  const durationLabel = DURATION_OPTIONS.find(opt => opt.value === duration)?.label || (duration === 'custom' ? 'Custom' : 'None');
-  const resultsLabel = resultsWho === 'OnlyMe' ? 'Only Me' : resultsWho;
+  const durationLabel = ar ? (DURATION_AR[duration] || 'بدون مدة') : DURATION_OPTIONS.find(opt => opt.value === duration)?.label || (duration === 'custom' ? 'Custom' : 'None');
+  const resultsLabel = ar ? ({Public:'للجميع',Participants:'للمشاركين فقط',OnlyMe:'لي فقط'}[resultsWho] || resultsWho) : resultsWho === 'OnlyMe' ? 'Only Me' : resultsWho;
   const advancedItems = [
     duration !== 'none' ? durationLabel : null,
     pollChoiceType !== 'rating' && allowMultipleSelection ? 'Multi' : null,
@@ -596,14 +610,14 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
           )}
 
           <div hidden={composerStep !== 1} className="space-y-6">
-          <div className="flex flex-wrap items-center gap-2" aria-label="Post details">
+          <div className="flex flex-wrap items-center gap-2" aria-label={ar?'تفاصيل المنشور':'Post details'}>
             <button
               type="button"
               onClick={() => setIsCategorySheetOpen(true)}
               className={`min-h-10 inline-flex items-center gap-2 rounded-full border bg-white px-3 text-[12px] font-bold text-gray-700 ${errors.category ? 'border-red-300' : 'border-gray-200'}`}
             >
               <Tag size={14} />
-              <span>{category || 'Category'}</span>
+              <span>{category ? (ar?CATEGORY_AR[category]||category:category) : (ar?'الفئة':'Category')}</span>
               <ChevronDown size={14} />
             </button>
             <PeopleTagPicker variant="chip" selectedPeople={taggedPeople} onChange={setTaggedPeople} accent="blue" />
@@ -615,7 +629,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                 <RichMentionInput
                   value={title}
                   onChange={(val) => { setTitle(val); if (errors.title) setErrors(prev => ({ ...prev, title: false })) }}
-                  placeholder="Ask a question..."
+                  placeholder={ar?'اكتب سؤالًا...':'Ask a question...'}
                   className={`text-[12px] leading-relaxed text-start font-normal bg-transparent border-b border-gray-100 focus:outline-none focus:border-blue-500 transition-all pt-0.5 pb-1.5 placeholder-gray-400 min-h-[44px] ${errors.title ? 'border-red-300 text-red-500' : 'text-gray-900'}`}
                   minRows={1}
                   autoFocus
@@ -627,8 +641,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                 onClick={() => postMediaPickerRef.current?.open()}
                 disabled={postMedia.length >= 8}
                 className={`p-1.5 rounded-full transition-colors shrink-0 mt-1 disabled:opacity-40 ${postMedia.length > 0 || legacyCoverImage ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-50'}`}
-                aria-label="Add poll images"
-                title="Add images"
+                aria-label={ar?'إضافة صور للاستطلاع':'Add poll images'}
+                title={ar?'إضافة صور':'Add images'}
               >
                 <Camera size={20} />
               </button>
@@ -651,8 +665,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
 
             {legacyCoverImage && postMedia.length === 0 && (
               <div className="relative w-24 h-24 rounded-xl overflow-hidden border border-gray-100 shadow-sm group animate-in zoom-in-95 mt-2">
-                <img src={legacyCoverImage} className="w-full h-full object-cover" alt="Cover" />
-                <button type="button" onClick={() => setLegacyCoverImage(null)} className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Remove image" title="Remove image"><X size={10} /></button>
+                <img src={legacyCoverImage} className="w-full h-full object-cover" alt={ar?'غلاف':'Cover'} />
+                <button type="button" onClick={() => setLegacyCoverImage(null)} className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity" aria-label={ar?'إزالة الصورة':'Remove image'} title={ar?'إزالة الصورة':'Remove image'}><X size={10} /></button>
               </div>
             )}
 
@@ -667,14 +681,14 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   <List size={12} />
                 </div>
                 <span className="text-xs font-bold text-gray-800">
-                  {pollChoiceType === 'rating' ? 'Rating' : <>Options <span className="text-red-500">*</span></>}
+                  {pollChoiceType === 'rating' ? (ar?'تقييم':'Rating') : <>{ar?'الخيارات':'Options'} <span className="text-red-500">*</span></>}
                 </span>
                 {errors.options && <span className="text-[10px] font-bold text-red-600 truncate">{errors.options}</span>}
               </div>
 
               {pollChoiceType === 'multiple' && optionPresentation === 'image' && (
                 <div className="flex items-center gap-1.5 shrink-0">
-                  <span className="text-[10px] font-bold text-gray-500">Option Layout</span>
+                  <span className="text-[10px] font-bold text-gray-500">{ar?'ترتيب الخيارات':'Option Layout'}</span>
                   <button
                     type="button"
                     onClick={() => setShowLayoutInfo(!showLayoutInfo)}
@@ -684,8 +698,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   </button>
                   <div className="flex gap-1">
                     {[
-                      { id: 'vertical', label: 'List', icon: List },
-                      { id: 'horizontal', label: 'Grid', icon: GalleryHorizontalEnd }
+                      { id: 'vertical', label: ar?'قائمة':'List', icon: List },
+                      { id: 'horizontal', label: ar?'شبكة':'Grid', icon: GalleryHorizontalEnd }
                     ].map((layout) => {
                       const Icon = layout.icon;
                       const isActive = imageLayout === layout.id;
@@ -713,7 +727,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
 
             {pollChoiceType === 'multiple' && optionPresentation === 'image' && showLayoutInfo && (
               <div className="p-3 bg-blue-50 border border-blue-100 text-blue-800 text-[10px] font-semibold rounded-xl leading-relaxed animate-in fade-in slide-in-from-top-1 duration-200">
-                Choose how image-based poll options are displayed, such as a vertical list or side-by-side layout.
+                {ar?'اختر طريقة عرض خيارات الصور: قائمة عمودية أو شبكة متجاورة.':'Choose how image-based poll options are displayed, such as a vertical list or side-by-side layout.'}
               </div>
             )}
 
@@ -772,7 +786,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                           {option.withFollowUp && (
                             <div className="flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-2 py-1.5 text-[10px]">
                               <MessageSquare size={10} className="text-blue-500" />
-                              <span className="truncate font-bold text-blue-700">Follow-up: {option.followUpLabel || "Please explain..."}</span>
+                              <span className="truncate font-bold text-blue-700">{ar?'سؤال توضيحي:':'Follow-up:'} {option.followUpLabel || (ar?'يرجى التوضيح...':'Please explain...')}</span>
                             </div>
                           )}
                         </div>
@@ -780,7 +794,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                           type="button"
                           onClick={() => setSettingsOptionId(option.id)}
                           className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-gray-500 hover:text-gray-700"
-                          aria-label={`Option ${idx + 1} menu`}
+                          aria-label={ar?`قائمة الخيار ${idx + 1}`:`Option ${idx + 1} menu`}
                         >
                           <MoreHorizontal size={18} />
                         </button>
@@ -792,7 +806,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   <div className="flex-1 rounded-xl border border-dashed border-gray-200 bg-gray-50/30 px-2 py-0.5">
                     <input dir="auto"
                       type="text"
-                      placeholder="Add option..."
+                      placeholder={ar?'أضف خيارًا...':'Add option...'}
                       className="w-full cursor-pointer bg-transparent px-2.5 py-1.5 text-[12px] leading-relaxed text-start font-normal text-gray-600 placeholder-gray-500 focus:outline-none"
                       onFocus={handleAddOption}
                     />
@@ -836,7 +850,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                             }
                           }}
                           onBlur={() => focusedOptionId === option.id && setFocusedOptionId(null)}
-                          placeholder={`Option ${idx + 1}`}
+                          placeholder={ar?`الخيار ${idx + 1}`:`Option ${idx + 1}`}
                           className="min-w-0 flex-1 bg-transparent px-2.5 py-1.5 text-[12px] leading-relaxed text-start font-normal text-gray-900 placeholder-gray-500 focus:outline-none"
                         />
                         <span className="me-1.5 whitespace-nowrap text-[9px] text-gray-500">{option.text.length}/80</span>
@@ -844,7 +858,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                       {option.withFollowUp && (
                         <div className="flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-2 py-1.5 text-[10px]">
                           <MessageSquare size={10} className="text-blue-500" />
-                          <span className="truncate font-bold text-blue-700">Follow-up: {option.followUpLabel || "Please explain..."}</span>
+                          <span className="truncate font-bold text-blue-700">{ar?'سؤال توضيحي:':'Follow-up:'} {option.followUpLabel || (ar?'يرجى التوضيح...':'Please explain...')}</span>
                         </div>
                       )}
                     </div>
@@ -852,7 +866,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                       type="button"
                       onClick={() => setSettingsOptionId(option.id)}
                       className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-gray-500 hover:text-gray-700"
-                      aria-label={`Option ${idx + 1} menu`}
+                      aria-label={ar?`قائمة الخيار ${idx + 1}`:`Option ${idx + 1} menu`}
                     >
                       <MoreHorizontal size={18} />
                     </button>
@@ -864,7 +878,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   <div className="flex-1 rounded-xl border border-dashed border-gray-200 bg-gray-50/30 px-2 py-0.5">
                     <input dir="auto"
                       type="text"
-                      placeholder="Add option..."
+                      placeholder={ar?'أضف خيارًا...':'Add option...'}
                       className="w-full cursor-pointer bg-transparent px-2.5 py-1.5 text-[12px] leading-relaxed text-start font-normal text-gray-600 placeholder-gray-500 focus:outline-none"
                       onFocus={handleAddOption}
                     />
@@ -907,11 +921,11 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                 <Settings2 size={16} />
               </div>
               <div>
-                <h4 className="text-xs font-bold text-gray-805">Advanced Settings</h4>
-                <p className="text-[9px] text-gray-500 mt-0.5 leading-tight">Results, duration & comments</p>
+                <h4 className="text-xs font-bold text-gray-805">{ar?'إعدادات متقدمة':'Advanced Settings'}</h4>
+                <p className="text-[9px] text-gray-500 mt-0.5 leading-tight">{ar?'النتائج والمدة والتعليقات':'Results, duration & comments'}</p>
               </div>
             </div>
-            <ChevronRight size={14} className="text-gray-400" />
+            <ChevronRight size={14} className={`text-gray-400 ${ar?'rotate-180':''}`} />
           </button>
 
           {/* 5. Optional Demographics Insights (Unlock Deeper Analytics Selector) */}
@@ -921,7 +935,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                 <div className="p-1.5 bg-gray-55/30 rounded-lg text-gray-500 border border-gray-100 shrink-0">
                   <Users size={12} />
                 </div>
-                <span className="text-xs font-bold text-gray-800">Unlock Deeper Analytics</span>
+                <span className="text-xs font-bold text-gray-800">{ar?'تحليلات أعمق':'Unlock Deeper Analytics'}</span>
                 <button
                   type="button"
                   onClick={() => setShowInsightInfo(!showInsightInfo)}
@@ -934,7 +948,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
 
             {showInsightInfo && (
               <div className="p-3 bg-blue-50 border border-blue-100 text-blue-800 text-[10px] font-semibold rounded-xl leading-relaxed animate-in fade-in slide-in-from-top-1 duration-200">
-                Choose optional demographic questions for participants to unlock deeper insights, audience trends, and response analysis.
+                {ar?'اختر أسئلة ديموغرافية اختيارية لفهم جمهورك واتجاهات الإجابات بشكل أفضل.':'Choose optional demographic questions for participants to unlock deeper insights, audience trends, and response analysis.'}
               </div>
             )}
 
@@ -942,10 +956,10 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               {(['basic', 'professional', 'social', 'custom'] as const).map((preset) => {
                 const isActive = selectedInsightPreset === preset;
                 const labels: Record<string, string> = {
-                  basic: 'Basic',
-                  professional: 'Professional',
-                  social: 'Social',
-                  custom: 'Custom'
+                  basic: ar?'أساسي':'Basic',
+                  professional: ar?'احترافي':'Professional',
+                  social: ar?'اجتماعي':'Social',
+                  custom: ar?'مخصص':'Custom'
                 };
                 return (
                   <button
@@ -968,17 +982,17 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               <div className="p-3 bg-white rounded-xl border border-gray-100 space-y-1 mx-0.5 animate-in fade-in duration-200">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[10px] font-bold text-gray-700">
-                    Provides {selectedDemographics.length} analytical comparisons
+                    {ar?`يوفر ${selectedDemographics.length} مقارنات تحليلية`:`Provides ${selectedDemographics.length} analytical comparisons`}
                   </span>
                   <span className="text-[10px] font-extrabold text-blue-600 whitespace-nowrap">
-                    +{selectedDemographics.length} questions for participant
+                    {ar?`+${selectedDemographics.length} أسئلة للمشارك`:`+${selectedDemographics.length} questions for participant`}
                   </span>
                 </div>
                 <div className="text-[9px] text-gray-550 font-medium mt-1 pb-1">
-                  Demographics requested: <span className="text-gray-800 font-bold">{selectedDemographics.map(id => DEMOGRAPHIC_OPTIONS.find(opt => opt.id === id)?.label).filter(Boolean).join(', ')}</span>
+                  {ar?'البيانات المطلوبة:':'Demographics requested:'} <span className="text-gray-800 font-bold">{selectedDemographics.map(id => ar?DEMOGRAPHIC_AR[id]:DEMOGRAPHIC_OPTIONS.find(opt => opt.id === id)?.label).filter(Boolean).join(', ')}</span>
                 </div>
                 <p className="text-[8px] text-gray-400 font-medium leading-normal">
-                  * Selected questions will be prompted as optional questions during participation.
+                  {ar?'* تظهر الأسئلة المحددة اختيارية أثناء المشاركة.':'* Selected questions will be prompted as optional questions during participation.'}
                 </p>
               </div>
             )}
@@ -986,7 +1000,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
             {selectedInsightPreset === 'custom' && (
               <div className="space-y-2 p-3 bg-gray-50/30 border border-gray-100 rounded-2xl animate-in fade-in duration-200">
                 <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">
-                  Select Custom Attributes
+                  {ar?'اختر خصائص مخصصة':'Select Custom Attributes'}
                 </span>
                 <div className="flex flex-wrap gap-1.5">
                   {DEMOGRAPHIC_OPTIONS.filter(opt => opt.id !== 'ageGroup').map((opt) => {
@@ -1003,7 +1017,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                         }`}
                       >
                         {isSelected && <Check size={10} strokeWidth={4} />}
-                        <span>{opt.label}</span>
+                        <span>{ar?DEMOGRAPHIC_AR[opt.id]||opt.label:opt.label}</span>
                       </button>
                     );
                   })}
@@ -1026,15 +1040,15 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
         }}
         title={
           advancedSheetView === 'results'
-            ? 'Result Visibility'
-            : 'Advanced Settings'
+            ? (ar?'عرض النتائج':'Result Visibility')
+            : (ar?'إعدادات متقدمة':'Advanced Settings')
         }
       >
         <div className="space-y-5 py-2 px-2 animate-in fade-in duration-200">
           {advancedSheetView === 'main' && (
             <div className="space-y-5">
               <p className="text-[11px] text-gray-550 leading-relaxed px-1">
-                Control results, duration, and participation settings.
+                {ar?'تحكم بعرض النتائج ومدة المنشور وإعدادات المشاركة.':'Control results, duration, and participation settings.'}
               </p>
 
               {/* Sub-routing rows */}
@@ -1048,10 +1062,10 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   onClick={() => setAdvancedSheetView('results')}
                   className="w-full flex items-center justify-between p-3.5 bg-gray-50 hover:bg-gray-100/70 rounded-xl transition-all border border-gray-100"
                 >
-                  <span className="text-xs font-bold text-gray-800">Result Visibility</span>
+                  <span className="text-xs font-bold text-gray-800">{ar?'عرض النتائج':'Result Visibility'}</span>
                   <div className="flex items-center gap-1 text-xs text-blue-600 font-black">
                     <span>{resultsLabel}</span>
-                    <ChevronRight size={14} />
+                    <ChevronRight size={14} className={ar?'rotate-180':undefined} />
                   </div>
                 </button>
               </div>
@@ -1073,7 +1087,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                           : 'bg-gray-50 text-gray-500 border-transparent hover:bg-gray-100'
                       }`}
                     >
-                      {opt.label}
+                      {ar?DURATION_AR[opt.value]||opt.label:opt.label}
                     </button>
                   ))}
                   <button
@@ -1085,7 +1099,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                         : 'bg-gray-50 text-gray-500 border-transparent hover:bg-gray-100'
                     }`}
                   >
-                    <Plus size={12} /> Custom
+                    <Plus size={12} /> {ar?'مخصص':'Custom'}
                   </button>
                 </div>
                 {duration === 'custom' && (
@@ -1104,8 +1118,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               <div className="space-y-4 pt-1">
                 <div className="flex items-center justify-between">
                   <div className="flex flex-col text-left">
-                    <span className="text-xs font-bold text-gray-800">Allow comments</span>
-                    <span className="text-[10px] text-gray-500">Enable user comments on the post</span>
+                    <span className="text-xs font-bold text-gray-800">{ar?'السماح بالتعليقات':'Allow comments'}</span>
+                    <span className="text-[10px] text-gray-500">{ar?'اسمح للجمهور بالتعليق على المنشور':'Enable user comments on the post'}</span>
                   </div>
                   <button
                     type="button"
@@ -1120,8 +1134,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   <>
                     <div className="flex items-center justify-between">
                       <div className="flex flex-col text-left">
-                        <span className="text-xs font-bold text-gray-800">Multiple selection</span>
-                        <span className="text-[10px] text-gray-500">Allow participants to choose more than one option</span>
+                        <span className="text-xs font-bold text-gray-800">{ar?'اختيار متعدد':'Multiple selection'}</span>
+                        <span className="text-[10px] text-gray-500">{ar?'اسمح باختيار أكثر من خيار':'Allow participants to choose more than one option'}</span>
                       </div>
                       <button
                         type="button"
@@ -1134,8 +1148,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
 
                     <div className="flex items-center justify-between">
                       <div className="flex flex-col text-left">
-                        <span className="text-xs font-bold text-gray-800">Allow user options</span>
-                        <span className="text-[10px] text-gray-500">Allow participants to add new options</span>
+                        <span className="text-xs font-bold text-gray-800">{ar?'خيارات من المشاركين':'Allow user options'}</span>
+                        <span className="text-[10px] text-gray-500">{ar?'اسمح للمشاركين بإضافة خيارات جديدة':'Allow participants to add new options'}</span>
                       </div>
                       <button
                         type="button"
@@ -1150,8 +1164,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
 
                 <div className="flex items-center justify-between">
                   <div className="flex flex-col text-left">
-                    <span className="text-xs font-bold text-gray-800">Force anonymous</span>
-                    <span className="text-[10px] text-gray-500">Keep all participants identity completely anonymous</span>
+                    <span className="text-xs font-bold text-gray-800">{ar?'مشاركة مجهولة':'Force anonymous'}</span>
+                    <span className="text-[10px] text-gray-500">{ar?'أخفِ هوية جميع المشاركين':'Keep all participants identity completely anonymous'}</span>
                   </div>
                   <button
                     type="button"
@@ -1175,14 +1189,15 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                 onClick={() => setAdvancedSheetView('main')}
                 className="flex items-center gap-1.5 text-xs text-blue-600 font-bold hover:opacity-80 transition-opacity pb-2"
               >
-                <span>&larr; Back to Advanced Settings</span>
+                {ar?<ArrowRight size={14}/>:<ArrowLeft size={14}/>}
+                <span>{ar?'الرجوع إلى الإعدادات المتقدمة':'Back to Advanced Settings'}</span>
               </button>
 
               <div className="space-y-2">
                 {[
-                  { id: 'Public', label: 'Public', desc: 'Results are visible to everyone.' },
-                  { id: 'Participants', label: 'Participants Only', desc: 'Only participants can see results after voting.' },
-                  { id: 'OnlyMe', label: 'Private (Only Me)', desc: 'Only you can see the results.' }
+                  { id: 'Public', label: ar?'للجميع':'Public', desc: ar?'النتائج متاحة للجميع.':'Results are visible to everyone.' },
+                  { id: 'Participants', label: ar?'للمشاركين فقط':'Participants Only', desc: ar?'تظهر النتائج للمشاركين بعد التصويت.':'Only participants can see results after voting.' },
+                  { id: 'OnlyMe', label: ar?'خاص (لي فقط)':'Private (Only Me)', desc: ar?'تظهر النتائج لك فقط.':'Only you can see the results.' }
                 ].map((opt) => (
                   <button
                     key={opt.id}
@@ -1204,14 +1219,14 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               {/* Result timing selector sub-section */}
               <div className="space-y-3 pt-2">
                 <div className="flex items-center justify-between px-1">
-                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">When Results Are Visible</span>
-                  {!canShowResultsAfterEnd && <span className="text-[9px] font-bold text-gray-450 flex items-center gap-1"><Info size={10} /> Set duration to enable timing</span>}
+                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{ar?'وقت ظهور النتائج':'When Results Are Visible'}</span>
+                  {!canShowResultsAfterEnd && <span className="text-[9px] font-bold text-gray-450 flex items-center gap-1"><Info size={10} /> {ar?'حدد المدة لتفعيل التوقيت':'Set duration to enable timing'}</span>}
                 </div>
                 <div className="space-y-2">
                   {[
-                    { id: 'AnyTime', label: 'Any time', enabled: true },
-                    { id: 'Immediately', label: 'Immediately after participation', enabled: true },
-                    { id: 'AfterEnd', label: 'After post ends', enabled: canShowResultsAfterEnd }
+                    { id: 'AnyTime', label: ar?'في أي وقت':'Any time', enabled: true },
+                    { id: 'Immediately', label: ar?'مباشرة بعد المشاركة':'Immediately after participation', enabled: true },
+                    { id: 'AfterEnd', label: ar?'بعد انتهاء المنشور':'After post ends', enabled: canShowResultsAfterEnd }
                   ].map((opt) => (
                     <button
                       key={opt.id}
@@ -1237,10 +1252,10 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
       <BottomSheet
         isOpen={isCategorySheetOpen}
         onClose={() => setIsCategorySheetOpen(false)}
-        title="Select Category"
+        title={ar?'اختر الفئة':'Select Category'}
       >
         <div className="flex flex-wrap gap-2 py-2 animate-in fade-in duration-200">
-          <button type="button" onClick={() => { setCategory(''); setOtherCategoryText(''); setIsCategorySheetOpen(false); }} className="px-4 py-2 rounded-full text-xs font-bold border border-gray-200 bg-white text-gray-600">Clear category</button>
+          <button type="button" onClick={() => { setCategory(''); setOtherCategoryText(''); setIsCategorySheetOpen(false); }} className="px-4 py-2 rounded-full text-xs font-bold border border-gray-200 bg-white text-gray-600">{ar?'إزالة الفئة':'Clear category'}</button>
           {POLL_CATEGORIES.map(cat => (
             <button
               key={cat}
@@ -1254,7 +1269,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                 : 'bg-white text-gray-650 border-gray-200 hover:bg-gray-50'
                 }`}
             >
-              {cat}
+              {ar?CATEGORY_AR[cat]||cat:cat}
             </button>
           ))}
         </div>
@@ -1264,7 +1279,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
       <BottomSheet
         isOpen={!!settingsOptionId}
         onClose={() => setSettingsOptionId(null)}
-        title="Option Settings"
+        title={ar?'إعدادات الخيار':'Option Settings'}
       >
         {selectedOptionForSettings && (
           <div className="space-y-6 py-4 px-2 animate-in fade-in slide-in-from-bottom-2">
@@ -1276,7 +1291,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   }`}
               >
                 <div className="p-2.5 rounded-xl bg-gray-100 text-gray-500"><ArrowUp size={20} /></div>
-                <span className="font-bold text-sm text-gray-900">Move Up</span>
+                <span className="font-bold text-sm text-gray-900">{ar?'تحريك للأعلى':'Move Up'}</span>
               </button>
 
               <button
@@ -1286,7 +1301,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                   }`}
               >
                 <div className="p-2.5 rounded-xl bg-gray-100 text-gray-500"><ArrowDown size={20} /></div>
-                <span className="font-bold text-sm text-gray-900">Move Down</span>
+                <span className="font-bold text-sm text-gray-900">{ar?'تحريك للأسفل':'Move Down'}</span>
               </button>
 
               {pollChoiceType === 'multiple' && (
@@ -1297,7 +1312,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                     }`}
                 >
                   <div className={`p-2.5 rounded-xl ${options.length <= 2 ? 'bg-gray-100 text-gray-400' : 'bg-red-50 text-red-500'}`}><Trash2 size={20} /></div>
-                  <span className="font-bold text-sm">Delete Option</span>
+                  <span className="font-bold text-sm">{ar?'حذف الخيار':'Delete Option'}</span>
                 </button>
               )}
             </div>
@@ -1307,8 +1322,8 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex flex-col">
-                  <span className="text-sm font-bold text-gray-800">Clarification Question</span>
-                  <span className="text-[10px] text-gray-400 font-medium">Ask for additional details if this is chosen</span>
+                  <span className="text-sm font-bold text-gray-800">{ar?'سؤال توضيحي':'Clarification Question'}</span>
+                  <span className="text-[10px] text-gray-400 font-medium">{ar?'اطلب تفاصيل إضافية عند اختيار هذا الخيار':'Ask for additional details if this is chosen'}</span>
                 </div>
                 <button
                   onClick={() => updateFollowUp(selectedOptionForSettings.id, { withFollowUp: !selectedOptionForSettings.withFollowUp })}
@@ -1320,12 +1335,12 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
 
               {selectedOptionForSettings.withFollowUp && (
                 <div className="animate-in fade-in slide-in-from-top-1">
-                  <label className="block text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1.5 px-1">Follow-up Question Text</label>
+                  <label className="block text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1.5 px-1">{ar?'نص السؤال التوضيحي':'Follow-up Question Text'}</label>
                   <input dir="auto"
                     type="text"
                     value={selectedOptionForSettings.followUpLabel}
                     onChange={(e) => updateFollowUp(selectedOptionForSettings.id, { followUpLabel: e.target.value })}
-                    placeholder="e.g. Please explain your choice..."
+                    placeholder={ar?'مثلاً: وضّح سبب اختيارك...':'e.g. Please explain your choice...'}
                     className="w-full bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-[12px] leading-relaxed text-start focus:outline-none focus:bg-white focus:border-blue-500 transition-all font-normal"
                     autoFocus
                   />
@@ -1337,7 +1352,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               onClick={() => setSettingsOptionId(null)}
               className="w-full mt-4 py-4 bg-gray-900 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg active:scale-95 transition-all"
             >
-              Done
+              {ar?'تم':'Done'}
             </button>
           </div>
         )}
@@ -1347,12 +1362,12 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
         <div className="fixed inset-0 z-[110] bg-black/60 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-200">
           <div className="bg-white rounded-3xl p-6 w-full max-w-xs shadow-2xl animate-in zoom-in-95 duration-200">
             <div className="w-12 h-12 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center mb-4"><AlertCircle size={24} /></div>
-            <h3 className="text-lg font-bold text-gray-900 mb-2">Discard changes?</h3>
-            <p className="text-sm text-gray-500 mb-6 leading-relaxed">You have unsaved work. If you exit now, your changes will be lost.</p>
+            <h3 className="text-lg font-bold text-gray-900 mb-2">{ar?'تجاهل التغييرات؟':'Discard changes?'}</h3>
+            <p className="text-sm text-gray-500 mb-6 leading-relaxed">{ar?'لديك تغييرات غير محفوظة. ستفقدها إذا خرجت الآن.':'You have unsaved work. If you exit now, your changes will be lost.'}</p>
             <div className="flex flex-col gap-2">
-              <button onClick={handleDiscard} disabled={isSaving || isSubmitting} className="w-full py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-colors">Discard and Exit</button>
-              <button onClick={handleSaveDraft} disabled={isSaving || isSubmitting || publisher.writeBlocked} className="w-full py-3 bg-blue-50 text-blue-600 rounded-xl font-bold text-sm hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Save as Draft</button>
-              <button onClick={() => setShowExitConfirm(false)} disabled={isSaving || isSubmitting} className="w-full py-3 bg-gray-100 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-200 transition-colors">Keep Editing</button>
+              <button onClick={handleDiscard} disabled={isSaving || isSubmitting} className="w-full py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-colors">{ar?'تجاهل والخروج':'Discard and Exit'}</button>
+              <button onClick={handleSaveDraft} disabled={isSaving || isSubmitting || publisher.writeBlocked} className="w-full py-3 bg-blue-50 text-blue-600 rounded-xl font-bold text-sm hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">{ar?'حفظ كمسودة':'Save as Draft'}</button>
+              <button onClick={() => setShowExitConfirm(false)} disabled={isSaving || isSubmitting} className="w-full py-3 bg-gray-100 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-200 transition-colors">{ar?'متابعة التحرير':'Keep Editing'}</button>
             </div>
           </div>
         </div>
