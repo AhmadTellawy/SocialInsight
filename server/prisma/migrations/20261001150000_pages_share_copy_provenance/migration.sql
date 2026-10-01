@@ -16,6 +16,7 @@ ALTER TABLE "Post" ADD COLUMN "sharedCopiedTitle" TEXT;
 ALTER TABLE "Post" ADD COLUMN "sharedCopiedDescription" TEXT;
 ALTER TABLE "Post" ADD COLUMN "sharedCopiedCategory" TEXT;
 ALTER TABLE "Post" ADD COLUMN "sharedRootPageId" TEXT;
+ALTER TABLE "PagePurgeJob" ADD COLUMN "shareCursor" TEXT;
 CREATE INDEX "Post_shared_root_page_idx" ON "Post"("sharedRootPageId", "id");
 RESET lock_timeout;
 RESET statement_timeout;

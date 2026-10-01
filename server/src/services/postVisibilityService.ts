@@ -10,7 +10,7 @@ const publicAudience = {
   ]
 };
 
-const buildBaseVisiblePublishedPostWhere = (
+export const buildBaseVisiblePublishedPostWhere = (
   viewerId?: string | null
 ): Prisma.PostWhereInput => {
   const nonGroupAudience: Prisma.PostWhereInput = {
@@ -106,7 +106,10 @@ export const buildVisiblePublishedPostWhere = (
       {
         OR: [
           { sharedFromId: null },
-          { sharedFrom: { is: visibleSource } }
+          { sharedFrom: { is: { AND: [visibleSource, { OR: [
+            { sharedFromId: null },
+            { sharedFrom: { is: buildBaseVisiblePublishedPostWhere(viewerId) } }
+          ] }] } } }
         ]
       }
     ]

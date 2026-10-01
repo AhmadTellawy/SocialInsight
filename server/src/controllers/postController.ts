@@ -63,8 +63,9 @@ import {
 import { buildVisiblePublishedPostWhere, evaluatePostResultsAccess } from '../services/postVisibilityService';
 import { loadVisiblePostScalars } from '../services/postVisibilitySql';
 import { attachPageCommentPublishers, attachPagePublishers, authorizePagePublisher, guardPagePostInteractions, guardPagePostPersistence, hasPostPageCapability, isPageFollower, respondPagePostError } from '../pages/pagePostService';
-import { assertPageDestination, PagePolicyError, pagePublicWhere } from '../pages/pagePolicy';
+import { assertPageDestination, PagePolicyError } from '../pages/pagePolicy';
 import { canonicalShareSourceId, copiedPageRootId, withoutCopiedPageText } from '../pages/pageShareCopy';
+import { hiddenCopiedShareIds } from '../pages/pageShareVisibility';
 import {
     PostOptionValidationError,
     buildPostReportDedupeKey,
@@ -1093,12 +1094,14 @@ export const updatePost = async (req: Request, res: Response) => {
                 pageId: true,
                 title: true,
                 description: true,
+                category: true,
                 status: true,
                 createdAt: true,
                 isDeleted: true,
                 responseCount: true,
                 groupId: true,
                 sharedFromId: true,
+                sharedRootPageId: true,
                 sharedCaption: true,
                 image: true,
                 targetAudience: true,
@@ -1125,6 +1128,16 @@ export const updatePost = async (req: Request, res: Response) => {
         }
         if (!existingPost.pageId && existingPost.authorId !== trustedUserId) {
             res.status(403).json({ error: 'Unauthorized to update this post' });
+            return;
+        }
+        // Page-derived shares keep copied fields immutable. Authors can add
+        // independent text in sharedCaption without losing its provenance.
+        if (((existingPost.pageId && existingPost.sharedFromId) || existingPost.sharedRootPageId) && (
+            (data.title !== undefined && data.title !== existingPost.title)
+            || (data.description !== undefined && data.description !== existingPost.description)
+            || (data.category !== undefined && data.category !== existingPost.category)
+        )) {
+            res.status(409).json({ code: 'PAGE_SHARED_COPY_IMMUTABLE', error: 'Copied Page text cannot be edited; use the share caption.' });
             return;
         }
 
@@ -1648,18 +1661,14 @@ export const getDrafts = async (req: Request, res: Response) => {
         const hasMore = drafts.length > limit;
         if (hasMore) drafts.pop();
         applyNextCursorHeader(res, drafts, hasMore);
-        const rootIds = [...new Set(drafts.map(draft => draft.sharedRootPageId).filter((value): value is string => Boolean(value)))];
-        const publicRoots = rootIds.length ? await prisma.page.findMany({
-            where: { AND: [{ id: { in: rootIds } }, pagePublicWhere(true)] }, select: { id: true }
-        }) : [];
-        const visibleRoots = new Set(publicRoots.map(root => root.id));
+        const hiddenShares = await hiddenCopiedShareIds(prisma, drafts, userId);
         const mappedDrafts = drafts.map((rawDraft: any) => {
-            const hiddenSource = rawDraft.sharedRootPageId && !visibleRoots.has(rawDraft.sharedRootPageId);
+            const hiddenSource = hiddenShares.has(rawDraft.id);
             const safeDraft = hiddenSource ? {
                 ...rawDraft,
                 title: withoutCopiedPageText(rawDraft.title, rawDraft.sharedCopiedTitle),
                 description: withoutCopiedPageText(rawDraft.description, rawDraft.sharedCopiedDescription),
-                category: rawDraft.category === rawDraft.sharedCopiedCategory ? null : rawDraft.category,
+                category: rawDraft.sharedCopiedCategory == null ? rawDraft.category : null,
             } : rawDraft;
             const d = serializePostSocialRecord(safeDraft, userId);
             return {
@@ -2974,9 +2983,8 @@ export const sharePost = async (req: Request, res: Response) => {
             }
         }
 
-        // A Page repost may contain Page-authored edits to a personal source.
-        // Keep that Page in the ancestry of later shares so hiding or purging
-        // it also hides/erases text copied from its edited repost.
+        // Keep the Page in the ancestry of later shares so hiding or purging
+        // it also hides/erases text copied through that Page's repost.
         if (originalPost.pageId && originalPost.sharedRootPageId) {
             res.status(403).json({ error: 'Cannot reshare a Page repost of another Page' });
             return;

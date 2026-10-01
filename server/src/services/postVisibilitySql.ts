@@ -4,7 +4,7 @@ import { buildFeedPostScalarSelect, FeedCursor, MAX_FEED_LIMIT } from './postFee
 
 // Only these internal aliases and scalar names enter SQL text. Every viewer,
 // filter and cursor value is a bound parameter, never an SQL identifier.
-type PostAlias = 'p' | 's';
+type PostAlias = 'p' | 's' | 'ancestor';
 const column = (alias: PostAlias, name: string) => Prisma.raw(`"${alias}"."${name}"`);
 const scalarProjection = Prisma.join(Object.keys(buildFeedPostScalarSelect()).map(name => column('p', name)));
 
@@ -52,12 +52,14 @@ function baseVisibility(alias: PostAlias, viewerId?: string | null): Prisma.Sql 
   return Prisma.sql`(${c('isDeleted')} = FALSE AND ${c('status')} = 'PUBLISHED' AND ${notHidden} AND (${personal} OR ${page}))`;
 }
 
-/** Equivalent to buildVisiblePublishedPostWhere, including the immediate
- * source's base policy. Call again when loading the source, as the model path
- * does, to enforce its own shared source too. No cached authorization result. */
+/** Share creation flattens personal reposts but retains a Page-edited repost
+ * as one additional ancestor. Check both source levels on every SQL read. */
 export function visiblePublishedPostSql(viewerId?: string | null): Prisma.Sql {
   return Prisma.sql`${baseVisibility('p', viewerId)} AND (p."sharedFromId" IS NULL OR EXISTS (
-    SELECT 1 FROM "Post" s WHERE s.id = p."sharedFromId" AND ${baseVisibility('s', viewerId)}))`;
+    SELECT 1 FROM "Post" s WHERE s.id = p."sharedFromId" AND ${baseVisibility('s', viewerId)}
+      AND (s."sharedFromId" IS NULL OR EXISTS (
+        SELECT 1 FROM "Post" ancestor WHERE ancestor.id = s."sharedFromId"
+          AND ${baseVisibility('ancestor', viewerId)}))))`;
 }
 
 export type VisiblePostSqlOptions = {

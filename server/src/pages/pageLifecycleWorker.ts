@@ -12,7 +12,7 @@ const phases = ['NOTIFICATIONS', 'ANSWERS', 'RESPONSES', 'COMMENT_LIKES', 'COMME
   'VIEWS', 'POST_MENTIONS', 'POST_HASHTAGS', 'POST_TAGS', 'POST_MEDIA', 'INTERACTIONS', 'REPORTS', 'CASES', 'EXTERNAL_REPORTS', 'EXTERNAL_SHARES', 'POSTS',
   'MEMBERS', 'FOLLOWS', 'BLOCKS', 'INVITATIONS', 'TRANSFERS', 'EVENTS', 'MEDIA', 'MEDIA_ROWS', 'HANDLES', 'FINALIZE'] as const;
 type Phase = typeof phases[number];
-type Job = { pageId: string; phase: Phase; attempts: number; availableAt: Date; completedAt: Date | null };
+type Job = { pageId: string; phase: Phase; shareCursor: string | null; attempts: number; availableAt: Date; completedAt: Date | null };
 type BatchOptions = { limit?: number; now?: Date; purgeAsset?: (id: string) => Promise<void> };
 
 /** Admit irrevocable erasure under the same Page lock as cancellation. All content stays inaccessible. */
@@ -85,16 +85,17 @@ async function erasePhase(tx: PageTx, job: Job, size: number, now: Date): Promis
     // hold pauses this worker; after release, erase reports before their targets.
     case 'REPORTS': return erase(tx, 'reports', Prisma.sql`t.target_type = 'POST' AND t.target_id IN (${p})`, size);
     case 'CASES': {
+      const crossPage = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        SELECT child.id FROM "PageCase" child JOIN "PageCase" parent ON parent.id = child."parentId"
+        WHERE (parent."pageId" = ${job.pageId} AND child."pageId" IS DISTINCT FROM ${job.pageId})
+           OR (child."pageId" = ${job.pageId} AND parent."pageId" IS DISTINCT FROM ${job.pageId})
+        LIMIT 1`);
+      if (crossPage.length) throw new Error('PAGE_CASE_CROSS_PAGE_REFERENCE');
       const deleted = await erase(tx, 'PageCase', Prisma.sql`t."pageId" = ${job.pageId} AND NOT EXISTS
         (SELECT 1 FROM "PageCase" child WHERE child."parentId" = t.id)`, size);
       if (deleted) return deleted;
       // A corrupt cross-Page edge may be legal evidence belonging to another
       // Page. Fail closed instead of mutating that Page's case history.
-      const external = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-        SELECT child.id FROM "PageCase" child JOIN "PageCase" parent ON parent.id = child."parentId"
-        WHERE parent."pageId" = ${job.pageId} AND child."pageId" IS DISTINCT FROM ${job.pageId}
-        LIMIT 1`);
-      if (external.length) throw new Error('PAGE_CASE_CROSS_PAGE_REFERENCE');
       // Historical/corrupt cycles wholly within this Page cannot strand its
       // own case rows. Detach a bounded set of those remaining edges.
       return tx.$executeRaw(Prisma.sql`UPDATE "PageCase" SET "parentId" = NULL WHERE id IN
@@ -115,6 +116,7 @@ async function erasePhase(tx: PageTx, job: Job, size: number, now: Date): Promis
       // New shares carry an indexed root Page ID, so each normal batch is bounded.
       const copied = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
         SELECT post.id FROM "Post" post WHERE post."sharedRootPageId" = ${job.pageId}
+          AND (${job.shareCursor}::text IS NULL OR post.id > ${job.shareCursor})
           AND (post."sharedCopiedTitle" IS NOT NULL OR post."sharedCopiedDescription" IS NOT NULL
             OR post."sharedCopiedCategory" IS NOT NULL)
         ORDER BY post.id LIMIT ${size}`);
@@ -132,13 +134,10 @@ async function erasePhase(tx: PageTx, job: Job, size: number, now: Date): Promis
       // Repost mentions and hashtags are indexed from sharedCaption alone;
       // retain the author's independent caption and its social references.
       await tx.$executeRaw(Prisma.sql`UPDATE "Post" SET
-        title = CASE WHEN "sharedCopiedTitle" IS NOT NULL AND "sharedCopiedTitle" <> ''
-          THEN replace(title, "sharedCopiedTitle", '') ELSE title END,
-        description = CASE WHEN "sharedCopiedDescription" IS NOT NULL AND "sharedCopiedDescription" <> ''
-          THEN replace(description, "sharedCopiedDescription", '') ELSE description END,
-        category = CASE WHEN category = "sharedCopiedCategory" THEN NULL ELSE category END,
+        title = '', description = '', category = NULL,
         "sharedCopiedTitle" = NULL, "sharedCopiedDescription" = NULL, "sharedCopiedCategory" = NULL
         WHERE id IN (${Prisma.join(ids)})`);
+      await tx.$executeRaw`UPDATE "PagePurgeJob" SET "shareCursor" = ${ids[ids.length - 1]} WHERE "pageId" = ${job.pageId}`;
       return ids.length;
     }
     case 'POSTS': {
@@ -240,7 +239,7 @@ export async function processPagePurgeBatch(pageId: string, options: BatchOption
       }
       const next = phases[phases.indexOf(job.phase) + 1];
       if (!next) throw new Error('PAGE_PURGE_UNKNOWN_PHASE');
-      await tx.$executeRaw`UPDATE "PagePurgeJob" SET phase = ${next}, "updatedAt" = ${now}, "lastErrorCode" = NULL WHERE "pageId" = ${pageId}`;
+      await tx.$executeRaw`UPDATE "PagePurgeJob" SET phase = ${next}, "shareCursor" = NULL, "updatedAt" = ${now}, "lastErrorCode" = NULL WHERE "pageId" = ${pageId}`;
       return { state: 'progress' as const, erased: 0 };
     });
     if (result.state === 'media') {

@@ -13,35 +13,17 @@ import { assertActiveAccountSession } from '../services/accountSecurityPolicy';
 import { readNotificationSettings } from '../services/notificationPolicy';
 import { assertOtherActiveOwner, GroupOwnershipError, lockGroupRow } from '../services/groupOwnershipService';
 import { PagePolicyError } from '../pages/pagePolicy';
-import { pagePublicWhere } from '../pages/pagePolicy';
+import { hiddenCopiedShareIds } from '../pages/pageShareVisibility';
 import { withoutCopiedPageText } from '../pages/pageShareCopy';
 
-async function redactHiddenPageShareCopies(rows: any[]): Promise<any[]> {
-  const shares = rows.filter(row => row.sharedFromId);
-  const hidden = new Set<string>();
-  if (shares.length) {
-    const ancestors = await prisma.$queryRaw<Array<{ seedId: string; pageId: string }>>(Prisma.sql`
-      WITH RECURSIVE sources("seedId", id, "sharedFromId", "pageId") AS (
-        SELECT p.id, p.id, p."sharedFromId", p."pageId" FROM "Post" p
-        WHERE p.id IN (${Prisma.join(shares.map(row => row.id))})
-        UNION
-        SELECT source."seedId", parent.id, parent."sharedFromId", parent."pageId"
-        FROM sources source JOIN "Post" parent ON parent.id = source."sharedFromId"
-      )
-      SELECT DISTINCT "seedId", "pageId" FROM sources WHERE "pageId" IS NOT NULL`);
-    const pageIds = [...new Set(ancestors.map(row => row.pageId))];
-    const visiblePages = pageIds.length ? await prisma.page.findMany({
-      where: { AND: [{ id: { in: pageIds } }, pagePublicWhere(true)] }, select: { id: true }
-    }) : [];
-    const visible = new Set(visiblePages.map(page => page.id));
-    for (const ancestor of ancestors) if (!visible.has(ancestor.pageId)) hidden.add(ancestor.seedId);
-  }
-  return rows.map(({ sharedCopiedTitle, sharedCopiedDescription, sharedCopiedCategory, ...row }) =>
+async function redactHiddenPageShareCopies(rows: any[], viewerId: string): Promise<any[]> {
+  const hidden = await hiddenCopiedShareIds(prisma, rows, viewerId);
+  return rows.map(({ sharedCopiedTitle, sharedCopiedDescription, sharedCopiedCategory, sharedRootPageId, ...row }) =>
     hidden.has(row.id) ? {
       ...row,
       title: withoutCopiedPageText(row.title, sharedCopiedTitle),
       description: withoutCopiedPageText(row.description, sharedCopiedDescription),
-      category: row.category === sharedCopiedCategory ? null : row.category,
+      category: sharedCopiedCategory == null ? row.category : null,
     } : row);
 }
 
@@ -128,7 +110,7 @@ export async function exportAccount(req: Request, res: Response) {
         id: true, title: true, description: true, type: true, status: true, createdAt: true, updatedAt: true, expiresAt: true,
         category: true, targetAudience: true, groupId: true, targetedGroups: { select: { id: true } },
         pollChoiceType: true, optionPresentation: true, showOptionNames: true, sharedFromId: true, sharedCaption: true,
-        sharedCopiedTitle: true, sharedCopiedDescription: true, sharedCopiedCategory: true,
+        sharedCopiedTitle: true, sharedCopiedDescription: true, sharedCopiedCategory: true, sharedRootPageId: true,
         demographics: true, allowAnonymous: true, forceAnonymous: true, allowComments: true, allowMultipleSelection: true,
         allowUserOptions: true, randomPairing: true, resultsWho: true, resultsDetail: true, resultsTiming: true, isDeleted: true
       } }],
@@ -150,7 +132,7 @@ export async function exportAccount(req: Request, res: Response) {
       await write(`,${JSON.stringify(key)}:[`); let cursor: string | undefined, first = true;
       do {
         const rows = await model.findMany({ ...query, take: 250, orderBy: { [cursorKey]: 'asc' }, ...(cursor ? { cursor: { [cursorKey]: cursor }, skip: 1 } : {}) });
-        const safeRows = key === 'posts' ? await redactHiddenPageShareCopies(rows) : rows;
+        const safeRows = key === 'posts' ? await redactHiddenPageShareCopies(rows, id) : rows;
         for (const row of safeRows) { await write(`${first ? '' : ','}${JSON.stringify(row)}`); first = false; }
         cursor = rows.length === 250 ? rows[rows.length-1][cursorKey] : undefined;
       } while (cursor && !res.destroyed);

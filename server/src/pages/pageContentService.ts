@@ -1,9 +1,10 @@
 import { Prisma } from '@prisma/client';
-import { hasPageCapability, PagePolicyError, pagePublicWhere } from './pagePolicy';
+import { hasPageCapability, PagePolicyError } from './pagePolicy';
 import { activePageActor, lockPage, pageTransaction, requirePageCapability } from './pageService';
 import { attachPagePublishers } from './pagePostService';
 import { POST_MEDIA_INCLUDE } from '../services/mediaService';
 import { withoutCopiedPageText } from './pageShareCopy';
+import { hiddenCopiedShareIds } from './pageShareVisibility';
 import { mapPostForClient, SAFE_USER_SELECT } from '../controllers/postController';
 import { ACTIVE_MENTION_REFERENCE_INCLUDE } from '../services/mentionLifecycleService';
 import { getVisiblePeopleTagsInclude } from '../services/peopleTagService';
@@ -24,16 +25,12 @@ export async function pageContent(pageId:string,viewerId:string,options:{postId?
       mentions:ACTIVE_MENTION_REFERENCE_INCLUDE,taggedUsers:getVisiblePeopleTagsInclude(viewerId)}});
   const nextCursor=posts.length>options.limit?posts[options.limit-1].id:null;
   const selected=posts.slice(0,options.limit);
-  const rootIds=[...new Set(selected.map(post=>post.sharedRootPageId).filter((value):value is string=>Boolean(value)))];
-  const visibleRoots=rootIds.length?await tx.page.findMany({
-    where:{AND:[{id:{in:rootIds}},pagePublicWhere(true)]},select:{id:true}
-  }):[];
-  const visibleRootIds=new Set(visibleRoots.map(root=>root.id));
+  const hiddenShares=await hiddenCopiedShareIds(tx,selected,viewerId);
   for(const post of selected){
-    if(!post.sharedRootPageId||visibleRootIds.has(post.sharedRootPageId))continue;
+    if(!hiddenShares.has(post.id))continue;
     post.title=withoutCopiedPageText(post.title,post.sharedCopiedTitle);
     post.description=withoutCopiedPageText(post.description,post.sharedCopiedDescription);
-    if(post.category===post.sharedCopiedCategory)post.category=null;
+    if(post.sharedCopiedCategory!=null)post.category=null;
   }
   await attachPagePublishers(selected,viewerId,tx);
   const items=selected.map(post=>mapPostForClient(post,viewerId));

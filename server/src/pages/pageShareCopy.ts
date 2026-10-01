@@ -1,7 +1,6 @@
-/** Remove a copied Page fragment while preserving text independently added by a share author. */
+/** Copied fields on Page-derived shares are immutable; captions hold authored text. */
 export function withoutCopiedPageText(value: string, copied: string | null | undefined): string {
-  if (!copied) return value;
-  return value.split(copied).join('');
+  return copied == null ? value : '';
 }
 
 type ShareSource = { id: string; pageId: string | null; sharedFromId: string | null; sharedRootPageId: string | null };

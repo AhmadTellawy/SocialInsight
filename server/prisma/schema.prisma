@@ -1153,6 +1153,7 @@ model Page {
 model PagePurgeJob {
   pageId        String @id
   phase         String @default("NOTIFICATIONS")
+  shareCursor   String?
   attempts      Int @default(0)
   availableAt   DateTime @default(now())
   leaseToken    String?
