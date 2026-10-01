@@ -136,7 +136,7 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
     deletionRequestedAt: new Date(Date.now() - 31 * 86400000) } });
   await db.pageHandle.create({ data: { pageId: expiredPageId, handle: `past_${suffix}` } });
   await db.page.create({ data: { id: otherPageId, ownerId: anonymousOwnerId, handle: `other_${suffix}`,
-    name: 'Synthetic other Page', category: 'company', publicationState: 'PUBLISHED',
+    name: 'Synthetic other Page', category: 'company', bio: '', publicationState: 'PUBLISHED',
     representationAt: new Date(), createRequestId: randomUUID() } });
   await db.pageMembership.create({ data: { pageId: otherPageId, userId: analystId, role: 'ANALYST' } });
   const expiredPostId = randomUUID(), expiredCommentId = randomUUID(), expiredCaseId = randomUUID(), cycleCaseId = randomUUID(), expiredReportId = randomUUID(), shareReportId = randomUUID();
