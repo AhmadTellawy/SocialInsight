@@ -23,7 +23,7 @@ RUN git init libde265 \
       -DCMAKE_INSTALL_PREFIX=/opt/native \
       -DBUILD_SHARED_LIBS=OFF \
       -DENABLE_SDL=OFF \
-    && cmake --build libde265/build --parallel \
+    && cmake --build libde265/build --parallel 1 \
     && cmake --install libde265/build
 
 RUN git init libheif \
@@ -70,7 +70,7 @@ RUN git init libheif \
       -DWITH_VVENC=OFF \
       -DWITH_WEBCODECS=OFF \
       -DWITH_GDK_PIXBUF=OFF \
-    && cmake --build libheif/build --target heif-dec --parallel \
+    && cmake --build libheif/build --target heif-dec --parallel 1 \
     && install -D -m 0755 libheif/build/examples/heif-dec /native/heif-convert \
     && sha256sum /native/heif-convert | cut -d ' ' -f 1 > /native/heif-convert.sha256 \
     && git -C libheif rev-parse HEAD > /native/libheif.commit \
