@@ -86,7 +86,7 @@ export async function decidePageCase(caseId:string,actorId:string,raw:unknown){
       await requirePageStaff(tx,actorId,true);
       const until=input.holdUntil?new Date(input.holdUntil):null;
       if(!until||until<=new Date()||until.getTime()>Date.now()+365*86400000)throw new PagePolicyError('PAGE_INVALID_HOLD');
-      await tx.page.update({where:{id:page.id},data:{legalHoldUntil:until,legalHoldReason:input.reason}});
+      await tx.page.update({where:{id:page.id},data:{legalHoldUntil:page.legalHoldUntil&&page.legalHoldUntil>until?page.legalHoldUntil:until,legalHoldReason:input.reason}});
       await tx.pageCase.update({where:{id:caseId},data:{legalHoldUntil:until,legalHoldReason:input.reason}});
     }
     const decided=await tx.pageCase.update({where:{id:caseId},data:{status:'CLOSED',assigneeId:actorId,decision:input.action,

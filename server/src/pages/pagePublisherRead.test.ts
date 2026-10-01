@@ -5,7 +5,7 @@ import { attachPagePublishers } from './pagePostService';
 import { hasPageCapability, PageCapability, PageRole } from './pagePolicy';
 
 const capabilities: PageCapability[] = ['manageContent', 'reply', 'moderateComments', 'analytics'];
-const page = { id: 'business', ownerId: 'private-owner', name: 'Public business', handle: 'business', avatarMediaId: 'avatar', _viewerRole: null as string | null, _isFollowing: false };
+const page = { id: 'business', ownerId: 'private-owner', name: 'Public business', handle: 'business', avatarMediaId: 'avatar', _viewerRole: null as string | null, _ownerActive: true, _isFollowing: false };
 async function fixture(run: (state: { queries: any[]; rows: typeof page[] }) => Promise<void>) {
   const original = prisma.$queryRaw;
   const state = { queries: [] as any[], rows: [{ ...page }] };
@@ -26,12 +26,25 @@ test('Publisher query binds IDs and viewer values; private actor fields never re
   const post: any = { pageId: id, authorId: 'employee', lastPageActorId: 'employee', pageCreateKey: 'private-key', approvedById: 'reviewer', rejectedById: 'reviewer', taggedUsers: [{ taggedByUserId: 'employee', userId: 'tagged' }] };
   await attachPagePublishers([post], viewer);
   assert.equal(state.queries.length, 1);
+  assert.match(state.queries[0].sql, /viewer_user\.status = 'ACTIVE'/);
+  assert.match(state.queries[0].sql, /owner_user\.status = 'ACTIVE'/);
   for (const value of [id, viewer]) { assert.ok(state.queries[0].values.includes(value)); assert.ok(!state.queries[0].sql.includes(value)); }
   assert.deepEqual(post.author, { id, kind: 'PAGE', name: page.name, handle: page.handle, avatar: '', avatarMediaId: page.avatarMediaId, verifiedBadge: false, isPrivate: false, isFollowing: true });
   assert.equal(post.authorId, id); assert.deepEqual(post.pageCapabilities, []);
   for (const key of ['lastPageActorId', 'pageCreateKey', 'approvedById', 'rejectedById']) assert.equal(key in post, false);
   assert.equal('taggedByUserId' in post.taggedUsers[0], false);
   assert.equal('ownerId' in post.author, false);
+}));
+
+test('inactive Page owner and member receive no presentation capabilities', async () => fixture(async state => {
+  state.rows = [{ ...page, _ownerActive: false, _viewerRole: null }];
+  const ownerPost: any = { pageId: page.id };
+  await attachPagePublishers([ownerPost], page.ownerId);
+  assert.deepEqual(ownerPost.pageCapabilities, []);
+  state.rows = [{ ...page, _viewerRole: null }];
+  const memberPost: any = { pageId: page.id };
+  await attachPagePublishers([memberPost], 'inactive-member');
+  assert.deepEqual(memberPost.pageCapabilities, []);
 }));
 
 for (const role of ['OWNER', 'ADMIN', 'EDITOR', 'ANALYST', null] as (PageRole | null)[]) {

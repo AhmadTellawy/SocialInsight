@@ -18,7 +18,7 @@ const visibleText = (minimum: number, maximum: number, multiline=false) => z.str
 
 export const pageHandleSchema = z.string().trim().transform(value => value.toLowerCase())
   .pipe(z.string().regex(/^[a-z][a-z0-9_]{2,29}$/, 'Use 3–30 letters, numbers or underscores; start with a letter'))
-  .refine(value => !reserved.has(value), 'This handle is reserved');
+  .refine(value => !reserved.has(value) && !value.startsWith('deleted_'), 'This handle is reserved');
 
 export const pageWebUrlSchema = z.string().trim().max(2048).url().refine(value => {
   try {

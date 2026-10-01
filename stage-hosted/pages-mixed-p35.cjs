@@ -314,10 +314,15 @@ async function main() {
   }
   const p35 = report.p35;
   report.checks = [
+    { name: '100 users sustained for at least 600 seconds', pass: p35.users === 100 && p35.sampleSeconds >= 600 && p35.requests >= 1000 },
+    { name: 'Every minute contains measured traffic', pass: p35.minuteWindows.length === 10 && p35.minuteWindows.every(window => window.requests > 0) },
+    { name: '80/10/5/5 mixed traffic within one percentage point', pass: Object.entries(report.acceptance.mix).every(([kind, expected]) =>
+      p35.byKind[kind].requests > 0 && Math.abs(p35.mixPercent[kind] - expected) <= 1) },
     { name: 'Read p95 <= 800ms', pass: p35.byKind.read.p95Ms <= 800 },
     { name: 'Write p95 <= 1200ms', pass: p35.write.p95Ms <= 1200 },
     { name: 'Every minute HTTP 5xx < 1%', pass: p35.minuteWindows.every(window => !window.requests || window.fiveXx / window.requests < .01) },
     { name: 'No transport errors', pass: p35.transportErrors === 0 },
+    { name: 'No API or database errors', pass: p35.errors === 0 && report.targetLogSignals?.prismaOrDatabaseErrorLines === 0 },
     { name: 'No unexpected HTTP 4xx', pass: p35.apiErrors === p35.fiveXx },
     { name: 'Counters and votes match actual database rows', pass: !report.integrity.counterMismatches && !report.integrity.optionMismatches && !report.integrity.duplicateResponses },
     { name: 'Cross-publisher deletion and account outbox cleanup', pass: Object.values(report.securitySmokes).every(Boolean) },

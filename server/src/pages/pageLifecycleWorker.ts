@@ -1,5 +1,4 @@
-import { randomUUID } from 'node:crypto';
-import { Buffer } from 'node:buffer';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import prisma from '../prisma';
 import { purgeMediaAsset } from '../services/mediaService';
@@ -9,8 +8,8 @@ import { PageTx, pageAudit, pageTransaction } from './pageService';
 import { pageErasureHeld, pageLifecycleLimit, pageRetentionCutoff, processPageRetention } from './pageRetentionService';
 
 const phases = ['NOTIFICATIONS', 'ANSWERS', 'RESPONSES', 'COMMENT_LIKES', 'COMMENT_MENTIONS',
-  'COMMENT_HASHTAGS', 'COMMENTS', 'OPTIONS', 'QUESTIONS', 'SECTIONS', 'SAVES', 'HIDES', 'LIKES',
-  'VIEWS', 'POST_MENTIONS', 'POST_HASHTAGS', 'POST_TAGS', 'POST_MEDIA', 'INTERACTIONS', 'REPORTS', 'POSTS',
+  'COMMENT_HASHTAGS', 'COMMENT_REPORTS', 'COMMENTS', 'OPTIONS', 'QUESTIONS', 'SECTIONS', 'SAVES', 'HIDES', 'LIKES',
+  'VIEWS', 'POST_MENTIONS', 'POST_HASHTAGS', 'POST_TAGS', 'POST_MEDIA', 'INTERACTIONS', 'REPORTS', 'CASES', 'POSTS',
   'MEMBERS', 'FOLLOWS', 'BLOCKS', 'INVITATIONS', 'TRANSFERS', 'EVENTS', 'MEDIA', 'MEDIA_ROWS', 'HANDLES', 'FINALIZE'] as const;
 type Phase = typeof phases[number];
 type Job = { pageId: string; phase: Phase; attempts: number; availableAt: Date; completedAt: Date | null };
@@ -19,15 +18,21 @@ type BatchOptions = { limit?: number; now?: Date; purgeAsset?: (id: string) => P
 /** Admit irrevocable erasure under the same Page lock as cancellation. All content stays inaccessible. */
 export async function admitPagePurges(limit = 10, now = new Date()): Promise<number> {
   const cutoff = pageRetentionCutoff(PAGE_POLICY.deletionGraceDays, now);
+  const caseCutoff = pageRetentionCutoff(PAGE_POLICY.closedCaseRetentionDays, now);
   const due = await prisma.page.findMany({ where: { purgedAt: null, deletionRequestedAt: { lte: cutoff },
-    OR: [{ legalHoldUntil: null }, { legalHoldUntil: { lte: now } }], cases: { none: { legalHoldUntil: { gt: now } } } },
+    OR: [{ legalHoldUntil: null }, { legalHoldUntil: { lte: now } }], cases: { none: { OR: [
+      { legalHoldUntil: { gt: now } }, { status: { not: 'CLOSED' } }, { closedAt: null }, { closedAt: { gt: caseCutoff } }
+    ] } } },
     take: pageLifecycleLimit(limit, 25), orderBy: [{ deletionRequestedAt: 'asc' }, { id: 'asc' }], select: { id: true } });
   let admitted = 0;
   for (const candidate of due) {
     const changed = await pageTransaction(async tx => {
       await tx.$queryRaw`SELECT id FROM "Page" WHERE id = ${candidate.id} FOR UPDATE`;
       const page = await tx.page.findUnique({ where: { id: candidate.id } });
-      if (!page || page.purgedAt || !page.deletionRequestedAt || page.deletionRequestedAt > cutoff || await pageErasureHeld(tx, page.id, now)) return false;
+      if (!page || page.purgedAt || !page.deletionRequestedAt || page.deletionRequestedAt > cutoff || await pageErasureHeld(tx, page.id, now) ||
+        await tx.pageCase.count({ where: { pageId: page.id, OR: [
+          { status: { not: 'CLOSED' } }, { closedAt: null }, { closedAt: { gt: caseCutoff } }
+        ] } })) return false;
       await tx.page.update({ where: { id: page.id }, data: { purgedAt: now, publicationState: 'UNPUBLISHED' } });
       await tx.$executeRaw`INSERT INTO "PagePurgeJob" ("pageId", "updatedAt", "availableAt") VALUES (${page.id}, ${now}, ${now}) ON CONFLICT ("pageId") DO NOTHING`;
       await pageAudit(tx, page.id, null, 'PAGE_PURGE_ADMITTED');
@@ -58,6 +63,7 @@ async function erasePhase(tx: PageTx, job: Job, size: number, now: Date): Promis
     case 'COMMENT_LIKES': return erase(tx, 'CommentLike', Prisma.sql`t."commentId" IN (${c})`, size);
     case 'COMMENT_MENTIONS': return erase(tx, 'Mention', Prisma.sql`t."commentId" IN (${c})`, size);
     case 'COMMENT_HASHTAGS': return erase(tx, 'CommentHashtag', Prisma.sql`t."commentId" IN (${c})`, size);
+    case 'COMMENT_REPORTS': return erase(tx, 'reports', Prisma.sql`t.target_type = 'COMMENT' AND t.target_id IN (${c})`, size);
     case 'COMMENTS': return erase(tx, 'Comment', Prisma.sql`t."postId" IN (${p}) AND NOT EXISTS (SELECT 1 FROM "Comment" child WHERE child."parentId" = t.id)`, size);
     case 'OPTIONS': return erase(tx, 'Option', Prisma.sql`t."questionId" IN (${q})`, size);
     case 'QUESTIONS': return erase(tx, 'Question', Prisma.sql`t.id IN (${q})`, size);
@@ -74,6 +80,8 @@ async function erasePhase(tx: PageTx, job: Job, size: number, now: Date): Promis
     // Report snapshots contain the Page post text and publisher identity. A legal
     // hold pauses this worker; after release, erase reports before their targets.
     case 'REPORTS': return erase(tx, 'reports', Prisma.sql`t.target_type = 'POST' AND t.target_id IN (${p})`, size);
+    case 'CASES': return erase(tx, 'PageCase', Prisma.sql`t."pageId" = ${job.pageId} AND NOT EXISTS
+      (SELECT 1 FROM "PageCase" child WHERE child."parentId" = t.id)`, size);
     case 'POSTS': {
       // Remove internal share edges in bounded batches before deleting roots. External shares are untouched.
       const detached = await tx.$executeRaw(Prisma.sql`UPDATE "Post" SET "sharedFromId" = NULL WHERE id IN
@@ -115,8 +123,17 @@ export async function processPagePurgeBatch(pageId: string, options: BatchOption
         await tx.$executeRaw`UPDATE "PagePurgeJob" SET "availableAt" = ${new Date(now.getTime() + 60000)}, "lastErrorCode" = 'LEGAL_HOLD', "updatedAt" = ${now} WHERE "pageId" = ${pageId}`;
         return { state: 'held' as const };
       }
+      if (await tx.pageCase.count({ where: { pageId, OR: [
+        { status: { not: 'CLOSED' } }, { closedAt: null },
+        { closedAt: { gt: pageRetentionCutoff(PAGE_POLICY.closedCaseRetentionDays, now) } }
+      ] } })) {
+        await tx.$executeRaw`UPDATE "PagePurgeJob" SET "availableAt" = ${new Date(now.getTime() + 60000)}, "lastErrorCode" = 'CASE_RETENTION', "updatedAt" = ${now} WHERE "pageId" = ${pageId}`;
+        return { state: 'held' as const };
+      }
       if (job.phase === 'FINALIZE') {
-        const anonymousHandle = 'deleted_' + Buffer.from(pageId.replace(/-/g, ''), 'hex').toString('base64url');
+        // Never derive the tombstone handle from the public Page ID: another
+        // account could reserve that value and prevent erasure from finishing.
+        const anonymousHandle = 'deleted_' + randomBytes(16).toString('base64url');
         await tx.page.update({ where: { id: pageId }, data: { name: '', bio: '', description: '', category: 'other',
           country: '', city: '', website: null, links: [], publicEmail: null, publicPhone: null, cta: null,
           avatarMediaId: null, coverMediaId: null, ownerId: null, handle: anonymousHandle,

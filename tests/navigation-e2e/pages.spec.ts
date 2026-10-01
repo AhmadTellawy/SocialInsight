@@ -70,3 +70,14 @@ test('malformed public Page path shows a recoverable unavailable state', async (
   await page.getByRole('link', { name: ar ? 'استكشف الصفحات' : 'Browse pages' }).click();
   await expect(page).toHaveURL('/pages');
 });
+
+test('extra public and management Page path segments are rejected', async ({ page, boot, state }, testInfo) => {
+  state.pages = {};
+  const ar = testInfo.project.name.startsWith('ar');
+  for (const path of ['/pages/navigation_test_studio/extra', '/pages/manage/00000000-0000-4000-8000-000000000101/extra']) {
+    await boot(path);
+    await expect(page.getByText(ar ? 'الصفحة غير متاحة' : 'Page unavailable', { exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: ar ? 'استكشف الصفحات' : 'Browse pages' })).toBeVisible();
+  }
+  expect(state.calls).not.toContain('GET /api/pages/navigation_test_studio');
+});

@@ -72,13 +72,16 @@ export async function attachPagePublishers(posts:any[],viewerId?:string|null,cli
   const viewer = viewerId || '';
   const pages = await client.$queryRaw<Array<{
     id: string; ownerId: string; name: string; handle: string; avatarMediaId: string | null;
-    _viewerRole: string | null; _isFollowing: boolean;
+    _viewerRole: string | null; _ownerActive: boolean; _isFollowing: boolean;
   }>>(Prisma.sql`
     SELECT p."id", p."ownerId", p."name", p."handle", p."avatarMediaId",
-      membership."role" AS "_viewerRole", (following."userId" IS NOT NULL) AS "_isFollowing"
+      CASE WHEN viewer_user.id IS NOT NULL THEN membership."role" ELSE NULL END AS "_viewerRole",
+      (owner_user.id IS NOT NULL) AS "_ownerActive", (following."userId" IS NOT NULL) AS "_isFollowing"
     FROM "Page" p
     LEFT JOIN "PageMembership" membership
       ON membership."pageId" = p."id" AND membership."userId" = ${viewer}
+    LEFT JOIN users viewer_user ON viewer_user.id = membership."userId" AND viewer_user.status = 'ACTIVE'
+    LEFT JOIN users owner_user ON owner_user.id = p."ownerId" AND owner_user.status = 'ACTIVE'
     LEFT JOIN "PageFollow" following
       ON following."pageId" = p."id" AND following."userId" = ${viewer}
     WHERE p."id" IN (${Prisma.join(pageIds)})
@@ -87,7 +90,7 @@ export async function attachPagePublishers(posts:any[],viewerId?:string|null,cli
   for(const post of targets){
     const page=pagesById.get(post.pageId);
     if(!page)throw new PagePolicyError('PAGE_NOT_FOUND',404);
-    const role:PageRole|null=viewerId===page.ownerId?'OWNER':page._viewerRole as PageRole||null;
+    const role:PageRole|null=viewerId===page.ownerId&&page._ownerActive?'OWNER':page._viewerRole as PageRole||null;
     post.authorId=page.id;
     post.author={id:page.id,kind:'PAGE',name:page.name,handle:page.handle,avatar:'',avatarMediaId:page.avatarMediaId,
       verifiedBadge:false,isPrivate:false,isFollowing:page._isFollowing};

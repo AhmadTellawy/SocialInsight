@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { randomUUID } from 'node:crypto';
 import prisma from '../prisma';
 import { PagePolicyError } from './pagePolicy';
 import { lockPage, pageAudit, PageTx } from './pageService';
@@ -52,6 +53,17 @@ export async function preparePageAccountDeletion(tx: PageTx, userId: string, con
       WHERE value <> to_jsonb(${userId}::text)), '[]'::jsonb))
     WHERE jsonb_typeof(e.context->'excludedRecipientIds') = 'array'
       AND e.context->'excludedRecipientIds' ? ${userId}`;
+  // Keep the bounded safety decision, but unlink a deleted account from its
+  // audit, case, and completed relationship history. Open cases retain their
+  // status/reason while the reporter's own free text and evidence are erased.
+  await tx.pageAuditEvent.updateMany({ where: { actorId: userId }, data: { actorId: null } });
+  await tx.pageAuditEvent.updateMany({ where: { targetId: userId }, data: { targetId: null } });
+  await tx.pageCase.updateMany({ where: { reporterId: userId }, data: {
+    reporterId: randomUUID(), detail: '', evidence: [],
+  } });
+  await tx.pageCase.updateMany({ where: { assigneeId: userId }, data: { assigneeId: null } });
+  await tx.pageInvitation.deleteMany({ where: { OR: [{ senderId: userId }, { recipientId: userId }] } });
+  await tx.pageOwnershipTransfer.deleteMany({ where: { OR: [{ senderId: userId }, { recipientId: userId }] } });
   return [...new Set([...owned.map(page=>page.id),...memberships.map(member=>member.pageId)])];
 }
 

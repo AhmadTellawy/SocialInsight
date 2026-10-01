@@ -92,6 +92,18 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
     publicationState: 'UNPUBLISHED', representationAt: new Date(), createRequestId: randomUUID(),
     deletionRequestedAt: new Date(Date.now() - 31 * 86400000) } });
   await db.pageHandle.create({ data: { pageId: expiredPageId, handle: `past_${suffix}` } });
+  const expiredPostId = randomUUID(), expiredCommentId = randomUUID(), expiredCaseId = randomUUID(), expiredReportId = randomUUID();
+  await db.post.create({ data: { id: expiredPostId, pageId: expiredPageId, authorId: anonymousOwnerId,
+    title: 'Synthetic old Page post', description: 'Erase this', type: 'Poll', expiresAt: new Date(Date.now() + 86400000) } });
+  await db.comment.create({ data: { id: expiredCommentId, postId: expiredPostId, userId: anonymousOwnerId, text: 'Synthetic Page comment' } });
+  await db.report.create({ data: { id: expiredReportId, reporterId: anonymousOwnerId, targetType: 'COMMENT', targetId: expiredCommentId,
+    reason: 'Synthetic test', targetSnapshot: { text: 'Synthetic Page comment' } } });
+  await db.pageCase.create({ data: { id: expiredCaseId, pageId: expiredPageId, reporterId: anonymousOwnerId,
+    reason: 'Synthetic test', detail: 'Case evidence to erase', evidence: ['synthetic'], status: 'OPEN' } });
+  stage = 'open-case-blocks-purge';
+  assert.equal(await admitPagePurges(10), 0);
+  await db.pageCase.update({ where: { id: expiredCaseId }, data: {
+    status: 'CLOSED', closedAt: new Date(Date.now() - 181 * 86400000) } });
   stage = 'admit-expired-page-purge';
   assert.equal(await admitPagePurges(10), 1);
   let purgeState;
@@ -101,7 +113,10 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
     if (purgeState === 'completed') break;
   }
   stage = 'expired-page-purge-completion';
-  assert.equal(purgeState, 'completed');
+  if (purgeState !== 'completed') {
+    const job = await db.pagePurgeJob.findUnique({ where: { pageId: expiredPageId }, select: { phase: true, attempts: true, lastErrorCode: true } });
+    throw new Error(`PAGE_PURGE_INCOMPLETE:${purgeState}:${job?.phase}:${job?.attempts}:${job?.lastErrorCode}`);
+  }
   const erasedPage = await db.page.findUniqueOrThrow({ where: { id: expiredPageId } });
   stage = 'detached-owner';
   assert.equal(erasedPage.ownerId, null);
@@ -109,8 +124,12 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
   assert.ok(erasedPage.handle.startsWith('deleted_'));
   assert.notEqual(erasedPage.handle, expiredHandle);
   assert.equal(await db.pageHandle.count({ where: { pageId: expiredPageId } }), 0);
+  stage = 'purge-erases-case-and-comment-report';
+  assert.equal(await db.pageCase.count({ where: { pageId: expiredPageId } }), 0);
+  assert.equal(await db.report.count({ where: { id: expiredReportId } }), 0);
   process.stdout.write(JSON.stringify({ result: 'PASS', scenarios: ['missing-owner-confirmation', 'former-editor-media-retained',
     'personal-media-journaled', 'revoked-editor-export-excludes-page', 'former-editor-page-draft-retained', 'personal-draft-erased',
-    'owner-page-hidden-with-grace', 'owner-page-media-retained', 'completed-purge-detaches-identifiers'] }) + '\n');
-})().catch(error => { process.stderr.write(`${stage}: ${error?.name || 'Error'}: ${error?.code || 'CHECK_FAILED'}\n`); process.exitCode = 1; })
+    'owner-page-hidden-with-grace', 'owner-page-media-retained', 'open-case-blocks-purge',
+    'completed-purge-detaches-identifiers', 'purge-erases-case-and-comment-report'] }) + '\n');
+})().catch(error => { process.stderr.write(`${stage}: ${error?.message?.startsWith('PAGE_PURGE_INCOMPLETE:') ? error.message : error?.name || 'Error'}: ${error?.code || 'CHECK_FAILED'}\n`); process.exitCode = 1; })
   .finally(() => db.$disconnect());

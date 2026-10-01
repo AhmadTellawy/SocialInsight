@@ -116,13 +116,17 @@ function PublicPage({handle,userProfile,cardProps,onPostClick}:PagesWorkspacePro
 
 export function PagesWorkspace(props:PagesWorkspaceProps) {
   const {ar,text}=usePageText();const location=useLocation();const parts=location.pathname.split('/').filter(Boolean);const path=parts[1]||'';
+  const validRoute = !path ? parts.length===1 :
+    path==='manage' ? parts.length===3 && !!parts[2] :
+    path==='staff'||path==='cases' ? parts.length<=3 :
+    ['create','mine','invitations','blocks'].includes(path) ? parts.length===2 : parts.length===2;
   let publicHandle: string | null = null;
   if (path) { try { publicHandle = decodeURIComponent(path); } catch { publicHandle = null; } }
-  const privateRoute=['create','mine','manage','staff','cases','invitations','blocks'].includes(path);
+  const privateRoute=validRoute&&['create','mine','manage','staff','cases','invitations','blocks'].includes(path);
   const heading=useRef<HTMLDivElement>(null);
   useEffect(()=>{heading.current?.scrollTo({top:0});},[location.pathname]);
   return <div ref={heading} className="pages-shell flex-1 overflow-y-auto" dir={ar?'rtl':'ltr'}><PageMetadata/><PageTopbar signedIn={!!props.userProfile}/>{props.userProfile?.id&&<PageAccountLinks userId={props.userProfile.id}/>}
     {privateRoute&&!props.userProfile?<main className="pages-content"><PageEmpty title={text('Sign in to manage your pages','سجّل الدخول لإدارة صفحاتك')} description={text('Use your personal account to create and manage pages.','استخدم حسابك الشخصي لإنشاء الصفحات وإدارتها.')}><Link className="pages-button primary" to={'/login?returnTo='+encodeURIComponent(location.pathname+location.search)}>{text('Sign in','تسجيل الدخول')}</Link></PageEmpty></main>:
-    path==='blocks'?<React.Fragment key={props.userProfile!.id}><BlockedPages userId={props.userProfile!.id!}/></React.Fragment>:path==='staff'||path==='cases'?<PageCases staff={path==='staff'} caseId={parts[2]} userId={props.userProfile!.id!}/>:path==='create'?<PageCreate/>:path==='manage'&&parts[2]?<PageManage pageId={parts[2]} userProfile={props.userProfile!} cardProps={props.cardProps}/>:path==='mine'||path==='invitations'?<PageDirectory mine userProfile={props.userProfile} invitationsOnly={path==='invitations'}/>:!path?<PageDirectory mine={false} userProfile={props.userProfile}/>:publicHandle===null?<main className="pages-content"><PageEmpty title={text('Page unavailable','الصفحة غير متاحة')} description={text('Check the link and try again.','تحقق من الرابط وحاول مجددًا.')}><Link className="pages-button primary" to="/pages">{text('Browse pages','استكشف الصفحات')}</Link></PageEmpty></main>:<PublicPage key={path} handle={publicHandle} {...props}/>}
+    !validRoute||publicHandle===null&&!!path?<main className="pages-content"><PageEmpty title={text('Page unavailable','الصفحة غير متاحة')} description={text('Check the link and try again.','تحقق من الرابط وحاول مجددًا.')}><Link className="pages-button primary" to="/pages">{text('Browse pages','استكشف الصفحات')}</Link></PageEmpty></main>:path==='blocks'?<React.Fragment key={props.userProfile!.id}><BlockedPages userId={props.userProfile!.id!}/></React.Fragment>:path==='staff'||path==='cases'?<PageCases staff={path==='staff'} caseId={parts[2]} userId={props.userProfile!.id!}/>:path==='create'?<PageCreate/>:path==='manage'&&parts[2]?<PageManage pageId={parts[2]} userProfile={props.userProfile!} cardProps={props.cardProps}/>:path==='mine'||path==='invitations'?<PageDirectory mine userProfile={props.userProfile} invitationsOnly={path==='invitations'}/>:!path?<PageDirectory mine={false} userProfile={props.userProfile}/>:<PublicPage key={path} handle={publicHandle!} {...props}/>}
   </div>;
 }
