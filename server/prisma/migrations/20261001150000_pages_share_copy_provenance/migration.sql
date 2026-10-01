@@ -4,5 +4,5 @@ ALTER TABLE "Post" ADD COLUMN "sharedCopiedTitle" TEXT;
 ALTER TABLE "Post" ADD COLUMN "sharedCopiedDescription" TEXT;
 ALTER TABLE "Post" ADD COLUMN "sharedCopiedCategory" TEXT;
 ALTER TABLE "Post" ADD COLUMN "sharedRootPageId" TEXT;
+CREATE INDEX "Post_shared_root_page_idx" ON "Post"("sharedRootPageId", "id");
 RESET lock_timeout;
-CREATE INDEX CONCURRENTLY "Post_shared_root_page_idx" ON "Post"("sharedRootPageId", "id");
