@@ -3,6 +3,7 @@ import { hasPageCapability, PagePolicyError, pagePublicWhere } from './pagePolic
 import { activePageActor, lockPage, pageTransaction, requirePageCapability } from './pageService';
 import { attachPagePublishers } from './pagePostService';
 import { POST_MEDIA_INCLUDE } from '../services/mediaService';
+import { withoutCopiedPageText } from './pageShareCopy';
 import { mapPostForClient, SAFE_USER_SELECT } from '../controllers/postController';
 import { ACTIVE_MENTION_REFERENCE_INCLUDE } from '../services/mentionLifecycleService';
 import { getVisiblePeopleTagsInclude } from '../services/peopleTagService';
@@ -30,8 +31,8 @@ export async function pageContent(pageId:string,viewerId:string,options:{postId?
   const visibleRootIds=new Set(visibleRoots.map(root=>root.id));
   for(const post of selected){
     if(!post.sharedRootPageId||visibleRootIds.has(post.sharedRootPageId))continue;
-    if(post.title===post.sharedCopiedTitle)post.title='';
-    if(post.description===post.sharedCopiedDescription)post.description='';
+    post.title=withoutCopiedPageText(post.title,post.sharedCopiedTitle);
+    post.description=withoutCopiedPageText(post.description,post.sharedCopiedDescription);
     if(post.category===post.sharedCopiedCategory)post.category=null;
   }
   await attachPagePublishers(selected,viewerId,tx);

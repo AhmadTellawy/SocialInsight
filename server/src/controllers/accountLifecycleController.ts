@@ -14,6 +14,7 @@ import { readNotificationSettings } from '../services/notificationPolicy';
 import { assertOtherActiveOwner, GroupOwnershipError, lockGroupRow } from '../services/groupOwnershipService';
 import { PagePolicyError } from '../pages/pagePolicy';
 import { pagePublicWhere } from '../pages/pagePolicy';
+import { withoutCopiedPageText } from '../pages/pageShareCopy';
 
 async function redactHiddenPageShareCopies(rows: any[]): Promise<any[]> {
   const shares = rows.filter(row => row.sharedFromId);
@@ -38,8 +39,8 @@ async function redactHiddenPageShareCopies(rows: any[]): Promise<any[]> {
   return rows.map(({ sharedCopiedTitle, sharedCopiedDescription, sharedCopiedCategory, ...row }) =>
     hidden.has(row.id) ? {
       ...row,
-      title: sharedCopiedTitle == null || row.title === sharedCopiedTitle ? '' : row.title,
-      description: sharedCopiedDescription == null || row.description === sharedCopiedDescription ? '' : row.description,
+      title: withoutCopiedPageText(row.title, sharedCopiedTitle),
+      description: withoutCopiedPageText(row.description, sharedCopiedDescription),
       category: row.category === sharedCopiedCategory ? null : row.category,
     } : row);
 }

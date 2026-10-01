@@ -64,6 +64,7 @@ import { buildVisiblePublishedPostWhere, evaluatePostResultsAccess } from '../se
 import { loadVisiblePostScalars } from '../services/postVisibilitySql';
 import { attachPageCommentPublishers, attachPagePublishers, authorizePagePublisher, guardPagePostInteractions, guardPagePostPersistence, hasPostPageCapability, isPageFollower, respondPagePostError } from '../pages/pagePostService';
 import { assertPageDestination, PagePolicyError, pagePublicWhere } from '../pages/pagePolicy';
+import { canonicalShareSourceId, copiedPageRootId, withoutCopiedPageText } from '../pages/pageShareCopy';
 import {
     PostOptionValidationError,
     buildPostReportDedupeKey,
@@ -1656,8 +1657,8 @@ export const getDrafts = async (req: Request, res: Response) => {
             const hiddenSource = rawDraft.sharedRootPageId && !visibleRoots.has(rawDraft.sharedRootPageId);
             const safeDraft = hiddenSource ? {
                 ...rawDraft,
-                title: rawDraft.title === rawDraft.sharedCopiedTitle ? '' : rawDraft.title,
-                description: rawDraft.description === rawDraft.sharedCopiedDescription ? '' : rawDraft.description,
+                title: withoutCopiedPageText(rawDraft.title, rawDraft.sharedCopiedTitle),
+                description: withoutCopiedPageText(rawDraft.description, rawDraft.sharedCopiedDescription),
                 category: rawDraft.category === rawDraft.sharedCopiedCategory ? null : rawDraft.category,
             } : rawDraft;
             const d = serializePostSocialRecord(safeDraft, userId);
@@ -2973,7 +2974,14 @@ export const sharePost = async (req: Request, res: Response) => {
             }
         }
 
-        const actualSharedFromId = originalPost.sharedFromId ? originalPost.sharedFromId : originalPost.id;
+        // A Page repost may contain Page-authored edits to a personal source.
+        // Keep that Page in the ancestry of later shares so hiding or purging
+        // it also hides/erases text copied from its edited repost.
+        if (originalPost.pageId && originalPost.sharedRootPageId) {
+            res.status(403).json({ error: 'Cannot reshare a Page repost of another Page' });
+            return;
+        }
+        const actualSharedFromId = canonicalShareSourceId(originalPost);
         const visibleSourceCount = await prisma.post.count({
             where: {
                 id: actualSharedFromId,
@@ -3041,9 +3049,12 @@ export const sharePost = async (req: Request, res: Response) => {
                 throw new Error('SHARING_UNAVAILABLE');
             }
             const sharedTemplate = currentSources.find(source => source.id === id)!;
-            if ((sharedTemplate.sharedFromId || sharedTemplate.id) !== actualSharedFromId) {
+            if (canonicalShareSourceId(sharedTemplate) !== actualSharedFromId) {
                 if (involvesPage) throw new PagePolicyError('PAGE_SHARE_SOURCE_CHANGED',409);
                 throw new Error('SHARING_UNAVAILABLE');
+            }
+            if (sharedTemplate.pageId && sharedTemplate.sharedRootPageId) {
+                throw new PagePolicyError('PAGE_SHARE_SOURCE_UNAVAILABLE', 403);
             }
             if (publisherPageId) await authorizePagePublisher(tx, publisherPageId, userId, { ...req.body, status: 'PUBLISHED' });
             await guardPagePostPersistence(tx,id,userId);
@@ -3079,8 +3090,8 @@ export const sharePost = async (req: Request, res: Response) => {
                     sharedCopiedTitle: sharedTemplate.title,
                     sharedCopiedDescription: sharedTemplate.description,
                     sharedCopiedCategory: sharedTemplate.category,
-                    sharedRootPageId: currentSources.find(source => source.id === actualSharedFromId)?.pageId
-                        || sharedTemplate.sharedRootPageId || null,
+                    sharedRootPageId: copiedPageRootId(sharedTemplate,
+                        currentSources.find(source => source.id === actualSharedFromId)?.pageId || null),
                     type: sharedTemplate.type,
                     authorId: userId,
                     pageId: publisherPageId,

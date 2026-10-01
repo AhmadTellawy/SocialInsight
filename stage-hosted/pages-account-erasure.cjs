@@ -144,7 +144,10 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
   await db.post.create({ data: { id: expiredPostId, pageId: expiredPageId, authorId: anonymousOwnerId,
     title: copiedTitle, description: 'Erase this', resultsDetail: 'Private result text',
     type: 'Poll', expiresAt: new Date(Date.now() + 86400000) } });
-  const externalShareId = randomUUID(), externalReshareId = randomUUID(), editedShareId = randomUUID(), otherPageShareId = randomUUID();
+  const externalShareId = randomUUID(), externalReshareId = randomUUID(), editedShareId = randomUUID(), otherPageShareId = randomUUID(), internalLegacyShareId = randomUUID();
+  await db.post.create({ data: { id: internalLegacyShareId, pageId: expiredPageId, authorId: anonymousOwnerId,
+    sharedFromId: expiredPostId, title: copiedTitle, description: 'Erase this',
+    type: 'Poll', expiresAt: new Date(Date.now() + 86400000) } });
   await db.post.create({ data: { id: externalShareId, authorId: anonymousOwnerId, sharedFromId: expiredPostId,
     title: copiedTitle, description: 'Erase this', sharedCaption: 'Independent user commentary',
     sharedCopiedTitle: copiedTitle, sharedCopiedDescription: 'Erase this', sharedRootPageId: expiredPageId,
@@ -154,7 +157,7 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
     sharedCopiedTitle: copiedTitle, sharedCopiedDescription: 'Erase this', sharedRootPageId: expiredPageId,
     type: 'Poll', expiresAt: new Date(Date.now() + 86400000) } });
   await db.post.create({ data: { id: editedShareId, authorId: anonymousOwnerId, sharedFromId: expiredPostId,
-    title: 'Independent edited share title', description: 'Erase this', sharedCaption: 'Independent edited commentary',
+    title: `${copiedTitle} — Independent edited share title`, description: 'Erase this', sharedCaption: 'Independent edited commentary',
     sharedCopiedTitle: copiedTitle, sharedCopiedDescription: 'Erase this', sharedRootPageId: expiredPageId,
     type: 'Poll', expiresAt: new Date(Date.now() + 86400000) } });
   await db.post.create({ data: { id: otherPageShareId, pageId: otherPageId, authorId: anonymousOwnerId,
@@ -187,7 +190,7 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
   assert.deepEqual([exportedShare.title, exportedShare.description, exportedShare.sharedCaption],
     ['', '', 'Independent user commentary']);
   assert.deepEqual([exportedEditedShare.title, exportedEditedShare.description],
-    ['Independent edited share title', '']);
+    [' — Independent edited share title', '']);
   stage = 'hidden-page-share-draft-redacted';
   await db.post.update({ where: { id: editedShareId }, data: { status: 'DRAFT' } });
   let draftStatus = 200, draftBody;
@@ -195,7 +198,7 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
   await getDrafts({ user: { userId: anonymousOwnerId }, query: {} }, draftResponse);
   assert.equal(draftStatus, 200);
   const safeDraft = draftBody.find(post => post.id === editedShareId);
-  assert.deepEqual([safeDraft.title, safeDraft.description], ['Independent edited share title', '']);
+  assert.deepEqual([safeDraft.title, safeDraft.description], [' — Independent edited share title', '']);
   assert.equal(safeDraft.sharedCopiedTitle, undefined);
   await db.comment.create({ data: { id: expiredCommentId, postId: expiredPostId, userId: anonymousOwnerId, text: 'Synthetic Page comment' } });
   await db.report.create({ data: { id: expiredReportId, reporterId: anonymousOwnerId, targetType: 'COMMENT', targetId: expiredCommentId,
@@ -233,6 +236,7 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
   assert.equal(await db.pageHandle.count({ where: { pageId: expiredPageId } }), 0);
   stage = 'purge-erases-case-and-comment-report';
   assert.equal(await db.pageCase.count({ where: { pageId: expiredPageId } }), 0);
+  assert.equal(await db.post.findUnique({ where: { id: internalLegacyShareId } }), null);
   assert.equal(await db.report.count({ where: { id: expiredReportId } }), 0);
   assert.equal((await db.report.findUniqueOrThrow({ where: { id: shareReportId } })).targetSnapshot, null);
   stage = 'other-page-analyst-after-purge';
@@ -254,7 +258,7 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
   assert.deepEqual([reshare.sharedFromId, reshare.title, reshare.description, reshare.sharedCaption],
     [externalShareId, '', '', 'Second independent commentary']);
   assert.deepEqual([editedShare.title, editedShare.description, editedShare.sharedCaption],
-    ['Independent edited share title', '', 'Independent edited commentary']);
+    [' — Independent edited share title', '', 'Independent edited commentary']);
   for (const post of [share, reshare, editedShare]) {
     assert.deepEqual([post.sharedCopiedTitle, post.sharedCopiedDescription, post.sharedCopiedCategory], [null, null, null]);
   }
@@ -264,7 +268,7 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
     'owner-page-hidden-with-grace', 'owner-page-media-retained', 'open-case-blocks-purge',
     'completed-purge-detaches-identifiers', 'purge-erases-case-and-comment-report', 'purge-breaks-case-cycle',
     'external-share-keeps-anonymous-source-tombstone', 'external-share-chain-copied-text-erased',
-    'edited-share-title-preserved', 'external-share-provenance-erased', 'external-share-report-snapshot-erased',
+    'edited-share-title-preserved', 'internal-legacy-share-purged', 'external-share-provenance-erased', 'external-share-report-snapshot-erased',
     'hidden-page-reshare-excluded-from-search-before-purge', 'hidden-page-share-export-redacted',
     'hidden-page-share-draft-redacted', 'other-page-analyst-source-redacted-before-and-after-purge'] }) + '\n');
 })().catch(error => { process.stderr.write(`${stage}: ${error?.message?.startsWith('PAGE_PURGE_INCOMPLETE:') ? error.message : error?.name || 'Error'}: ${error?.code || 'CHECK_FAILED'}\n`); process.exitCode = 1; })

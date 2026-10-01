@@ -3,6 +3,14 @@ import assert from 'node:assert/strict';
 import prisma from '../prisma';
 import { pageContent } from './pageContentService';
 import { PagePolicyError } from './pagePolicy';
+import { canonicalShareSourceId, copiedPageRootId, withoutCopiedPageText } from './pageShareCopy';
+
+test('a Page-edited repost keeps its Page as the copied-text source', () => {
+  const source = { id: 'page-repost', pageId: 'page-b', sharedFromId: 'personal-original', sharedRootPageId: null };
+  assert.equal(canonicalShareSourceId(source), 'page-repost');
+  assert.equal(copiedPageRootId(source, null), 'page-b');
+  assert.equal(withoutCopiedPageText('Page title — author addition', 'Page title'), ' — author addition');
+});
 
 test('management content rechecks revoked membership after acquiring the Page lock', async () => {
   const prior = prisma.$transaction;

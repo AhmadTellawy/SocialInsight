@@ -88,11 +88,19 @@ async function erasePhase(tx: PageTx, job: Job, size: number, now: Date): Promis
       const deleted = await erase(tx, 'PageCase', Prisma.sql`t."pageId" = ${job.pageId} AND NOT EXISTS
         (SELECT 1 FROM "PageCase" child WHERE child."parentId" = t.id)`, size);
       if (deleted) return deleted;
-      // Historical/corrupt cycles (or cross-Page references) cannot strand case
-      // evidence after the job moves on. Detach a bounded set of remaining edges.
+      // A corrupt cross-Page edge may be legal evidence belonging to another
+      // Page. Fail closed instead of mutating that Page's case history.
+      const external = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        SELECT child.id FROM "PageCase" child JOIN "PageCase" parent ON parent.id = child."parentId"
+        WHERE parent."pageId" = ${job.pageId} AND child."pageId" IS DISTINCT FROM ${job.pageId}
+        LIMIT 1`);
+      if (external.length) throw new Error('PAGE_CASE_CROSS_PAGE_REFERENCE');
+      // Historical/corrupt cycles wholly within this Page cannot strand its
+      // own case rows. Detach a bounded set of those remaining edges.
       return tx.$executeRaw(Prisma.sql`UPDATE "PageCase" SET "parentId" = NULL WHERE id IN
         (SELECT child.id FROM "PageCase" child JOIN "PageCase" parent ON parent.id = child."parentId"
-         WHERE parent."pageId" = ${job.pageId} ORDER BY child.id LIMIT ${size})`);
+         WHERE parent."pageId" = ${job.pageId} AND child."pageId" = ${job.pageId}
+         ORDER BY child.id LIMIT ${size})`);
     }
     case 'EXTERNAL_REPORTS': return tx.$executeRaw(Prisma.sql`
       UPDATE reports SET target_snapshot = NULL WHERE id IN (
@@ -115,7 +123,8 @@ async function erasePhase(tx: PageTx, job: Job, size: number, now: Date): Promis
         // independently edited share. Fail closed for a reviewed forward-fix.
         const legacy = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
           SELECT child.id FROM "Post" child JOIN "Post" root ON root.id = child."sharedFromId"
-          WHERE root."pageId" = ${job.pageId} AND child."sharedRootPageId" IS NULL LIMIT 1`);
+          WHERE root."pageId" = ${job.pageId} AND child."pageId" IS DISTINCT FROM ${job.pageId}
+            AND child."sharedRootPageId" IS NULL LIMIT 1`);
         if (legacy.length) throw new Error('PAGE_LEGACY_SHARE_PROVENANCE_MISSING');
         return 0;
       }
@@ -123,8 +132,10 @@ async function erasePhase(tx: PageTx, job: Job, size: number, now: Date): Promis
       // Repost mentions and hashtags are indexed from sharedCaption alone;
       // retain the author's independent caption and its social references.
       await tx.$executeRaw(Prisma.sql`UPDATE "Post" SET
-        title = CASE WHEN title = "sharedCopiedTitle" THEN '' ELSE title END,
-        description = CASE WHEN description = "sharedCopiedDescription" THEN '' ELSE description END,
+        title = CASE WHEN "sharedCopiedTitle" IS NOT NULL AND "sharedCopiedTitle" <> ''
+          THEN replace(title, "sharedCopiedTitle", '') ELSE title END,
+        description = CASE WHEN "sharedCopiedDescription" IS NOT NULL AND "sharedCopiedDescription" <> ''
+          THEN replace(description, "sharedCopiedDescription", '') ELSE description END,
         category = CASE WHEN category = "sharedCopiedCategory" THEN NULL ELSE category END,
         "sharedCopiedTitle" = NULL, "sharedCopiedDescription" = NULL, "sharedCopiedCategory" = NULL
         WHERE id IN (${Prisma.join(ids)})`);
