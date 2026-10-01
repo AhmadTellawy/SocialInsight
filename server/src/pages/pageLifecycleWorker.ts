@@ -95,49 +95,38 @@ async function erasePhase(tx: PageTx, job: Job, size: number, now: Date): Promis
          WHERE parent."pageId" = ${job.pageId} ORDER BY child.id LIMIT ${size})`);
     }
     case 'EXTERNAL_REPORTS': return tx.$executeRaw(Prisma.sql`
-      WITH RECURSIVE descendants(id) AS (
-        SELECT id FROM "Post" WHERE "pageId" = ${job.pageId}
-        UNION
-        SELECT child.id FROM "Post" child JOIN descendants parent ON child."sharedFromId" = parent.id
-      )
       UPDATE reports SET target_snapshot = NULL WHERE id IN (
-        SELECT report.id FROM reports report JOIN descendants tree ON report.target_id = tree.id
+        SELECT report.id FROM reports report JOIN "Post" shared ON shared.id = report.target_id
         WHERE report.target_type = 'POST' AND report.target_snapshot IS NOT NULL
-          AND report.target_id NOT IN (SELECT id FROM "Post" WHERE "pageId" = ${job.pageId})
+          AND shared."sharedRootPageId" = ${job.pageId}
         ORDER BY report.id LIMIT ${size})`);
     case 'EXTERNAL_SHARES': {
       // Shares copy the source title/description into their own Post rows.
       // Traverse the full share chain before deleting Page roots; preserve the
       // share author's independent caption and media while erasing copied text.
-      const copiedWhere = Prisma.sql`((post.title <> '' AND (post."sharedCopiedTitle" IS NULL OR post.title = post."sharedCopiedTitle"))
-        OR (post.description <> '' AND (post."sharedCopiedDescription" IS NULL OR post.description = post."sharedCopiedDescription"))
-        OR (post.category IS NOT NULL AND post.category = post."sharedCopiedCategory"))`;
       // New shares carry an indexed root Page ID, so each normal batch is bounded.
-      let copied = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      const copied = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
         SELECT post.id FROM "Post" post WHERE post."sharedRootPageId" = ${job.pageId}
-          AND ${copiedWhere} ORDER BY post.id LIMIT ${size}`);
+          AND (post."sharedCopiedTitle" IS NOT NULL OR post."sharedCopiedDescription" IS NOT NULL
+            OR post."sharedCopiedCategory" IS NOT NULL)
+        ORDER BY post.id LIMIT ${size}`);
       if (!copied.length) {
-        // Older rows lack provenance; traverse only that legacy subgraph.
-        copied = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-          WITH RECURSIVE legacy(id) AS (
-            SELECT id FROM "Post" WHERE "pageId" = ${job.pageId}
-            UNION
-            SELECT child.id FROM "Post" child JOIN legacy parent ON child."sharedFromId" = parent.id
-            WHERE child."sharedRootPageId" IS NULL
-          )
-          SELECT post.id FROM "Post" post JOIN legacy tree ON tree.id = post.id
-          WHERE post."pageId" IS DISTINCT FROM ${job.pageId}
-            AND post."sharedRootPageId" IS NULL AND ${copiedWhere}
-          ORDER BY post.id LIMIT ${size}`);
+        // A pre-provenance Page share cannot safely be distinguished from an
+        // independently edited share. Fail closed for a reviewed forward-fix.
+        const legacy = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+          SELECT child.id FROM "Post" child JOIN "Post" root ON root.id = child."sharedFromId"
+          WHERE root."pageId" = ${job.pageId} AND child."sharedRootPageId" IS NULL LIMIT 1`);
+        if (legacy.length) throw new Error('PAGE_LEGACY_SHARE_PROVENANCE_MISSING');
+        return 0;
       }
-      if (!copied.length) return 0;
       const ids = copied.map(post => post.id);
       // Repost mentions and hashtags are indexed from sharedCaption alone;
       // retain the author's independent caption and its social references.
       await tx.$executeRaw(Prisma.sql`UPDATE "Post" SET
-        title = CASE WHEN "sharedCopiedTitle" IS NULL OR title = "sharedCopiedTitle" THEN '' ELSE title END,
-        description = CASE WHEN "sharedCopiedDescription" IS NULL OR description = "sharedCopiedDescription" THEN '' ELSE description END,
-        category = CASE WHEN category = "sharedCopiedCategory" THEN NULL ELSE category END
+        title = CASE WHEN title = "sharedCopiedTitle" THEN '' ELSE title END,
+        description = CASE WHEN description = "sharedCopiedDescription" THEN '' ELSE description END,
+        category = CASE WHEN category = "sharedCopiedCategory" THEN NULL ELSE category END,
+        "sharedCopiedTitle" = NULL, "sharedCopiedDescription" = NULL, "sharedCopiedCategory" = NULL
         WHERE id IN (${Prisma.join(ids)})`);
       return ids.length;
     }

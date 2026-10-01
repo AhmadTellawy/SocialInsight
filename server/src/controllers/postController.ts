@@ -63,7 +63,7 @@ import {
 import { buildVisiblePublishedPostWhere, evaluatePostResultsAccess } from '../services/postVisibilityService';
 import { loadVisiblePostScalars } from '../services/postVisibilitySql';
 import { attachPageCommentPublishers, attachPagePublishers, authorizePagePublisher, guardPagePostInteractions, guardPagePostPersistence, hasPostPageCapability, isPageFollower, respondPagePostError } from '../pages/pagePostService';
-import { assertPageDestination, PagePolicyError } from '../pages/pagePolicy';
+import { assertPageDestination, PagePolicyError, pagePublicWhere } from '../pages/pagePolicy';
 import {
     PostOptionValidationError,
     buildPostReportDedupeKey,
@@ -1647,8 +1647,20 @@ export const getDrafts = async (req: Request, res: Response) => {
         const hasMore = drafts.length > limit;
         if (hasMore) drafts.pop();
         applyNextCursorHeader(res, drafts, hasMore);
+        const rootIds = [...new Set(drafts.map(draft => draft.sharedRootPageId).filter((value): value is string => Boolean(value)))];
+        const publicRoots = rootIds.length ? await prisma.page.findMany({
+            where: { AND: [{ id: { in: rootIds } }, pagePublicWhere(true)] }, select: { id: true }
+        }) : [];
+        const visibleRoots = new Set(publicRoots.map(root => root.id));
         const mappedDrafts = drafts.map((rawDraft: any) => {
-            const d = serializePostSocialRecord(rawDraft, userId);
+            const hiddenSource = rawDraft.sharedRootPageId && !visibleRoots.has(rawDraft.sharedRootPageId);
+            const safeDraft = hiddenSource ? {
+                ...rawDraft,
+                title: rawDraft.title === rawDraft.sharedCopiedTitle ? '' : rawDraft.title,
+                description: rawDraft.description === rawDraft.sharedCopiedDescription ? '' : rawDraft.description,
+                category: rawDraft.category === rawDraft.sharedCopiedCategory ? null : rawDraft.category,
+            } : rawDraft;
+            const d = serializePostSocialRecord(safeDraft, userId);
             return {
                 ...d,
                 likes: d.likesCount,

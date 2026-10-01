@@ -1505,6 +1505,8 @@ export const serializeGroupMediaRecord = <T extends Record<string, any>>(group?:
 
 export const serializePostMediaRecord = (post: any, viewerId?: string | null): any => {
   if (!post) return post;
+  // Share provenance is internal privacy metadata, never an API field.
+  const { sharedCopiedTitle, sharedCopiedDescription, sharedCopiedCategory, sharedRootPageId, ...publicPost } = post;
   const maySeeInternalOptionNames = post.pageId
     ? Boolean(post.pageCapabilities?.includes('analytics'))
     : post.status !== 'PUBLISHED' || (Boolean(viewerId) && post.authorId === viewerId);
@@ -1541,7 +1543,7 @@ export const serializePostMediaRecord = (post: any, viewerId?: string | null): a
     };
   };
   return {
-    ...post,
+    ...publicPost,
     author: post.author ? {
       ...serializePublicUserCard(post.author),
       // Existing feed mappers consume only relation presence, not row identities.

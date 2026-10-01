@@ -306,7 +306,9 @@ ALTER TABLE "PageInvitation" ADD CONSTRAINT "PageInvitation_role_check" CHECK (r
 ALTER TABLE "PageBlock" ADD CONSTRAINT "PageBlock_direction_check" CHECK (direction IN ('PAGE_TO_USER','USER_TO_PAGE'));
 ALTER TABLE "Post" ADD CONSTRAINT "Post_page_no_groups" CHECK ("pageId" IS NULL OR
  ("groupId" IS NULL AND coalesce("targetGroups",'[]') IN ('','[]') AND coalesce("targetAudience",'') !~* 'groups')) NOT VALID;
+SET statement_timeout = '30s';
 ALTER TABLE "Post" VALIDATE CONSTRAINT "Post_page_no_groups";
+RESET statement_timeout;
 CREATE UNIQUE INDEX "PageInvitation_pending_unique" ON "PageInvitation" ("pageId","recipientId") WHERE status = 'PENDING';
 CREATE UNIQUE INDEX "PageOwnershipTransfer_pending_unique" ON "PageOwnershipTransfer" ("pageId") WHERE status = 'PENDING';
 CREATE UNIQUE INDEX "PageCase_active_report_unique" ON "PageCase" ("pageId",coalesce("postId",''),"reporterId",kind) WHERE status IN ('OPEN','IN_REVIEW');

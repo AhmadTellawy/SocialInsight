@@ -58,10 +58,14 @@ export async function preparePageAccountDeletion(tx: PageTx, userId: string, con
   await tx.$executeRaw`UPDATE "PageEvent" SET context = context - 'cursor'
     WHERE context->>'cursor' = ${userId}`;
   // Keep the bounded safety decision, but unlink a deleted account from its
-  // audit, case, and completed relationship history. Open cases retain their
-  // status/reason while the reporter's own free text and evidence are erased.
+  // audit, case, and completed relationship history. A live legal hold keeps
+  // restricted case evidence while replacing the account identifier.
   await tx.pageAuditEvent.updateMany({ where: { actorId: userId }, data: { actorId: null } });
   await tx.pageAuditEvent.updateMany({ where: { targetId: userId }, data: { targetId: null } });
+  const now = new Date();
+  await tx.pageCase.updateMany({ where: { reporterId: userId, OR: [
+    { legalHoldUntil: { gt: now } }, { page: { legalHoldUntil: { gt: now } } }
+  ] }, data: { reporterId: randomUUID() } });
   await tx.pageCase.updateMany({ where: { reporterId: userId }, data: {
     reporterId: randomUUID(), reason: 'Report from a deleted account', detail: '', evidence: [],
   } });

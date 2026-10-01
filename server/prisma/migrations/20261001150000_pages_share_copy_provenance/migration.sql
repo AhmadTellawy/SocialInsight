@@ -1,4 +1,14 @@
 -- Preserve independently edited share text while removing Page text copied at share creation.
+-- Legacy Page shares have no provenance. Refuse an automatic migration that
+-- would later have to choose between deleting authored text and retaining a copy.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM "Post" child JOIN "Post" source ON source.id = child."sharedFromId"
+    WHERE source."pageId" IS NOT NULL AND child."pageId" IS DISTINCT FROM source."pageId"
+  ) THEN
+    RAISE EXCEPTION 'PAGE_LEGACY_SHARE_PROVENANCE_MISSING';
+  END IF;
+END $$;
 SET lock_timeout = '5s';
 ALTER TABLE "Post" ADD COLUMN "sharedCopiedTitle" TEXT;
 ALTER TABLE "Post" ADD COLUMN "sharedCopiedDescription" TEXT;

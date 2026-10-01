@@ -7,6 +7,8 @@ const { purgeAccount } = require('../server/dist/services/accountErasureService'
 const { exportAccount } = require('../server/dist/controllers/accountLifecycleController');
 const { admitPagePurges, processPagePurgeBatch } = require('../server/dist/pages/pageLifecycleWorker');
 const { searchAll } = require('../server/dist/controllers/searchController');
+const { getDrafts } = require('../server/dist/controllers/postController');
+const { pageContent } = require('../server/dist/pages/pageContentService');
 
 const target = new URL(process.env.DATABASE_URL || 'http://invalid');
 assert.equal(process.env.GITHUB_ACTIONS, 'true');
@@ -71,10 +73,13 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
   assert.ok(exported.posts.some(post => post.id === personalDraftId));
   stage = 'export-keeps-personal-media';
   assert.ok(exported.media.some(asset => asset.id === personalMediaId));
-  const staffCaseId = randomUUID(), cursorEventId = randomUUID();
+  const staffCaseId = randomUUID(), heldCaseId = randomUUID(), cursorEventId = randomUUID();
   await db.pageCase.create({ data: { id: staffCaseId, pageId, reporterId: ownerId,
     assigneeId: formerId, status: 'CLOSED', closedAt: new Date(), reason: 'owner@example.test synthetic report',
     evidence: [{ actorId: formerId, text: 'Synthetic staff evidence' }] } });
+  await db.pageCase.create({ data: { id: heldCaseId, pageId, reporterId: ownerId,
+    status: 'CLOSED', closedAt: new Date(), legalHoldUntil: new Date(Date.now() + 86400000),
+    reason: 'Synthetic held reason', detail: 'Synthetic held evidence', evidence: [{ text: 'Synthetic held evidence' }] } });
   await db.pageEvent.create({ data: { id: cursorEventId, pageId, recipientId: ownerId,
     kind: 'PAGE_ACTIVITY', targetId: pageDraftId, dedupeKey: `cursor:${suffix}`,
     context: { kind: 'like', actorId: ownerId, cursor: formerId } } });
@@ -114,21 +119,32 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
   const redactedCase = await db.pageCase.findUniqueOrThrow({ where: { id: staffCaseId } });
   assert.notEqual(redactedCase.reporterId, ownerId);
   assert.equal(redactedCase.reason, 'Report from a deleted account');
+  const heldCase = await db.pageCase.findUniqueOrThrow({ where: { id: heldCaseId } });
+  assert.notEqual(heldCase.reporterId, ownerId);
+  assert.equal(heldCase.detail, 'Synthetic held evidence');
+  assert.deepEqual(heldCase.evidence, [{ text: 'Synthetic held evidence' }]);
   assert.deepEqual(await db.pageAuditEvent.findUnique({ where: { id: auditId }, select: { actorId: true, targetId: true } }),
     { actorId: null, targetId: null });
-  const anonymousOwnerId = randomUUID(), expiredPageId = randomUUID(), expiredHandle = `old_${suffix}`;
-  await db.user.create({ data: { id: anonymousOwnerId, name: 'Synthetic purge owner', handle: `purge_${suffix}` } });
+  const anonymousOwnerId = randomUUID(), analystId = randomUUID(), expiredPageId = randomUUID(), otherPageId = randomUUID(), expiredHandle = `old_${suffix}`;
+  await db.user.createMany({ data: [
+    { id: anonymousOwnerId, name: 'Synthetic purge owner', handle: `purge_${suffix}` },
+    { id: analystId, name: 'Synthetic Page analyst', handle: `analyst_${suffix}` }
+  ] });
   await db.page.create({ data: { id: expiredPageId, ownerId: anonymousOwnerId, handle: expiredHandle,
     name: 'Synthetic expired Page', category: 'company', bio: 'Will be erased',
     publicationState: 'UNPUBLISHED', representationAt: new Date(), createRequestId: randomUUID(),
     deletionRequestedAt: new Date(Date.now() - 31 * 86400000) } });
   await db.pageHandle.create({ data: { pageId: expiredPageId, handle: `past_${suffix}` } });
+  await db.page.create({ data: { id: otherPageId, ownerId: anonymousOwnerId, handle: `other_${suffix}`,
+    name: 'Synthetic other Page', category: 'company', publicationState: 'PUBLISHED',
+    representationAt: new Date(), createRequestId: randomUUID() } });
+  await db.pageMembership.create({ data: { pageId: otherPageId, userId: analystId, role: 'ANALYST' } });
   const expiredPostId = randomUUID(), expiredCommentId = randomUUID(), expiredCaseId = randomUUID(), cycleCaseId = randomUUID(), expiredReportId = randomUUID(), shareReportId = randomUUID();
   const copiedTitle = `Synthetic old Page post ${suffix}`;
   await db.post.create({ data: { id: expiredPostId, pageId: expiredPageId, authorId: anonymousOwnerId,
     title: copiedTitle, description: 'Erase this', resultsDetail: 'Private result text',
     type: 'Poll', expiresAt: new Date(Date.now() + 86400000) } });
-  const externalShareId = randomUUID(), externalReshareId = randomUUID(), editedShareId = randomUUID();
+  const externalShareId = randomUUID(), externalReshareId = randomUUID(), editedShareId = randomUUID(), otherPageShareId = randomUUID();
   await db.post.create({ data: { id: externalShareId, authorId: anonymousOwnerId, sharedFromId: expiredPostId,
     title: copiedTitle, description: 'Erase this', sharedCaption: 'Independent user commentary',
     sharedCopiedTitle: copiedTitle, sharedCopiedDescription: 'Erase this', sharedRootPageId: expiredPageId,
@@ -141,6 +157,11 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
     title: 'Independent edited share title', description: 'Erase this', sharedCaption: 'Independent edited commentary',
     sharedCopiedTitle: copiedTitle, sharedCopiedDescription: 'Erase this', sharedRootPageId: expiredPageId,
     type: 'Poll', expiresAt: new Date(Date.now() + 86400000) } });
+  await db.post.create({ data: { id: otherPageShareId, pageId: otherPageId, authorId: anonymousOwnerId,
+    sharedFromId: expiredPostId, title: copiedTitle, description: 'Erase this',
+    sharedCaption: 'Other Page commentary', sharedCopiedTitle: copiedTitle,
+    sharedCopiedDescription: 'Erase this', sharedRootPageId: expiredPageId,
+    type: 'Poll', expiresAt: new Date(Date.now() + 86400000) } });
   await db.report.create({ data: { id: shareReportId, reporterId: anonymousOwnerId, targetType: 'POST', targetId: externalShareId,
     reason: 'Synthetic share report', targetSnapshot: { title: copiedTitle, description: 'Erase this' } } });
   stage = 'hidden-page-reshare-search';
@@ -149,6 +170,12 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
   await searchAll({ query: { q: copiedTitle } }, searchResponse);
   assert.equal(searchStatus, 200);
   assert.equal(searchBody.surveys.some(post => post.id === externalReshareId), false);
+  stage = 'other-page-analyst-hidden-source';
+  const managedBefore = await pageContent(otherPageId, analystId, { limit: 10, status: 'PUBLISHED' });
+  const managedShareBefore = managedBefore.items.find(post => post.id === otherPageShareId);
+  assert.deepEqual([managedShareBefore.title, managedShareBefore.description, managedShareBefore.sharedCaption],
+    ['', '', 'Other Page commentary']);
+  assert.equal(managedShareBefore.sharedCopiedTitle, undefined);
   stage = 'hidden-page-share-export-redacted';
   const shareExportChunks = [];
   const shareExportResponse = new Writable({ write(chunk, _encoding, callback) { shareExportChunks.push(Buffer.from(chunk)); callback(); } });
@@ -161,6 +188,15 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
     ['', '', 'Independent user commentary']);
   assert.deepEqual([exportedEditedShare.title, exportedEditedShare.description],
     ['Independent edited share title', '']);
+  stage = 'hidden-page-share-draft-redacted';
+  await db.post.update({ where: { id: editedShareId }, data: { status: 'DRAFT' } });
+  let draftStatus = 200, draftBody;
+  const draftResponse = { status(code) { draftStatus = code; return this; }, json(body) { draftBody = body; return this; }, setHeader() {} };
+  await getDrafts({ user: { userId: anonymousOwnerId }, query: {} }, draftResponse);
+  assert.equal(draftStatus, 200);
+  const safeDraft = draftBody.find(post => post.id === editedShareId);
+  assert.deepEqual([safeDraft.title, safeDraft.description], ['Independent edited share title', '']);
+  assert.equal(safeDraft.sharedCopiedTitle, undefined);
   await db.comment.create({ data: { id: expiredCommentId, postId: expiredPostId, userId: anonymousOwnerId, text: 'Synthetic Page comment' } });
   await db.report.create({ data: { id: expiredReportId, reporterId: anonymousOwnerId, targetType: 'COMMENT', targetId: expiredCommentId,
     reason: 'Synthetic test', targetSnapshot: { text: 'Synthetic Page comment' } } });
@@ -199,6 +235,11 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
   assert.equal(await db.pageCase.count({ where: { pageId: expiredPageId } }), 0);
   assert.equal(await db.report.count({ where: { id: expiredReportId } }), 0);
   assert.equal((await db.report.findUniqueOrThrow({ where: { id: shareReportId } })).targetSnapshot, null);
+  stage = 'other-page-analyst-after-purge';
+  const managedAfter = await pageContent(otherPageId, analystId, { limit: 10, status: 'PUBLISHED' });
+  const managedShareAfter = managedAfter.items.find(post => post.id === otherPageShareId);
+  assert.deepEqual([managedShareAfter.title, managedShareAfter.description], ['', '']);
+  assert.equal(managedShareAfter.sharedCopiedTitle, undefined);
   stage = 'external-share-keeps-anonymous-source-tombstone';
   const tombstone = await db.post.findUniqueOrThrow({ where: { id: expiredPostId } });
   assert.equal(tombstone.isDeleted, true);
@@ -214,13 +255,17 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
     [externalShareId, '', '', 'Second independent commentary']);
   assert.deepEqual([editedShare.title, editedShare.description, editedShare.sharedCaption],
     ['Independent edited share title', '', 'Independent edited commentary']);
+  for (const post of [share, reshare, editedShare]) {
+    assert.deepEqual([post.sharedCopiedTitle, post.sharedCopiedDescription, post.sharedCopiedCategory], [null, null, null]);
+  }
   process.stdout.write(JSON.stringify({ result: 'PASS', scenarios: ['missing-owner-confirmation', 'former-editor-media-retained',
     'personal-media-journaled', 'revoked-editor-export-excludes-page', 'former-editor-page-draft-retained', 'personal-draft-erased',
-    'erased-account-case-and-cursor-identifiers',
+    'erased-account-case-and-cursor-identifiers', 'held-case-evidence-retained-without-reporter-id',
     'owner-page-hidden-with-grace', 'owner-page-media-retained', 'open-case-blocks-purge',
     'completed-purge-detaches-identifiers', 'purge-erases-case-and-comment-report', 'purge-breaks-case-cycle',
     'external-share-keeps-anonymous-source-tombstone', 'external-share-chain-copied-text-erased',
-    'edited-share-title-preserved', 'external-share-report-snapshot-erased',
-    'hidden-page-reshare-excluded-from-search-before-purge', 'hidden-page-share-export-redacted'] }) + '\n');
+    'edited-share-title-preserved', 'external-share-provenance-erased', 'external-share-report-snapshot-erased',
+    'hidden-page-reshare-excluded-from-search-before-purge', 'hidden-page-share-export-redacted',
+    'hidden-page-share-draft-redacted', 'other-page-analyst-source-redacted-before-and-after-purge'] }) + '\n');
 })().catch(error => { process.stderr.write(`${stage}: ${error?.message?.startsWith('PAGE_PURGE_INCOMPLETE:') ? error.message : error?.name || 'Error'}: ${error?.code || 'CHECK_FAILED'}\n`); process.exitCode = 1; })
   .finally(() => db.$disconnect());
