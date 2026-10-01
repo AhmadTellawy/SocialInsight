@@ -13,6 +13,7 @@ const serverRequire = createRequire(path.resolve(__dirname, '../server/package.j
 const prisma = new (serverRequire('@prisma/client').PrismaClient)();
 const bcrypt = serverRequire('bcryptjs');
 const api = process.env.P35_API_URL || 'http://127.0.0.1:3001';
+const apiOrigin = new URL(api).origin;
 const reportPath = process.env.P35_REPORT || path.resolve(__dirname, 'p35-receipt.json');
 const targetPid = Number(process.env.P35_API_PID || 0);
 const prefix = `qa_p35_${crypto.randomBytes(4).toString('hex')}`;
@@ -59,8 +60,13 @@ async function call(client, url, method = 'GET', body, kind, started = 0) {
       resolve(result);
     };
     const req = http.request(api + '/api' + url, { method, agent: client.agent, localAddress: client.ip,
-      headers: { ...(client.token ? { authorization: `Bearer ${client.token}` } : {}),
+      headers: { ...(client.cookies ? { cookie: client.cookies } : {}),
+        ...(!['GET', 'HEAD', 'OPTIONS'].includes(method) ? { origin: apiOrigin } : {}),
+        ...(client.csrfToken && !['GET', 'HEAD', 'OPTIONS'].includes(method) ? { 'x-csrf-token': client.csrfToken } : {}),
         ...(payload ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } : {}) } }, res => {
+      if (res.headers['set-cookie']?.length) {
+        client.cookies = res.headers['set-cookie'].map(cookie => cookie.split(';', 1)[0]).join('; ');
+      }
       const chunks = [];
       res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => finish(res.statusCode, Buffer.concat(chunks).toString()));
@@ -101,8 +107,8 @@ async function fixtures() {
       email, passwordHash, status: 'ACTIVE', emailVerifiedAt: new Date(), isPrivate: false, mediaPrivacyTarget: false } });
     const client = { index, id: user.id, ip: `127.1.0.${index + 1}`, step: index,
       agent: new http.Agent({ keepAlive: true, maxSockets: 1, timeout: 15000 }) };
-    client.token = (await ok(client, '/auth/login', 'POST', { identifier: email, password })).token;
-    assert.ok(client.token);
+    client.csrfToken = (await ok(client, '/auth/login', 'POST', { identifier: email, password })).csrfToken;
+    assert.ok(client.cookies && client.csrfToken);
     clients[index] = client;
   });
   for (let i = 0; i < 5; i++) {
