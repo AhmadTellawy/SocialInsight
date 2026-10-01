@@ -176,6 +176,11 @@ export async function processPagePurgeBatch(pageId: string, options: BatchOption
     }
     return result;
   } catch (error) {
+    if (process.env.GITHUB_ACTIONS === 'true' && process.env.PAGES_EPHEMERAL_ERASURE_TEST === 'true') {
+      const safeName = error instanceof Error && /^[A-Za-z]+Error$/.test(error.name) ? error.name : 'UnknownError';
+      const safeCode = error instanceof Prisma.PrismaClientKnownRequestError ? error.code : 'NO_PRISMA_CODE';
+      process.stderr.write(`PAGE_PURGE_EPHEMERAL_DIAGNOSTIC:${safeName}:${safeCode}\n`);
+    }
     // Persist safe codes only: provider messages can contain object paths or credentials.
     const code = error instanceof Error && /^PAGE_PURGE_[A-Z_]+$/.test(error.message) ? error.message
       : error instanceof Prisma.PrismaClientKnownRequestError ? `PAGE_PURGE_DB_${error.code}` : 'PAGE_PURGE_RETRY_REQUIRED';
