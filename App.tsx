@@ -952,35 +952,10 @@ const App: React.FC = () => {
         setIsProfileLoading(false);
         navigate('/login', { replace: true });
       } else {
-        const requestId = ++profileRequestRef.current;
-        profileRequestAbortRef.current?.abort();
-        const controller = new AbortController();
-        profileRequestAbortRef.current = controller;
-        setIsProfileLoading(true);
-        setProfileError(null);
-        setSelectedProfile(null);
-        setProfileSurveys([]);
-        api.getSurveys(
-          userProfile.id,
-          undefined,
-          10,
-          userProfile.id,
-          undefined,
-          { timeoutMs: FEED_REQUEST_TIMEOUT_MS, normalize: false, signal: controller.signal }
-        ).then(res => {
-          if (profileRequestRef.current !== requestId) return;
-          const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
-          setProfileSurveys(newSurveys);
-          setProfileNextCursor(res.nextCursor);
-          setSelectedProfile(userProfile);
-        }).catch(err => {
-          if (profileRequestRef.current !== requestId) return;
-          if (err?.name === 'AbortError') return;
-          console.error(err);
-          setProfileError('Failed to load profile.');
-        }).finally(() => {
-          if (profileRequestRef.current === requestId) setIsProfileLoading(false);
-        });
+        const ownProfilePath = userProfile.handle
+          ? `/@${encodeURIComponent(userProfile.handle)}`
+          : `/profile/${encodeURIComponent(userProfile.id)}`;
+        navigate(ownProfilePath, { replace: true });
       }
     }
     else if (path.startsWith('/settings/profile')) {
@@ -1464,12 +1439,12 @@ const App: React.FC = () => {
       else if (user.handle) navigate(`/@${user.handle}`);
       else navigate(`/profile/${user.id}`);
     }
-    else navigate(-1);
+    else back('/');
   };
 
   const navigateToGroup = (id: string | null) => {
     if (id) navigate(`/group/${id}`);
-    else navigate(-1);
+    else back('/');
   };
 
   const buildProgressFromAnswerPayload = (payload?: PostAnswerPayload[]) => {
@@ -1771,7 +1746,7 @@ const App: React.FC = () => {
               <ProfileSettingsScreen
                 userProfile={userProfile}
                 onUpdateProfile={handleProfileUpdated}
-                onBack={() => navigate(userProfile.handle ? `/@${userProfile.handle}` : `/profile/${userProfile.id}`, { replace: true })}
+                onBack={() => back(userProfile.handle ? `/@${userProfile.handle}` : `/profile/${userProfile.id}`)}
                 onLogout={handleLogout}
                 onSessionEnded={clearAuthenticatedState}
                 oauthFeedback={accountAccessFeedback}
@@ -1798,12 +1773,12 @@ const App: React.FC = () => {
             }
           }
           setNotifications(newNotifs);
-        }} onBack={() => window.history.length > 2 ? navigate(-1) : navigate('/', { replace: true })} onItemClick={(notification) => {
+        }} onBack={() => back('/')} onItemClick={(notification) => {
           const deepLink = getNotificationDeepLink(notification);
           if (deepLink) navigate(deepLink);
         }} />;
       case 'messages':
-        return <MessagesScreen onBack={() => window.history.length > 2 ? navigate(-1) : navigate('/', { replace: true })} />;
+        return <MessagesScreen onBack={() => back('/')} />;
       default:
         // When activeTab isn't explicitly matched but a modal is open
         if (activeCreationFlow || accountModalType) {
@@ -2022,7 +1997,7 @@ const App: React.FC = () => {
               <GroupSettingsScreen
                 group={activeGroup}
                 currentUserId={viewerProfile.id || ''}
-                onBack={() => window.history.length > 2 ? navigate(-1) : navigate(`/group/${activeGroup.id}`, { replace: true })}
+                onBack={() => back(`/group/${activeGroup.id}`)}
                 onUpdateGroup={async (id, updates) => {
                   const updatedGroup = await api.updateGroup(id, updates);
                   setExternalGroup(prev => prev && prev.id === id ? { ...prev, ...updatedGroup } : prev);

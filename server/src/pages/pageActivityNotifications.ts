@@ -55,7 +55,7 @@ export async function pageActivityNotification(tx:PageTx,event:any,language?:str
   if((await tx.pageFollow.findUnique({where:{pageId_userId:{pageId:event.pageId,userId:event.recipientId}}}))?.muted)return null;
   const record=await tx.notificationSettings.findUnique({where:{userId:event.recipientId}});
   if(record){try{const settings=JSON.parse(record.settings);const option=['like','comment_like'].includes(context.kind)?settings.myPosts?.likes:settings.myPosts?.comments;
-    if(option==='off'||settings.toggles?.pushNotifications===false)return null;
+    if(option==='off')return null;
     if(option==='following'&&(!context.actorId||!await tx.follow.count({where:{followerId:event.recipientId,followingId:context.actorId,status:'ACTIVE'}})))return null;
   }catch{/* Existing malformed settings fall back to delivery. */}}
   const ar=language?.startsWith('ar');const labels={vote:ar?'مشاركة جديدة في استطلاع الصفحة':'New participation in a Page poll',like:ar?'إعجاب جديد بمنشور الصفحة':'A Page post received a like',comment:ar?'تعليق جديد على منشور الصفحة':'New comment on a Page post',reply:ar?'رد جديد على تعليق':'New reply to a comment',comment_like:ar?'إعجاب جديد برد الصفحة':'A Page reply received a like'};
@@ -84,7 +84,6 @@ export async function eligiblePageActivityIds(tx:PageTx,events:any[],recipientId
   const record=await tx.notificationSettings.findUnique({where:{userId:recipientId}});
   let settings:any;
   if(record){try{settings=JSON.parse(record.settings);}catch{/* Preserve the existing malformed-settings fallback. */}}
-  if(settings?.toggles?.pushNotifications===false)return allowed;
   const optionFor=(event:any)=>['like','comment_like'].includes(event.context.kind)?settings?.myPosts?.likes:settings?.myPosts?.comments;
   const actorIds=[...new Set<string>(candidates.filter(event=>optionFor(event)==='following').map(event=>event.context.actorId).filter(Boolean))];
   const follows=actorIds.length?await tx.follow.findMany({where:{followerId:recipientId,followingId:{in:actorIds},status:'ACTIVE'},select:{followingId:true}}):[];

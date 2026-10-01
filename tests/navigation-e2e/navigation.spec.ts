@@ -167,6 +167,22 @@ test('direct post and group settings return inside app even with external histor
   await expect(page).toHaveURL('/');
 });
 
+for (const [name, route, fallback] of [
+  ['profile', profilePath, '/'],
+  ['group', `/group/${group.id}`, '/'],
+  ['notifications', '/notifications', '/'],
+  ['messages', '/messages', '/'],
+  ['profile settings', '/settings/profile', profilePath],
+] as const) {
+  test(`direct ${name} Back ignores external history and uses its app fallback`, async ({ page, boot }) => {
+    await page.goto('about:blank');
+    await boot(route);
+    await expect(page).toHaveURL(route);
+    await back(page);
+    await expect(page).toHaveURL(fallback);
+  });
+}
+
 test('repeated active profile tab does not add a history entry', async ({ page, boot, word }) => {
   await boot(profilePath);
   const saved = page.getByRole('button', { name: word('Saved'), exact: true });

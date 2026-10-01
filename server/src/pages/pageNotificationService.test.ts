@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import prisma from '../prisma';
 import { eligiblePageActivityIds, pageActivityNotification } from './pageActivityNotifications';
 import { pageEventDeepLink, presentPageNotifications, processPageOutbox } from './pageNotificationService';
+import { sendPushNotification } from '../services/pushService';
 process.env.JWT_SECRET ||= 'page-notification-isolated-test';
 
 test('an ineligible recipient does not starve eligible events in the same outbox batch', async () => {
@@ -114,7 +115,6 @@ test('batched eligibility preserves current recipient, roles, parent, visibility
     ['Page purged',tx=>tx.page.findMany=async()=>[{id:'page',ownerId:'reader',purgedAt:new Date()}]],
     ['Page muted',tx=>tx.pageFollow.findMany=async()=>[{pageId:'page'}]],
     ['comments disabled',tx=>tx.notificationSettings.findUnique=async()=>({settings:'{"myPosts":{"comments":"off"}}'})],
-    ['push disabled',tx=>tx.notificationSettings.findUnique=async()=>({settings:'{"toggles":{"pushNotifications":false}}'})],
     ['following required',tx=>tx.notificationSettings.findUnique=async()=>({settings:'{"myPosts":{"comments":"following"}}'})],
   ];
   for(const [label,change]of changes){const tx=batchFixture();change(tx);assert.deepEqual([...await eligiblePageActivityIds(tx as any,[event],'reader')],[],label);}
@@ -129,6 +129,36 @@ test('batched eligibility preserves current recipient, roles, parent, visibility
   tx.notificationSettings.findUnique=async()=>({settings:'malformed'});
   assert.deepEqual([...await eligiblePageActivityIds(tx as any,[event],'reader')],['event']);
 }));
+
+test('disabled device push preserves Page activity creation and inbox eligibility',()=>enabled(async()=>{
+  const settings={settings:'{"toggles":{"pushNotifications":false}}'};
+  const tx=fixture();tx.notificationSettings.findUnique=async()=>settings;
+  assert.ok(await pageActivityNotification(tx as any,event),'Page activity should still create an in-app notification');
+  const batch=batchFixture();batch.notificationSettings.findUnique=async()=>settings;
+  assert.deepEqual([...await eligiblePageActivityIds(batch as any,[event],'reader')],['event']);
+}));
+
+test('device push delivery remains governed by the push preference',async()=>{
+  const originalUserFind=(prisma as any).user.findUnique;
+  const originalSettingsFind=(prisma as any).notificationSettings.findUnique;
+  const originalSubscriptionsFind=(prisma as any).pushSubscription.findMany;
+  let pushEnabled=false,subscriptionReads=0;
+  try{
+    (prisma as any).user.findUnique=async()=>({status:'ACTIVE'});
+    (prisma as any).notificationSettings.findUnique=async()=>({settings:JSON.stringify({toggles:{pushNotifications:pushEnabled}})});
+    (prisma as any).pushSubscription.findMany=async()=>{subscriptionReads++;return [];};
+    const payload={title:'Page update',body:'New Page activity',type:'comment'};
+    await sendPushNotification('reader',payload);
+    assert.equal(subscriptionReads,0,'disabled push must stop before subscription delivery');
+    pushEnabled=true;
+    await sendPushNotification('reader',payload);
+    assert.equal(subscriptionReads,1,'enabled push may continue to registered subscriptions');
+  }finally{
+    (prisma as any).user.findUnique=originalUserFind;
+    (prisma as any).notificationSettings.findUnique=originalSettingsFind;
+    (prisma as any).pushSubscription.findMany=originalSubscriptionsFind;
+  }
+});
 
 test('inbox presentation uses constant bulk query count for 1 and 100 activity receipts without exposing context',()=>enabled(async()=>{
   const replacements=batchFixture() as any;
