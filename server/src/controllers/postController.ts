@@ -1130,9 +1130,10 @@ export const updatePost = async (req: Request, res: Response) => {
             res.status(403).json({ error: 'Unauthorized to update this post' });
             return;
         }
-        // Page-derived shares keep copied fields immutable. Authors can add
-        // independent text in sharedCaption without losing its provenance.
-        if (((existingPost.pageId && existingPost.sharedFromId) || existingPost.sharedRootPageId) && (
+        // Page-derived shares keep copied fields immutable; the independently
+        // authored share caption is stored separately from those fields.
+        const immutablePageShareCopy = Boolean((existingPost.pageId && existingPost.sharedFromId) || existingPost.sharedRootPageId);
+        if (immutablePageShareCopy && (
             (data.title !== undefined && data.title !== existingPost.title)
             || (data.description !== undefined && data.description !== existingPost.description)
             || (data.category !== undefined && data.category !== existingPost.category)
@@ -1265,9 +1266,9 @@ export const updatePost = async (req: Request, res: Response) => {
         }
 
         const updateData: any = {
-            ...(data.title !== undefined && { title: data.title }),
-            ...(data.description !== undefined && { description: data.description }),
-            ...(data.category !== undefined && { category: data.category }),
+            ...(!immutablePageShareCopy && data.title !== undefined && { title: data.title }),
+            ...(!immutablePageShareCopy && data.description !== undefined && { description: data.description }),
+            ...(!immutablePageShareCopy && data.category !== undefined && { category: data.category }),
             ...((data.coverImage !== undefined || data.image !== undefined) && { image: data.coverImage || data.image }),
             ...(data.currentStep !== undefined && { currentStep: data.currentStep }),
             ...(data.expiresAt !== undefined && { expiresAt: new Date(data.expiresAt) }),

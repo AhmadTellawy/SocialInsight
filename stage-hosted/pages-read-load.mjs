@@ -91,4 +91,12 @@ for (const users of levels) {
 }
 receipt.finished_at = new Date().toISOString();
 process.stdout.write(`PAGE_LOAD_RECEIPT ${JSON.stringify(receipt)}\n`);
-if (receipt.levels.some(level => level.request_count === 0)) process.exitCode = 1;
+// Keep this diagnostic read probe honest: a completed runner is not a passing
+// target when its responses or latency violate the same read contract as P35.
+const failed = receipt.levels.filter(level => level.request_count === 0 || level.error_count !== 0 ||
+  level.timeouts !== 0 || level.database_errors_visible_to_client !== 0 ||
+  level.p95_ms === null || level.p95_ms > 800);
+if (failed.length) {
+  process.stderr.write(`PAGE_LOAD_GATE_FAIL levels=${failed.map(level => level.users).join(',')}\n`);
+  process.exitCode = 1;
+}

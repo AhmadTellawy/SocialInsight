@@ -82,7 +82,8 @@ const createChallengeOption = (): ChallengeDraftOption => ({
 });
 
 export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ onClose, onSubmit: persistPost, onSaveDraft: persistDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const ar = i18n.language.startsWith('ar');
   const publisher = usePagePublisher(userProfile, draft, persistPost, persistDraft);
   const { error: submissionError, isSaving, onSubmit, onSaveDraft } = usePostSaveFeedback(publisher.submit, publisher.save, t);
   const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
@@ -138,7 +139,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
     }
     const allMedia = [...postMedia, ...activeOptionMediaDrafts];
     if (!mediaDraftsAreReady(allMedia) || mediaDraftsHaveErrors(allMedia)) {
-      alert('Please finish or remove image uploads before saving.');
+      alert(ar ? 'أكمل رفع الصور أو احذفها قبل الحفظ.' : 'Please finish or remove image uploads before saving.');
       return;
     }
     if (onSaveDraft) {
@@ -364,7 +365,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
     }
     const requiredMedia = [...postMedia, ...activeOptionMediaDrafts];
     if (!mediaDraftsAreReady(requiredMedia) || mediaDraftsHaveErrors(requiredMedia)) {
-      newErrors.media = "Please finish or remove image uploads.";
+      newErrors.media = ar ? 'أكمل رفع الصور أو احذفها.' : 'Please finish or remove image uploads.';
       isValid = false;
     }
     if (includeAudience && !visibility) {
@@ -465,7 +466,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
         <button aria-label={composerStep === 2 ? 'Back' : 'Close'} onClick={() => { if (composerStep === 2) { setComposerStep(1); setHasAttemptedSubmit(false); scrollContainerRef.current?.scrollTo({ top: 0 }); } else handleExit(); }} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">
           <ArrowLeft size={24} />
         </button>
-        <div className="text-center"><h1 className="text-[12px] font-bold text-gray-800">New Challenge</h1><p className="text-xs text-gray-500">Step {composerStep} of 2</p></div>
+        <div className="text-center"><h1 className="text-[12px] font-bold text-gray-800">{ar ? 'تحدٍ جديد' : 'New Challenge'}</h1><p className="text-xs text-gray-500">{ar ? `الخطوة ${composerStep} من 2` : `Step ${composerStep} of 2`}</p></div>
         <button
           onClick={() => composerStep === 1 ? handleNext() : publisher.draftOnly ? handleSaveDraft() : handleFinalPost()}
           disabled={isSaving || isSubmitting || (composerStep === 2 && publisher.writeBlocked)}
@@ -476,7 +477,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
               : 'bg-gray-300 shadow-none cursor-not-allowed'
           }`}
         >
-          {composerStep === 1 ? 'Next' : publisher.draftOnly ? publisher.draftActionLabel : 'Post'}
+          {composerStep === 1 ? (ar ? 'متابعة' : 'Next') : publisher.draftOnly ? publisher.draftActionLabel : (ar ? 'نشر' : 'Post')}
         </button>
       </div>
 

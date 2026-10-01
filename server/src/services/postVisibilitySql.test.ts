@@ -36,12 +36,12 @@ test('direct and shared reads require an active personal author and keep Page te
   try {
     process.env.PAGES_ENABLED = 'true'; process.env.PAGES_TEST_USERS = 'pilot-user';
     const publicRead = buildVisiblePostSql({ limit: 1 }).text;
-    assert.equal((publicRead.match(/author_user\.status = 'ACTIVE'/g) || []).length, 2);
-    assert.equal((publicRead.match(/pg\."isTestFixture" = FALSE/g) || []).length, 2);
+    assert.equal((publicRead.match(/author_user\.status = 'ACTIVE'/g) || []).length, 3);
+    assert.equal((publicRead.match(/pg\."isTestFixture" = FALSE/g) || []).length, 3);
     const pilotRead = buildVisiblePostSql({ viewerId: 'pilot-user', limit: 1 }).text;
     assert.equal((pilotRead.match(/pg\."isTestFixture" = FALSE/g) || []).length, 0);
     const outsiderRead = buildVisiblePostSql({ viewerId: 'ordinary-user', limit: 1 }).text;
-    assert.equal((outsiderRead.match(/pg\."isTestFixture" = FALSE/g) || []).length, 2);
+    assert.equal((outsiderRead.match(/pg\."isTestFixture" = FALSE/g) || []).length, 3);
   } finally {
     if (enabled === undefined) delete process.env.PAGES_ENABLED; else process.env.PAGES_ENABLED = enabled;
     if (allowlisted === undefined) delete process.env.PAGES_TEST_USERS; else process.env.PAGES_TEST_USERS = allowlisted;

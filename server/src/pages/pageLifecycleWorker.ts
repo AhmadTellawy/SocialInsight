@@ -14,6 +14,9 @@ const phases = ['NOTIFICATIONS', 'ANSWERS', 'RESPONSES', 'COMMENT_LIKES', 'COMME
 type Phase = typeof phases[number];
 type Job = { pageId: string; phase: Phase; shareCursor: string | null; attempts: number; availableAt: Date; completedAt: Date | null };
 type BatchOptions = { limit?: number; now?: Date; purgeAsset?: (id: string) => Promise<void> };
+// Raw writes target TIMESTAMP WITHOUT TIME ZONE columns. Bind UTC text so a
+// worker running outside UTC cannot shift its retry window by local offset.
+const utcTimestamp = (value: Date) => Prisma.sql`(${value.toISOString()}::timestamptz AT TIME ZONE 'UTC')`;
 
 /** Admit irrevocable erasure under the same Page lock as cancellation. All content stays inaccessible. */
 export async function admitPagePurges(limit = 10, now = new Date()): Promise<number> {
@@ -34,7 +37,7 @@ export async function admitPagePurges(limit = 10, now = new Date()): Promise<num
           { status: { not: 'CLOSED' } }, { closedAt: null }, { closedAt: { gt: caseCutoff } }
         ] } })) return false;
       await tx.page.update({ where: { id: page.id }, data: { purgedAt: now, publicationState: 'UNPUBLISHED' } });
-      await tx.$executeRaw`INSERT INTO "PagePurgeJob" ("pageId", "updatedAt", "availableAt") VALUES (${page.id}, ${now}, ${now}) ON CONFLICT ("pageId") DO NOTHING`;
+      await tx.$executeRaw`INSERT INTO "PagePurgeJob" ("pageId", "updatedAt", "availableAt") VALUES (${page.id}, ${utcTimestamp(now)}, ${utcTimestamp(now)}) ON CONFLICT ("pageId") DO NOTHING`;
       await pageAudit(tx, page.id, null, 'PAGE_PURGE_ADMITTED');
       return true;
     });
@@ -158,7 +161,7 @@ async function erasePhase(tx: PageTx, job: Job, size: number, now: Date): Promis
         handle: 'deleted_page_' + randomBytes(8).toString('hex'), status: 'DELETED', deletedAt: now,
         searchVisibility: false, isPrivate: true } });
       return tx.$executeRaw(Prisma.sql`UPDATE "Post" SET title = '', description = '', image = NULL,
-        "sharedCaption" = NULL, "isDeleted" = true, "deletedAt" = ${now}, demographics = NULL,
+        "sharedCaption" = NULL, "isDeleted" = true, "deletedAt" = ${utcTimestamp(now)}, demographics = NULL,
         "authorId" = ${anonymousAuthorId}, category = NULL, "targetAudience" = NULL, "targetGroups" = NULL,
         "resultsWho" = NULL, "resultsDetail" = NULL, "resultsTiming" = NULL,
         "approvedById" = NULL, "rejectedById" = NULL, "rejectionReason" = NULL,
@@ -192,14 +195,14 @@ export async function processPagePurgeBatch(pageId: string, options: BatchOption
       const job = jobs[0];
       if (!page?.purgedAt || !job || job.completedAt || job.availableAt > now) return { state: 'idle' as const };
       if (await pageErasureHeld(tx, pageId, now)) {
-        await tx.$executeRaw`UPDATE "PagePurgeJob" SET "availableAt" = ${new Date(now.getTime() + 60000)}, "lastErrorCode" = 'LEGAL_HOLD', "updatedAt" = ${now} WHERE "pageId" = ${pageId}`;
+        await tx.$executeRaw`UPDATE "PagePurgeJob" SET "availableAt" = ${utcTimestamp(new Date(now.getTime() + 60000))}, "lastErrorCode" = 'LEGAL_HOLD', "updatedAt" = ${utcTimestamp(now)} WHERE "pageId" = ${pageId}`;
         return { state: 'held' as const };
       }
       if (await tx.pageCase.count({ where: { pageId, OR: [
         { status: { not: 'CLOSED' } }, { closedAt: null },
         { closedAt: { gt: pageRetentionCutoff(PAGE_POLICY.closedCaseRetentionDays, now) } }
       ] } })) {
-        await tx.$executeRaw`UPDATE "PagePurgeJob" SET "availableAt" = ${new Date(now.getTime() + 60000)}, "lastErrorCode" = 'CASE_RETENTION', "updatedAt" = ${now} WHERE "pageId" = ${pageId}`;
+        await tx.$executeRaw`UPDATE "PagePurgeJob" SET "availableAt" = ${utcTimestamp(new Date(now.getTime() + 60000))}, "lastErrorCode" = 'CASE_RETENTION', "updatedAt" = ${utcTimestamp(now)} WHERE "pageId" = ${pageId}`;
         return { state: 'held' as const };
       }
       if (job.phase === 'FINALIZE') {
@@ -211,7 +214,7 @@ export async function processPagePurgeBatch(pageId: string, options: BatchOption
           avatarMediaId: null, coverMediaId: null, ownerId: null, handle: anonymousHandle,
           legalHoldUntil: null, legalHoldReason: null } });
         await pageAudit(tx, pageId, null, 'PAGE_PURGE_COMPLETED');
-        await tx.$executeRaw`UPDATE "PagePurgeJob" SET "completedAt" = ${now}, "updatedAt" = ${now}, "leaseToken" = NULL, "lastErrorCode" = NULL WHERE "pageId" = ${pageId}`;
+        await tx.$executeRaw`UPDATE "PagePurgeJob" SET "completedAt" = ${utcTimestamp(now)}, "updatedAt" = ${utcTimestamp(now)}, "leaseToken" = NULL, "lastErrorCode" = NULL WHERE "pageId" = ${pageId}`;
         return { state: 'completed' as const };
       }
       if (job.phase === 'MEDIA') {
@@ -227,24 +230,24 @@ export async function processPagePurgeBatch(pageId: string, options: BatchOption
           ] } });
           if (conflicts) throw new Error('PAGE_PURGE_MEDIA_REFERENCED_ELSEWHERE');
           await tx.mediaAsset.updateMany({ where: { id: { in: ids }, pageId }, data: { status: 'PENDING_DELETE' } });
-          await tx.$executeRaw`UPDATE "PagePurgeJob" SET "leaseToken" = ${token}, "availableAt" = ${new Date(now.getTime() + 60000)}, "updatedAt" = ${now} WHERE "pageId" = ${pageId}`;
+          await tx.$executeRaw`UPDATE "PagePurgeJob" SET "leaseToken" = ${token}, "availableAt" = ${utcTimestamp(new Date(now.getTime() + 60000))}, "updatedAt" = ${utcTimestamp(now)} WHERE "pageId" = ${pageId}`;
           return { state: 'media' as const, ids };
         }
       } else {
         const erased = await erasePhase(tx, job, size, now);
         if (erased) {
-          await tx.$executeRaw`UPDATE "PagePurgeJob" SET "updatedAt" = ${now}, "lastErrorCode" = NULL WHERE "pageId" = ${pageId}`;
+          await tx.$executeRaw`UPDATE "PagePurgeJob" SET "updatedAt" = ${utcTimestamp(now)}, "lastErrorCode" = NULL WHERE "pageId" = ${pageId}`;
           return { state: 'progress' as const, erased };
         }
       }
       const next = phases[phases.indexOf(job.phase) + 1];
       if (!next) throw new Error('PAGE_PURGE_UNKNOWN_PHASE');
-      await tx.$executeRaw`UPDATE "PagePurgeJob" SET phase = ${next}, "shareCursor" = NULL, "updatedAt" = ${now}, "lastErrorCode" = NULL WHERE "pageId" = ${pageId}`;
+      await tx.$executeRaw`UPDATE "PagePurgeJob" SET phase = ${next}, "shareCursor" = NULL, "updatedAt" = ${utcTimestamp(now)}, "lastErrorCode" = NULL WHERE "pageId" = ${pageId}`;
       return { state: 'progress' as const, erased: 0 };
     });
     if (result.state === 'media') {
       for (const id of result.ids) await (options.purgeAsset ?? purgeMediaAsset)(id);
-      await prisma.$executeRaw`UPDATE "PagePurgeJob" SET "availableAt" = ${now}, "leaseToken" = NULL, "lastErrorCode" = NULL, "updatedAt" = ${now} WHERE "pageId" = ${pageId} AND "leaseToken" = ${token}`;
+      await prisma.$executeRaw`UPDATE "PagePurgeJob" SET "availableAt" = ${utcTimestamp(now)}, "leaseToken" = NULL, "lastErrorCode" = NULL, "updatedAt" = ${utcTimestamp(now)} WHERE "pageId" = ${pageId} AND "leaseToken" = ${token}`;
     }
     return result;
   } catch (error) {
@@ -257,7 +260,7 @@ export async function processPagePurgeBatch(pageId: string, options: BatchOption
     const code = error instanceof Error && /^PAGE_PURGE_[A-Z_]+$/.test(error.message) ? error.message
       : error instanceof Prisma.PrismaClientKnownRequestError ? `PAGE_PURGE_DB_${error.code}` : 'PAGE_PURGE_RETRY_REQUIRED';
     await prisma.$executeRaw`UPDATE "PagePurgeJob" SET attempts = attempts + 1, "lastErrorCode" = ${code},
-      "availableAt" = ${new Date(now.getTime() + 60000)}, "leaseToken" = NULL, "updatedAt" = ${now}
+      "availableAt" = ${utcTimestamp(new Date(now.getTime() + 60000))}, "leaseToken" = NULL, "updatedAt" = ${utcTimestamp(now)}
       WHERE "pageId" = ${pageId} AND "completedAt" IS NULL AND ("leaseToken" IS NULL OR "leaseToken" = ${token})`;
     return { state: 'retry' as const, code };
   }
@@ -267,7 +270,7 @@ export async function runPageLifecycleCycle(options: { pages?: number; batchSize
   const now = options.now ?? new Date();
   const admitted = await admitPagePurges(options.pages ?? 10, now);
   const jobs = await prisma.$queryRaw<Job[]>(Prisma.sql`SELECT * FROM "PagePurgeJob" WHERE "completedAt" IS NULL
-    AND "availableAt" <= ${now} ORDER BY "availableAt", "pageId" LIMIT ${pageLifecycleLimit(options.pages ?? 10, 25)}`);
+    AND "availableAt" <= ${utcTimestamp(now)} ORDER BY "availableAt", "pageId" LIMIT ${pageLifecycleLimit(options.pages ?? 10, 25)}`);
   const batches = [];
   for (const job of jobs) batches.push({ pageId: job.pageId, ...await processPagePurgeBatch(job.pageId, { limit: options.batchSize, now }) });
   return { admitted, batches, retention: await processPageRetention(options.batchSize ?? 100, now) };

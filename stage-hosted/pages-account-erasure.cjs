@@ -129,8 +129,8 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
     { actorId: null, targetId: null });
   const anonymousOwnerId = randomUUID(), analystId = randomUUID(), expiredPageId = randomUUID(), otherPageId = randomUUID(), expiredHandle = `old_${suffix}`;
   await db.user.createMany({ data: [
-    { id: anonymousOwnerId, name: 'Synthetic purge owner', handle: `purge_${suffix}` },
-    { id: analystId, name: 'Synthetic Page analyst', handle: `analyst_${suffix}` }
+    { id: anonymousOwnerId, name: 'Synthetic purge owner', handle: `purge_${suffix}`, mediaPrivacyTarget: false },
+    { id: analystId, name: 'Synthetic Page analyst', handle: `analyst_${suffix}`, mediaPrivacyTarget: false }
   ] });
   await db.page.create({ data: { id: expiredPageId, ownerId: anonymousOwnerId, handle: expiredHandle,
     name: 'Synthetic expired Page', category: 'company', bio: 'Will be erased',
@@ -144,16 +144,21 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
   const personalSourceId = randomUUID(), pageRepostId = randomUUID(), personalReshareId = randomUUID();
   const personalSourceTitle = `Synthetic personal source ${suffix}`;
   await db.post.create({ data: { id: personalSourceId, authorId: anonymousOwnerId,
-    title: personalSourceTitle, type: 'Poll', expiresAt: new Date(Date.now() + 86400000) } });
+    title: personalSourceTitle, description: 'Synthetic personal source text', type: 'Poll', expiresAt: new Date(Date.now() + 86400000) } });
   await db.post.create({ data: { id: pageRepostId, pageId: otherPageId, authorId: anonymousOwnerId,
     sharedFromId: personalSourceId, title: personalSourceTitle, sharedCopiedTitle: personalSourceTitle,
-    sharedCaption: 'Page-authored caption', type: 'Poll', expiresAt: new Date(Date.now() + 86400000) } });
+    description: 'Synthetic personal source text', sharedCaption: 'Page-authored caption', type: 'Poll', expiresAt: new Date(Date.now() + 86400000) } });
   await db.post.create({ data: { id: personalReshareId, authorId: anonymousOwnerId,
     sharedFromId: pageRepostId, title: personalSourceTitle, sharedCopiedTitle: personalSourceTitle,
     sharedRootPageId: otherPageId, sharedCaption: 'Personal authored caption',
-    type: 'Poll', expiresAt: new Date(Date.now() + 86400000) } });
+    description: 'Synthetic personal source text', type: 'Poll', expiresAt: new Date(Date.now() + 86400000) } });
   stage = 'two-level-share-visibility-before-source-hide';
-  assert.equal(await db.post.count({ where: { id: personalReshareId, ...buildVisiblePublishedPostWhere(analystId) } }), 1);
+  const initialVisibleCount = await db.post.count({ where: { id: personalReshareId, ...buildVisiblePublishedPostWhere(analystId) } });
+  if (initialVisibleCount !== 1) {
+    const ids = [personalSourceId, pageRepostId, personalReshareId];
+    const counts = await Promise.all(ids.map(id => db.post.count({ where: { id, ...buildVisiblePublishedPostWhere(analystId) } })));
+    throw new Error(`CHAIN_VISIBILITY_EXPECTED:${counts.join(',')}`);
+  }
   assert.equal((await loadVisiblePostScalars(db, { viewerId: analystId, ids: [personalReshareId], limit: 1 })).length, 1);
   await db.post.update({ where: { id: personalSourceId }, data: { isDeleted: true } });
   stage = 'two-level-share-visibility-after-source-hide';
@@ -253,15 +258,17 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
   stage = 'admit-expired-page-purge';
   assert.equal(await admitPagePurges(10), 1);
   let purgeState;
+  const purgeStates = [];
   stage = 'process-expired-page-purge';
   for (let attempt = 0; attempt < 100; attempt++) {
     purgeState = (await processPagePurgeBatch(expiredPageId, { limit: 2 })).state;
+    if (purgeStates.length < 8 || purgeStates[purgeStates.length - 1] !== purgeState) purgeStates.push(purgeState);
     if (purgeState === 'completed') break;
   }
   stage = 'expired-page-purge-completion';
   if (purgeState !== 'completed') {
-    const job = await db.pagePurgeJob.findUnique({ where: { pageId: expiredPageId }, select: { phase: true, attempts: true, lastErrorCode: true } });
-    throw new Error(`PAGE_PURGE_INCOMPLETE:${purgeState}:${job?.phase}:${job?.attempts}:${job?.lastErrorCode}`);
+    const job = await db.pagePurgeJob.findUnique({ where: { pageId: expiredPageId }, select: { phase: true, attempts: true, lastErrorCode: true, availableAt: true } });
+    throw new Error(`PAGE_PURGE_INCOMPLETE:${purgeState}:${job?.phase}:${job?.attempts}:${job?.lastErrorCode}:${job ? job.availableAt.getTime() - Date.now() : 'NO_JOB'}:${purgeStates.join(',')}`);
   }
   const erasedPage = await db.page.findUniqueOrThrow({ where: { id: expiredPageId } });
   stage = 'detached-owner';
@@ -309,5 +316,5 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
     'external-share-provenance-erased', 'external-share-report-snapshot-erased',
     'hidden-page-reshare-excluded-from-search-before-purge', 'hidden-page-share-export-redacted',
     'hidden-page-share-draft-redacted', 'other-page-analyst-source-redacted-before-and-after-purge'] }) + '\n');
-})().catch(error => { process.stderr.write(`${stage}: ${error?.message?.startsWith('PAGE_PURGE_INCOMPLETE:') ? error.message : error?.name || 'Error'}: ${error?.code || 'CHECK_FAILED'}\n`); process.exitCode = 1; })
+})().catch(error => { process.stderr.write(`${stage}: ${error?.message?.startsWith('PAGE_PURGE_INCOMPLETE:') ? error.message : error?.name || 'Error'}: ${error?.code || 'CHECK_FAILED'}\n`); if (process.env.PAGES_EPHEMERAL_ERASURE_TEST === 'true') process.stderr.write(`${String(error?.message || '').slice(0, 1600)}\n`); process.exitCode = 1; })
   .finally(() => db.$disconnect());

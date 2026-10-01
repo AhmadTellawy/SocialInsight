@@ -1108,6 +1108,11 @@ const App: React.FC = () => {
     if (path.startsWith('/create/')) {
       const type = path.split('/create/')[1];
       if (['poll', 'survey', 'quiz', 'challenge'].includes(type)) {
+        if (!userProfile?.id) {
+          setActiveCreationFlow(null);
+          if (!isAuthenticated) navigate(location.search.includes('pageId=') ? '/login?returnTo=%2Fpages' : '/login', { replace: true });
+          return;
+        }
         setIsAddMenuOpen(false);
         setAccountModalType(null);
         setActiveCreationFlow(type as any);
@@ -2248,19 +2253,19 @@ const App: React.FC = () => {
           )}
 
           {/* Creation Flows */}
-          {activeCreationFlow === 'survey' && (
+          {activeCreationFlow === 'survey' && userProfile && (
             <CreateSurveyModal isOpen={true} onClose={handleCloseModal} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
           )}
 
-          {activeCreationFlow === 'poll' && (
+          {activeCreationFlow === 'poll' && userProfile && (
             <CreatePollScreen onClose={handleCloseModal} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
           )}
 
-          {activeCreationFlow === 'quiz' && (
+          {activeCreationFlow === 'quiz' && userProfile && (
             <CreateQuizModal isOpen={true} onClose={handleCloseModal} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
           )}
 
-          {activeCreationFlow === 'challenge' && (
+          {activeCreationFlow === 'challenge' && userProfile && (
             <CreateChallengeScreen onClose={handleCloseModal} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
           )}
 

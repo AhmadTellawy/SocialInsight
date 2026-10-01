@@ -40,6 +40,26 @@ test('guest Following tab offers sign-in and preserves the return destination', 
   expect(state.calls).not.toContain('GET /api/pages');
 });
 
+test('guest direct Page composer URL opens sign-in without mounting a publisher', async ({ page, boot, state }, testInfo) => {
+  state.guest = true;
+  await boot('/create/poll?pageId=00000000-0000-4000-8000-000000000101');
+  await expect(page).toHaveURL('/login?returnTo=%2Fpages');
+  await expect(page.getByRole('heading', { name: testInfo.project.name.startsWith('ar') ? 'مرحبًا بعودتك' : 'Welcome back' })).toBeVisible();
+  expect(state.calls).not.toContain('GET /api/pages/mine');
+});
+
+test('Page challenge composer labels its main actions in the selected language', async ({ page, boot, state }, testInfo) => {
+  const id = '00000000-0000-4000-8000-000000000101';
+  const ar = testInfo.project.name.startsWith('ar');
+  state.pages = { page: { id, kind: 'PAGE', handle: 'navigation_test_studio', name: 'Navigation Test Studio',
+    category: 'company', bio: 'Questions and ideas', description: '', country: '', city: '', website: null,
+    links: [], publicEmail: null, publicPhone: null, cta: null, avatarMediaId: null, coverMediaId: null,
+    publicationState: 'PUBLISHED', platformState: 'NONE', role: 'OWNER', capabilities: ['manageContent', 'publish'] } };
+  await boot(`/create/challenge?pageId=${id}`);
+  await expect(page.getByRole('heading', { name: ar ? 'تحدٍ جديد' : 'New Challenge' })).toBeVisible();
+  await expect(page.getByRole('button', { name: ar ? 'متابعة' : 'Next' })).toBeVisible();
+});
+
 test('Page poll composer validates required question in the selected language', async ({ page, boot, state }, testInfo) => {
   const ar = testInfo.project.name.startsWith('ar');
   const id = '00000000-0000-4000-8000-000000000101';
