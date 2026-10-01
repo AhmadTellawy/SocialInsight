@@ -285,6 +285,10 @@ model Post {
   // Sharing/Reposting fields
   sharedFromId           String?
   sharedCaption          String?
+  sharedCopiedTitle      String?
+  sharedCopiedDescription String?
+  sharedCopiedCategory   String?
+  sharedRootPageId       String?
   sharedFrom             Post?        @relation("SharedPosts", fields: [sharedFromId], references: [id])
   shares                 Post[]       @relation("SharedPosts")
   status                 String       @default("PUBLISHED") // "DRAFT", "PUBLISHED"
@@ -333,6 +337,7 @@ model Post {
   @@index([authorId, status, isDeleted, createdAt(sort: Desc)], map: "Post_author_feed_created_idx")
   @@index([authorId, status, isDeleted, updatedAt(sort: Desc), id(sort: Desc)], map: "Post_author_status_updated_id_idx")
   @@index([sharedFromId, authorId], map: "Post_shared_viewer_idx")
+  @@index([sharedRootPageId, id], map: "Post_shared_root_page_idx")
   pageId             String?
   page               Page?       @relation(fields: [pageId], references: [id], onDelete: Restrict)
   @@index([pageId, status, isDeleted, createdAt(sort: Desc), id(sort: Desc)])

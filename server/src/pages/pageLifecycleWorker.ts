@@ -9,7 +9,7 @@ import { pageErasureHeld, pageLifecycleLimit, pageRetentionCutoff, processPageRe
 
 const phases = ['NOTIFICATIONS', 'ANSWERS', 'RESPONSES', 'COMMENT_LIKES', 'COMMENT_MENTIONS',
   'COMMENT_HASHTAGS', 'COMMENT_REPORTS', 'COMMENTS', 'OPTIONS', 'QUESTIONS', 'SECTIONS', 'SAVES', 'HIDES', 'LIKES',
-  'VIEWS', 'POST_MENTIONS', 'POST_HASHTAGS', 'POST_TAGS', 'POST_MEDIA', 'INTERACTIONS', 'REPORTS', 'CASES', 'EXTERNAL_SHARES', 'POSTS',
+  'VIEWS', 'POST_MENTIONS', 'POST_HASHTAGS', 'POST_TAGS', 'POST_MEDIA', 'INTERACTIONS', 'REPORTS', 'CASES', 'EXTERNAL_REPORTS', 'EXTERNAL_SHARES', 'POSTS',
   'MEMBERS', 'FOLLOWS', 'BLOCKS', 'INVITATIONS', 'TRANSFERS', 'EVENTS', 'MEDIA', 'MEDIA_ROWS', 'HANDLES', 'FINALIZE'] as const;
 type Phase = typeof phases[number];
 type Job = { pageId: string; phase: Phase; attempts: number; availableAt: Date; completedAt: Date | null };
@@ -84,27 +84,61 @@ async function erasePhase(tx: PageTx, job: Job, size: number, now: Date): Promis
     // Report snapshots contain the Page post text and publisher identity. A legal
     // hold pauses this worker; after release, erase reports before their targets.
     case 'REPORTS': return erase(tx, 'reports', Prisma.sql`t.target_type = 'POST' AND t.target_id IN (${p})`, size);
-    case 'CASES': return erase(tx, 'PageCase', Prisma.sql`t."pageId" = ${job.pageId} AND NOT EXISTS
-      (SELECT 1 FROM "PageCase" child WHERE child."parentId" = t.id)`, size);
+    case 'CASES': {
+      const deleted = await erase(tx, 'PageCase', Prisma.sql`t."pageId" = ${job.pageId} AND NOT EXISTS
+        (SELECT 1 FROM "PageCase" child WHERE child."parentId" = t.id)`, size);
+      if (deleted) return deleted;
+      // Historical/corrupt cycles (or cross-Page references) cannot strand case
+      // evidence after the job moves on. Detach a bounded set of remaining edges.
+      return tx.$executeRaw(Prisma.sql`UPDATE "PageCase" SET "parentId" = NULL WHERE id IN
+        (SELECT child.id FROM "PageCase" child JOIN "PageCase" parent ON parent.id = child."parentId"
+         WHERE parent."pageId" = ${job.pageId} ORDER BY child.id LIMIT ${size})`);
+    }
+    case 'EXTERNAL_REPORTS': return tx.$executeRaw(Prisma.sql`
+      WITH RECURSIVE descendants(id) AS (
+        SELECT id FROM "Post" WHERE "pageId" = ${job.pageId}
+        UNION
+        SELECT child.id FROM "Post" child JOIN descendants parent ON child."sharedFromId" = parent.id
+      )
+      UPDATE reports SET target_snapshot = NULL WHERE id IN (
+        SELECT report.id FROM reports report JOIN descendants tree ON report.target_id = tree.id
+        WHERE report.target_type = 'POST' AND report.target_snapshot IS NOT NULL
+          AND report.target_id NOT IN (SELECT id FROM "Post" WHERE "pageId" = ${job.pageId})
+        ORDER BY report.id LIMIT ${size})`);
     case 'EXTERNAL_SHARES': {
       // Shares copy the source title/description into their own Post rows.
       // Traverse the full share chain before deleting Page roots; preserve the
       // share author's independent caption and media while erasing copied text.
-      const copied = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-        WITH RECURSIVE descendants(id) AS (
-          SELECT id FROM "Post" WHERE "pageId" = ${job.pageId}
-          UNION
-          SELECT child.id FROM "Post" child JOIN descendants parent ON child."sharedFromId" = parent.id
-        )
-        SELECT post.id FROM "Post" post JOIN descendants tree ON tree.id = post.id
-        WHERE post."pageId" IS DISTINCT FROM ${job.pageId}
-          AND (post.title <> '' OR post.description <> '')
-        ORDER BY post.id LIMIT ${size}`);
+      const copiedWhere = Prisma.sql`((post.title <> '' AND (post."sharedCopiedTitle" IS NULL OR post.title = post."sharedCopiedTitle"))
+        OR (post.description <> '' AND (post."sharedCopiedDescription" IS NULL OR post.description = post."sharedCopiedDescription"))
+        OR (post.category IS NOT NULL AND post.category = post."sharedCopiedCategory"))`;
+      // New shares carry an indexed root Page ID, so each normal batch is bounded.
+      let copied = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        SELECT post.id FROM "Post" post WHERE post."sharedRootPageId" = ${job.pageId}
+          AND ${copiedWhere} ORDER BY post.id LIMIT ${size}`);
+      if (!copied.length) {
+        // Older rows lack provenance; traverse only that legacy subgraph.
+        copied = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+          WITH RECURSIVE legacy(id) AS (
+            SELECT id FROM "Post" WHERE "pageId" = ${job.pageId}
+            UNION
+            SELECT child.id FROM "Post" child JOIN legacy parent ON child."sharedFromId" = parent.id
+            WHERE child."sharedRootPageId" IS NULL
+          )
+          SELECT post.id FROM "Post" post JOIN legacy tree ON tree.id = post.id
+          WHERE post."pageId" IS DISTINCT FROM ${job.pageId}
+            AND post."sharedRootPageId" IS NULL AND ${copiedWhere}
+          ORDER BY post.id LIMIT ${size}`);
+      }
       if (!copied.length) return 0;
       const ids = copied.map(post => post.id);
-      await tx.mention.deleteMany({ where: { postId: { in: ids } } });
-      await tx.postHashtag.deleteMany({ where: { postId: { in: ids } } });
-      await tx.post.updateMany({ where: { id: { in: ids } }, data: { title: '', description: '', category: null } });
+      // Repost mentions and hashtags are indexed from sharedCaption alone;
+      // retain the author's independent caption and its social references.
+      await tx.$executeRaw(Prisma.sql`UPDATE "Post" SET
+        title = CASE WHEN "sharedCopiedTitle" IS NULL OR title = "sharedCopiedTitle" THEN '' ELSE title END,
+        description = CASE WHEN "sharedCopiedDescription" IS NULL OR description = "sharedCopiedDescription" THEN '' ELSE description END,
+        category = CASE WHEN category = "sharedCopiedCategory" THEN NULL ELSE category END
+        WHERE id IN (${Prisma.join(ids)})`);
       return ids.length;
     }
     case 'POSTS': {

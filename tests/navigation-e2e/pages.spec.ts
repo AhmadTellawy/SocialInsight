@@ -39,6 +39,20 @@ test('guest Following tab offers sign-in and preserves the return destination', 
   expect(state.calls).not.toContain('GET /api/pages');
 });
 
+test('Page poll composer validates required question in the selected language', async ({ page, boot, state }, testInfo) => {
+  const ar = testInfo.project.name.startsWith('ar');
+  const id = '00000000-0000-4000-8000-000000000101';
+  state.pages = { page: { id, kind: 'PAGE', handle: 'navigation_test_studio', name: 'Navigation Test Studio',
+    category: 'company', bio: 'Questions and ideas', description: '', country: '', city: '', website: null,
+    links: [], publicEmail: null, publicPhone: null, cta: null, avatarMediaId: null, coverMediaId: null,
+    publicationState: 'PUBLISHED', platformState: 'NONE', role: 'OWNER', capabilities: ['manageContent', 'publish'] } };
+  await boot(`/pages/manage/${id}`);
+  await page.getByRole('link', { name: ar ? 'إنشاء استطلاع' : 'Create poll' }).click();
+  await expect(page).toHaveURL(`/create/poll?pageId=${id}`);
+  await page.getByRole('button', { name: ar ? 'متابعة' : 'Next' }).click();
+  await expect(page.getByText(ar ? 'نص السؤال مطلوب.' : 'Question text is required')).toBeVisible();
+});
+
 test('saved Page draft can recover from a transient management read failure', async ({ page, boot, state }, testInfo) => {
   const id = '00000000-0000-4000-8000-000000000101';
   state.pages = { failManageOnce: true, page: { id, kind: 'PAGE', handle: 'navigation_test_studio', name: 'Navigation Test Studio',

@@ -351,6 +351,12 @@ async function main() {
   }
   const p35 = report.p35;
   report.checks = [
+    { name: 'Baseline and progressive stages all succeed without errors or timeouts', pass:
+      [1, 10, 25, 50, 100].every(users => {
+        const result = report.levelResults.find(level => level.users === users);
+        return result && result.requests > 0 && result.errors === 0 && result.timeouts === 0 &&
+          result.transportErrors === 0 && result.apiErrors === 0 && result.databaseErrorsVisible === 0;
+      }) },
     { name: '100 users sustained for at least 600 seconds', pass: p35.users === 100 && p35.sampleSeconds >= 600 && p35.requests >= 1000 },
     { name: 'Every minute contains measured traffic', pass: p35.minuteWindows.length === 10 && p35.minuteWindows.every(window => window.requests > 0) },
     { name: '80/10/5/5 mixed traffic within one percentage point', pass: Object.entries(report.acceptance.mix).every(([kind, expected]) =>

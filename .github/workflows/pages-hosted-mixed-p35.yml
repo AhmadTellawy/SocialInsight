@@ -9,6 +9,12 @@ on:
       - stage-hosted/pages-mixed-p35.cjs
       - stage-hosted/pages-account-erasure.cjs
       - server/src/pages/**
+      - server/prisma/schema.prisma
+      - server/prisma/migrations/**
+      - server/src/services/postVisibilityService.ts
+      - server/src/controllers/searchController.ts
+      - server/src/controllers/accountLifecycleController.ts
+      - components/CreatePollScreen.tsx
       - server/src/controllers/postController.ts
       - server/src/controllers/postController.runtime.test.ts
       - server/src/middleware/proxyTrust.ts

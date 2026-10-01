@@ -3064,6 +3064,11 @@ export const sharePost = async (req: Request, res: Response) => {
                 data: {
                     title: sharedTemplate.title,
                     description: sharedTemplate.description,
+                    sharedCopiedTitle: sharedTemplate.title,
+                    sharedCopiedDescription: sharedTemplate.description,
+                    sharedCopiedCategory: sharedTemplate.category,
+                    sharedRootPageId: currentSources.find(source => source.id === actualSharedFromId)?.pageId
+                        || sharedTemplate.sharedRootPageId || null,
                     type: sharedTemplate.type,
                     authorId: userId,
                     pageId: publisherPageId,

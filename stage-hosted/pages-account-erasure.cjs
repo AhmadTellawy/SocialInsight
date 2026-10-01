@@ -6,6 +6,7 @@ const { PrismaClient } = require('../server/node_modules/@prisma/client');
 const { purgeAccount } = require('../server/dist/services/accountErasureService');
 const { exportAccount } = require('../server/dist/controllers/accountLifecycleController');
 const { admitPagePurges, processPagePurgeBatch } = require('../server/dist/pages/pageLifecycleWorker');
+const { searchAll } = require('../server/dist/controllers/searchController');
 
 const target = new URL(process.env.DATABASE_URL || 'http://invalid');
 assert.equal(process.env.GITHUB_ACTIONS, 'true');
@@ -122,17 +123,44 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
     publicationState: 'UNPUBLISHED', representationAt: new Date(), createRequestId: randomUUID(),
     deletionRequestedAt: new Date(Date.now() - 31 * 86400000) } });
   await db.pageHandle.create({ data: { pageId: expiredPageId, handle: `past_${suffix}` } });
-  const expiredPostId = randomUUID(), expiredCommentId = randomUUID(), expiredCaseId = randomUUID(), expiredReportId = randomUUID();
+  const expiredPostId = randomUUID(), expiredCommentId = randomUUID(), expiredCaseId = randomUUID(), cycleCaseId = randomUUID(), expiredReportId = randomUUID(), shareReportId = randomUUID();
+  const copiedTitle = `Synthetic old Page post ${suffix}`;
   await db.post.create({ data: { id: expiredPostId, pageId: expiredPageId, authorId: anonymousOwnerId,
-    title: 'Synthetic old Page post', description: 'Erase this', resultsDetail: 'Private result text',
+    title: copiedTitle, description: 'Erase this', resultsDetail: 'Private result text',
     type: 'Poll', expiresAt: new Date(Date.now() + 86400000) } });
-  const externalShareId = randomUUID(), externalReshareId = randomUUID();
+  const externalShareId = randomUUID(), externalReshareId = randomUUID(), editedShareId = randomUUID();
   await db.post.create({ data: { id: externalShareId, authorId: anonymousOwnerId, sharedFromId: expiredPostId,
-    title: 'Synthetic old Page post', description: 'Erase this', sharedCaption: 'Independent user commentary',
+    title: copiedTitle, description: 'Erase this', sharedCaption: 'Independent user commentary',
+    sharedCopiedTitle: copiedTitle, sharedCopiedDescription: 'Erase this', sharedRootPageId: expiredPageId,
     type: 'Poll', expiresAt: new Date(Date.now() + 86400000) } });
   await db.post.create({ data: { id: externalReshareId, authorId: anonymousOwnerId, sharedFromId: externalShareId,
-    title: 'Synthetic old Page post', description: 'Erase this', sharedCaption: 'Second independent commentary',
+    title: copiedTitle, description: 'Erase this', sharedCaption: 'Second independent commentary',
+    sharedCopiedTitle: copiedTitle, sharedCopiedDescription: 'Erase this', sharedRootPageId: expiredPageId,
     type: 'Poll', expiresAt: new Date(Date.now() + 86400000) } });
+  await db.post.create({ data: { id: editedShareId, authorId: anonymousOwnerId, sharedFromId: expiredPostId,
+    title: 'Independent edited share title', description: 'Erase this', sharedCaption: 'Independent edited commentary',
+    sharedCopiedTitle: copiedTitle, sharedCopiedDescription: 'Erase this', sharedRootPageId: expiredPageId,
+    type: 'Poll', expiresAt: new Date(Date.now() + 86400000) } });
+  await db.report.create({ data: { id: shareReportId, reporterId: anonymousOwnerId, targetType: 'POST', targetId: externalShareId,
+    reason: 'Synthetic share report', targetSnapshot: { title: copiedTitle, description: 'Erase this' } } });
+  stage = 'hidden-page-reshare-search';
+  let searchStatus = 200, searchBody;
+  const searchResponse = { status(code) { searchStatus = code; return this; }, json(body) { searchBody = body; return this; } };
+  await searchAll({ query: { q: copiedTitle } }, searchResponse);
+  assert.equal(searchStatus, 200);
+  assert.equal(searchBody.surveys.some(post => post.id === externalReshareId), false);
+  stage = 'hidden-page-share-export-redacted';
+  const shareExportChunks = [];
+  const shareExportResponse = new Writable({ write(chunk, _encoding, callback) { shareExportChunks.push(Buffer.from(chunk)); callback(); } });
+  shareExportResponse.set = () => shareExportResponse;
+  await exportAccount({ user: { userId: anonymousOwnerId } }, shareExportResponse);
+  const shareExport = JSON.parse(Buffer.concat(shareExportChunks).toString('utf8'));
+  const exportedShare = shareExport.posts.find(post => post.id === externalShareId);
+  const exportedEditedShare = shareExport.posts.find(post => post.id === editedShareId);
+  assert.deepEqual([exportedShare.title, exportedShare.description, exportedShare.sharedCaption],
+    ['', '', 'Independent user commentary']);
+  assert.deepEqual([exportedEditedShare.title, exportedEditedShare.description],
+    ['Independent edited share title', '']);
   await db.comment.create({ data: { id: expiredCommentId, postId: expiredPostId, userId: anonymousOwnerId, text: 'Synthetic Page comment' } });
   await db.report.create({ data: { id: expiredReportId, reporterId: anonymousOwnerId, targetType: 'COMMENT', targetId: expiredCommentId,
     reason: 'Synthetic test', targetSnapshot: { text: 'Synthetic Page comment' } } });
@@ -142,6 +170,10 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
   assert.equal(await admitPagePurges(10), 0);
   await db.pageCase.update({ where: { id: expiredCaseId }, data: {
     status: 'CLOSED', closedAt: new Date(Date.now() - 181 * 86400000) } });
+  await db.pageCase.create({ data: { id: cycleCaseId, pageId: expiredPageId, parentId: expiredCaseId,
+    reporterId: anonymousOwnerId, reason: 'Synthetic cycle test', detail: 'Erase cycle evidence',
+    status: 'CLOSED', closedAt: new Date(Date.now() - 181 * 86400000) } });
+  await db.pageCase.update({ where: { id: expiredCaseId }, data: { parentId: cycleCaseId } });
   stage = 'admit-expired-page-purge';
   assert.equal(await admitPagePurges(10), 1);
   let purgeState;
@@ -166,6 +198,7 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
   stage = 'purge-erases-case-and-comment-report';
   assert.equal(await db.pageCase.count({ where: { pageId: expiredPageId } }), 0);
   assert.equal(await db.report.count({ where: { id: expiredReportId } }), 0);
+  assert.equal((await db.report.findUniqueOrThrow({ where: { id: shareReportId } })).targetSnapshot, null);
   stage = 'external-share-keeps-anonymous-source-tombstone';
   const tombstone = await db.post.findUniqueOrThrow({ where: { id: expiredPostId } });
   assert.equal(tombstone.isDeleted, true);
@@ -174,15 +207,20 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
   assert.equal((await db.user.findUniqueOrThrow({ where: { id: tombstone.authorId } })).status, 'DELETED');
   const share = await db.post.findUniqueOrThrow({ where: { id: externalShareId } });
   const reshare = await db.post.findUniqueOrThrow({ where: { id: externalReshareId } });
+  const editedShare = await db.post.findUniqueOrThrow({ where: { id: editedShareId } });
   assert.deepEqual([share.sharedFromId, share.title, share.description, share.sharedCaption],
     [expiredPostId, '', '', 'Independent user commentary']);
   assert.deepEqual([reshare.sharedFromId, reshare.title, reshare.description, reshare.sharedCaption],
     [externalShareId, '', '', 'Second independent commentary']);
+  assert.deepEqual([editedShare.title, editedShare.description, editedShare.sharedCaption],
+    ['Independent edited share title', '', 'Independent edited commentary']);
   process.stdout.write(JSON.stringify({ result: 'PASS', scenarios: ['missing-owner-confirmation', 'former-editor-media-retained',
     'personal-media-journaled', 'revoked-editor-export-excludes-page', 'former-editor-page-draft-retained', 'personal-draft-erased',
     'erased-account-case-and-cursor-identifiers',
     'owner-page-hidden-with-grace', 'owner-page-media-retained', 'open-case-blocks-purge',
-    'completed-purge-detaches-identifiers', 'purge-erases-case-and-comment-report',
-    'external-share-keeps-anonymous-source-tombstone', 'external-share-chain-copied-text-erased'] }) + '\n');
+    'completed-purge-detaches-identifiers', 'purge-erases-case-and-comment-report', 'purge-breaks-case-cycle',
+    'external-share-keeps-anonymous-source-tombstone', 'external-share-chain-copied-text-erased',
+    'edited-share-title-preserved', 'external-share-report-snapshot-erased',
+    'hidden-page-reshare-excluded-from-search-before-purge', 'hidden-page-share-export-redacted'] }) + '\n');
 })().catch(error => { process.stderr.write(`${stage}: ${error?.message?.startsWith('PAGE_PURGE_INCOMPLETE:') ? error.message : error?.name || 'Error'}: ${error?.code || 'CHECK_FAILED'}\n`); process.exitCode = 1; })
   .finally(() => db.$disconnect());

@@ -142,12 +142,12 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
 
   const handleSaveDraft = async () => {
     if (!userProfile?.id) {
-      alert('Please log in to save a draft');
+      alert(ar ? 'سجّل الدخول لحفظ المسودة.' : 'Please log in to save a draft');
       return;
     }
     const allMedia = [...postMedia, ...activeOptionMediaDrafts];
     if (!mediaDraftsAreReady(allMedia) || mediaDraftsHaveErrors(allMedia)) {
-      alert('Please finish or remove image uploads before saving.');
+      alert(ar ? 'أكمل رفع الصور أو احذفها قبل الحفظ.' : 'Please finish or remove image uploads before saving.');
       return;
     }
 
@@ -461,11 +461,11 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
     const newErrors: { [key: string]: boolean | string } = {};
     let isValid = true;
     if (!userProfile?.id) {
-      newErrors.userProfile = "User profile not found. Please log in.";
+      newErrors.userProfile = ar ? 'لم يُعثر على حسابك. سجّل الدخول.' : 'User profile not found. Please log in.';
       isValid = false;
     }
     if (!title.trim()) {
-      newErrors.title = "Question text is required";
+      newErrors.title = ar ? 'نص السؤال مطلوب.' : 'Question text is required';
       isValid = false;
     }
 
@@ -476,23 +476,23 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
           : t('answerType.imageAndNameRequired');
         isValid = false;
       } else if (optionPresentation === 'text' && options.filter(o => o.text.trim() !== '').length < 2) {
-        newErrors.options = "At least 2 options are required";
+        newErrors.options = ar ? 'أضف خيارين على الأقل.' : 'At least 2 options are required';
         isValid = false;
       }
     }
 
     const requiredMedia = [...postMedia, ...activeOptionMediaDrafts];
     if (!mediaDraftsAreReady(requiredMedia) || mediaDraftsHaveErrors(requiredMedia)) {
-      newErrors.media = "Please finish or remove image uploads.";
+      newErrors.media = ar ? 'أكمل رفع الصور أو احذفها.' : 'Please finish or remove image uploads.';
       isValid = false;
     }
 
     if (includeAudience && !visibility) {
-      newErrors.visibility = 'Select at least one destination.';
+      newErrors.visibility = ar ? 'اختر وجهة واحدة على الأقل.' : 'Select at least one destination.';
       isValid = false;
     }
     if (includeAudience && (visibility === 'Groups' || visibility === 'ProfileAndGroups') && selectedGroups.length === 0) {
-      newErrors.visibility = "Please select at least one group.";
+      newErrors.visibility = ar ? 'اختر مجموعة واحدة على الأقل.' : 'Please select at least one group.';
       isValid = false;
 
     }
@@ -513,7 +513,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   const handleSubmit = async () => {
     if (isSaving || isSubmitting) return;
     if (!userProfile?.id) {
-      alert('Please log in to create a post');
+      alert(ar ? 'سجّل الدخول لإنشاء المنشور.' : 'Please log in to create a post');
       return;
     }
     setHasAttemptedSubmit(true);
