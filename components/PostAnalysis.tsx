@@ -3,7 +3,9 @@ import { useTranslation } from 'react-i18next';
 import { Download, ShieldCheck } from 'lucide-react';
 import type { Survey } from '../types';
 import { api } from '../services/api';
+import { pageRequest } from '../services/pagesApi';
 import { demographicCountries } from '../utils/demographicSettings';
+import { PageError } from './pages/PageUi';
 
 type Distribution = { counts: Record<string, number>; suppressionReason: string | null };
 type Results = { version: 2; sampleSize: number; minimumCellSize: number; questionSummaries: Array<{ questionId: string; responseCount: number; optionCounts: Record<string, number>; textResponseCount: number }>; demographicBreakdowns: Record<string, Distribution>; scoreDistribution: Distribution | null };
@@ -18,25 +20,38 @@ export const AggregateBars: React.FC<{ counts: Record<string, number>; labels?: 
   </div>)}</div>;
 };
 
-export const PostAnalysis: React.FC<{ survey: Survey; isAccessDenied?: boolean }> = ({ survey, isAccessDenied }) => {
+export const PostAnalysis: React.FC<{ survey: Survey; isAccessDenied?: boolean; privatePageId?: string }> = ({ survey, isAccessDenied, privatePageId }) => {
   const { i18n } = useTranslation();
   const ar = i18n.language.startsWith('ar');
   const source = survey.sharedFrom || survey;
   const [results, setResults] = useState<Results | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'denied' | 'error'>('loading');
+  const [pageResultError, setPageResultError] = useState<unknown>(null);
   const [attempt, setAttempt] = useState(0);
   const [dimension, setDimension] = useState('age');
   useEffect(() => {
     setResults(null);
+    setPageResultError(null);
     if (isAccessDenied) { setState('denied'); return; }
     const controller = new AbortController();
     setState('loading');
-    api.getPostResults(source.id, controller.signal).then((data: Results) => {
-      if (data?.version !== 2) throw new Error('Unsupported aggregate results');
-      if (!controller.signal.aborted) { setResults(data); setState('ready'); }
-    }).catch((error: any) => { if (!controller.signal.aborted) setState(error?.status === 403 || error?.status === 404 ? 'denied' : 'error'); });
-    return () => controller.abort();
-  }, [source.id, isAccessDenied, attempt]);
+    const load = async () => {
+      try {
+        const data = privatePageId && source.pageId === privatePageId
+          ? await pageRequest<Results>(`/manage/${encodeURIComponent(privatePageId)}/content/${encodeURIComponent(source.id)}/results`, 'GET', undefined, controller.signal)
+          : await api.getPostResults(source.id, controller.signal) as Results;
+        if (data?.version !== 2) throw new Error('Unsupported aggregate results');
+        if (!controller.signal.aborted) { setResults(data); setPageResultError(null); setState('ready'); }
+      } catch (error: any) {
+        if (controller.signal.aborted) return;
+        if (privatePageId) setPageResultError(error);
+        setState(error?.status === 403 || error?.status === 404 ? 'denied' : 'error');
+      }
+    };
+    void load();
+    const timer = privatePageId ? window.setInterval(() => void load(), 30_000) : undefined;
+    return () => { controller.abort(); if (timer !== undefined) window.clearInterval(timer); };
+  }, [source.id, source.pageId, isAccessDenied, privatePageId, attempt]);
   const choices = ar ? { age: 'الفئة العمرية', gender: 'الجنس', country: 'البلد', education: 'المستوى التعليمي', employment: 'الحالة الوظيفية', industry: 'نوع العمل', sector: 'قطاع العمل' } : { age: 'Age group', gender: 'Gender', country: 'Country', education: 'Education', employment: 'Employment status', industry: 'Employment type', sector: 'Employment sector' };
   const hidden = ar ? 'حُجب هذا التوزيع لحماية المجموعات الصغيرة. لا تتوفر تصفية الإجابات حسب بيانات فردية.' : 'This distribution is withheld to protect small groups. Individual response and demographic filtering is unavailable.';
   const questions = source.sections?.flatMap(section => section.questions) || [];
@@ -47,6 +62,7 @@ export const PostAnalysis: React.FC<{ survey: Survey; isAccessDenied?: boolean }
     const link = document.createElement('a'); link.href = url; link.download = `aggregate-results-${source.id}.json`; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
+  if (privatePageId && pageResultError) return <PageError error={pageResultError} retry={() => setAttempt(value => value + 1)} />;
   return <section dir={ar ? 'rtl' : 'ltr'} className="p-4 md:p-6 space-y-6 bg-white text-gray-900 min-h-full">
     <header className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-xl font-bold">{ar ? 'تحليل النتائج' : 'Results analysis'}</h2><p className="text-sm text-gray-600 mt-1">{source.title}</p></div>{results && <button type="button" onClick={exportResults} className="inline-flex gap-2 items-center px-4 py-2 rounded-xl border text-sm"><Download size={16} />{ar ? 'تنزيل النتائج المجمعة' : 'Download aggregates'}</button>}</header>
     {state === 'loading' && <p role="status">{ar ? 'جارٍ تحميل النتائج…' : 'Loading results…'}</p>}

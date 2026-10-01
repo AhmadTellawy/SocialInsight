@@ -2,10 +2,12 @@ import prisma from '../prisma';
 import { GroupPermissionService } from './groupPermissionService';
 import { PrivacyService } from './privacyService';
 import { MEMBERSHIP_STATUS, POST_STATUS } from '../utils/constants';
+import { buildVisiblePublishedPostWhere } from './postVisibilityService';
 
 export interface MentionSourceContext {
     postId: string;
     authorId: string;
+    pageId?: string | null;
     status: string;
     isDeleted: boolean;
     groupIds: string[];
@@ -31,6 +33,9 @@ export interface MentionPolicyDependencies {
     canViewPost: (postId: string, targetUserId: string) => Promise<boolean>;
     canViewAuthorContent: (targetUserId: string, authorId: string) => Promise<boolean>;
     hasJoinedGroupMembership: (targetUserId: string, groupIds: string[]) => Promise<boolean>;
+    hasPageBlockRelationship?: (pageId: string, targetUserId: string) => Promise<boolean>;
+    canViewPagePost?: (postId: string, targetUserId: string) => Promise<boolean>;
+    loadCommentPageId?: (commentId: string) => Promise<string | null>;
 }
 
 const defaultDependencies: MentionPolicyDependencies = {
@@ -59,6 +64,7 @@ const defaultDependencies: MentionPolicyDependencies = {
             select: {
                 id: true,
                 authorId: true,
+                pageId: true,
                 status: true,
                 isDeleted: true,
                 groupId: true,
@@ -69,6 +75,7 @@ const defaultDependencies: MentionPolicyDependencies = {
         return {
             postId: post.id,
             authorId: post.authorId,
+            pageId: post.pageId,
             status: post.status,
             isDeleted: post.isDeleted,
             groupIds: Array.from(new Set([
@@ -77,6 +84,9 @@ const defaultDependencies: MentionPolicyDependencies = {
             ].filter((groupId): groupId is string => !!groupId)))
         };
     },
+    hasPageBlockRelationship: async (pageId, userId) => !!await prisma.pageBlock.findFirst({ where: { pageId, userId }, select: { userId: true } }),
+    canViewPagePost: async (postId, targetUserId) => !!await prisma.post.count({ where: { id: postId, ...buildVisiblePublishedPostWhere(targetUserId) } }),
+    loadCommentPageId: async (id) => (await prisma.comment.findUnique({ where: { id }, select: { pageId: true } }))?.pageId || null,
     canViewPost: (postId, targetUserId) => GroupPermissionService.canViewPost(postId, targetUserId),
     canViewAuthorContent: (targetUserId, authorId) => PrivacyService.canViewUserContent(targetUserId, authorId),
     hasJoinedGroupMembership: async (targetUserId, groupIds) => {
@@ -93,17 +103,18 @@ const defaultDependencies: MentionPolicyDependencies = {
 };
 
 export const canMention = async (
-    input: { actorUserId: string; targetUserId: string; postId: string },
+    input: { actorUserId: string; targetUserId: string; postId: string; commentId?: string },
     dependencies: MentionPolicyDependencies = defaultDependencies,
     preparedSource?: MentionSourceContext | null
 ): Promise<MentionEligibilityResult> => {
-    if (input.actorUserId === input.targetUserId) return { allowed: false, reason: 'self' };
-
-    const [targetStatus, blocked, source] = await Promise.all([
+    const [targetStatus, source] = await Promise.all([
         dependencies.loadTargetStatus(input.targetUserId),
-        dependencies.hasBlockRelationship(input.actorUserId, input.targetUserId),
         preparedSource === undefined ? dependencies.loadSourceContext(input.postId) : Promise.resolve(preparedSource)
     ]);
+    const pageActor = !!source?.pageId && (!input.commentId || await dependencies.loadCommentPageId?.(input.commentId) === source.pageId);
+    if (!pageActor && input.actorUserId === input.targetUserId) return { allowed: false, reason: 'self' };
+    const blocked = (!pageActor && await dependencies.hasBlockRelationship(input.actorUserId, input.targetUserId))
+        || (!!source?.pageId && !!await dependencies.hasPageBlockRelationship?.(source.pageId, input.targetUserId));
 
     if (targetStatus !== 'ACTIVE') return { allowed: false, reason: 'inactive_account' };
     if (blocked) return { allowed: false, reason: 'blocked' };
@@ -111,9 +122,12 @@ export const canMention = async (
         return { allowed: false, reason: 'source_unavailable' };
     }
 
-    if (!await dependencies.canViewPost(source.postId, input.targetUserId)) {
+    const canView = source.pageId && dependencies.canViewPagePost ? dependencies.canViewPagePost : dependencies.canViewPost;
+    if (!await canView(source.postId, input.targetUserId)) {
         return { allowed: false, reason: 'source_forbidden' };
     }
+
+    if (source.pageId) return { allowed: true };
 
     if (source.groupIds.length > 0) {
         if (source.authorId === input.targetUserId) return { allowed: true };

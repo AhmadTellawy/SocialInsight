@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { getPageDeletionImpact } from '../controllers/userController';
 import { getMe, getUser, getUserByHandle, updateUser, getUsers, getUserAnalytics, getUserFollowers, getUserFollowing, getNotifications, markNotificationsRead, markSingleNotificationRead, getUserGroups, searchUsers, getSuggestedUsers, updateAccountSettings, getBlockedAccounts, blockAccount, unblockAccount } from '../controllers/userController';
 import { followUser, getFollowStatus, acceptFollowRequest, rejectFollowRequest, removeFollower, getPendingRequests } from '../controllers/followController';
 import { addMyProfileLink, editMyProfileLink, getMyProfileLinks, removeMyProfileLink } from '../controllers/profileLinkController';
@@ -25,6 +26,7 @@ router.get('/:id/followers', optionalAuth, getUserFollowers);
 router.get('/:id/following', optionalAuth, getUserFollowing);
 
 router.put('/:id', requireAuth, profileMutationLimiter, updateUser);
+router.get('/:id/page-deletion-impact', requireAuth, getPageDeletionImpact);
 router.post('/:userId/follow', requireAuth, followUser);
 router.get('/:userId/follow-status', optionalAuth, getFollowStatus); // Just checking, optional
 

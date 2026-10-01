@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { MEMBERSHIP_STATUS, POST_STATUS } from '../utils/constants';
 import { PrivacyService } from './privacyService';
+import { pagePostAudienceWhere } from '../pages/pagePostService';
 
 const publicAudience = {
   OR: [
@@ -9,7 +10,7 @@ const publicAudience = {
   ]
 };
 
-const buildBaseVisiblePublishedPostWhere = (
+export const buildBaseVisiblePublishedPostWhere = (
   viewerId?: string | null
 ): Prisma.PostWhereInput => {
   const nonGroupAudience: Prisma.PostWhereInput = {
@@ -80,30 +81,35 @@ const buildBaseVisiblePublishedPostWhere = (
   return {
     isDeleted: false,
     status: POST_STATUS.PUBLISHED,
-    author: { status: 'ACTIVE' },
     ...(viewerId ? { NOT: { hiddenBy: { some: { userId: viewerId } } } } : {}),
-    OR: [nonGroupAudience, groupAudience, {
+    OR: [{ pageId: null, author: { status: 'ACTIVE' }, OR: [nonGroupAudience, groupAudience, {
       AND: [
         { targetAudience: 'ProfileAndGroups' },
         PrivacyService.getPostPrivacyWhereClause(viewerId, true)
       ]
-    }]
+    }] }, pagePostAudienceWhere(viewerId)]
   };
 };
 
 export const buildVisiblePublishedPostWhere = (
-  viewerId?: string | null
+  viewerId?: string | null,
+  publisher?: 'PAGE'
 ): Prisma.PostWhereInput => {
   const visiblePost = buildBaseVisiblePublishedPostWhere(viewerId);
   const visibleSource = buildBaseVisiblePublishedPostWhere(viewerId);
+  const { OR: publisherAudience, ...postState } = visiblePost;
 
   return {
-    ...visiblePost,
+    ...postState,
     AND: [
+      publisher === 'PAGE' ? pagePostAudienceWhere(viewerId) : { OR: publisherAudience },
       {
         OR: [
           { sharedFromId: null },
-          { sharedFrom: { is: visibleSource } }
+          { sharedFrom: { is: { AND: [visibleSource, { OR: [
+            { sharedFromId: null },
+            { sharedFrom: { is: buildBaseVisiblePublishedPostWhere(viewerId) } }
+          ] }] } } }
         ]
       }
     ]

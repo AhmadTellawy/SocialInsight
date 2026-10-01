@@ -9,6 +9,7 @@ import { AccountSecurityError, lockAccountSecurity } from '../services/mfaServic
 import { hashSessionSecret, readCookies, SESSION_COOKIE_NAME } from '../services/sessionService';
 import { GUEST_PROOF_TTL_MS } from '../services/guestParticipationService';
 import { hasValidCsrf, isTrustedOrigin } from '../middleware/csrfProtection';
+import { guardPagePostPersistence, respondPagePostError } from '../pages/pagePostService';
 
 // This cache is only consulted after current authorization and the post lock.
 // PostgreSQL remains authoritative for replicas, restarts and concurrent misses.
@@ -71,6 +72,7 @@ export const recordPostView = async (req: Request, res: Response) => {
                 await lockAccountSecurity(tx, userId);
                 await assertActiveAccountSession(tx, req, false);
             }
+            await guardPagePostPersistence(tx, postId, userId);
             if (body.expectedActorId !== userId) throw new ViewError('VIEW_ACTOR_CHANGED', 409);
             if (!initialize && !viewerKey) throw new ViewError('VIEW_PROOF_REQUIRED', 428);
             if (viewerKey) await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${'post-view:' + postId + ':' + viewerKey}, 0))`);
@@ -102,6 +104,7 @@ export const recordPostView = async (req: Request, res: Response) => {
         }
         return res.json(result);
     } catch (error) {
+        if (respondPagePostError(error, res)) return;
         if (error instanceof ViewError || error instanceof AccountSecurityError) return res.status(error.status).json({ error: 'The view request could not be accepted.', code: error.code });
         console.error(JSON.stringify({ event: 'post_view_failed', error: error instanceof Error ? error.name : 'unknown' }));
         res.set('Retry-After', '1');

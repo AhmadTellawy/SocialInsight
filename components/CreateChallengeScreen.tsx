@@ -1,3 +1,4 @@
+import { PagePublisher, PagePublisherRecovery, usePagePublisher } from './pages/PagePublisher';
 import { PostSaveStatus } from './PostSaveStatus';
 import { usePostSaveFeedback } from '../hooks/usePostSaveFeedback';
 
@@ -81,8 +82,10 @@ const createChallengeOption = (): ChallengeDraftOption => ({
 });
 
 export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ onClose, onSubmit: persistPost, onSaveDraft: persistDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
-  const { t } = useTranslation();
-  const { error: submissionError, isSaving, onSubmit, onSaveDraft } = usePostSaveFeedback(persistPost, persistDraft, t);
+  const { t, i18n } = useTranslation();
+  const ar = i18n.language.startsWith('ar');
+  const publisher = usePagePublisher(userProfile, draft, persistPost, persistDraft);
+  const { error: submissionError, isSaving, onSubmit, onSaveDraft } = usePostSaveFeedback(publisher.submit, publisher.save, t);
   const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
   const [isAdvancedSheetOpen, setIsAdvancedSheetOpen] = useState(false);
   const [advancedSheetView, setAdvancedSheetView] = useState<'main' | 'results'>('main');
@@ -136,7 +139,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
     }
     const allMedia = [...postMedia, ...activeOptionMediaDrafts];
     if (!mediaDraftsAreReady(allMedia) || mediaDraftsHaveErrors(allMedia)) {
-      alert('Please finish or remove image uploads before saving.');
+      alert(ar ? 'أكمل رفع الصور أو احذفها قبل الحفظ.' : 'Please finish or remove image uploads before saving.');
       return;
     }
     if (onSaveDraft) {
@@ -222,7 +225,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
     const isBasic = selectedDemographics.length === 3 && selectedDemographics.includes('gender') && selectedDemographics.includes('ageGroup') && selectedDemographics.includes('residence');
     const isProfessional = selectedDemographics.length === 4 && selectedDemographics.includes('education') && selectedDemographics.includes('employment') && selectedDemographics.includes('industry') && selectedDemographics.includes('sector');
     const isSocial = selectedDemographics.length === 1 && selectedDemographics.includes('maritalStatus');
-    
+
     if (isBasic) setSelectedInsightPreset('basic');
     else if (isProfessional) setSelectedInsightPreset('professional');
     else if (isSocial) setSelectedInsightPreset('social');
@@ -362,7 +365,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
     }
     const requiredMedia = [...postMedia, ...activeOptionMediaDrafts];
     if (!mediaDraftsAreReady(requiredMedia) || mediaDraftsHaveErrors(requiredMedia)) {
-      newErrors.media = "Please finish or remove image uploads.";
+      newErrors.media = ar ? 'أكمل رفع الصور أو احذفها.' : 'Please finish or remove image uploads.';
       isValid = false;
     }
     if (includeAudience && !visibility) {
@@ -453,6 +456,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
     scrollContainerRef.current?.scrollTo({ top: 0 });
   };
 
+  if(draft?.pageId&&(publisher.loading||publisher.accessLost))return <PagePublisherRecovery publisher={publisher} user={userProfile} onClose={onClose}/>;
   return (
     <>
       <PostSaveStatus active={isSaving || isSubmitting} label={t('postOptions.saving')} />
@@ -462,18 +466,18 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
         <button aria-label={composerStep === 2 ? 'Back' : 'Close'} onClick={() => { if (composerStep === 2) { setComposerStep(1); setHasAttemptedSubmit(false); scrollContainerRef.current?.scrollTo({ top: 0 }); } else handleExit(); }} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">
           <ArrowLeft size={24} />
         </button>
-        <div className="text-center"><h1 className="text-[12px] font-bold text-gray-800">New Challenge</h1><p className="text-xs text-gray-500">Step {composerStep} of 2</p></div>
+        <div className="text-center"><h1 className="text-[12px] font-bold text-gray-800">{ar ? 'تحدٍ جديد' : 'New Challenge'}</h1><p className="text-xs text-gray-500">{ar ? `الخطوة ${composerStep} من 2` : `Step ${composerStep} of 2`}</p></div>
         <button
-          onClick={() => composerStep === 1 ? handleNext() : handleFinalPost()}
-          disabled={isSaving || isSubmitting}
-          aria-disabled={isSaving || isSubmitting}
+          onClick={() => composerStep === 1 ? handleNext() : publisher.draftOnly ? handleSaveDraft() : handleFinalPost()}
+          disabled={isSaving || isSubmitting || (composerStep === 2 && publisher.writeBlocked)}
+          aria-disabled={isSaving || isSubmitting || (composerStep === 2 && publisher.writeBlocked)}
           className={`text-white font-bold text-[12px] px-5 py-2.5 rounded-full transition-all uppercase tracking-widest ${
-            !isSubmitting
+            !isSubmitting && !(composerStep === 2 && publisher.writeBlocked)
               ? 'bg-amber-600 hover:bg-amber-700 shadow-md active:scale-95 shadow-amber-200/50'
               : 'bg-gray-300 shadow-none cursor-not-allowed'
           }`}
         >
-          {composerStep === 1 ? 'Next' : 'Post'}
+          {composerStep === 1 ? (ar ? 'متابعة' : 'Next') : publisher.draftOnly ? publisher.draftActionLabel : (ar ? 'نشر' : 'Post')}
         </button>
       </div>
 
@@ -697,7 +701,9 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
 
           </div>
           <div hidden={composerStep !== 2} className="space-y-6">
+          <PagePublisher publisher={publisher} user={userProfile} groupDestination={visibility === 'Groups' || visibility === 'ProfileAndGroups' || !!initialGroupId} />
           <PostVisibilitySection
+            pagePublisher={!!publisher.pageId}
             value={visibility}
             onChange={value => { setVisibility(value); setErrors(previous => ({ ...previous, visibility: false })); }}
             selectedGroupIds={selectedGroups}
@@ -1040,7 +1046,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
               <button disabled={options.indexOf(selectedOptionForSettings) === options.length - 1} onClick={() => { const idx = options.indexOf(selectedOptionForSettings); const newOpts = [...options];[newOpts[idx], newOpts[idx + 1]] = [newOpts[idx + 1], newOpts[idx]]; setOptions(newOpts); setSettingsOptionId(null); }} className="w-full flex items-center gap-4 p-4 rounded-2xl border transition-all hover:bg-gray-50 disabled:opacity-30">
                 <div className="p-2.5 rounded-xl bg-gray-100 text-gray-500"><ArrowDown size={20} /></div><span className="font-bold text-sm text-gray-900">Move Down</span>
               </button>
-              
+
               <button
                 disabled={options.length <= 2}
                 onClick={() => { handleRemoveOption(selectedOptionForSettings.id); setSettingsOptionId(null); }}
@@ -1096,7 +1102,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
             <p className="text-sm text-gray-500 mb-6 leading-relaxed">You have unsaved work. If you exit now, your changes will be lost.</p>
             <div className="flex flex-col gap-2">
               <button onClick={handleDiscard} disabled={isSaving || isSubmitting} className="w-full py-3 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-colors">Discard and Exit</button>
-              <button onClick={handleSaveDraft} disabled={isSaving || isSubmitting} className="w-full py-3 bg-amber-50 text-amber-600 rounded-xl font-bold text-sm hover:bg-amber-100 transition-colors">Save as Draft</button>
+              <button onClick={handleSaveDraft} disabled={isSaving || isSubmitting || publisher.writeBlocked} className="w-full py-3 bg-amber-50 text-amber-600 rounded-xl font-bold text-sm hover:bg-amber-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Save as Draft</button>
               <button onClick={() => setShowExitConfirm(false)} disabled={isSaving || isSubmitting} className="w-full py-3 bg-gray-100 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-200 transition-colors">Keep Editing</button>
             </div>
           </div>

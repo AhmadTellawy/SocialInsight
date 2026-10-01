@@ -1,10 +1,10 @@
 import React from 'react';
 import { ArrowLeft, Shield } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useAppNavigation } from '../hooks/useAppNavigation';
 
 export const PrivacyPolicyScreen: React.FC = () => {
-    const navigate = useNavigate();
+    const { back } = useAppNavigation();
     const { i18n } = useTranslation();
     const ar = i18n.language.startsWith('ar');
     const text = (english: string, arabic: string) => ar ? arabic : english;
@@ -64,7 +64,7 @@ export const PrivacyPolicyScreen: React.FC = () => {
     return (
         <div dir={i18n.dir()} className="flex flex-col h-full bg-white animate-in slide-in-from-right duration-300 z-50">
             <div className="bg-white border-b border-gray-100 flex items-center px-4 h-14 sticky top-0 z-30">
-                <button type="button" onClick={() => typeof window.history.state?.idx === 'number' && window.history.state.idx > 0 ? navigate(-1) : navigate('/', { replace: true })} aria-label={text('Back', 'رجوع')} className="flex h-11 w-11 items-center justify-center -ms-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors focus-visible:ring-2 focus-visible:ring-blue-600">
+                <button type="button" onClick={() => back('/')} aria-label={text('Back', 'رجوع')} className="flex h-11 w-11 items-center justify-center -ms-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors focus-visible:ring-2 focus-visible:ring-blue-600">
                     <ArrowLeft size={24} className="rtl:rotate-180" />
                 </button>
                 <div className="flex items-center gap-2 ms-2 text-gray-900">

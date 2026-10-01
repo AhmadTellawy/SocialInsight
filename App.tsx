@@ -7,6 +7,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { api, ApiError } from './services/api';
 import { Header } from './components/Header';
+import { usePagesAvailability } from './hooks/usePagesAvailability';
 import { BottomNav } from './components/BottomNav';
 import { SurveyCard } from './components/SurveyCard';
 import { HomeScreen } from './components/HomeScreen';
@@ -35,6 +36,7 @@ const CreatePollScreen = React.lazy(() => import('./components/CreatePollScreen'
 const CreateQuizModal = React.lazy(() => import('./components/CreateQuizModal').then(({ CreateQuizModal }) => ({ default: CreateQuizModal })));
 const CreateChallengeScreen = React.lazy(() => import('./components/CreateChallengeScreen').then(({ CreateChallengeScreen }) => ({ default: CreateChallengeScreen })));
 const CreateAccountModal = React.lazy(() => import('./components/CreateAccountModal').then(({ CreateAccountModal }) => ({ default: CreateAccountModal })));
+const PagesWorkspace = React.lazy(() => import('./components/pages/PagesWorkspace').then(({ PagesWorkspace }) => ({ default: PagesWorkspace })));
 const GroupSettingsScreen = React.lazy(() => import('./components/GroupSettingsScreen').then(({ GroupSettingsScreen }) => ({ default: GroupSettingsScreen })));
 const ProfileSettingsScreen = React.lazy(() => import('./components/ProfileSettingsScreen').then(({ ProfileSettingsScreen }) => ({ default: ProfileSettingsScreen })));
 const SearchScreen = React.lazy(() => import('./components/SearchScreen').then(({ SearchScreen }) => ({ default: SearchScreen })));
@@ -129,6 +131,7 @@ const App: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { t, i18n } = useTranslation();
+  const isPagesRoute = location.pathname === '/pages' || location.pathname.startsWith('/pages/');
   const isProfileSettingsRoute = location.pathname === '/settings/profile'
     || location.pathname.startsWith('/settings/profile/');
 
@@ -165,6 +168,7 @@ const App: React.FC = () => {
   const userProfileIdRef = useRef<string | undefined>(undefined);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authBootstrapped, setAuthBootstrapped] = useState(false);
+  const { available: pagesAvailable } = usePagesAvailability(userProfile?.id, authBootstrapped);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalType, setAuthModalType] = useState<'flow' | 'login'>('flow');
   const [authRecoveryMessage, setAuthRecoveryMessage] = useState<string | null>(null);
@@ -179,12 +183,17 @@ const App: React.FC = () => {
     setAuthModalOpen(false);
   };
 
+  const publishedPageDestination = useRef<string | null>(null);
   const handleCloseModal = () => {
+    const pageId = publishedPageDestination.current;
+    publishedPageDestination.current = null;
     setEditingDraft(null);
     setActiveCreationFlow(null);
     setActiveCreationGroupId(null);
     setIsNavVisible(true);
-    if (window.history.state && window.history.state.idx > 0) {
+    if (pageId) {
+      navigate(`/pages/manage/${encodeURIComponent(pageId)}`, { replace: true });
+    } else if (window.history.state && window.history.state.idx > 0) {
       navigate(-1);
     } else {
       navigate('/', { replace: true });
@@ -218,7 +227,13 @@ const App: React.FC = () => {
     setActiveCreationFlow(null);
     setAccountModalType(null);
     setActiveTab('home');
-    navigate('/', { replace: true });
+    const returnTo = new URLSearchParams(location.search).get('returnTo');
+    const pagesReturnTo = returnTo
+      && (returnTo === '/pages' || returnTo.startsWith('/pages/'))
+      && !returnTo.includes('\\')
+      ? returnTo
+      : '/';
+    navigate(pagesReturnTo, { replace: true });
 
   };
 
@@ -346,6 +361,7 @@ const App: React.FC = () => {
       sharedFrom: raw.sharedFrom ? normalizeSurvey(raw.sharedFrom as Partial<Survey>, currentUser) : undefined,
       author: raw.author?.id ? {
         id: raw.author.id,
+        kind: raw.author.kind,
         name: raw.author.name || 'Unknown',
         handle: raw.author.handle,
         avatar: raw.author.avatar || '',
@@ -452,7 +468,10 @@ const App: React.FC = () => {
           if (controller.signal.aborted) return;
 
           try {
-            writeMediaSafeJson(getFeedCacheKey(currentUserId), normalizedSurveys.slice(0, 10));
+            writeMediaSafeJson(
+              getFeedCacheKey(currentUserId),
+              normalizedSurveys.filter(survey => !survey.pageId && !survey.sharedFrom?.pageId).slice(0, 10)
+            );
           } catch {
             console.warn('Failed to cache feed to localStorage due to quota limits');
           }
@@ -706,6 +725,12 @@ const App: React.FC = () => {
   React.useEffect(() => {
     if (!authBootstrapped) return;
 
+    if (isPagesRoute) {
+      feedRequestRef.current?.controller.abort();
+      loadMoreAbortRef.current?.abort();
+      return;
+    }
+
     if (isAuthenticated && userProfile?.id) {
       void fetchData(userProfile.id, userProfile);
       return;
@@ -714,7 +739,7 @@ const App: React.FC = () => {
     if (!isAuthenticated) {
       void fetchData();
     }
-  }, [authBootstrapped, isAuthenticated, userProfile?.id]);
+  }, [authBootstrapped, isAuthenticated, isPagesRoute, userProfile?.id]);
 
   React.useEffect(() => {
     if (!authBootstrapped) return;
@@ -1059,7 +1084,13 @@ const App: React.FC = () => {
     if ((path === '/login' || path === '/signup') && isAuthenticated && userProfile?.id) {
       setAuthModalOpen(false);
       setAuthModalType('flow');
-      navigate('/', { replace: true });
+      const returnTo = new URLSearchParams(location.search).get('returnTo');
+      const pagesReturnTo = returnTo
+        && (returnTo === '/pages' || returnTo.startsWith('/pages/'))
+        && !returnTo.includes('\\')
+        ? returnTo
+        : '/';
+      navigate(pagesReturnTo, { replace: true });
       return;
     }
 
@@ -1077,6 +1108,11 @@ const App: React.FC = () => {
     if (path.startsWith('/create/')) {
       const type = path.split('/create/')[1];
       if (['poll', 'survey', 'quiz', 'challenge'].includes(type)) {
+        if (!userProfile?.id) {
+          setActiveCreationFlow(null);
+          if (!isAuthenticated) navigate(location.search.includes('pageId=') ? '/login?returnTo=%2Fpages' : '/login', { replace: true });
+          return;
+        }
         setIsAddMenuOpen(false);
         setAccountModalType(null);
         setActiveCreationFlow(type as any);
@@ -1087,7 +1123,8 @@ const App: React.FC = () => {
       } else if (type === 'business') {
         setIsAddMenuOpen(false);
         setActiveCreationFlow(null);
-        setAccountModalType('company');
+        setAccountModalType(null);
+        navigate('/pages/create', { replace: true });
       }
     } else {
       if (activeCreationFlow && !path.startsWith('/create/')) setActiveCreationFlow(null);
@@ -1244,6 +1281,7 @@ const App: React.FC = () => {
   const handleCreateSubmit = async (newSurveyData: Partial<Survey>) => {
     if (!userProfile?.id) throw new Error(t('postOptions.loginRequired'));
     if (postSaveInFlight.current) throw new Error(t('postOptions.saving'));
+    publishedPageDestination.current = null;
     postSaveInFlight.current = true;
     try {
       const targetId = newSurveyData.id || editingDraft?.id;
@@ -1258,6 +1296,7 @@ const App: React.FC = () => {
         ? await api.updatePost(targetId, payload)
         : await api.createSurvey(payload);
       const saved = normalizeSurvey(result, userProfile);
+      publishedPageDestination.current = saved.status === 'PUBLISHED' && saved.pageId ? saved.pageId : null;
       const reconcile = (posts: Survey[]) => {
         if (saved.status !== 'PUBLISHED') return posts.filter(post => post.id !== saved.id);
         const existing = posts.find(post => post.id === saved.id);
@@ -1278,16 +1317,24 @@ const App: React.FC = () => {
     }
   };
 
-  const handleShareToFeed = async (originalSurvey: Survey, caption: string): Promise<'shared' | 'unshared'> => {
+  const handleShareToFeed = async (
+    originalSurvey: Survey,
+    caption: string,
+    publisher?: { pageId: string; pageCreateKey: string }
+  ): Promise<'shared' | 'unshared'> => {
     if (!userProfile) throw new Error(t('postOptions.loginRequired'));
 
     try {
       // 1. Save to DB
-      const resultSurvey = await api.sharePost(originalSurvey.id, userProfile.id, caption);
+      const resultSurvey = await api.sharePost(originalSurvey.id, userProfile.id, caption, publisher);
 
       if (resultSurvey.action === 'unshared') {
         // Remove the repost from the feed if it's there
-        setSurveys(prev => prev.filter(s => !(s.sharedFrom?.id === originalSurvey.id && s.author?.id === userProfile.id && !s.sharedCaption)));
+        setSurveys(prev => prev.filter(s => !(
+          s.sharedFrom?.id === originalSurvey.id
+          && s.author?.id === (publisher?.pageId || userProfile.id)
+          && !s.sharedCaption
+        )));
         // Decrement original count in state
         setSurveys(prev => prev.map(s => {
           if (s.id === originalSurvey.id) {
@@ -1331,7 +1378,7 @@ const App: React.FC = () => {
 
   const handleEditPost = (draft: Survey) => {
     setEditingDraft(draft);
-    navigate(`/create/${draft.type.toLowerCase()}`);
+    navigate(`/create/${draft.type.toLowerCase()}${draft.pageId ? `?pageId=${encodeURIComponent(draft.pageId)}` : ''}`);
   };
 
   const handlePostDeleted = (surveyId: string, deletedPostIds?: string[]) => {
@@ -1367,6 +1414,12 @@ const App: React.FC = () => {
   };
 
   const handleAddMenuOption = (option: 'survey' | 'poll' | 'quiz' | 'challenge' | 'group' | 'business') => {
+    if (option === 'business') {
+      if (!pagesAvailable) return;
+      setIsAddMenuOpen(false);
+      navigate('/pages/create');
+      return;
+    }
     if (!isAuthenticated || !userProfile) {
       navigate('/signup');
       return;
@@ -1405,9 +1458,10 @@ const App: React.FC = () => {
     navigate(`/post/${id}`);
   };
 
-  const navigateToProfile = (user: { id: string; name?: string; handle?: string; avatar?: string } | null) => {
+  const navigateToProfile = (user: { id: string; name?: string; handle?: string; avatar?: string; kind?: string } | null) => {
     if (user) {
-      if (user.handle) navigate(`/@${user.handle}`);
+      if (user.kind === 'PAGE' && user.handle) navigate(`/pages/${user.handle}`);
+      else if (user.handle) navigate(`/@${user.handle}`);
       else navigate(`/profile/${user.id}`);
     }
     else navigate(-1);
@@ -1917,7 +1971,7 @@ const App: React.FC = () => {
         </div>
       )}
       <div className="min-h-screen bg-gray-100/50 flex justify-center items-center">
-        <div className="w-full max-w-md bg-white h-[100dvh] max-h-screen relative shadow-2xl overflow-hidden flex flex-col">
+        <div className={`w-full ${isPagesRoute ? 'max-w-[1120px]' : 'max-w-md'} bg-white h-[100dvh] max-h-screen relative shadow-2xl overflow-hidden flex flex-col`}>
 
           {!authBootstrapped ? (
             <div className="flex-1 flex flex-col items-center justify-center bg-white px-8">
@@ -1927,6 +1981,23 @@ const App: React.FC = () => {
             </div>
           ) : showUsersTable ? (
             <UsersTableScreen onBack={() => setShowUsersTable(false)} onUserClick={(u) => { setShowUsersTable(false); setSelectedProfile({ id: u.id, name: u.name, avatar: u.avatar }); }} />
+          ) : isPagesRoute ? (
+            <PagesWorkspace
+              key={userProfile?.id || 'guest'}
+              userProfile={userProfile}
+              onPostClick={handleSurveyClick}
+              cardProps={{
+                userProfile: userProfile || undefined,
+                onVote: handleVote,
+                onAuthorClick: navigateToProfile,
+                onSurveyProgress: handleSurveyProgress,
+                onShareToFeed: handleShareToFeed,
+                onLike: handleLikePost,
+                onDelete: handlePostDeleted,
+                onEditDraft: handleEditPost,
+                onUpdateDemographics: handleUpdateDemographics
+              }}
+            />
           ) : isPrivacyScreenOpen ? (
             <PrivacyPolicyScreen />
           ) : selectedGroupId && isGroupLoading ? (
@@ -2143,6 +2214,7 @@ const App: React.FC = () => {
             <>
               {activeTab !== 'search' && activeTab !== 'profile' && activeTab !== 'notifications' && activeTab !== 'messages' && (
                 <Header
+                  onPagesClick={pagesAvailable ? () => navigate('/pages') : undefined}
                   onProfileClick={() => navigate('/profile')}
                   onMessagesClick={() => navigate('/messages')}
                   userProfile={userProfile || undefined}
@@ -2173,6 +2245,7 @@ const App: React.FC = () => {
                   isVisible={(isNavVisible || activeTab !== 'home') && activeTab !== 'messages'}
                   isAddMenuOpen={isAddMenuOpen}
                   onAddMenuOption={handleAddMenuOption}
+                  pagesAvailable={pagesAvailable}
                   unreadNotificationsCount={unreadNotificationsCount}
                 />
               )}
@@ -2180,19 +2253,19 @@ const App: React.FC = () => {
           )}
 
           {/* Creation Flows */}
-          {activeCreationFlow === 'survey' && (
+          {activeCreationFlow === 'survey' && userProfile && (
             <CreateSurveyModal isOpen={true} onClose={handleCloseModal} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
           )}
 
-          {activeCreationFlow === 'poll' && (
+          {activeCreationFlow === 'poll' && userProfile && (
             <CreatePollScreen onClose={handleCloseModal} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
           )}
 
-          {activeCreationFlow === 'quiz' && (
+          {activeCreationFlow === 'quiz' && userProfile && (
             <CreateQuizModal isOpen={true} onClose={handleCloseModal} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
           )}
 
-          {activeCreationFlow === 'challenge' && (
+          {activeCreationFlow === 'challenge' && userProfile && (
             <CreateChallengeScreen onClose={handleCloseModal} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
           )}
 

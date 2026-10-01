@@ -12,6 +12,20 @@ import { AccountSecurityError, lockAccountSecurity } from '../services/mfaServic
 import { assertActiveAccountSession } from '../services/accountSecurityPolicy';
 import { readNotificationSettings } from '../services/notificationPolicy';
 import { assertOtherActiveOwner, GroupOwnershipError, lockGroupRow } from '../services/groupOwnershipService';
+import { PagePolicyError } from '../pages/pagePolicy';
+import { hiddenCopiedShareIds } from '../pages/pageShareVisibility';
+import { withoutCopiedPageText } from '../pages/pageShareCopy';
+
+async function redactHiddenPageShareCopies(rows: any[], viewerId: string): Promise<any[]> {
+  const hidden = await hiddenCopiedShareIds(prisma, rows, viewerId);
+  return rows.map(({ sharedCopiedTitle, sharedCopiedDescription, sharedCopiedCategory, sharedRootPageId, ...row }) =>
+    hidden.has(row.id) ? {
+      ...row,
+      title: withoutCopiedPageText(row.title, sharedCopiedTitle),
+      description: withoutCopiedPageText(row.description, sharedCopiedDescription),
+      category: sharedCopiedCategory == null ? row.category : null,
+    } : row);
+}
 
 class LifecycleError extends Error { constructor(public code: string, public status = 409) { super(code); } }
 async function lockAccount(tx: Prisma.TransactionClient, req: Request) {
@@ -33,6 +47,7 @@ async function lockAccount(tx: Prisma.TransactionClient, req: Request) {
   return user;
 }
 function failure(res: Response, error: unknown) {
+  if (error instanceof PagePolicyError) return res.status(error.status).json({ code: error.code, error: error.code });
   if (error instanceof AccountSecurityError) return res.status(error.status).json({code:error.code,error:'Sign in again to continue.'});
   if (error instanceof GroupOwnershipError) return res.status(error.status).json({code:error.code,error:'Transfer ownership or delete groups where you are the only active owner first.'});
   if (error instanceof LifecycleError) return res.status(error.status).json({ code: error.code, error: error.code === 'GROUP_OWNERSHIP_REQUIRED' ? 'Transfer ownership or delete groups where you are the only active owner first.' : 'Sign in again to continue.' });
@@ -65,7 +80,7 @@ export async function deleteAccount(req: Request, res: Response) {
   try {
     await prisma.$transaction(async tx => {
       const user = await lockAccount(tx, req);
-      await purgeAccount(tx, user.id, { decisionId });
+      await purgeAccount(tx, user.id, { decisionId, deleteOwnedPages: req.body?.deleteOwnedPages });
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 20_000 });
     notifyUserSessionsRevoked(req.user!.userId); clearSessionCookies(res);
     void resumeAccountCleanupJobs().catch(() => {});
@@ -83,25 +98,30 @@ export async function exportAccount(req: Request, res: Response) {
     res.set({ 'Cache-Control': 'private, no-store', 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': 'attachment; filename="opiniup-account.json"', 'X-Content-Type-Options': 'nosniff' });
     const write = async (value: string) => { if (res.destroyed) throw new Error('Client closed'); if (!res.write(value)) await once(res, 'drain'); };
     await write(JSON.stringify({ formatVersion: 1, exportedAt: new Date().toISOString(), profile }).slice(0,-1));
-    const ownedQuestion = { OR: [{ post: { authorId: id } }, { section: { post: { authorId: id } } }] };
+    // Authorship is not ownership of Page content. A former Page editor must
+    // never receive its drafts or questionnaire graph in a personal export.
+    const personalPost = { authorId: id, pageId: null };
+    const ownedQuestion = { OR: [{ post: personalPost }, { section: { post: personalPost } }] };
+    const nonPageQuestion = { OR: [{ post: { pageId: null } }, { section: { post: { pageId: null } } }] };
     const datasets: Array<[string, any, any, string?]> = [
       ['handleHistory', prisma.handleAlias, { where: { userId: id }, select: { handle: true, createdAt: true } }, 'handle'],
       ['pendingSecurityNotifications', prisma.securityEmailOutbox, { where: { userId: id }, select: { id: true, recipient: true, kind: true, createdAt: true } }],
-      ['posts', prisma.post, { where: { authorId: id }, select: {
+      ['posts', prisma.post, { where: personalPost, select: {
         id: true, title: true, description: true, type: true, status: true, createdAt: true, updatedAt: true, expiresAt: true,
         category: true, targetAudience: true, groupId: true, targetedGroups: { select: { id: true } },
         pollChoiceType: true, optionPresentation: true, showOptionNames: true, sharedFromId: true, sharedCaption: true,
+        sharedCopiedTitle: true, sharedCopiedDescription: true, sharedCopiedCategory: true, sharedRootPageId: true,
         demographics: true, allowAnonymous: true, forceAnonymous: true, allowComments: true, allowMultipleSelection: true,
         allowUserOptions: true, randomPairing: true, resultsWho: true, resultsDetail: true, resultsTiming: true, isDeleted: true
       } }],
       // Export the authored questionnaire as separate bounded datasets; never
       // include other participants' response rows, device IDs or vote records.
-      ['sections', prisma.section, { where: { post: { authorId: id } }, select: { id: true, postId: true, title: true, order: true } }],
+      ['sections', prisma.section, { where: { post: personalPost }, select: { id: true, postId: true, title: true, order: true } }],
       ['questions', prisma.question, { where: ownedQuestion, select: { id: true, postId: true, sectionId: true, text: true, type: true, order: true, isRequired: true, imageMediaId: true, optionPresentation: true, showOptionNames: true } }],
       ['options', prisma.option, { where: { question: ownedQuestion }, select: { id: true, questionId: true, text: true, order: true, isCorrect: true, isRating: true, ratingValue: true, imageMediaId: true, withFollowUp: true, followUpLabel: true, isUserAdded: true } }],
-      ['contributedOptions', prisma.option, { where: { addedByUserId: id, isUserAdded: true }, select: { id: true, questionId: true, text: true, order: true, imageMediaId: true } }],
-      ['postMedia', prisma.postMedia, { where: { post: { authorId: id } }, select: { id: true, postId: true, mediaAssetId: true, sortOrder: true } }],
-      ['media', prisma.mediaAsset, { where: { ownerId: id }, select: { id: true, purpose: true, status: true, sourceMime: true, sourceWidth: true, sourceHeight: true, aspectRatio: true, altText: true, createdAt: true } }],
+      ['contributedOptions', prisma.option, { where: { addedByUserId: id, isUserAdded: true, question: nonPageQuestion }, select: { id: true, questionId: true, text: true, order: true, imageMediaId: true } }],
+      ['postMedia', prisma.postMedia, { where: { post: personalPost }, select: { id: true, postId: true, mediaAssetId: true, sortOrder: true } }],
+      ['media', prisma.mediaAsset, { where: { ownerId: id, pageId: null }, select: { id: true, purpose: true, status: true, sourceMime: true, sourceWidth: true, sourceHeight: true, aspectRatio: true, altText: true, createdAt: true } }],
       ['comments', prisma.comment, { where: { userId: id }, select: { id: true, postId: true, text: true, createdAt: true } }],
       ['responses', prisma.response, { where: { userId: id }, select: { id: true, postId: true, timestamp: true, isAnonymous: true, answers: { select: { questionId: true, optionId: true, textValue: true } } } }],
       ['follows', prisma.follow, { where: { followerId: id }, select: { id: true, followingId: true, status: true, createdAt: true } }],
@@ -112,7 +132,8 @@ export async function exportAccount(req: Request, res: Response) {
       await write(`,${JSON.stringify(key)}:[`); let cursor: string | undefined, first = true;
       do {
         const rows = await model.findMany({ ...query, take: 250, orderBy: { [cursorKey]: 'asc' }, ...(cursor ? { cursor: { [cursorKey]: cursor }, skip: 1 } : {}) });
-        for (const row of rows) { await write(`${first ? '' : ','}${JSON.stringify(row)}`); first = false; }
+        const safeRows = key === 'posts' ? await redactHiddenPageShareCopies(rows, id) : rows;
+        for (const row of safeRows) { await write(`${first ? '' : ','}${JSON.stringify(row)}`); first = false; }
         cursor = rows.length === 250 ? rows[rows.length-1][cursorKey] : undefined;
       } while (cursor && !res.destroyed);
       await write(']');

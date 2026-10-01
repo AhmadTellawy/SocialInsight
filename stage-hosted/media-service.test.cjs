@@ -1,0 +1,44 @@
+'use strict';
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const crypto=require('node:crypto');
+process.env.RENDER_SERVICE_NAME='si-pages-qa-media-20260926';
+process.env.RENDER_EXTERNAL_HOSTNAME='si-pages-qa-media-20260926.onrender.com';
+process.env.STAGE_ONLY='true';
+process.env.STAGE_WEB_ORIGIN='https://si-pages-qa-web-20260926.onrender.com';
+process.env.STAGE_MEDIA_ADMIN_KEY=crypto.randomBytes(32).toString('hex');
+process.env.PORT='1';
+const {server,objectPath}=require('./media-service.cjs');
+const owner={Authorization:`Bearer ${process.env.STAGE_MEDIA_ADMIN_KEY}`};
+test('synthetic Stage media enforces signed upload, bucket privacy, origin and admin access',async()=>{
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const base=`http://127.0.0.1:${server.address().port}`,key=`probe/${crypto.randomUUID()}.png`,payload=Buffer.from([137,80,78,71,0,1]);
+ const call=(route,options)=>fetch(base+route,options);
+ const admin=(route,options={})=>call('/admin/'+route,{...options,headers:{...owner,...options.headers}});
+ try{
+  assert.throws(()=>objectPath('media-private','../escape'));
+  assert.throws(()=>objectPath('media-public','a\\b'));
+  assert.equal((await call('/admin/metrics')).status,403);
+  assert.equal((await call('/admin/metrics',{headers:{Origin:'https://opiniup.com'}})).status,403);
+  const preflight=await call('/upload/token',{method:'OPTIONS',headers:{Origin:process.env.STAGE_WEB_ORIGIN,'Access-Control-Request-Method':'PUT','Access-Control-Request-Headers':'x-upsert,content-type'}});
+  assert.equal(preflight.status,204);
+  assert.match(preflight.headers.get('access-control-allow-headers'),/x-upsert/);
+  const signed=await admin('sign',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bucket:'media-originals',key,mode:'upload'})});
+  assert.equal(signed.status,200);
+  const uploadToken=(await signed.json()).token;
+  const multipart=new FormData();multipart.append('cacheControl','0');multipart.append('',new Blob([payload],{type:'image/png'}),'probe.png');
+  assert.equal((await call('/upload/'+uploadToken,{method:'PUT',headers:{Origin:process.env.STAGE_WEB_ORIGIN,'x-upsert':'false'},body:multipart})).status,200);
+  assert.equal((await call('/upload/'+uploadToken,{method:'PUT',body:payload})).status,403);
+  assert.equal((await call('/public/media-originals/'+key)).status,404);
+  const readSign=await admin('sign',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bucket:'media-originals',key,mode:'read'})});
+  const readToken=(await readSign.json()).token;
+  const read=await call('/read/'+readToken);
+  assert.equal(read.status,200);
+  assert.deepEqual(Buffer.from(await read.arrayBuffer()),payload);
+  const copy=await admin('copy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fromBucket:'media-originals',fromKey:key,toBucket:'media-public',toKey:key})});
+  assert.equal(copy.status,200);
+  assert.deepEqual(Buffer.from(await (await call('/public/media-public/'+key)).arrayBuffer()),payload);
+  for(const bucket of ['media-originals','media-public'])assert.equal((await admin('remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bucket,keys:[key]})})).status,200);
+  assert.equal((await call('/public/media-public/'+key)).status,404);
+ }finally{await new Promise(resolve=>server.close(resolve));}
+});

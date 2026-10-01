@@ -55,7 +55,7 @@ test('post text matching is ANDed with the complete audience predicate', async (
     await searchAll({ query: { q: 'private title' } } as any, res);
     assert.equal(state.status, 200);
     assert.equal(postWhere.AND.length, 2);
-    assert.ok(Array.isArray(postWhere.AND[0].OR), 'the visibility union must remain intact');
+    assert.ok(Array.isArray(postWhere.AND[0].AND?.[0]?.AND?.[0]?.OR), 'the visibility union must remain intact inside the Page discovery predicate');
     assert.ok(Array.isArray(postWhere.AND[1].OR), 'text alternatives must be a separate conjunct');
     assert.equal(postWhere.OR, undefined, 'text matching must never replace the visibility OR');
   } finally {

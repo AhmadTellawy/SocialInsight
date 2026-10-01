@@ -13,7 +13,7 @@ const { updatePost } = require('./postController');
 after(async () => { await prisma.$disconnect(); });
 
 // Invoke the original controller, with all I/O replaced; no database or storage calls.
-const runUpdate = async (body: any, overrides: any = {}, groups: Record<string, any> = {}) => {
+const runUpdate = async (body: any, overrides: any = {}, groups: Record<string, any> = {}, beforeTransaction?: (existing: any) => void) => {
     const existing = {
         id: 'post-1', authorId: 'author-1', title: 'Question', description: '',
         status: 'PENDING_APPROVAL', createdAt: new Date(), responseCount: 0,
@@ -45,7 +45,9 @@ const runUpdate = async (body: any, overrides: any = {}, groups: Record<string, 
             return fixture?.membership === null ? null : { status: 'JOINED', role: 'Member', ...fixture?.membership };
         });
         stubPrisma(prisma.groupMember, 'findMany', async () => []);
-        stubPrisma(prisma, '$transaction', async (callback: any) => callback({
+        stubPrisma(prisma, '$transaction', async (callback: any) => {
+          beforeTransaction?.(existing);
+          return callback({
             $executeRaw: async () => 1,
             authSession: { findFirst: async () => ({ id: 'session-1', createdAt: new Date() }) },
             post: { update: async ({ data }: any) => {
@@ -54,7 +56,8 @@ const runUpdate = async (body: any, overrides: any = {}, groups: Record<string, 
             } },
             option: { findMany: async () => [] },
             section: { findMany: async () => [] }
-        }));
+          });
+        });
         for (const name of ['prepareMediaAttachments', 'prepareMediaScopeChange']) mock.method(media, name, async () => []);
         for (const name of ['commitPreparedMedia', 'commitMediaScopeChange', 'finalizeMediaScopeChange', 'scheduleMediaDeletion', 'rollbackPreparedMedia', 'rollbackMediaScopeChange']) mock.method(media, name, async () => {});
         mock.method(media, 'resolvePostMediaScope', async () => 'PRIVATE');
@@ -176,6 +179,20 @@ test('rejected content-only edits do not resubmit the post', async () => {
     const result = await runUpdate({ title: 'Changed' }, { status: 'REJECTED' });
     assert.equal(result.code, 200);
     assert.equal(result.saved.status, undefined);
+});
+
+test('a late draft edit cannot restore Page text scrubbed after the initial read', async () => {
+    const result = await runUpdate(
+        { title: 'Copied Page title', description: 'Copied Page body' },
+        { status: 'DRAFT', groupId: null, targetAudience: 'Public', title: 'Copied Page title',
+          description: 'Copied Page body', sharedFromId: 'source-1', sharedRootPageId: 'page-1', sharedCaption: 'My own note' },
+        {},
+        existing => { existing.title = ''; existing.description = ''; existing.sharedCopiedTitle = null; }
+    );
+    assert.equal(result.code, 200);
+    assert.equal(result.saved.title, undefined);
+    assert.equal(result.saved.description, undefined);
+    assert.equal(result.saved.sharedCaption, undefined);
 });
 
 test('non-author cannot update a post', async () => {

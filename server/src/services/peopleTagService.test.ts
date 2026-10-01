@@ -21,11 +21,14 @@ const createHarness = () => {
   const tags: any[] = [];
   const notifications: Array<{ id: string; userId: string }> = [];
   const followsActor = new Set<string>();
+  const pageFollows = new Set<string>();
+  const pageBlocks = new Set<string>();
   let blocked = false;
   let tagSequence = 0;
   let notificationSequence = 0;
   const post = {
     authorId: 'actor',
+    pageId: null as string | null,
     status: 'PUBLISHED',
     isDeleted: false,
     targetAudience: 'Public',
@@ -36,6 +39,8 @@ const createHarness = () => {
 
   const tx: any = {
     notificationSettings: { findUnique: async () => null },
+    pageFollow: { findMany: async () => [...pageFollows].map(userId => ({ userId })) },
+    pageBlock: { findMany: async () => [...pageBlocks].map(userId => ({ userId })) },
     post: { findUnique: async () => ({ ...post }) },
     user: {
       findUnique: async ({ where }: any) => users.find(user => user.id === where.id),
@@ -100,6 +105,8 @@ const createHarness = () => {
     tags,
     notifications,
     followsActor,
+    pageFollows,
+    pageBlocks,
     post,
     reconcile,
     setBlocked: (value: boolean) => { blocked = value; }
@@ -118,6 +125,23 @@ test('people tags persist independently and unchanged reconciliation does not no
   assert.equal(retained.retained, 1);
   assert.equal(retained.created, 0);
   assert.equal(harness.notifications.length, 1);
+});
+
+test('Page tags use Page follows and blocks without exposing the internal publisher relationship', async () => {
+  const harness = createHarness();
+  harness.post.pageId = 'page-1';
+  harness.post.targetAudience = 'Followers';
+  harness.post.author.isPrivate = true;
+  harness.post.author.mediaPrivacyTarget = true;
+  harness.users[0].peopleTagPermission = PeopleTagPermission.FOLLOWING;
+  harness.followsActor.add('target');
+  await assert.rejects(() => harness.reconcile(['target']), PeopleTagValidationError);
+  harness.pageFollows.add('target');
+  harness.setBlocked(true); // The staff member's personal block cannot reveal staff identity.
+  await harness.reconcile(['target']);
+  assert.equal(harness.tags.length, 1);
+  harness.pageBlocks.add('target');
+  await assert.rejects(() => harness.reconcile(['target']), PeopleTagValidationError);
 });
 
 test('people-tag privacy and blocks are enforced by the mutation service', async () => {

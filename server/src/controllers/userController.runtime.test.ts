@@ -120,9 +120,11 @@ test('getUserGroups hydrates filtered counts in the membership relation load', a
 test('getNotifications caps pages and exposes an array-compatible next cursor', async () => {
     const originalFindMany = prisma.notification.findMany;
     const originalUserFindMany = prisma.user.findMany;
+    const originalPostFindMany = prisma.post.findMany;
     const capturedCalls: any[] = [];
 
     try {
+        (prisma.post as any).findMany = async () => [{ id: 'post-1', pageId: null, sharedFrom: null }];
         (prisma.user as any).findMany = async ({ where }: any) => where.id.in.map((id: string) => ({ id }));
         (prisma.notification as any).findMany = async (args: any) => {
             capturedCalls.push(args);
@@ -168,6 +170,7 @@ test('getNotifications caps pages and exposes an array-compatible next cursor', 
     } finally {
         (prisma.notification as any).findMany = originalFindMany;
         (prisma.user as any).findMany = originalUserFindMany;
+        (prisma.post as any).findMany = originalPostFindMany;
     }
 });
 
@@ -176,6 +179,7 @@ test('notification reads drop a post notification after its source becomes unava
         notificationFindMany: prisma.notification.findMany,
         userFindMany: prisma.user.findMany,
         userBlockFindFirst: prisma.userBlock.findFirst,
+        postFindMany: prisma.post.findMany,
         postFindFirst: prisma.post.findFirst
     };
     let calls = 0;
@@ -187,6 +191,7 @@ test('notification reads drop a post notification after its source becomes unava
         }] : [];
         (prisma.user as any).findMany = async ({ where }: any) => where.id.in.map((id: string) => ({ id }));
         (prisma.userBlock as any).findFirst = async () => null;
+        (prisma.post as any).findMany = async () => [];
         (prisma.post as any).findFirst = async () => null;
         const { response, state } = createResponse();
         await getNotifications({ params: { id: 'viewer-1' }, user: { userId: 'viewer-1' }, query: { limit: '10' } } as any, response);
@@ -197,6 +202,7 @@ test('notification reads drop a post notification after its source becomes unava
         (prisma.notification as any).findMany = originals.notificationFindMany;
         (prisma.user as any).findMany = originals.userFindMany;
         (prisma.userBlock as any).findFirst = originals.userBlockFindFirst;
+        (prisma.post as any).findMany = originals.postFindMany;
         (prisma.post as any).findFirst = originals.postFindFirst;
     }
 });
@@ -206,6 +212,7 @@ test('notification reads return a continuation cursor after five fully denied sc
         notificationFindMany: prisma.notification.findMany,
         userFindMany: prisma.user.findMany,
         userBlockFindFirst: prisma.userBlock.findFirst,
+        postFindMany: prisma.post.findMany,
         postFindFirst: prisma.post.findFirst
     };
     let calls = 0;
@@ -221,6 +228,7 @@ test('notification reads return a continuation cursor after five fully denied sc
         };
         (prisma.user as any).findMany = async ({ where }: any) => where.id.in.map((id: string) => ({ id }));
         (prisma.userBlock as any).findFirst = async () => null;
+        (prisma.post as any).findMany = async () => [];
         (prisma.post as any).findFirst = async () => null;
 
         const { response, state } = createResponse();
@@ -232,6 +240,7 @@ test('notification reads return a continuation cursor after five fully denied sc
         (prisma.notification as any).findMany = originals.notificationFindMany;
         (prisma.user as any).findMany = originals.userFindMany;
         (prisma.userBlock as any).findFirst = originals.userBlockFindFirst;
+        (prisma.post as any).findMany = originals.postFindMany;
         (prisma.post as any).findFirst = originals.postFindFirst;
     }
 });

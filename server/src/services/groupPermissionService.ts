@@ -120,6 +120,7 @@ export class GroupPermissionService {
                 isDeleted: true,
                 authorId: true,
                 author: { select: { status: true } },
+                pageId: true,
                 groupId: true,
                 targetAudience: true,
                 group: { select: { id: true, isPublic: true, isDeleted: true } },
@@ -128,6 +129,7 @@ export class GroupPermissionService {
         });
 
         if (!post || post.isDeleted || post.author.status !== 'ACTIVE') return false;
+        if (post.pageId) return (await prisma.post.count({ where: { id: postId, ...buildVisiblePublishedPostWhere(userId) } })) > 0;
 
         if (post.targetAudience === 'ProfileAndGroups' && post.status === POST_STATUS.PUBLISHED) {
             return (await prisma.post.count({ where: { id: postId, ...buildVisiblePublishedPostWhere(userId) } })) > 0;
