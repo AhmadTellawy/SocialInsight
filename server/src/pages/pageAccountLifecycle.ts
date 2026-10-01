@@ -53,14 +53,23 @@ export async function preparePageAccountDeletion(tx: PageTx, userId: string, con
       WHERE value <> to_jsonb(${userId}::text)), '[]'::jsonb))
     WHERE jsonb_typeof(e.context->'excludedRecipientIds') = 'array'
       AND e.context->'excludedRecipientIds' ? ${userId}`;
+  // A fanout cursor is also an account ID. Restarting a pending fanout from
+  // its beginning is safe because recipient upserts use stable dedupe keys.
+  await tx.$executeRaw`UPDATE "PageEvent" SET context = context - 'cursor'
+    WHERE context->>'cursor' = ${userId}`;
   // Keep the bounded safety decision, but unlink a deleted account from its
   // audit, case, and completed relationship history. Open cases retain their
   // status/reason while the reporter's own free text and evidence are erased.
   await tx.pageAuditEvent.updateMany({ where: { actorId: userId }, data: { actorId: null } });
   await tx.pageAuditEvent.updateMany({ where: { targetId: userId }, data: { targetId: null } });
   await tx.pageCase.updateMany({ where: { reporterId: userId }, data: {
-    reporterId: randomUUID(), detail: '', evidence: [],
+    reporterId: randomUUID(), reason: 'Report from a deleted account', detail: '', evidence: [],
   } });
+  await tx.$executeRaw`UPDATE "PageCase" c SET evidence = (
+    SELECT COALESCE(jsonb_agg(CASE WHEN item->>'actorId' = ${userId}
+      THEN item - 'actorId' ELSE item END ORDER BY position), '[]'::jsonb)
+    FROM jsonb_array_elements(c.evidence) WITH ORDINALITY AS entries(item, position))
+    WHERE c."assigneeId" = ${userId} AND jsonb_typeof(c.evidence) = 'array'`;
   await tx.pageCase.updateMany({ where: { assigneeId: userId }, data: { assigneeId: null } });
   await tx.pageInvitation.deleteMany({ where: { OR: [{ senderId: userId }, { recipientId: userId }] } });
   await tx.pageOwnershipTransfer.deleteMany({ where: { OR: [{ senderId: userId }, { recipientId: userId }] } });

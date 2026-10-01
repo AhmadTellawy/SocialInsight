@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import prisma from '../prisma';
 import { purgeMediaAsset } from '../services/mediaService';
@@ -53,6 +53,10 @@ async function erase(tx: PageTx, table: string, predicate: Prisma.Sql, limit: nu
 const postIds = (pageId: string) => Prisma.sql`SELECT id FROM "Post" WHERE "pageId" = ${pageId}`;
 const questionIds = (pageId: string) => Prisma.sql`SELECT q.id FROM "Question" q LEFT JOIN "Section" s ON s.id = q."sectionId" WHERE q."postId" IN (${postIds(pageId)}) OR s."postId" IN (${postIds(pageId)})`;
 const commentIds = (pageId: string) => Prisma.sql`SELECT id FROM "Comment" WHERE "postId" IN (${postIds(pageId)})`;
+const tombstoneAuthorId = (pageId: string) => {
+  const hash = createHash('sha256').update('page-purge-author:' + pageId).digest('hex').slice(0, 32);
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20)}`;
+};
 
 async function erasePhase(tx: PageTx, job: Job, size: number, now: Date): Promise<number> {
   const p = postIds(job.pageId), q = questionIds(job.pageId), c = commentIds(job.pageId);
@@ -89,13 +93,27 @@ async function erasePhase(tx: PageTx, job: Job, size: number, now: Date): Promis
       if (detached) return detached;
       const deleted = await erase(tx, 'Post', Prisma.sql`t."pageId" = ${job.pageId} AND NOT EXISTS (SELECT 1 FROM "Post" child WHERE child."sharedFromId" = t.id)`, size);
       if (deleted) return deleted;
-      // A minimal invisible tombstone protects external share FKs without rewriting their authors/content.
+      // An invisible, content-free tombstone protects external share FKs. Its
+      // author points to a synthetic deleted account, never the human publisher.
+      if (!await tx.post.count({ where: { pageId: job.pageId } })) return 0;
+      const anonymousAuthorId = tombstoneAuthorId(job.pageId);
+      const existingAuthor = await tx.user.findUnique({ where: { id: anonymousAuthorId }, select: { status: true, name: true } });
+      if (existingAuthor && (existingAuthor.status !== 'DELETED' || existingAuthor.name !== 'Deleted Page author'))
+        throw new Error('PAGE_PURGE_ANON_ID_CONFLICT');
+      if (!existingAuthor) await tx.user.create({ data: { id: anonymousAuthorId, name: 'Deleted Page author',
+        handle: 'deleted_page_' + randomBytes(8).toString('hex'), status: 'DELETED', deletedAt: now,
+        searchVisibility: false, isPrivate: true } });
       return tx.$executeRaw(Prisma.sql`UPDATE "Post" SET title = '', description = '', image = NULL,
         "sharedCaption" = NULL, "isDeleted" = true, "deletedAt" = ${now}, demographics = NULL,
+        "authorId" = ${anonymousAuthorId}, category = NULL, "targetAudience" = NULL, "targetGroups" = NULL,
+        "resultsWho" = NULL, "resultsDetail" = NULL, "resultsTiming" = NULL,
         "approvedById" = NULL, "rejectedById" = NULL, "rejectionReason" = NULL,
         "likesCount" = 0, "commentsCount" = 0, "responseCount" = 0, "sharesCount" = 0,
         "viewCount" = 0, "uniqueViewCount" = 0 WHERE id IN (SELECT id FROM "Post"
-          WHERE "pageId" = ${job.pageId} AND (NOT "isDeleted" OR title <> '' OR description <> '' OR image IS NOT NULL OR "sharedCaption" IS NOT NULL) LIMIT ${size})`);
+          WHERE "pageId" = ${job.pageId} AND ("authorId" <> ${anonymousAuthorId} OR NOT "isDeleted" OR title <> '' OR description <> ''
+            OR image IS NOT NULL OR "sharedCaption" IS NOT NULL OR demographics IS NOT NULL OR category IS NOT NULL
+            OR "targetAudience" IS NOT NULL OR "targetGroups" IS NOT NULL OR "resultsWho" IS NOT NULL
+            OR "resultsDetail" IS NOT NULL OR "resultsTiming" IS NOT NULL) LIMIT ${size})`);
     }
     case 'MEMBERS': return erase(tx, 'PageMembership', Prisma.sql`t."pageId" = ${job.pageId}`, size);
     case 'FOLLOWS': return erase(tx, 'PageFollow', Prisma.sql`t."pageId" = ${job.pageId}`, size);

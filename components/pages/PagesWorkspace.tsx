@@ -81,7 +81,8 @@ function PageDirectory({mine,userProfile,invitationsOnly=false}:{mine:boolean;us
 }
 
 function PublicPage({handle,userProfile,cardProps,onPostClick}:PagesWorkspaceProps & {handle:string;key?:React.Key}) {
-  const {text}=usePageText();const navigate=useNavigate();const [query]=useSearchParams();const tab=query.get('tab')||'posts';
+  const {text}=usePageText();const navigate=useNavigate();const [query]=useSearchParams();const requestedTab=query.get('tab')||'posts';
+  const tab=['posts','polls','about','report'].includes(requestedTab)?requestedTab:'posts';
   const [page,setPage]=useState<BusinessPage|null>(null),[posts,setPosts]=useState<Survey[]>([]);
   const [loading,setLoading]=useState(true),[error,setError]=useState<unknown>(null),[postError,setPostError]=useState<unknown>(null);
   const [postsLoading,setPostsLoading]=useState(true),[next,setNext]=useState<string|null>(null),[busy,setBusy]=useState(false),[copied,setCopied]=useState(false);

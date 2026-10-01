@@ -43,11 +43,11 @@ test('another case on the Page with an active hold blocks closed-case retention'
   const previous: Array<[any, string, any]> = [];
   const replace = (model: any, name: string, value: any) => { previous.push([model, name, model[name]]); model[name] = value; };
   const now = new Date('2026-10-01T00:00:00.000Z');
-  let held = true, deletions = 0;
+  let held = true, childPresent = true, deletions = 0;
   const tx: any = {
     $queryRaw: async () => [{ id: 'page' }],
     page: { count: async () => 0 },
-    pageCase: { count: async ({ where }: any) => where.parentId ? 0 : held ? 1 : 0,
+    pageCase: { count: async ({ where }: any) => where.parentId ? (childPresent ? 1 : 0) : held ? 1 : 0,
       deleteMany: async () => { deletions++; return { count: 1 }; } }
   };
   try {
@@ -60,6 +60,8 @@ test('another case on the Page with an active hold blocks closed-case retention'
     assert.equal((await processPageRetention(1, now)).casesDeleted, 0);
     assert.equal(deletions, 0);
     held = false;
+    assert.equal((await processPageRetention(1, now)).casesDeleted, 0, 'a closed appeal still needs its parent decision');
+    childPresent = false;
     assert.equal((await processPageRetention(1, now)).casesDeleted, 1);
     assert.equal(deletions, 1);
   } finally { for (const [model, name, value] of previous.reverse()) model[name] = value; }

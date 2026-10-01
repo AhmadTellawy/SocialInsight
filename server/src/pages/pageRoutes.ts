@@ -135,8 +135,9 @@ router.get('/manage/:id/cases',requireAuth,handle(async(req,res)=>{
 router.post('/:id/cases',requireAuth,caseLimiter,handle(async(req,res)=>res.status(201).json(await openPageCase(id(req),user(req),req.body))));
 router.post('/staff/cases/:id/assign',requireAuth,handle(async(req,res)=>{
   const input=z.object({assigneeId:uuid}).strict().parse(req.body);
-  return res.json(await pageTransaction(async tx=>{await requirePageStaff(tx,user(req));await requirePageStaff(tx,input.assigneeId);
-    const changed=await tx.pageCase.updateMany({where:{id:id(req),status:{not:'CLOSED'}},data:{assigneeId:input.assigneeId,status:'IN_REVIEW'}});
+  return res.json(await pageTransaction(async tx=>{const actorId=user(req);await requirePageStaff(tx,actorId);await requirePageStaff(tx,input.assigneeId);
+    const changed=await tx.pageCase.updateMany({where:{id:id(req),status:{not:'CLOSED'},
+      ...(isPageStaff(actorId,true)?{}:{OR:[{assigneeId:null},{assigneeId:actorId}]})},data:{assigneeId:input.assigneeId,status:'IN_REVIEW'}});
     if(!changed.count)throw new PagePolicyError('PAGE_CASE_UNAVAILABLE',409);return {assigned:true};}));
 }));
 router.post('/staff/cases/:id/decision',requireAuth,sensitiveLimiter,handle(async(req,res)=>res.json(await decidePageCase(id(req),user(req),req.body))));

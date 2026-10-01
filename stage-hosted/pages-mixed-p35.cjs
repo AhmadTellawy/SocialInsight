@@ -134,6 +134,37 @@ async function fixtures() {
   save();
 }
 
+async function permissionSmokes() {
+  const page = pages[0], bio = (await prisma.page.findUniqueOrThrow({ where: { id: page.id } })).bio;
+  const guest = { ip: '127.1.0.101', agent: new http.Agent({ keepAlive: true, maxSockets: 1 }) };
+  const denied = async (client, method, expected) => {
+    const response = await call(client, `/pages/manage/${page.id}`, method,
+      method === 'PATCH' ? { bio: `${prefix} unauthorized write` } : undefined);
+    assert.ok(expected.includes(response.status), `${method} denial returned ${response.status}`);
+  };
+  try {
+    await denied(guest, 'GET', [401]);
+    await denied(guest, 'PATCH', [401]);
+    await ok(clients[0], `/pages/manage/${page.id}`);
+    await denied(clients[1], 'GET', [403, 404]);
+    await denied(clients[1], 'PATCH', [403, 404]);
+    const revoked = clients[5];
+    await prisma.pageMembership.delete({ where: { pageId_userId: { pageId: page.id, userId: revoked.id } } });
+    await denied(revoked, 'GET', [403, 404]);
+    await denied(revoked, 'PATCH', [403, 404]);
+    await prisma.pageMembership.create({ data: { pageId: page.id, userId: revoked.id, role: 'ADMIN' } });
+    const analyst = clients[10];
+    await prisma.pageMembership.update({ where: { pageId_userId: { pageId: page.id, userId: analyst.id } }, data: { role: 'ANALYST' } });
+    await denied(analyst, 'PATCH', [403, 404]);
+    await prisma.pageMembership.update({ where: { pageId_userId: { pageId: page.id, userId: analyst.id } }, data: { role: 'ADMIN' } });
+    assert.equal((await prisma.page.findUniqueOrThrow({ where: { id: page.id } })).bio, bio,
+      'denied HTTP writes must not reach the database');
+    report.permissionSmokes = { guestDenied: true, otherPageDenied: true, revokedMemberDenied: true,
+      analystWriteDenied: true, deniedWritesUnchanged: true };
+    save();
+  } finally { guest.agent.destroy(); }
+}
+
 async function oneOperation(client, started, measured) {
   const step = client.step++;
   const slot = step % 20;
@@ -300,6 +331,7 @@ async function main() {
   assert.ok(report.runner.cpus >= 3 && report.runner.freeMemoryAtStartBytes >= 8 * 1024 ** 3,
     'RUNNER_CAPACITY_PREFLIGHT: need at least 3 CPUs and 8 GiB available; this is environment limitation, not Pages failure');
   await fixtures();
+  await permissionSmokes();
   for (const users of [1, 10, 25, 50]) await level(users, 10000, 30000);
   await level(100, 30000, 600000, true);
   await sleep(30000);
@@ -326,6 +358,8 @@ async function main() {
     { name: 'No unexpected HTTP 4xx', pass: p35.apiErrors === p35.fiveXx },
     { name: 'Counters and votes match actual database rows', pass: !report.integrity.counterMismatches && !report.integrity.optionMismatches && !report.integrity.duplicateResponses },
     { name: 'Cross-publisher deletion and account outbox cleanup', pass: Object.values(report.securitySmokes).every(Boolean) },
+    { name: 'HTTP and PostgreSQL Page permission matrix', pass: Object.values(report.permissionSmokes || {}).length === 5 &&
+      Object.values(report.permissionSmokes).every(Boolean) },
   ];
   report.status = report.checks.every(check => check.pass) ? 'PASS' : 'FAIL';
 }

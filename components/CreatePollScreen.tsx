@@ -3,7 +3,7 @@ import { PostSaveStatus } from './PostSaveStatus';
 import { usePostSaveFeedback } from '../hooks/usePostSaveFeedback';
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { X, Image as ImageIcon, Plus, Trash2, Globe, Users, AlertCircle, Clock, Calendar, ChevronDown, List, Info, Lock, Camera, Save, BarChart3, Check, ChevronRight, UserCircle, Target, Link2, GalleryHorizontalEnd, Settings2, Star, MoreHorizontal, ArrowUp, ArrowDown, MessageSquare, ArrowLeft, Tag } from 'lucide-react';
+import { X, Image as ImageIcon, Plus, Trash2, Globe, Users, AlertCircle, Clock, Calendar, ChevronDown, List, Info, Lock, Camera, Save, BarChart3, Check, ChevronRight, UserCircle, Target, Link2, GalleryHorizontalEnd, Settings2, Star, MoreHorizontal, ArrowUp, ArrowDown, MessageSquare, ArrowLeft, ArrowRight, Tag } from 'lucide-react';
 import { Survey, SurveyType, UserProfile, Option, Group, DraftOption, MediaDraft } from '../types';
 import { useTranslation } from 'react-i18next';
 import { BottomSheet } from './BottomSheet';
@@ -83,7 +83,8 @@ const createRatingOptions = (): PollDraftOption[] => [5, 4, 3, 2, 1].map((rating
 }));
 
 export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onSubmit: persistPost, onSaveDraft: persistDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const ar = i18n.language.startsWith('ar');
   const publisher = usePagePublisher(userProfile, draft, persistPost, persistDraft);
   const { error: submissionError, isSaving, onSubmit, onSaveDraft } = usePostSaveFeedback(publisher.submit, publisher.save, t);
   const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
@@ -563,14 +564,14 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
   return (
     <>
       <PostSaveStatus active={isSaving || isSubmitting} label={t('postOptions.saving')} />
-      <div data-post-editor inert={isSaving || isSubmitting} aria-busy={isSaving || isSubmitting} className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-right duration-350">
+      <div data-post-editor inert={isSaving || isSubmitting} aria-busy={isSaving || isSubmitting} dir={ar?'rtl':'ltr'} className={`absolute inset-0 z-[60] bg-white flex flex-col animate-in duration-350 ${ar?'slide-in-from-left':'slide-in-from-right'}`}>
       {submissionError && <p role="alert" className="shrink-0 border-b border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">{submissionError}</p>}
       {/* Simplified Clean Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white/95 backdrop-blur-md sticky top-0 z-40 safe-top shrink-0">
-        <button aria-label={composerStep === 2 ? 'Back' : 'Close'} onClick={() => { if (composerStep === 2) { setComposerStep(1); setHasAttemptedSubmit(false); scrollContainerRef.current?.scrollTo({ top: 0 }); } else handleExit(); }} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">
-          <ArrowLeft size={24} />
+        <button aria-label={composerStep === 2 ? (ar?'رجوع':'Back') : (ar?'إغلاق':'Close')} onClick={() => { if (composerStep === 2) { setComposerStep(1); setHasAttemptedSubmit(false); scrollContainerRef.current?.scrollTo({ top: 0 }); } else handleExit(); }} className="p-2 hover:bg-gray-50 rounded-full text-gray-500" style={{marginInlineStart:-8}}>
+          {ar?<ArrowRight size={24}/>:<ArrowLeft size={24} />}
         </button>
-        <div className="text-center"><h1 className="text-[12px] font-bold text-gray-800">New Poll</h1><p className="text-xs text-gray-500">Step {composerStep} of 2</p></div>
+        <div className="text-center"><h1 className="text-[12px] font-bold text-gray-800">{ar?'استطلاع جديد':'New Poll'}</h1><p className="text-xs text-gray-500">{ar?`الخطوة ${composerStep} من 2`:`Step ${composerStep} of 2`}</p></div>
         <button
           onClick={() => composerStep === 1 ? handleNext() : publisher.draftOnly ? handleSaveDraft() : handleSubmit()}
           disabled={isSaving || isSubmitting || (composerStep === 2 && publisher.writeBlocked)}
@@ -581,7 +582,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               : 'bg-gray-300 text-white shadow-none cursor-not-allowed'
           }`}
         >
-          {composerStep === 1 ? 'Next' : publisher.draftOnly ? publisher.draftActionLabel : 'Post'}
+          {composerStep === 1 ? (ar?'متابعة':'Next') : publisher.draftOnly ? publisher.draftActionLabel : (ar?'نشر':'Post')}
         </button>
       </div>
 

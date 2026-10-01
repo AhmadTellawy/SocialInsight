@@ -35,7 +35,7 @@ export async function processPageRetention(limit = 100, now = new Date()) {
               AND (p."legalHoldUntil" IS NULL OR p."legalHoldUntil" <= ${now})
               AND NOT EXISTS (SELECT 1 FROM "PageCase" held WHERE held."pageId" = c."pageId"
                 AND held."legalHoldUntil" > ${now})
-              AND NOT EXISTS (SELECT 1 FROM "PageCase" a WHERE a."parentId" = c.id AND a.status <> 'CLOSED')
+              AND NOT EXISTS (SELECT 1 FROM "PageCase" a WHERE a."parentId" = c.id)
             ORDER BY c."closedAt", c.id LIMIT ${size}`);
     for (const candidate of candidates) {
       const changed = await pageTransaction(async tx => {
@@ -56,9 +56,10 @@ export async function processPageRetention(limit = 100, now = new Date()) {
           }
         } else {
           const legalHold = await pageErasureHeld(tx, candidate.pageId, now);
-          // An unresolved appeal still needs its original decision, even when that decision is old.
-          const activeAppeal = await tx.pageCase.count({ where: { parentId: candidate.id, status: { not: 'CLOSED' } } });
-          if (!legalHold && !activeAppeal) {
+          // Every appeal retains its original decision until the child itself
+          // has aged out and been removed, including closed appeals.
+          const childCases = await tx.pageCase.count({ where: { parentId: candidate.id } });
+          if (!legalHold && !childCases) {
             return (await tx.pageCase.deleteMany({ where: { id: candidate.id, status: 'CLOSED', closedAt: { lte: caseCutoff }, OR: [{ legalHoldUntil: null }, { legalHoldUntil: { lte: now } }] } })).count;
           }
         }
