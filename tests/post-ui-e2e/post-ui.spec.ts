@@ -160,6 +160,72 @@ test('challenge pair and winner retain full independent option typography', asyn
   await card.screenshot({ path: testInfo.outputPath('challenge-winner.png') });
 });
 
+test('text-only challenge renders labels without empty image frames', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.goto('/tests/post-ui-e2e/index.html?challenge&layout=text&dir=rtl');
+  const card = page.getByTestId('challenge');
+  const first = card.getByRole('button', { name: names[0], exact: true });
+  const second = card.getByRole('button', { name: names[1], exact: true });
+  await expect(first).toBeVisible();
+  await expect(second).toBeVisible();
+  await expect(first.locator('img')).toHaveCount(0);
+  await expect(second.locator('img')).toHaveCount(0);
+  await expect(first.locator('div.bg-gray-50')).toHaveCount(0);
+  await first.click();
+  await expect(card.getByText('Your Final Choice', { exact: true })).toBeVisible();
+  await expect(card.locator('h4').filter({ hasText: names[0] })).toBeVisible();
+});
+
+test('image challenge retains option images', async ({ page }) => {
+  await page.goto('/tests/post-ui-e2e/index.html?challenge');
+  const card = page.getByTestId('challenge');
+  await expect(card.getByRole('button', { name: names[0], exact: true }).locator('img')).toHaveCount(1);
+  await expect(card.getByRole('button', { name: names[1], exact: true }).locator('img')).toHaveCount(1);
+});
+
+test('image challenge with hidden names keeps option text concealed', async ({ page }) => {
+  await page.goto('/tests/post-ui-e2e/index.html?challenge&legacyHidden');
+  const card = page.getByTestId('challenge');
+  const first = card.getByRole('button', { name: 'Image option 1', exact: true });
+  await expect(first.locator('img')).toHaveCount(1);
+  await expect(card.getByText(names[0], { exact: true })).toHaveCount(0);
+  await expect(card.getByText(names[1], { exact: true })).toHaveCount(0);
+  await first.click();
+  await expect(card.getByText('Your Final Choice', { exact: true })).toBeVisible();
+  await expect(card.getByText(names[0], { exact: true })).toHaveCount(0);
+});
+
+test('image challenge with hidden names and missing media uses neutral option labels', async ({ page }) => {
+  await page.goto('/tests/post-ui-e2e/index.html?challenge&layout=text&forceImageMode&legacyHidden');
+  const card = page.getByTestId('challenge');
+  const first = card.getByRole('button', { name: 'Image option 1', exact: true });
+  const second = card.getByRole('button', { name: 'Image option 2', exact: true });
+  await expect(first.getByText('Image option 1', { exact: true })).toBeVisible();
+  await expect(second.getByText('Image option 2', { exact: true })).toBeVisible();
+  await expect(first.locator('img')).toHaveCount(0);
+  await expect(second.locator('img')).toHaveCount(0);
+  await expect(card.getByText(names[0], { exact: true })).toHaveCount(0);
+  await expect(card.getByText(names[1], { exact: true })).toHaveCount(0);
+  await first.click();
+  await expect(card.getByText('Your Final Choice', { exact: true })).toBeVisible();
+  await expect(card.getByText('Image option 1', { exact: true })).toBeVisible();
+  await expect(card.getByText(names[0], { exact: true })).toHaveCount(0);
+});
+
+test('hidden image challenge keeps neutral option number through later rounds', async ({ page }) => {
+  await page.goto('/tests/post-ui-e2e/index.html?challenge&layout=text&forceImageMode&legacyHidden&threeOptions');
+  const card = page.getByTestId('challenge');
+  await card.getByRole('button', { name: 'Image option 1', exact: true }).click();
+  const third = card.getByRole('button', { name: 'Image option 3', exact: true });
+  await expect(third).toBeVisible();
+  await expect(third.locator('img')).toHaveCount(0);
+  await expect(card.getByText('Third hidden option', { exact: true })).toHaveCount(0);
+  await third.click();
+  await expect(card.getByText('Your Final Choice', { exact: true })).toBeVisible();
+  await expect(card.locator('h4')).toHaveText('Image option 3');
+  await expect(card.getByText('Third hidden option', { exact: true })).toHaveCount(0);
+});
+
 test('embedded repost media fills embedded post and caption has independent direction', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 900 });
   await page.goto('/tests/post-ui-e2e/index.html?repost&dir=ltr');
