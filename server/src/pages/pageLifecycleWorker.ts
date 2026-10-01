@@ -133,7 +133,7 @@ export async function processPagePurgeBatch(pageId: string, options: BatchOption
       if (job.phase === 'FINALIZE') {
         // Never derive the tombstone handle from the public Page ID: another
         // account could reserve that value and prevent erasure from finishing.
-        const anonymousHandle = 'deleted_' + randomBytes(16).toString('base64url');
+        const anonymousHandle = 'deleted_' + randomBytes(11).toString('hex');
         await tx.page.update({ where: { id: pageId }, data: { name: '', bio: '', description: '', category: 'other',
           country: '', city: '', website: null, links: [], publicEmail: null, publicPhone: null, cta: null,
           avatarMediaId: null, coverMediaId: null, ownerId: null, handle: anonymousHandle,

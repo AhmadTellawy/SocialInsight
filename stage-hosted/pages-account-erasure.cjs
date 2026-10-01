@@ -122,6 +122,7 @@ const erase = (userId, deleteOwnedPages) => db.$transaction(
   assert.equal(erasedPage.ownerId, null);
   stage = 'anonymized-handle';
   assert.ok(erasedPage.handle.startsWith('deleted_'));
+  assert.match(erasedPage.handle, /^deleted_[a-f0-9]{22}$/);
   assert.notEqual(erasedPage.handle, expiredHandle);
   assert.equal(await db.pageHandle.count({ where: { pageId: expiredPageId } }), 0);
   stage = 'purge-erases-case-and-comment-report';
