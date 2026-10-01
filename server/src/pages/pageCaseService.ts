@@ -51,6 +51,7 @@ export async function decidePageCase(caseId:string,actorId:string,raw:unknown){
     await requirePageStaff(tx,actorId);
     const initial=await tx.pageCase.findUnique({where:{id:caseId}});if(!initial)throw new PagePolicyError('PAGE_CASE_NOT_FOUND',404);
     const page=await lockPage(tx,initial.pageId);
+    if (!page.ownerId) throw new PagePolicyError('PAGE_NOT_FOUND',404);
     const current=await tx.pageCase.findUniqueOrThrow({where:{id:caseId}});
     if(current.status==='CLOSED')throw new PagePolicyError('PAGE_CASE_ALREADY_CLOSED',409);
     if(current.assigneeId&&current.assigneeId!==actorId)throw new PagePolicyError('PAGE_CASE_ASSIGNED_ELSEWHERE',409);

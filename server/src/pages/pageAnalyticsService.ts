@@ -5,6 +5,9 @@ import { requirePageCapability } from './pageService';
 
 export async function getPageAnalytics(pageId: string, userId: string, days: 7 | 30, exporting = false) {
   return prisma.$transaction(async tx => {
+    // Team changes take the same Page row lock. Keep authorization and the
+    // aggregate snapshot before any subsequent revocation can complete.
+    await tx.$queryRaw`SELECT id FROM "Page" WHERE id = ${pageId} FOR UPDATE`;
     const page = await tx.page.findUnique({ where: { id: pageId } });
     if (!page || page.purgedAt) throw new PagePolicyError('PAGE_NOT_FOUND',404);
     await requirePageCapability(tx,page,userId,exporting ? 'export' : 'analytics');

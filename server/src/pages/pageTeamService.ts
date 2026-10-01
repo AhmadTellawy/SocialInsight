@@ -125,7 +125,7 @@ export async function leavePageTeam(pageId: string, actorId: string) {
 
 export async function refreshPageSafety(tx: PageTx, pageId: string) {
   const page = await tx.page.findUniqueOrThrow({ where: { id: pageId }, include: { owner: { select: { status: true } } } });
-  const eligible = page.owner.status === 'ACTIVE' || !!await tx.pageMembership.findFirst({
+  const eligible = page.owner?.status === 'ACTIVE' || !!await tx.pageMembership.findFirst({
     where: { pageId, role: { in: ['ADMIN', 'EDITOR'] }, user: { status: 'ACTIVE' } }, select: { userId: true },
   });
   if (!eligible && !page.safetyHiddenAt) {

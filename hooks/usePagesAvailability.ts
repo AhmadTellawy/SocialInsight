@@ -4,7 +4,7 @@ import { API_BASE_URL, authFetch } from '../services/api';
 /** Navigation hint only; Page requests remain server-authorized. */
 export function usePagesAvailability(viewerId?: string, enabled = true) {
   const sessionKey = `${viewerId || 'guest'}:${localStorage.getItem('si_token') || ''}`;
-  const [result, setResult] = useState({ sessionKey: '', available: false, loading: true });
+  const [result, setResult] = useState({ sessionKey: '', available: false, loading: true, error: false });
   const [revision, setRevision] = useState(0);
   const retry = useCallback(() => setRevision(value => value + 1), []);
   useEffect(() => {
@@ -18,14 +18,17 @@ export function usePagesAvailability(viewerId?: string, enabled = true) {
         const response = await authFetch(`${API_BASE_URL}/pages/availability`, {
           signal: request.signal, timeoutMs: 10_000, cache: 'no-store'
         });
-        const body = response.ok ? await response.json() : null;
-        if (active && !request.signal.aborted) setResult({ sessionKey, available: body?.available === true, loading: false });
+        if (!response.ok) throw new Error('Pages availability could not be checked');
+        const body = await response.json();
+        if (active && !request.signal.aborted) setResult({ sessionKey, available: body?.available === true, loading: false, error: false });
       } catch {
-        if (active && !request.signal.aborted) setResult({ sessionKey, available: false, loading: false });
+        // A transport failure is not the feature-disabled response. Keep the
+        // entry point reachable so the Page screen can show its retry state.
+        if (active && !request.signal.aborted) setResult(previous => ({ sessionKey, available: previous.sessionKey === sessionKey ? previous.available || previous.error : true, loading: false, error: true }));
       }
     };
     const onFocus = () => {
-      setResult({ sessionKey, available: false, loading: true });
+      setResult(previous => ({ sessionKey, available: previous.sessionKey === sessionKey && previous.available, loading: true, error: false }));
       void refresh();
     };
     const onVisible = () => { if (document.visibilityState === 'visible') onFocus(); };
@@ -47,5 +50,5 @@ export function usePagesAvailability(viewerId?: string, enabled = true) {
     };
   }, [sessionKey, enabled, revision, retry]);
   const current = enabled && result.sessionKey === sessionKey;
-  return { available: current && result.available, loading: enabled && (!current || result.loading), retry };
+  return { available: current && result.available, loading: enabled && (!current || result.loading), error: current && result.error, retry };
 }

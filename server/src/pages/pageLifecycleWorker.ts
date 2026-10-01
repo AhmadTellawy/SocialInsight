@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { Buffer } from 'node:buffer';
 import { Prisma } from '@prisma/client';
 import prisma from '../prisma';
 import { purgeMediaAsset } from '../services/mediaService';
@@ -10,7 +11,7 @@ import { pageErasureHeld, pageLifecycleLimit, pageRetentionCutoff, processPageRe
 const phases = ['NOTIFICATIONS', 'ANSWERS', 'RESPONSES', 'COMMENT_LIKES', 'COMMENT_MENTIONS',
   'COMMENT_HASHTAGS', 'COMMENTS', 'OPTIONS', 'QUESTIONS', 'SECTIONS', 'SAVES', 'HIDES', 'LIKES',
   'VIEWS', 'POST_MENTIONS', 'POST_HASHTAGS', 'POST_TAGS', 'POST_MEDIA', 'INTERACTIONS', 'REPORTS', 'POSTS',
-  'MEMBERS', 'FOLLOWS', 'BLOCKS', 'INVITATIONS', 'TRANSFERS', 'EVENTS', 'MEDIA', 'MEDIA_ROWS', 'FINALIZE'] as const;
+  'MEMBERS', 'FOLLOWS', 'BLOCKS', 'INVITATIONS', 'TRANSFERS', 'EVENTS', 'MEDIA', 'MEDIA_ROWS', 'HANDLES', 'FINALIZE'] as const;
 type Phase = typeof phases[number];
 type Job = { pageId: string; phase: Phase; attempts: number; availableAt: Date; completedAt: Date | null };
 type BatchOptions = { limit?: number; now?: Date; purgeAsset?: (id: string) => Promise<void> };
@@ -95,6 +96,7 @@ async function erasePhase(tx: PageTx, job: Job, size: number, now: Date): Promis
     case 'TRANSFERS': return erase(tx, 'PageOwnershipTransfer', Prisma.sql`t."pageId" = ${job.pageId}`, size);
     case 'EVENTS': return erase(tx, 'PageEvent', Prisma.sql`t."pageId" = ${job.pageId}`, size);
     case 'MEDIA_ROWS': return erase(tx, 'MediaAsset', Prisma.sql`t."pageId" = ${job.pageId} AND t.status = 'DELETED'`, size);
+    case 'HANDLES': return erase(tx, 'PageHandle', Prisma.sql`t."pageId" = ${job.pageId}`, size);
     default: throw new Error('PAGE_PURGE_UNKNOWN_PHASE');
   }
 }
@@ -114,9 +116,11 @@ export async function processPagePurgeBatch(pageId: string, options: BatchOption
         return { state: 'held' as const };
       }
       if (job.phase === 'FINALIZE') {
+        const anonymousHandle = 'deleted_' + Buffer.from(pageId.replace(/-/g, ''), 'hex').toString('base64url');
         await tx.page.update({ where: { id: pageId }, data: { name: '', bio: '', description: '', category: 'other',
           country: '', city: '', website: null, links: [], publicEmail: null, publicPhone: null, cta: null,
-          avatarMediaId: null, coverMediaId: null, legalHoldUntil: null, legalHoldReason: null } });
+          avatarMediaId: null, coverMediaId: null, ownerId: null, handle: anonymousHandle,
+          legalHoldUntil: null, legalHoldReason: null } });
         await pageAudit(tx, pageId, null, 'PAGE_PURGE_COMPLETED');
         await tx.$executeRaw`UPDATE "PagePurgeJob" SET "completedAt" = ${now}, "updatedAt" = ${now}, "leaseToken" = NULL, "lastErrorCode" = NULL WHERE "pageId" = ${pageId}`;
         return { state: 'completed' as const };

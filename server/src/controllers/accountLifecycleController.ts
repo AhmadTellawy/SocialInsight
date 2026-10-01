@@ -85,11 +85,15 @@ export async function exportAccount(req: Request, res: Response) {
     res.set({ 'Cache-Control': 'private, no-store', 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': 'attachment; filename="opiniup-account.json"', 'X-Content-Type-Options': 'nosniff' });
     const write = async (value: string) => { if (res.destroyed) throw new Error('Client closed'); if (!res.write(value)) await once(res, 'drain'); };
     await write(JSON.stringify({ formatVersion: 1, exportedAt: new Date().toISOString(), profile }).slice(0,-1));
-    const ownedQuestion = { OR: [{ post: { authorId: id } }, { section: { post: { authorId: id } } }] };
+    // Authorship is not ownership of Page content. A former Page editor must
+    // never receive its drafts or questionnaire graph in a personal export.
+    const personalPost = { authorId: id, pageId: null };
+    const ownedQuestion = { OR: [{ post: personalPost }, { section: { post: personalPost } }] };
+    const nonPageQuestion = { OR: [{ post: { pageId: null } }, { section: { post: { pageId: null } } }] };
     const datasets: Array<[string, any, any, string?]> = [
       ['handleHistory', prisma.handleAlias, { where: { userId: id }, select: { handle: true, createdAt: true } }, 'handle'],
       ['pendingSecurityNotifications', prisma.securityEmailOutbox, { where: { userId: id }, select: { id: true, recipient: true, kind: true, createdAt: true } }],
-      ['posts', prisma.post, { where: { authorId: id }, select: {
+      ['posts', prisma.post, { where: personalPost, select: {
         id: true, title: true, description: true, type: true, status: true, createdAt: true, updatedAt: true, expiresAt: true,
         category: true, targetAudience: true, groupId: true, targetedGroups: { select: { id: true } },
         pollChoiceType: true, optionPresentation: true, showOptionNames: true, sharedFromId: true, sharedCaption: true,
@@ -98,12 +102,12 @@ export async function exportAccount(req: Request, res: Response) {
       } }],
       // Export the authored questionnaire as separate bounded datasets; never
       // include other participants' response rows, device IDs or vote records.
-      ['sections', prisma.section, { where: { post: { authorId: id } }, select: { id: true, postId: true, title: true, order: true } }],
+      ['sections', prisma.section, { where: { post: personalPost }, select: { id: true, postId: true, title: true, order: true } }],
       ['questions', prisma.question, { where: ownedQuestion, select: { id: true, postId: true, sectionId: true, text: true, type: true, order: true, isRequired: true, imageMediaId: true, optionPresentation: true, showOptionNames: true } }],
       ['options', prisma.option, { where: { question: ownedQuestion }, select: { id: true, questionId: true, text: true, order: true, isCorrect: true, isRating: true, ratingValue: true, imageMediaId: true, withFollowUp: true, followUpLabel: true, isUserAdded: true } }],
-      ['contributedOptions', prisma.option, { where: { addedByUserId: id, isUserAdded: true }, select: { id: true, questionId: true, text: true, order: true, imageMediaId: true } }],
-      ['postMedia', prisma.postMedia, { where: { post: { authorId: id } }, select: { id: true, postId: true, mediaAssetId: true, sortOrder: true } }],
-      ['media', prisma.mediaAsset, { where: { ownerId: id }, select: { id: true, purpose: true, status: true, sourceMime: true, sourceWidth: true, sourceHeight: true, aspectRatio: true, altText: true, createdAt: true } }],
+      ['contributedOptions', prisma.option, { where: { addedByUserId: id, isUserAdded: true, question: nonPageQuestion }, select: { id: true, questionId: true, text: true, order: true, imageMediaId: true } }],
+      ['postMedia', prisma.postMedia, { where: { post: personalPost }, select: { id: true, postId: true, mediaAssetId: true, sortOrder: true } }],
+      ['media', prisma.mediaAsset, { where: { ownerId: id, pageId: null }, select: { id: true, purpose: true, status: true, sourceMime: true, sourceWidth: true, sourceHeight: true, aspectRatio: true, altText: true, createdAt: true } }],
       ['comments', prisma.comment, { where: { userId: id }, select: { id: true, postId: true, text: true, createdAt: true } }],
       ['responses', prisma.response, { where: { userId: id }, select: { id: true, postId: true, timestamp: true, isAnonymous: true, answers: { select: { questionId: true, optionId: true, textValue: true } } } }],
       ['follows', prisma.follow, { where: { followerId: id }, select: { id: true, followingId: true, status: true, createdAt: true } }],

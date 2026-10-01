@@ -20,6 +20,8 @@ import { buildVisiblePublishedPostWhere } from '../services/postVisibilityServic
 import { hasPageCapability, mayManagePageRole, PageRole } from './pagePolicy';
 import { getPageManagedPostResults } from '../controllers/postController';
 import { pageRole } from './pageService';
+import { lockPage, requirePageCapability, PageTx } from './pageService';
+import { PageCapability } from './pagePolicy';
 import { MediaValidationError } from '../services/mediaProcessor';
 
 const router = Router();
@@ -33,6 +35,12 @@ const cursorArgs = (value: unknown): { cursor?: { id: string }; skip?: number } 
   typeof value === 'string' && value ? { cursor: { id: uuid.parse(value) }, skip: 1 } : {};
 const handle = (fn: (req: Request, res: Response) => Promise<unknown>) =>
   (req: Request, res: Response, next: NextFunction) => { Promise.resolve(fn(req, res)).catch(next); };
+const managedRead = <T>(pageId: string, actorId: string, capability: PageCapability,
+  work: (tx: PageTx, role: PageRole) => Promise<T>) => pageTransaction(async tx => {
+    const page = await lockPage(tx, pageId);
+    const role = await requirePageCapability(tx, page, actorId, capability);
+    return work(tx, role);
+  }, 'ReadCommitted');
 
 router.use(optionalAuth);
 router.use((_req, res, next) => {
@@ -118,9 +126,11 @@ router.get('/cases/:id',requireAuth,handle(async(req,res)=>{
   throw new PagePolicyError('PAGE_CASE_NOT_FOUND',404);
 }));
 router.get('/manage/:id/cases',requireAuth,handle(async(req,res)=>{
-  const page=await getManagedPage(id(req),user(req));if(page.role!=='OWNER')throw new PagePolicyError('PAGE_PERMISSION_DENIED',403);
-  const limit=pageLimit(req.query.limit);const rows=await prisma.pageCase.findMany({where:{pageId:id(req),status:'CLOSED'},orderBy:[{createdAt:'desc'},{id:'desc'}],...cursorArgs(req.query.cursor),take:limit+1});
-  return res.json({items:rows.slice(0,limit).map(managerCaseDto),nextCursor:nextCursor(rows,limit)});
+  return res.json(await managedRead(id(req),user(req),'readManagement',async(tx,role)=>{
+    if(role!=='OWNER')throw new PagePolicyError('PAGE_PERMISSION_DENIED',403);
+    const limit=pageLimit(req.query.limit);const rows=await tx.pageCase.findMany({where:{pageId:id(req),status:'CLOSED'},orderBy:[{createdAt:'desc'},{id:'desc'}],...cursorArgs(req.query.cursor),take:limit+1});
+    return {items:rows.slice(0,limit).map(managerCaseDto),nextCursor:nextCursor(rows,limit)};
+  }));
 }));
 router.post('/:id/cases',requireAuth,caseLimiter,handle(async(req,res)=>res.status(201).json(await openPageCase(id(req),user(req),req.body))));
 router.post('/staff/cases/:id/assign',requireAuth,handle(async(req,res)=>{
@@ -147,22 +157,26 @@ router.get('/transfers', requireAuth, handle(async (req, res) => {
 router.post('/transfers/:id/:action', requireAuth, handle(async (req, res) =>
   res.json(await respondPageTransfer(id(req), user(req), z.enum(['accept', 'reject', 'withdraw']).parse(req.params.action)))));
 
-router.get('/manage/:id', requireAuth, handle(async (req, res) => res.json(await getManagedPage(id(req), user(req)))));
+router.get('/manage/:id', requireAuth, handle(async (req, res) => res.json(await managedRead(id(req),user(req),'readManagement',
+  async(tx,role)=>pageManagementDto(await tx.page.findUniqueOrThrow({where:{id:id(req)}}),role)))));
 router.get('/manage/:id/content/:postId/results',requireAuth,getPageManagedPostResults);
 router.get('/manage/:id/requests',requireAuth,handle(async(req,res)=>{
-  const managed=await getManagedPage(id(req),user(req));const kind=z.enum(['invitation','transfer']).parse(req.query.kind);
-  if(kind==='transfer'?managed.role!=='OWNER':!managed.capabilities.includes('manageTeam'))throw new PagePolicyError('PAGE_PERMISSION_DENIED',403);
-  const args={where:{pageId:id(req)},orderBy:[{createdAt:'desc' as const},{id:'desc' as const}],take:51,...cursorArgs(req.query.cursor)};
-  const rows=kind==='transfer'?await prisma.pageOwnershipTransfer.findMany(args):await prisma.pageInvitation.findMany(args);
-  const people=await prisma.user.findMany({where:{id:{in:rows.map(row=>row.recipientId)}},select:{id:true,name:true,handle:true}});
-  return res.json({items:rows.slice(0,50).map(row=>({id:row.id,status:row.status==='PENDING'&&row.expiresAt<=new Date()?'EXPIRED':row.status,role:'role'in row?row.role:undefined,expiresAt:row.expiresAt,recipient:people.find(person=>person.id===row.recipientId)||null,
-    canWithdraw:row.status==='PENDING'&&row.expiresAt>new Date()&&(kind==='transfer'||mayManagePageRole(managed.role as PageRole,('role'in row?row.role:'OWNER') as PageRole))})),nextCursor:nextCursor(rows,50)});
+  const kind=z.enum(['invitation','transfer']).parse(req.query.kind);
+  return res.json(await managedRead(id(req),user(req),kind==='transfer'?'readManagement':'manageTeam',async(tx,role)=>{
+    if(kind==='transfer'&&role!=='OWNER')throw new PagePolicyError('PAGE_PERMISSION_DENIED',403);
+    const args={where:{pageId:id(req)},orderBy:[{createdAt:'desc' as const},{id:'desc' as const}],take:51,...cursorArgs(req.query.cursor)};
+    const rows=kind==='transfer'?await tx.pageOwnershipTransfer.findMany(args):await tx.pageInvitation.findMany(args);
+    const people=await tx.user.findMany({where:{id:{in:rows.map(row=>row.recipientId)}},select:{id:true,name:true,handle:true}});
+    return {items:rows.slice(0,50).map(row=>({id:row.id,status:row.status==='PENDING'&&row.expiresAt<=new Date()?'EXPIRED':row.status,role:'role'in row?row.role:undefined,expiresAt:row.expiresAt,recipient:people.find(person=>person.id===row.recipientId)||null,
+      canWithdraw:row.status==='PENDING'&&row.expiresAt>new Date()&&(kind==='transfer'||mayManagePageRole(role,('role'in row?row.role:'OWNER') as PageRole))})),nextCursor:nextCursor(rows,50)};
+  }));
 }));
 router.get('/manage/:id/blocks',requireAuth,handle(async(req,res)=>{
-  const managed=await getManagedPage(id(req),user(req));if(!managed.capabilities.includes('block'))throw new PagePolicyError('PAGE_PERMISSION_DENIED',403);
-  const rows=await prisma.pageBlock.findMany({where:{pageId:id(req),direction:'PAGE_TO_USER'},select:{userId:true,user:{select:{id:true,name:true,handle:true}}},orderBy:{userId:'asc'},take:51,
-    ...(req.query.cursor?{cursor:{pageId_userId_direction:{pageId:id(req),userId:uuid.parse(req.query.cursor),direction:'PAGE_TO_USER'}},skip:1}:{})});
-  return res.json({items:rows.slice(0,50),nextCursor:rows.length>50?rows[49].userId:null});
+  return res.json(await managedRead(id(req),user(req),'block',async tx=>{
+    const rows=await tx.pageBlock.findMany({where:{pageId:id(req),direction:'PAGE_TO_USER'},select:{userId:true,user:{select:{id:true,name:true,handle:true}}},orderBy:{userId:'asc'},take:51,
+      ...(req.query.cursor?{cursor:{pageId_userId_direction:{pageId:id(req),userId:uuid.parse(req.query.cursor),direction:'PAGE_TO_USER'}},skip:1}:{})});
+    return {items:rows.slice(0,50),nextCursor:rows.length>50?rows[49].userId:null};
+  }));
 }));
 router.get('/manage/:id/analytics', requireAuth, handle(async (req,res) =>
   res.json(await getPageAnalytics(id(req),user(req),req.query.days === '7' ? 7 : 30))));
@@ -193,31 +207,31 @@ router.patch('/manage/:id/team/:userId', requireAuth, handle(async (req, res) =>
 }));
 router.post('/manage/:id/leave', requireAuth, handle(async (req, res) => res.json(await leavePageTeam(id(req), user(req)))));
 router.get('/manage/:id/team', requireAuth, handle(async (req, res) => {
-  const managed = await getManagedPage(id(req), user(req));
-  if (!managed.capabilities.includes('manageTeam')) throw new PagePolicyError('PAGE_PERMISSION_DENIED',403);
-  const rows = await prisma.pageMembership.findMany({ where: { pageId: id(req) },
-    select: { userId: true, role: true, user: { select: { id: true, name: true, handle: true, status: true,emailVerifiedAt:true } } },
-    orderBy: { userId: 'asc' }, take: 51,
-    ...(req.query.cursor ? { cursor: { pageId_userId: { pageId: id(req), userId: uuid.parse(req.query.cursor) } }, skip: 1 } : {}) });
-  const page = await prisma.page.findUniqueOrThrow({ where: { id: id(req) }, select: { owner: { select: { id: true, name: true, handle: true, status: true } } } });
-  return res.json({ owner: page.owner, items: rows.slice(0,50).map(({user:person,...row})=>({...row,user:{id:person.id,name:person.name,handle:person.handle,status:person.status,emailConfirmed:!!person.emailVerifiedAt}})), nextCursor: rows.length > 50 ? rows[49].userId : null });
+  return res.json(await managedRead(id(req),user(req),'manageTeam',async tx=>{
+    const rows = await tx.pageMembership.findMany({ where: { pageId: id(req) },
+      select: { userId: true, role: true, user: { select: { id: true, name: true, handle: true, status: true,emailVerifiedAt:true } } },
+      orderBy: { userId: 'asc' }, take: 51,
+      ...(req.query.cursor ? { cursor: { pageId_userId: { pageId: id(req), userId: uuid.parse(req.query.cursor) } }, skip: 1 } : {}) });
+    const page = await tx.page.findUniqueOrThrow({ where: { id: id(req) }, select: { owner: { select: { id: true, name: true, handle: true, status: true } } } });
+    return { owner: page.owner, items: rows.slice(0,50).map(({user:person,...row})=>({...row,user:{id:person.id,name:person.name,handle:person.handle,status:person.status,emailConfirmed:!!person.emailVerifiedAt}})), nextCursor: rows.length > 50 ? rows[49].userId : null };
+  }));
 }));
 router.get('/manage/:id/team-candidate', requireAuth, handle(async (req, res) => {
-  const managed = await getManagedPage(id(req), user(req));
-  if (!managed.capabilities.includes('manageTeam')) throw new PagePolicyError('PAGE_PERMISSION_DENIED',403);
   const handle = queryText(req.query.handle).replace(/^@/, '').toLowerCase();
-  const candidate = await prisma.user.findFirst({ where: { handle, status: 'ACTIVE',
-    blocking: { none: { blockedId: user(req) } }, blockedBy: { none: { blockerId: user(req) } },
-    pageBlocks: { none: { pageId: id(req) } } }, select: { id: true, name: true, handle: true } });
-  return res.json({ candidate });
+  return res.json(await managedRead(id(req),user(req),'manageTeam',async tx=>{
+    const candidate = await tx.user.findFirst({ where: { handle, status: 'ACTIVE', searchVisibility: true,
+      blocking: { none: { blockedId: user(req) } }, blockedBy: { none: { blockerId: user(req) } },
+      pageBlocks: { none: { pageId: id(req) } } }, select: { id: true, name: true, handle: true } });
+    return { candidate };
+  }));
 }));
 router.get('/manage/:id/audit', requireAuth, handle(async (req, res) => {
-  const managed = await getManagedPage(id(req), user(req));
-  if (!managed.capabilities.includes('audit')) throw new PagePolicyError('PAGE_PERMISSION_DENIED',403);
-  const limit = pageLimit(req.query.limit);
-  const rows = await prisma.pageAuditEvent.findMany({ where: { pageId: id(req), action: { notIn: ['FOLLOW_CHANGED','CASE_OPENED','STAFF_CASE_DECIDED'] } },
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], ...cursorArgs(req.query.cursor), take: limit + 1 });
-  return res.json({ items: rows.slice(0,limit), nextCursor: nextCursor(rows,limit) });
+  return res.json(await managedRead(id(req),user(req),'audit',async tx=>{
+    const limit = pageLimit(req.query.limit);
+    const rows = await tx.pageAuditEvent.findMany({ where: { pageId: id(req), action: { notIn: ['FOLLOW_CHANGED','CASE_OPENED','STAFF_CASE_DECIDED'] } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], ...cursorArgs(req.query.cursor), take: limit + 1 });
+    return { items: rows.slice(0,limit), nextCursor: nextCursor(rows,limit) };
+  }));
 }));
 router.get('/:id/follow', requireAuth, handle(async (req, res) => {
   const page = await prisma.page.findUnique({ where: { id: id(req) } });

@@ -1094,8 +1094,8 @@ model AccountCleanupJob {
 
 model Page {
   id                    String   @id @default(uuid())
-  ownerId               String
-  owner                 User     @relation("PageOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  ownerId               String?
+  owner                 User?    @relation("PageOwner", fields: [ownerId], references: [id], onDelete: Restrict)
   handle                String   @unique @db.VarChar(30)
   name                  String   @db.VarChar(100)
   category              String

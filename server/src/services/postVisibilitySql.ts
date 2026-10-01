@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { pagesEnabled } from '../pages/pageFeature';
+import { isPageTestUser, pagesEnabled } from '../pages/pageFeature';
 import { buildFeedPostScalarSelect, FeedCursor, MAX_FEED_LIMIT } from './postFeedService';
 
 // Only these internal aliases and scalar names enter SQL text. Every viewer,
@@ -26,7 +26,8 @@ function baseVisibility(alias: PostAlias, viewerId?: string | null): Prisma.Sql 
   const groups = Prisma.sql`EXISTS (SELECT 1 FROM "Group" g WHERE g."isDeleted" = FALSE
     AND (g."isPublic" = TRUE OR ${memberOfGroup})
     AND (g.id = ${c('groupId')} OR EXISTS (SELECT 1 FROM "_PostTargetGroups" tg WHERE tg."B" = ${c('id')} AND tg."A" = g.id)))`;
-  const personal = Prisma.sql`(${c('pageId')} IS NULL AND ${unblocked} AND (
+  const personal = Prisma.sql`(${c('pageId')} IS NULL AND EXISTS (SELECT 1 FROM "users" author_user
+    WHERE author_user.id = ${c('authorId')} AND author_user.status = 'ACTIVE') AND ${unblocked} AND (
     (${c('groupId')} IS NULL AND ${noTargets} AND
       (${publicAudience} OR ${own} OR (${c('targetAudience')} ILIKE 'Followers' AND ${followsAuthor})) AND ${privacy(false)})
     OR ${groups}
@@ -42,6 +43,7 @@ function baseVisibility(alias: PostAlias, viewerId?: string | null): Prisma.Sql 
   const pageUnblocked = viewerId ? Prisma.sql`NOT EXISTS (SELECT 1 FROM "PageBlock" pb WHERE pb."pageId" = pg.id AND pb."userId" = ${viewerId})` : Prisma.sql`TRUE`;
   const page = pagesEnabled(viewerId) ? Prisma.sql`(${c('pageId')} IS NOT NULL AND ${c('groupId')} IS NULL AND ${noTargets}
     AND EXISTS (SELECT 1 FROM "Page" pg WHERE pg.id = ${c('pageId')}
+      AND ${viewerId && isPageTestUser(viewerId) ? Prisma.sql`TRUE` : Prisma.sql`pg."isTestFixture" = FALSE`}
       AND pg."publicationState" = 'PUBLISHED' AND pg."platformState" <> 'SUSPENDED'
       AND pg."safetyHiddenAt" IS NULL AND pg."deletionRequestedAt" IS NULL AND pg."purgedAt" IS NULL
       AND (${activeOwner} OR ${activeManager}) AND ${pageUnblocked}

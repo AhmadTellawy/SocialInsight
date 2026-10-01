@@ -17,7 +17,7 @@ export async function notifyPagePostInteraction(input:PageInteraction,transactio
     if(!pageId)return false;
     if(input.kind==='comment_like'&&input.commentId){const comment=await tx.comment.findUnique({where:{id:input.commentId},select:{pageId:true}});if(!comment?.pageId)return false;}
     const page=lockedPage||await lockPageForInteraction(tx,pageId);
-    if(!pagesEnabled(input.actorId)||page.purgedAt)return true;
+    if(!pagesEnabled(input.actorId)||page.purgedAt||!page.ownerId)return true;
     // Notification suppression never redirects a Page interaction to the historical publishing employee.
     try{await assertPagePublic(tx,page,input.actorId);}catch(error){if(error instanceof PagePolicyError)return true;throw error;}
     await tx.pageEvent.create({data:{pageId:page.id,recipientId:page.ownerId,kind:'PAGE_ACTIVITY',targetId:input.postId,
@@ -30,7 +30,7 @@ export async function notifyPagePostInteraction(input:PageInteraction,transactio
 export async function expandPageActivity(tx:PageTx,event:any):Promise<boolean>{
   const context=event.context as PageInteraction&{cursor?:string};
   const page=await tx.page.findUnique({where:{id:event.pageId},select:{ownerId:true,purgedAt:true}});
-  if(!page||page.purgedAt)return true;
+  if(!page||page.purgedAt||!page.ownerId)return true;
   const roles=context.kind==='vote'?['ADMIN','EDITOR','ANALYST']:['ADMIN','EDITOR'];
   const parent=context.parentCommentId?await tx.comment.findUnique({where:{id:context.parentCommentId},select:{userId:true,pageId:true}}):null;
   const people=await tx.user.findMany({where:{status:'ACTIVE',...(context.cursor?{id:{gt:context.cursor}}:{}),OR:[{id:page.ownerId},{pageMemberships:{some:{pageId:event.pageId,role:{in:roles}}}},...(parent&&!parent.pageId?[{id:parent.userId}]:[])]},select:{id:true},orderBy:{id:'asc'},take:50});

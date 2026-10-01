@@ -42,7 +42,7 @@ export async function purgeAccount(tx: Prisma.TransactionClient, id: string, opt
   await tx.mediaAsset.updateMany({ where: { ownerId: id, pageId: null, status: { not: 'DELETED' } }, data: { status: 'PENDING_DELETE' } });
   // Only published contributions are retained. Remove the complete private
   // questionnaire graph, including rows protected by restrictive foreign keys.
-  const unpublished = await tx.post.findMany({ where: { authorId: id, status: { not: 'PUBLISHED' } }, select: { id: true } });
+  const unpublished = await tx.post.findMany({ where: { authorId: id, pageId: null, status: { not: 'PUBLISHED' } }, select: { id: true } });
   const unpublishedIds = unpublished.map(post => post.id);
   if (unpublishedIds.length) {
     const ownedQuestion = { OR: [{ postId: { in: unpublishedIds } }, { section: { postId: { in: unpublishedIds } } }] };

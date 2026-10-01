@@ -31,6 +31,23 @@ test('feature gate changes SQL per call and allowlist does not enable other view
   }
 });
 
+test('direct and shared reads require an active personal author and keep Page test fixtures pilot-only', () => {
+  const enabled = process.env.PAGES_ENABLED, allowlisted = process.env.PAGES_TEST_USERS;
+  try {
+    process.env.PAGES_ENABLED = 'true'; process.env.PAGES_TEST_USERS = 'pilot-user';
+    const publicRead = buildVisiblePostSql({ limit: 1 }).text;
+    assert.equal((publicRead.match(/author_user\.status = 'ACTIVE'/g) || []).length, 2);
+    assert.equal((publicRead.match(/pg\."isTestFixture" = FALSE/g) || []).length, 2);
+    const pilotRead = buildVisiblePostSql({ viewerId: 'pilot-user', limit: 1 }).text;
+    assert.equal((pilotRead.match(/pg\."isTestFixture" = FALSE/g) || []).length, 0);
+    const outsiderRead = buildVisiblePostSql({ viewerId: 'ordinary-user', limit: 1 }).text;
+    assert.equal((outsiderRead.match(/pg\."isTestFixture" = FALSE/g) || []).length, 2);
+  } finally {
+    if (enabled === undefined) delete process.env.PAGES_ENABLED; else process.env.PAGES_ENABLED = enabled;
+    if (allowlisted === undefined) delete process.env.PAGES_TEST_USERS; else process.env.PAGES_TEST_USERS = allowlisted;
+  }
+});
+
 test('empty identifier sets fail closed and unbounded limits are rejected', () => {
   assert.match(buildVisiblePostSql({ids:[],limit:1}).text, /AND \(FALSE\)/);
   for (const limit of [0,-1,32,1.5,Infinity,NaN]) assert.throws(() => buildVisiblePostSql({limit}));

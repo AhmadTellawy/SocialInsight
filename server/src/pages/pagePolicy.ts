@@ -73,6 +73,10 @@ export const assertPageDestination = (input: {
       (typeof input.targetAudience === 'string' && /groups/i.test(input.targetAudience))) {
     throw new PagePolicyError('PAGE_GROUP_DESTINATION_FORBIDDEN');
   }
+  if (input.targetAudience !== undefined && input.targetAudience !== null && input.targetAudience !== '' &&
+      (typeof input.targetAudience !== 'string' || !['public', 'followers'].includes(input.targetAudience.toLowerCase()))) {
+    throw new PagePolicyError('PAGE_AUDIENCE_FORBIDDEN');
+  }
 };
 
 export const pagePublicWhere = (includeTestFixtures = false) => ({

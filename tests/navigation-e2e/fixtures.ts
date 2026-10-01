@@ -17,7 +17,7 @@ export const post = { id: 'navigation-post', title: 'Navigation fixture poll', t
 export const otherProfile = { ...profile, id: 'other-navigation-user', handle: 'other_navigation_user', name: 'Other Navigation Fixture', isPrivate: false, isFollowing: false, followStatus: 'NONE' };
 export const privateProfile = { ...otherProfile, id: 'private-navigation-user', handle: 'private_navigation_user', name: 'Private Navigation Fixture', isPrivate: true };
 type State = { calls: string[]; unexpected: string[]; errors: string[]; guest?: boolean; notifications?: Array<Record<string, unknown>>; denyGroupMembers?: boolean; holdProfile?: Promise<void>; profileRequested?: () => void;
-  pages?: { page?: Record<string, any>; failManageOnce?: boolean } };
+  pages?: { page?: Record<string, any>; failManageOnce?: boolean; failAvailabilityOnce?: boolean } };
 const json = (r: Route, value: unknown, status = 200) => r.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
 
 async function install(page: Page, state: State, baseURL: string, language: 'ar' | 'en') {
@@ -44,7 +44,7 @@ async function install(page: Page, state: State, baseURL: string, language: 'ar'
     // Vite preview throws before its SPA fallback for malformed URI encoding.
     // Serve the unchanged production entry document only for this router-guard
     // fixture; hosting-server malformed-URL behavior requires separate live smoke.
-    if (request.isNavigationRequest() && p === '/post/%E0%A4%A') {
+    if (request.isNavigationRequest() && (p === '/post/%E0%A4%A' || p === '/pages/%E0%A4%A')) {
       return r.fulfill({ path: path.resolve('dist/index.html'), contentType: 'text/html' });
     }
     if (!p.startsWith('/api/')) return r.continue();
@@ -52,7 +52,10 @@ async function install(page: Page, state: State, baseURL: string, language: 'ar'
     if (method === 'GET' && p === '/api/auth/session') return state.guest
       ? json(r, { code: 'AUTH_REQUIRED' }, 401) : json(r, { user: { ...profile, language } });
     if (method === 'GET' && p === '/api/auth/challenge') return json(r, { code: 'AUTH_CHALLENGE_EXPIRED' }, 401);
-    if (method === 'GET' && p === '/api/pages/availability') return json(r, { available: !!state.pages });
+    if (method === 'GET' && p === '/api/pages/availability') {
+      if (state.pages?.failAvailabilityOnce) { state.pages.failAvailabilityOnce = false; return json(r, { code: 'TEMPORARY_FAILURE' }, 503); }
+      return json(r, { available: !!state.pages });
+    }
     if (state.pages?.page && method === 'GET' && p === `/api/pages-seo/${state.pages.page.handle}`)
       return json(r, { title: `${state.pages.page.name} | Opiniup`, description: state.pages.page.bio,
         canonicalUrl: `${origin}/pages/${state.pages.page.handle}`, imageUrl: `${origin}/logo.png` });

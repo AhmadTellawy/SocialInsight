@@ -51,6 +51,9 @@ test('Page destination rejects primary ids, JSON ids, nested relations and legac
   }
   assert.doesNotThrow(() => assertPageDestination({ targetAudience: 'Public', targetGroups: [] }));
   assert.doesNotThrow(() => assertPageDestination({ targetAudience: 'Followers', targetGroups: '[]', groupId: null }));
+  for (const audience of ['Custom Audience', 'Custom Domain', 'Private', 7]) {
+    assert.throws(() => assertPageDestination({ targetAudience: audience }), /PAGE_AUDIENCE_FORBIDDEN/);
+  }
 });
 
 test('handles are normalized before reservation and disallow deceptive Unicode and route names', () => {

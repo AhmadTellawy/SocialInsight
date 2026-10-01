@@ -52,3 +52,21 @@ test('saved Page draft can recover from a transient management read failure', as
   await expect(page.getByRole('heading', { name: ar ? 'أنشئ صفحتك' : 'Create your page' })).toBeVisible();
   await expect(page.getByText(ar ? 'حُفظت المسودة' : 'Your draft is saved', { exact: false })).toBeVisible();
 });
+
+test('temporary availability failure keeps the Pages entry reachable', async ({ page, boot, state }, testInfo) => {
+  state.pages = { failAvailabilityOnce: true };
+  const ar = testInfo.project.name.startsWith('ar');
+  await boot('/');
+  await expect(page.getByRole('button', { name: ar ? 'الصفحات' : 'Pages', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: ar ? 'الصفحات' : 'Pages', exact: true }).click();
+  await expect(page).toHaveURL('/pages');
+});
+
+test('malformed public Page path shows a recoverable unavailable state', async ({ page, boot, state }, testInfo) => {
+  state.pages = {};
+  const ar = testInfo.project.name.startsWith('ar');
+  await boot('/pages/%E0%A4%A');
+  await expect(page.getByText(ar ? 'الصفحة غير متاحة' : 'Page unavailable', { exact: true })).toBeVisible();
+  await page.getByRole('link', { name: ar ? 'استكشف الصفحات' : 'Browse pages' }).click();
+  await expect(page).toHaveURL('/pages');
+});

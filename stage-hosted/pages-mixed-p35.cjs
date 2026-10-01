@@ -105,7 +105,7 @@ async function fixtures() {
     const email = `${prefix}_${index}@load.example.test`;
     const user = await prisma.user.create({ data: { name: `${prefix} user ${index}`, handle: `${prefix}_${index}`,
       email, passwordHash, status: 'ACTIVE', emailVerifiedAt: new Date(), isPrivate: false, mediaPrivacyTarget: false } });
-    const client = { index, id: user.id, ip: `127.1.0.${index + 1}`, step: index,
+    const client = { index, id: user.id, email, password, ip: `127.1.0.${index + 1}`, step: index,
       agent: new http.Agent({ keepAlive: true, maxSockets: 1, timeout: 15000 }) };
     client.csrfToken = (await ok(client, '/auth/login', 'POST', { identifier: email, password })).csrfToken;
     assert.ok(client.cookies && client.csrfToken);
@@ -264,7 +264,9 @@ async function postLoadSecuritySmokes() {
   const transferEvent = await prisma.pageEvent.create({ data: { pageId: transfer.pageId,
     recipientId: recipient.id, kind: 'PAGE_TRANSFER', targetId: transfer.id,
     dedupeKey: `${prefix}:sender-transfer`, deliveredAt: new Date() } });
-  await ok(actor, `/users/${actor.id}`, 'DELETE', { deleteOwnedPages: [] });
+  // The active account route requires fresh session proof after the 600s run.
+  actor.csrfToken = (await ok(actor, '/auth/login', 'POST', { identifier: actor.email, password: actor.password })).csrfToken;
+  await ok(actor, '/account', 'DELETE', { deleteOwnedPages: [] });
   assert.equal(await prisma.pageEvent.findUnique({ where: { id: actorEvent.id } }), null);
   assert.equal(await prisma.pageEvent.findUnique({ where: { id: addressedEvent.id } }), null);
   assert.equal(await prisma.pageEvent.findUnique({ where: { id: invitationEvent.id } }), null);
