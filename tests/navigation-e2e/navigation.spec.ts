@@ -300,19 +300,17 @@ for (const type of ['Poll', 'Survey', 'Quiz', 'Challenge']) {
     await boot(`/group/${group.id}`);
     await page.getByRole('button', { name: type, exact: true }).click();
     await expect(page).toHaveURL(`/create/${type.toLowerCase()}?group=${group.id}`);
-    const heading = type === 'Poll'
-      ? localized('New Poll', 'استطلاع جديد')
-      : type === 'Challenge'
-        ? localized('New Challenge', 'تحدٍ جديد')
-        : `New ${type}`;
+    const heading = {
+      Poll: localized('New Poll', 'استطلاع جديد'),
+      Survey: localized('New Survey', 'استبيان جديد'),
+      Quiz: localized('New Quiz', 'اختبار جديد'),
+      Challenge: localized('New Challenge', 'تحدٍ جديد'),
+    }[type]!;
     await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
     await page.reload();
     await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
     await expect(page).toHaveURL(`/create/${type.toLowerCase()}?group=${group.id}`);
-    const closeButton = type === 'Poll'
-      ? page.getByRole('button', { name: localized('Close', 'إغلاق'), exact: true })
-      : page.getByRole('button', { name: 'Close', exact: true });
-    await closeButton.click();
+    await page.getByRole('button', { name: localized('Close', 'إغلاق'), exact: true }).click();
     await expect(page).toHaveURL(`/group/${group.id}`);
     await expect(page.getByRole('heading', { name: group.name, exact: true })).toBeVisible();
   });

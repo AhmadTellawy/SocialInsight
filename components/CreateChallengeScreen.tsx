@@ -463,7 +463,7 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
       <div data-post-editor inert={isSaving || isSubmitting} aria-busy={isSaving || isSubmitting} className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-right duration-350">
       {submissionError && <p role="alert" className="shrink-0 border-b border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">{submissionError}</p>}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white/95 backdrop-blur-md sticky top-0 z-40 safe-top shrink-0">
-        <button aria-label={composerStep === 2 ? 'Back' : 'Close'} onClick={() => { if (composerStep === 2) { setComposerStep(1); setHasAttemptedSubmit(false); scrollContainerRef.current?.scrollTo({ top: 0 }); } else handleExit(); }} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">
+        <button aria-label={composerStep === 2 ? (ar ? 'رجوع' : 'Back') : (ar ? 'إغلاق' : 'Close')} onClick={() => { if (composerStep === 2) { setComposerStep(1); setHasAttemptedSubmit(false); scrollContainerRef.current?.scrollTo({ top: 0 }); } else handleExit(); }} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">
           <ArrowLeft size={24} />
         </button>
         <div className="text-center"><h1 className="text-[12px] font-bold text-gray-800">{ar ? 'تحدٍ جديد' : 'New Challenge'}</h1><p className="text-xs text-gray-500">{ar ? `الخطوة ${composerStep} من 2` : `Step ${composerStep} of 2`}</p></div>

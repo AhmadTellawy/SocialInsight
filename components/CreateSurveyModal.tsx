@@ -97,7 +97,8 @@ const createSurveyRatingOptions = (): SurveyOptionDraft[] => [5, 4, 3, 2, 1].map
 }));
 
 export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, onClose, onSubmit: persistPost, onSaveDraft: persistDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const ar = i18n.language.startsWith('ar');
   const publisher = usePagePublisher(userProfile, draft, persistPost, persistDraft);
   const { error: submissionError, isSaving, onSubmit, onSaveDraft } = usePostSaveFeedback(publisher.submit, publisher.save, t);
   const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
@@ -678,10 +679,10 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
       <div data-post-editor inert={isSaving || isSubmitting} aria-busy={isSaving || isSubmitting} className="absolute inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-bottom duration-300">
       {submissionError && <p role="alert" className="shrink-0 border-b border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">{submissionError}</p>}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white/95 backdrop-blur-md sticky top-0 z-40 safe-top shrink-0">
-        <button aria-label={composerStep === 2 ? 'Back' : 'Close'} onClick={() => { if (composerStep === 2) { setComposerStep(1); setHasAttemptedSubmit(false); scrollContainerRef.current?.scrollTo({ top: 0 }); } else handleClose(); }} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">{composerStep === 2 ? <ChevronLeft size={24} /> : <X size={24} />}</button>
+        <button aria-label={composerStep === 2 ? (ar ? 'رجوع' : 'Back') : (ar ? 'إغلاق' : 'Close')} onClick={() => { if (composerStep === 2) { setComposerStep(1); setHasAttemptedSubmit(false); scrollContainerRef.current?.scrollTo({ top: 0 }); } else handleClose(); }} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">{composerStep === 2 ? <ChevronLeft size={24} /> : <X size={24} />}</button>
         <div className="flex flex-col items-center flex-1 mx-2">
-          <h1 className="text-[12px] font-bold text-gray-800 mb-0.5">New Survey</h1>
-          <span className="text-[9px] font-extrabold text-blue-600 uppercase tracking-wider">Step {composerStep} of 2</span>
+          <h1 className="text-[12px] font-bold text-gray-800 mb-0.5">{ar ? 'استبيان جديد' : 'New Survey'}</h1>
+          <span className="text-[9px] font-extrabold text-blue-600 uppercase tracking-wider">{ar ? `الخطوة ${composerStep} من 2` : `Step ${composerStep} of 2`}</span>
         </div>
         <div className="w-10 h-10 flex items-center justify-center shrink-0" />
       </div>

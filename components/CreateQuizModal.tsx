@@ -84,7 +84,8 @@ const createQuizOption = (): SurveyOptionDraft => ({
 });
 
 export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClose, onSubmit: persistPost, onSaveDraft: persistDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const ar = i18n.language.startsWith('ar');
   const publisher = usePagePublisher(userProfile, draft, persistPost, persistDraft);
   const { error: submissionError, isSaving, onSubmit, onSaveDraft } = usePostSaveFeedback(publisher.submit, publisher.save, t);
   const [visibility, setVisibility] = useState<VisibilityType>(initialGroupId ? 'Groups' : 'Public');
@@ -570,10 +571,10 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
       {submissionError && <p role="alert" className="shrink-0 border-b border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">{submissionError}</p>}
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white/95 backdrop-blur-md sticky top-0 z-40 safe-top shrink-0">
-        <button aria-label={composerStep === 2 ? 'Back' : 'Close'} onClick={() => { if (composerStep === 2) { setComposerStep(1); setHasAttemptedSubmit(false); scrollContainerRef.current?.scrollTo({ top: 0 }); } else handleClose(); }} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">
+        <button aria-label={composerStep === 2 ? (ar ? 'رجوع' : 'Back') : (ar ? 'إغلاق' : 'Close')} onClick={() => { if (composerStep === 2) { setComposerStep(1); setHasAttemptedSubmit(false); scrollContainerRef.current?.scrollTo({ top: 0 }); } else handleClose(); }} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-500">
           <ArrowLeft size={24} />
         </button>
-        <div className="text-center"><h1 className="text-[12px] font-bold text-gray-800">New Quiz</h1><p className="text-xs text-gray-500">Step {composerStep} of 2</p></div>
+        <div className="text-center"><h1 className="text-[12px] font-bold text-gray-800">{ar ? 'اختبار جديد' : 'New Quiz'}</h1><p className="text-xs text-gray-500">{ar ? `الخطوة ${composerStep} من 2` : `Step ${composerStep} of 2`}</p></div>
         <div className="flex items-center gap-2">
           <button
             onClick={handleSaveDraft}
