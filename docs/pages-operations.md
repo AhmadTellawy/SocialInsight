@@ -1,5 +1,14 @@
 # Pages operational controls
 
+## Database duty separation and RLS context
+
+- `DIRECT_URL` is the migration/admin connection. Its principal owns schema objects and must have `BYPASSRLS` plus `CREATEROLE` for the Pages RLS migration. Protect it as an operator-only secret; the application must never use it at runtime.
+- `DATABASE_URL` is the application connection. Provision a distinct login with `server/scripts/provision-pages-runtime-role.sql`; it inherits only the `socialinsight_runtime` group, is not an owner, and has `NOBYPASSRLS`, no DDL, and no access to `_prisma_migrations`.
+- The server refuses to listen in Production when Pages are enabled and the effective `DATABASE_URL` role is a superuser, has `BYPASSRLS`, or owns a Pages table.
+- Request identity, staff review, test-fixture eligibility, and worker authority are transaction-local PostgreSQL settings. All Page operations must use `pageTransaction`; never replace `SET LOCAL` with session-level settings on a pooled connection.
+- Before rotating a runtime secret, apply migrations through `DIRECT_URL`, run `server/scripts/verify-pages-runtime-rls.sql` against a disposable database, then verify the effective runtime role and both allowed and denied application journeys. Do not record the password in commands, logs, or evidence.
+- Rollback must preserve the restricted runtime login and forced RLS. If a forward fix is required, pause Page workers/traffic first; never restore the application to an owner or `BYPASSRLS` connection as a workaround.
+
 This is a release runbook, not evidence of a production deployment.
 
 - `PAGES_ENABLED=true` enables Pages globally. Exact `true` is required.

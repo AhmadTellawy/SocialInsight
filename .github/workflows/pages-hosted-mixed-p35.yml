@@ -72,6 +72,10 @@ jobs:
         id: migrate
         working-directory: server
         run: npx prisma migrate deploy
+      - name: Provision restricted ephemeral application role
+        run: |
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "CREATE ROLE pages_p35_runtime LOGIN IN ROLE socialinsight_runtime"
+          echo "DATABASE_URL=postgresql://pages_p35_runtime@127.0.0.1:5432/postgres?schema=public&connection_limit=12" >> "$GITHUB_ENV"
       - name: Generate ephemeral signing key
         run: |
           signing_key="$(openssl rand -hex 48)"
@@ -91,6 +95,7 @@ jobs:
       - name: Verify Page-aware account erasure on disposable database
         env:
           PAGES_EPHEMERAL_ERASURE_TEST: 'true'
+          DATABASE_URL: ${{ env.DIRECT_URL }}
         run: node stage-hosted/pages-account-erasure.cjs
       - name: Run progressive and 600-second mixed Pages load
         run: node stage-hosted/pages-mixed-p35.cjs

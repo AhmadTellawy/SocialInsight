@@ -6,6 +6,7 @@ import { activePageActor, assertPagePublic, lockPage, pageIsBlocked, pageManagem
 import { buildVisiblePublishedPostWhere } from '../services/postVisibilityService';
 import { commitPreparedMedia, getStoredMediaPresentation, prepareMediaAttachments, scheduleMediaDeletion } from '../services/mediaService';
 import { getMediaStorage } from '../services/mediaStorage';
+import { currentPageDatabaseContext } from './pageDatabaseContext';
 
 export async function updatePageMedia(pageId:string,actorId:string,raw:unknown) {
   assertPagesEnabled(actorId);
@@ -30,7 +31,7 @@ export async function updatePageMedia(pageId:string,actorId:string,raw:unknown) 
   return result.page;
 }
 
-async function permittedPageMedia(assetId:string,viewerId?:string) {
+async function permittedPageMediaInTransaction(assetId:string,viewerId?:string) {
   assertPagesEnabled(viewerId);
   const asset=await prisma.mediaAsset.findUnique({where:{id:assetId},include:{page:true,variants:true,
     postAttachment:{select:{postId:true}},questionFor:{select:{postId:true,section:{select:{postId:true}}}},
@@ -58,6 +59,12 @@ async function permittedPageMedia(assetId:string,viewerId?:string) {
     if(!role)await assertPagePublic(prisma,asset.page,viewerId);
   }
   return asset;
+}
+
+async function permittedPageMedia(assetId:string,viewerId?:string): Promise<Awaited<ReturnType<typeof permittedPageMediaInTransaction>>> {
+  const context=currentPageDatabaseContext();
+  if(context&&!context.transaction)return pageTransaction(()=>permittedPageMediaInTransaction(assetId,viewerId),'ReadCommitted');
+  return permittedPageMediaInTransaction(assetId,viewerId);
 }
 
 export async function pageMediaPresentation(assetId:string,viewerId?:string) {

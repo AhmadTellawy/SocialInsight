@@ -6,6 +6,7 @@ import { PAGE_POLICY } from './pagePolicy';
 import { pagesEnabled } from './pageFeature';
 import { PageTx, pageAudit, pageTransaction } from './pageService';
 import { pageErasureHeld, pageLifecycleLimit, pageRetentionCutoff, processPageRetention } from './pageRetentionService';
+import { currentPageDatabaseContext, runWithPageSystemContext } from './pageDatabaseContext';
 
 const phases = ['NOTIFICATIONS', 'ANSWERS', 'RESPONSES', 'COMMENT_LIKES', 'COMMENT_MENTIONS',
   'COMMENT_HASHTAGS', 'COMMENT_REPORTS', 'COMMENTS', 'OPTIONS', 'QUESTIONS', 'SECTIONS', 'SAVES', 'HIDES', 'LIKES',
@@ -22,11 +23,11 @@ const utcTimestamp = (value: Date) => Prisma.sql`(${value.toISOString()}::timest
 export async function admitPagePurges(limit = 10, now = new Date()): Promise<number> {
   const cutoff = pageRetentionCutoff(PAGE_POLICY.deletionGraceDays, now);
   const caseCutoff = pageRetentionCutoff(PAGE_POLICY.closedCaseRetentionDays, now);
-  const due = await prisma.page.findMany({ where: { purgedAt: null, deletionRequestedAt: { lte: cutoff },
+  const due = await pageTransaction(tx => tx.page.findMany({ where: { purgedAt: null, deletionRequestedAt: { lte: cutoff },
     OR: [{ legalHoldUntil: null }, { legalHoldUntil: { lte: now } }], cases: { none: { OR: [
       { legalHoldUntil: { gt: now } }, { status: { not: 'CLOSED' } }, { closedAt: null }, { closedAt: { gt: caseCutoff } }
     ] } } },
-    take: pageLifecycleLimit(limit, 25), orderBy: [{ deletionRequestedAt: 'asc' }, { id: 'asc' }], select: { id: true } });
+    take: pageLifecycleLimit(limit, 25), orderBy: [{ deletionRequestedAt: 'asc' }, { id: 'asc' }], select: { id: true } }));
   let admitted = 0;
   for (const candidate of due) {
     const changed = await pageTransaction(async tx => {
@@ -247,7 +248,7 @@ export async function processPagePurgeBatch(pageId: string, options: BatchOption
     });
     if (result.state === 'media') {
       for (const id of result.ids) await (options.purgeAsset ?? purgeMediaAsset)(id);
-      await prisma.$executeRaw`UPDATE "PagePurgeJob" SET "availableAt" = ${utcTimestamp(now)}, "leaseToken" = NULL, "lastErrorCode" = NULL, "updatedAt" = ${utcTimestamp(now)} WHERE "pageId" = ${pageId} AND "leaseToken" = ${token}`;
+      await pageTransaction(tx => tx.$executeRaw`UPDATE "PagePurgeJob" SET "availableAt" = ${utcTimestamp(now)}, "leaseToken" = NULL, "lastErrorCode" = NULL, "updatedAt" = ${utcTimestamp(now)} WHERE "pageId" = ${pageId} AND "leaseToken" = ${token}`);
     }
     return result;
   } catch (error) {
@@ -259,18 +260,22 @@ export async function processPagePurgeBatch(pageId: string, options: BatchOption
     // Persist safe codes only: provider messages can contain object paths or credentials.
     const code = error instanceof Error && /^PAGE_PURGE_[A-Z_]+$/.test(error.message) ? error.message
       : error instanceof Prisma.PrismaClientKnownRequestError ? `PAGE_PURGE_DB_${error.code}` : 'PAGE_PURGE_RETRY_REQUIRED';
-    await prisma.$executeRaw`UPDATE "PagePurgeJob" SET attempts = attempts + 1, "lastErrorCode" = ${code},
+    await pageTransaction(tx => tx.$executeRaw`UPDATE "PagePurgeJob" SET attempts = attempts + 1, "lastErrorCode" = ${code},
       "availableAt" = ${utcTimestamp(new Date(now.getTime() + 60000))}, "leaseToken" = NULL, "updatedAt" = ${utcTimestamp(now)}
-      WHERE "pageId" = ${pageId} AND "completedAt" IS NULL AND ("leaseToken" IS NULL OR "leaseToken" = ${token})`;
+      WHERE "pageId" = ${pageId} AND "completedAt" IS NULL AND ("leaseToken" IS NULL OR "leaseToken" = ${token})`);
     return { state: 'retry' as const, code };
   }
 }
 
-export async function runPageLifecycleCycle(options: { pages?: number; batchSize?: number; now?: Date } = {}) {
+export async function runPageLifecycleCycle(options: { pages?: number; batchSize?: number; now?: Date } = {}):
+  Promise<{admitted:number;batches:any[];retention:Awaited<ReturnType<typeof processPageRetention>>}> {
+  if (!currentPageDatabaseContext()?.system) {
+    return runWithPageSystemContext(() => runPageLifecycleCycle(options));
+  }
   const now = options.now ?? new Date();
   const admitted = await admitPagePurges(options.pages ?? 10, now);
-  const jobs = await prisma.$queryRaw<Job[]>(Prisma.sql`SELECT * FROM "PagePurgeJob" WHERE "completedAt" IS NULL
-    AND "availableAt" <= ${utcTimestamp(now)} ORDER BY "availableAt", "pageId" LIMIT ${pageLifecycleLimit(options.pages ?? 10, 25)}`);
+  const jobs = await pageTransaction(tx => tx.$queryRaw<Job[]>(Prisma.sql`SELECT * FROM "PagePurgeJob" WHERE "completedAt" IS NULL
+    AND "availableAt" <= ${utcTimestamp(now)} ORDER BY "availableAt", "pageId" LIMIT ${pageLifecycleLimit(options.pages ?? 10, 25)}`));
   const batches = [];
   for (const job of jobs) batches.push({ pageId: job.pageId, ...await processPagePurgeBatch(job.pageId, { limit: options.batchSize, now }) });
   return { admitted, batches, retention: await processPageRetention(options.batchSize ?? 100, now) };

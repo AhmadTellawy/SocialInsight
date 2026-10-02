@@ -10,7 +10,9 @@ const { createRequire } = require('node:module');
 const { performance } = require('node:perf_hooks');
 
 const serverRequire = createRequire(path.resolve(__dirname, '../server/package.json'));
-const prisma = new (serverRequire('@prisma/client').PrismaClient)();
+// Fixture setup and metrics inspection use the ephemeral migration principal;
+// the API process under load uses the restricted DATABASE_URL runtime login.
+const prisma = new (serverRequire('@prisma/client').PrismaClient)({ datasourceUrl: process.env.DIRECT_URL });
 const bcrypt = serverRequire('bcryptjs');
 const api = process.env.P35_API_URL || 'http://127.0.0.1:3001';
 const apiOrigin = new URL(api).origin;

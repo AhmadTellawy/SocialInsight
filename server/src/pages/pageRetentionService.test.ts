@@ -10,12 +10,17 @@ test('closed invitation and its notifications expire after 180 days unless held'
   const now = new Date('2026-10-01T00:00:00.000Z');
   let held = false, deleted = 0, removedEvents = 0, removedNotifications = 0;
   const tx: any = {
-    $queryRaw: async () => [{ id: 'page' }],
+    $queryRaw: async (query: any) => String(query?.strings?.join(' ') || '').includes('SELECT c.id') ? [] : [{ id: 'page' }],
     page: { count: async () => held ? 1 : 0 },
     pageCase: { count: async () => 0 },
-    pageInvitation: { deleteMany: async ({ where }: any) => { assert.equal(where.id, 'invite'); deleted++; return { count: 1 }; } },
+    pageInvitation: {
+      findMany: async ({ where }: any) => where.status === 'PENDING' ? [] : [{ id: 'invite', pageId: 'page', decidedAt: old }],
+      deleteMany: async ({ where }: any) => { assert.equal(where.id, 'invite'); deleted++; return { count: 1 }; }
+    },
+    pageOwnershipTransfer: { findMany: async () => [] },
+    pageAuditEvent: { findMany: async () => [] },
     pageEvent: {
-      findMany: async () => [{ id: 'event' }],
+      findMany: async ({ where }: any) => where.deliveredAt ? [] : [{ id: 'event' }],
       deleteMany: async () => { removedEvents++; return { count: 1 }; }
     },
     notification: { deleteMany: async ({ where }: any) => {
@@ -45,10 +50,15 @@ test('another case on the Page with an active hold blocks closed-case retention'
   const now = new Date('2026-10-01T00:00:00.000Z');
   let held = true, childPresent = true, deletions = 0;
   const tx: any = {
-    $queryRaw: async () => [{ id: 'page' }],
+    $queryRaw: async (query: any) => String(query?.strings?.join(' ') || '').includes('SELECT c.id')
+      ? [{ id: 'closed-case', pageId: 'page' }] : [{ id: 'page' }],
     page: { count: async () => 0 },
     pageCase: { count: async ({ where }: any) => where.parentId ? (childPresent ? 1 : 0) : held ? 1 : 0,
-      deleteMany: async () => { deletions++; return { count: 1 }; } }
+      deleteMany: async () => { deletions++; return { count: 1 }; } },
+    pageInvitation: { findMany: async () => [] },
+    pageOwnershipTransfer: { findMany: async () => [] },
+    pageAuditEvent: { findMany: async () => [] },
+    pageEvent: { findMany: async () => [] }
   };
   try {
     replace(prisma, '$transaction', async (action: any) => action(tx));

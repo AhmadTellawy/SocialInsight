@@ -2,10 +2,13 @@ import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import prisma from '../prisma';
 import { PagePolicyError } from './pagePolicy';
-import { lockPage, pageAudit, PageTx } from './pageService';
+import { lockPage, pageAudit, pageTransaction, PageTx } from './pageService';
+import { currentPageDatabaseContext } from './pageDatabaseContext';
 import { refreshPageSafety } from './pageTeamService';
 
-export async function pageAccountDeletionImpact(userId: string) {
+export async function pageAccountDeletionImpact(userId: string): Promise<Array<{id:string;name:string;handle:string}>> {
+  const context=currentPageDatabaseContext();
+  if(context&&!context.transaction)return pageTransaction(()=>pageAccountDeletionImpact(userId),'ReadCommitted');
   return prisma.page.findMany({where:{ownerId:userId,purgedAt:null,deletionRequestedAt:null},
     orderBy:{id:'asc'},select:{id:true,name:true,handle:true}});
 }

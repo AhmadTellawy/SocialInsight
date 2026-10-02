@@ -21,6 +21,7 @@ import { hasPageCapability, mayManagePageRole, PageRole } from './pagePolicy';
 import { getPageManagedPostResults } from '../controllers/postController';
 import { pageRole } from './pageService';
 import { lockPage, requirePageCapability, PageTx } from './pageService';
+import { pageFollowerCounts } from './pageService';
 import { PageCapability } from './pagePolicy';
 import { MediaValidationError } from '../services/mediaProcessor';
 
@@ -34,7 +35,9 @@ const nextCursor = (rows: Array<{id: string}>, limit: number) => rows.length > l
 const cursorArgs = (value: unknown): { cursor?: { id: string }; skip?: number } =>
   typeof value === 'string' && value ? { cursor: { id: uuid.parse(value) }, skip: 1 } : {};
 const handle = (fn: (req: Request, res: Response) => Promise<unknown>) =>
-  (req: Request, res: Response, next: NextFunction) => { Promise.resolve(fn(req, res)).catch(next); };
+  (req: Request, res: Response, next: NextFunction) => {
+    Promise.resolve(pageTransaction(() => fn(req, res), 'ReadCommitted')).catch(next);
+  };
 const managedRead = <T>(pageId: string, actorId: string, capability: PageCapability,
   work: (tx: PageTx, role: PageRole) => Promise<T>) => pageTransaction(async tx => {
     const page = await lockPage(tx, pageId);
@@ -97,10 +100,11 @@ router.post('/', requireAuth, creationLimiter, handle(async (req, res) => res.st
 router.get('/mine', requireAuth, handle(async (req, res) => {
   const limit = pageLimit(req.query.limit);
   const rows = await prisma.page.findMany({ where: { purgedAt: null, OR: [{ ownerId: user(req) }, { members: { some: { userId: user(req) } } }] },
-    include: { members: { where: { userId: user(req) }, select: { role: true } }, _count: { select: { follows: true } } },
+    include: { members: { where: { userId: user(req) }, select: { role: true } } },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], ...cursorArgs(req.query.cursor), take: limit + 1 });
+  const counts = await pageFollowerCounts(prisma, rows.slice(0, limit).map(page => page.id));
   return res.json({ items: rows.slice(0, limit).map(page => ({ ...pageManagementDto(page,
-    page.ownerId === user(req) ? 'OWNER' : page.members[0].role as 'ADMIN' | 'EDITOR' | 'ANALYST'), followersCount: page._count.follows })), nextCursor: nextCursor(rows, limit) });
+    page.ownerId === user(req) ? 'OWNER' : page.members[0].role as 'ADMIN' | 'EDITOR' | 'ANALYST'), followersCount: counts.get(page.id) || 0 })), nextCursor: nextCursor(rows, limit) });
 }));
 const caseLimiter=rateLimit({windowMs:60*60*1000,limit:10,keyGenerator:req=>user(req),standardHeaders:true,legacyHeaders:false});
 router.get('/staff/access',requireAuth,handle(async(req,res)=>{
@@ -160,7 +164,7 @@ router.post('/transfers/:id/:action', requireAuth, handle(async (req, res) =>
 
 router.get('/manage/:id', requireAuth, handle(async (req, res) => res.json(await managedRead(id(req),user(req),'readManagement',
   async(tx,role)=>pageManagementDto(await tx.page.findUniqueOrThrow({where:{id:id(req)}}),role)))));
-router.get('/manage/:id/content/:postId/results',requireAuth,getPageManagedPostResults);
+router.get('/manage/:id/content/:postId/results',requireAuth,handle((req,res)=>getPageManagedPostResults(req,res)));
 router.get('/manage/:id/requests',requireAuth,handle(async(req,res)=>{
   const kind=z.enum(['invitation','transfer']).parse(req.query.kind);
   return res.json(await managedRead(id(req),user(req),kind==='transfer'?'readManagement':'manageTeam',async(tx,role)=>{

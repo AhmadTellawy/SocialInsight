@@ -1,4 +1,3 @@
-import prisma from '../prisma';
 import { PAGE_POLICY } from './pagePolicy';
 import { PageTx, pageTransaction } from './pageService';
 
@@ -20,15 +19,15 @@ export async function processPageRetention(limit = 100, now = new Date()) {
   const eventCutoff = pageRetentionCutoff(PAGE_POLICY.deliveredEventRetentionDays, now);
   const totals = { invitationsExpired: 0, transfersExpired: 0, invitationHistoryDeleted: 0, transferHistoryDeleted: 0, auditsDeleted: 0, casesDeleted: 0, eventsDeleted: 0 };
   for (const kind of ['invitation', 'transfer', 'audit', 'case', 'event'] as const) {
-    const candidates = kind === 'invitation'
-      ? await prisma.pageInvitation.findMany({ where: { status: 'PENDING', expiresAt: { lte: now } }, take: size, orderBy: { expiresAt: 'asc' }, select: { id: true, pageId: true } })
+    const candidates = await pageTransaction(tx => kind === 'invitation'
+      ? tx.pageInvitation.findMany({ where: { status: 'PENDING', expiresAt: { lte: now } }, take: size, orderBy: { expiresAt: 'asc' }, select: { id: true, pageId: true } })
       : kind === 'transfer'
-        ? await prisma.pageOwnershipTransfer.findMany({ where: { status: 'PENDING', expiresAt: { lte: now } }, take: size, orderBy: { expiresAt: 'asc' }, select: { id: true, pageId: true } })
+        ? tx.pageOwnershipTransfer.findMany({ where: { status: 'PENDING', expiresAt: { lte: now } }, take: size, orderBy: { expiresAt: 'asc' }, select: { id: true, pageId: true } })
         : kind === 'audit'
-          ? await prisma.pageAuditEvent.findMany({ where: { createdAt: { lte: auditCutoff }, page: { OR: [{ legalHoldUntil: null }, { legalHoldUntil: { lte: now } }], cases: { none: { legalHoldUntil: { gt: now } } } } }, take: size, orderBy: { createdAt: 'asc' }, select: { id: true, pageId: true } })
+          ? tx.pageAuditEvent.findMany({ where: { createdAt: { lte: auditCutoff }, page: { OR: [{ legalHoldUntil: null }, { legalHoldUntil: { lte: now } }], cases: { none: { legalHoldUntil: { gt: now } } } } }, take: size, orderBy: { createdAt: 'asc' }, select: { id: true, pageId: true } })
           : kind === 'event'
-            ? await prisma.pageEvent.findMany({ where: { deliveredAt: { lte: eventCutoff }, page: { OR: [{ legalHoldUntil: null }, { legalHoldUntil: { lte: now } }], cases: { none: { legalHoldUntil: { gt: now } } } } }, take: size, orderBy: { deliveredAt: 'asc' }, select: { id: true, pageId: true } })
-          : await prisma.$queryRaw<Array<{ id: string; pageId: string }>>(Prisma.sql`
+            ? tx.pageEvent.findMany({ where: { deliveredAt: { lte: eventCutoff }, page: { OR: [{ legalHoldUntil: null }, { legalHoldUntil: { lte: now } }], cases: { none: { legalHoldUntil: { gt: now } } } } }, take: size, orderBy: { deliveredAt: 'asc' }, select: { id: true, pageId: true } })
+          : tx.$queryRaw<Array<{ id: string; pageId: string }>>(Prisma.sql`
             SELECT c.id, c."pageId" FROM "PageCase" c JOIN "Page" p ON p.id = c."pageId"
             WHERE c.status = 'CLOSED' AND c."closedAt" <= ${caseCutoff}
               AND (c."legalHoldUntil" IS NULL OR c."legalHoldUntil" <= ${now})
@@ -36,7 +35,7 @@ export async function processPageRetention(limit = 100, now = new Date()) {
               AND NOT EXISTS (SELECT 1 FROM "PageCase" held WHERE held."pageId" = c."pageId"
                 AND held."legalHoldUntil" > ${now})
               AND NOT EXISTS (SELECT 1 FROM "PageCase" a WHERE a."parentId" = c.id)
-            ORDER BY c."closedAt", c.id LIMIT ${size}`);
+            ORDER BY c."closedAt", c.id LIMIT ${size}`));
     for (const candidate of candidates) {
       const changed = await pageTransaction(async tx => {
         await tx.$queryRaw`SELECT id FROM "Page" WHERE id = ${candidate.pageId} FOR UPDATE`;
@@ -72,11 +71,11 @@ export async function processPageRetention(limit = 100, now = new Date()) {
   // Closed requests are relationship records, not permanent team history.
   // Keep them for the same bounded audit window unless a Page/case hold applies.
   for (const kind of ['invitation', 'transfer'] as const) {
-    const candidates = kind === 'invitation'
-      ? await prisma.pageInvitation.findMany({ where: { status: { not: 'PENDING' }, decidedAt: { lte: auditCutoff } },
+    const candidates = await pageTransaction(tx => kind === 'invitation'
+      ? tx.pageInvitation.findMany({ where: { status: { not: 'PENDING' }, decidedAt: { lte: auditCutoff } },
         take: size, orderBy: { decidedAt: 'asc' }, select: { id: true, pageId: true } })
-      : await prisma.pageOwnershipTransfer.findMany({ where: { status: { not: 'PENDING' }, decidedAt: { lte: auditCutoff } },
-        take: size, orderBy: { decidedAt: 'asc' }, select: { id: true, pageId: true } });
+      : tx.pageOwnershipTransfer.findMany({ where: { status: { not: 'PENDING' }, decidedAt: { lte: auditCutoff } },
+        take: size, orderBy: { decidedAt: 'asc' }, select: { id: true, pageId: true } }));
     for (const candidate of candidates) {
       const deleted = await pageTransaction(async tx => {
         await tx.$queryRaw`SELECT id FROM "Page" WHERE id = ${candidate.pageId} FOR UPDATE`;

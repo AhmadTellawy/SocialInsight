@@ -4,6 +4,7 @@ import { hasPageCapability, isPagePublic, PAGE_POLICY, PageCapability, PagePolic
   PageRole, pagePublicWhere } from './pagePolicy';
 import { pageCreateSchema, pagePatchSchema, validatePageCta } from './pageValidation';
 import { assertPagesEnabled, isPageTestUser, pagesEnabled } from './pageFeature';
+import { applyPageDatabaseContext, currentPageDatabaseContext, runWithPageTransaction } from './pageDatabaseContext';
 
 export type PageTx = Prisma.TransactionClient;
 export const pageDaysFrom = (days: number, now = new Date()) => new Date(now.getTime() + days * 86400000);
@@ -11,9 +12,14 @@ export const pageDaysFrom = (days: number, now = new Date()) => new Date(now.get
 /** Retry only serialization/deadlock conflicts; callbacks may perform database operations only. */
 export async function pageTransaction<T>(action: (tx: PageTx) => Promise<T>,
   isolationLevel: 'Serializable' | 'ReadCommitted' = 'Serializable'): Promise<T> {
+  const active = currentPageDatabaseContext()?.transaction;
+  if (active) return action(active);
   for (let attempt = 0; ; attempt++) {
     try {
-      return await prisma.$transaction(action, { isolationLevel, maxWait: 5000, timeout: 15000 });
+      return await prisma.$transaction(async tx => {
+        await applyPageDatabaseContext(tx);
+        return runWithPageTransaction(tx, () => action(tx));
+      }, { isolationLevel, maxWait: 5000, timeout: 15000 });
     } catch (error) {
       const conflict = error instanceof Prisma.PrismaClientKnownRequestError &&
         (error.code === 'P2034' || error.code === 'P2010' && ['40001', '40P01'].includes(String(error.meta?.code)));
@@ -114,6 +120,14 @@ export const pageManagementDto = (page: Page, role: PageRole) => ({
     .filter(capability => hasPageCapability(role, capability)),
 });
 
+export async function pageFollowerCounts(tx: PageTx, pageIds: string[]): Promise<Map<string, number>> {
+  if (!pageIds.length) return new Map();
+  const rows = await tx.$queryRaw<Array<{id:string;count:bigint}>>(Prisma.sql`
+    SELECT page_id AS id, public.socialinsight_page_follower_count(page_id)::bigint AS count
+    FROM unnest(ARRAY[${Prisma.join(pageIds)}]::text[]) page_id`);
+  return new Map(rows.map(row => [row.id, Number(row.count)]));
+}
+
 export async function pageAudit(tx: PageTx, pageId: string, actorId: string | null, action: string,
   targetId?: string, data: Prisma.InputJsonValue = {}) {
   return tx.pageAuditEvent.create({ data: { pageId, actorId, action, targetId, data } });
@@ -211,7 +225,8 @@ export async function pageFollowAction(userId: string, pageId: string, action: '
     if ((action === 'follow' && !wasFollowing) || (action === 'unfollow' && wasFollowing)) {
       await pageAudit(tx, pageId, null, 'FOLLOW_CHANGED', undefined, { delta: action === 'follow' ? 1 : -1 });
     }
-    return { following: action !== 'unfollow', followersCount: await tx.pageFollow.count({ where: { pageId } }) };
+    const counts = await pageFollowerCounts(tx, [pageId]);
+    return { following: action !== 'unfollow', followersCount: counts.get(pageId) || 0 };
   });
 }
 

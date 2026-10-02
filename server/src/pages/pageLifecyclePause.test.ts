@@ -17,6 +17,15 @@ test('scheduled Page lifecycle touches no data while disabled or paused and resu
     restore.push(() => { target[key] = original; });
   };
   replace(prisma.page, 'findMany'); replace(prisma, '$queryRaw');
+  const originalTransaction = prisma.$transaction, originalExecuteRaw = prisma.$executeRaw;
+  (prisma as any).$transaction = async (action: any) => action({
+    page: prisma.page, pageInvitation: prisma.pageInvitation,
+    pageOwnershipTransfer: prisma.pageOwnershipTransfer,
+    pageAuditEvent: prisma.pageAuditEvent, pageEvent: prisma.pageEvent,
+    $queryRaw: prisma.$queryRaw, $executeRaw: async () => 1,
+  });
+  (prisma as any).$executeRaw = async () => 1;
+  restore.push(() => { (prisma as any).$transaction = originalTransaction; (prisma as any).$executeRaw = originalExecuteRaw; });
   replace(prisma.pageInvitation, 'findMany'); replace(prisma.pageOwnershipTransfer, 'findMany');
   replace(prisma.pageAuditEvent, 'findMany');
   replace(prisma.pageEvent, 'findMany');

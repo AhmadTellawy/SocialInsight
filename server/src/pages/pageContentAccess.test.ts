@@ -13,8 +13,12 @@ const pageRoutes = require('./pageRoutes').default as typeof import('./pageRoute
 
 test('public Page visibility never grants an unauthenticated management access receipt', async () => {
   const id = randomUUID();
-  const original = prisma.post.findMany;
+  const original = prisma.post.findMany, originalTransaction = prisma.$transaction;
   (prisma.post as any).findMany = async () => [{ id }];
+  (prisma as any).$transaction = async (action: any) => action({
+    post: prisma.post,
+    $executeRaw: async () => 1,
+  });
   const app = express();
   app.use(express.json());
   app.use('/api/pages', pageRoutes);
@@ -35,6 +39,7 @@ test('public Page visibility never grants an unauthenticated management access r
     assert.deepEqual((await request(false)).allowed, [`${id}:public`]);
   } finally {
     (prisma.post as any).findMany = original;
+    (prisma as any).$transaction = originalTransaction;
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     await prisma.$disconnect();
   }

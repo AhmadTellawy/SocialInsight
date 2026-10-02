@@ -7,7 +7,7 @@ test('old exact handle occupies one first-page slot and never repeats on later c
     id: `page-${index}`, handle: index === 4 ? 'exact' : `fuzzy_${index}`,
     name: `Page ${index}`, createdAt: new Date(2026, 0, 5 - index), _count: { follows: 0 }
   }));
-  const client: any = { page: {
+  const client: any = { $queryRaw: async () => pages.map(page => ({ id: page.id, count: BigInt(0) })), page: {
     findFirst: async ({ where }: any) => pages.find(page => page.handle === where.handle) || null,
     findMany: async ({ where, cursor, skip, take }: any) => {
       let rows = pages.filter(page => page.id !== where.id?.not);

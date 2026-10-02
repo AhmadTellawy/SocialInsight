@@ -3,10 +3,16 @@ import { buildVisiblePublishedPostWhere } from '../services/postVisibilityServic
 import { parseNotificationPayload } from '../utils/notificationTarget';
 import { isPageTestUser, pagesEnabled } from './pageFeature';
 import { eligiblePageActivityIds, expandPageActivity, pageActivityNotification } from './pageActivityNotifications';
+import { currentPageDatabaseContext, runWithPageSystemContext } from './pageDatabaseContext';
+import { pageTransaction } from './pageService';
 export { notifyPagePostInteraction } from './pageActivityNotifications';
 
 /** Batch, recipient-scoped notification presentation. Human actors never stand in for Page publishers. */
-export async function presentPageNotifications(records:any[],viewerId:string) {
+export async function presentPageNotifications(records:any[],viewerId:string): Promise<Array<Record<string, any>>> {
+  const context = currentPageDatabaseContext();
+  if (context && !context.transaction) {
+    return pageTransaction(() => presentPageNotifications(records, viewerId), 'ReadCommitted');
+  }
   // Recheck durable activity at each inbox/Socket/push read, after role or preference changes.
   const eventIdFor=(record:any):string|null=>typeof record.dedupeKey==='string'&&record.dedupeKey.startsWith('page-event:')?record.dedupeKey.slice(11):null;
   const eventIds=[...new Set(records.map(eventIdFor).filter(Boolean))] as string[];
@@ -66,7 +72,10 @@ export function pageEventDeepLink(event: {kind:string;pageId:string;targetId:str
 }
 
 /** Durable inbox delivery is atomic with the outbox receipt. Socket delivery is a best-effort hint. */
-export async function processPageOutbox(limit=40) {
+export async function processPageOutbox(limit=40): Promise<{persisted:number}> {
+  if (!currentPageDatabaseContext()?.system) {
+    return runWithPageSystemContext(() => processPageOutbox(limit));
+  }
   let attemptedIds:string[]=[];
   const notificationIds=await prisma.$transaction(async tx=>{
     const events=await tx.$queryRaw<Array<{id:string}>>`SELECT id FROM "PageEvent" WHERE "deliveredAt" IS NULL AND "availableAt" <= NOW() ORDER BY "createdAt",id LIMIT ${Math.min(100,Math.max(1,limit))} FOR UPDATE SKIP LOCKED`;
@@ -105,7 +114,7 @@ export async function processPageOutbox(limit=40) {
     return ids;
   },{timeout:15000}).catch(async error=>{
     // Retry state survives the rolled-back delivery transaction; never expose payloads in diagnostics.
-    if(attemptedIds.length)await prisma.pageEvent.updateMany({where:{id:{in:attemptedIds},deliveredAt:null},data:{attempts:{increment:1},availableAt:new Date(Date.now()+60000),lastError:error instanceof Error?error.name:'UNKNOWN'}});
+    if(attemptedIds.length)await pageTransaction(tx => tx.pageEvent.updateMany({where:{id:{in:attemptedIds},deliveredAt:null},data:{attempts:{increment:1},availableAt:new Date(Date.now()+60000),lastError:error instanceof Error?error.name:'UNKNOWN'}}));
     throw error;
   });
   const {dispatchNotificationIds}=await import('../services/notificationService');

@@ -6,7 +6,8 @@ process.env.AUTH_LEGACY_BEARER_COMPAT = 'true';
 const jwt = require('jsonwebtoken');
 const prisma = require('../prisma').default;
 const sessions = require('../services/sessionService');
-const {requireAuth, requireRecentAuth} = require('./authMiddleware');
+const {requireAuth, requireRecentAuth, optionalAuth} = require('./authMiddleware');
+const {currentPageDatabaseContext} = require('../pages/pageDatabaseContext');
 const response = () => { const state: any = {}; const res: any = { status(code: number) {state.status = code; return res;}, json(body: any) {state.body = body; return res;} }; return {state,res}; };
 
 test('a valid bearer for A cannot borrow the cookie or recent-auth proof belonging to B', async () => {
@@ -38,4 +39,21 @@ test('recent-auth uses refreshed same-user session proof; stale or mismatched pr
   for(const session of [{...req.authSession,recentAuthenticatedAt:old},{...req.authSession,userId:'b'}]) {
     const {res,state}=response(); requireRecentAuth({...req,authSession:session},res,()=>assert.fail('invalid proof accepted')); assert.equal(state.body.code,'REAUTHENTICATION_REQUIRED');
   }
+});
+
+test('optional authentication scopes Page database identity and does not leak it after next', async () => {
+  const original=sessions.resolveSession;
+  try {
+    sessions.resolveSession=async()=>({id:'session-a',userId:'a',createdAt:new Date(),user:{status:'ACTIVE'}});
+    const req:any={method:'GET',headers:{}};
+    await optionalAuth(req,response().res,()=>assert.deepEqual(currentPageDatabaseContext(),{
+      actorId:'a',staff:false,system:false,testUser:false,
+    }));
+    assert.equal(currentPageDatabaseContext(),undefined);
+    sessions.resolveSession=async()=>null;
+    await optionalAuth({method:'GET',headers:{}} as any,response().res,()=>assert.deepEqual(currentPageDatabaseContext(),{
+      actorId:null,staff:false,system:false,testUser:false,
+    }));
+    assert.equal(currentPageDatabaseContext(),undefined);
+  } finally { sessions.resolveSession=original; }
 });

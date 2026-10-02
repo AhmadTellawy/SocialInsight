@@ -115,14 +115,22 @@ test('role mutation guard retains exclusive Page lock',async()=>enabled(async()=
 }));
 
 test('Page boundary denies invisible Page/source mutations while preserving management and recovery bypasses',async()=>enabled(async()=>{
-  const original={post:prisma.post.findUnique,query:prisma.$queryRaw,page:prisma.page.findUnique,user:prisma.user.findUnique};
+  const original={transaction:prisma.$transaction,post:prisma.post.findUnique,query:prisma.$queryRaw,page:prisma.page.findUnique,user:prisma.user.findUnique};
   try {
+    let txPostFind:any,txPageFind:any,txUserFind:any,txQuery:any;
+    (prisma as any).$transaction=async(action:any)=>action({
+      post:{findUnique:(...args:any[])=>txPostFind(...args)},
+      page:{findUnique:(...args:any[])=>txPageFind(...args)},
+      user:{findUnique:(...args:any[])=>txUserFind(...args)},
+      pageMembership:{findUnique:async()=>null},
+      $queryRaw:(...args:any[])=>txQuery(...args),
+    });
     for(const scenario of ['page-denied','source-denied','page-visible','personal','remove-save','managed-draft','detail'] as const) {
       let queries=0,nextCalls=0,status=200,body:any;
-      (prisma.post as any).findUnique=async()=>({pageId:scenario==='personal'||scenario==='source-denied'?null:'page',sharedFrom:scenario==='source-denied'?{pageId:'page'}:null});
-      (prisma.page as any).findUnique=async()=>({id:'page',ownerId:'viewer',purgedAt:null,publicationState:'DRAFT'});
-      (prisma.user as any).findUnique=async()=>({status:'ACTIVE'});
-      (prisma as any).$queryRaw=async(query:any)=>{queries++;assert.match(query.text,/sharedFromId/);return [{visible:scenario==='page-visible'}];};
+      txPostFind=async()=>({pageId:scenario==='personal'||scenario==='source-denied'?null:'page',sharedFrom:scenario==='source-denied'?{pageId:'page'}:null});
+      txPageFind=async()=>({id:'page',ownerId:'viewer',purgedAt:null,publicationState:'DRAFT'});
+      txUserFind=async()=>({status:'ACTIVE'});
+      txQuery=async(query:any)=>{queries++;assert.match(query.text,/sharedFromId/);return [{visible:scenario==='page-visible'}];};
       const req:any={path:scenario==='remove-save'?'/post/save':scenario==='managed-draft'||scenario==='detail'?'/post':'/post/like',method:scenario==='remove-save'?'DELETE':scenario==='managed-draft'?'PUT':scenario==='detail'?'GET':'POST',user:{userId:'viewer'}};
       const res:any={setHeader(){},status(code:number){status=code;return this;},json(value:any){body=value;return this;}};
       await pagePostBoundary(req,res,(error?:any)=>{assert.equal(error,undefined);nextCalls++;});
@@ -132,6 +140,7 @@ test('Page boundary denies invisible Page/source mutations while preserving mana
       if(denied)assert.equal(body.code,'PAGE_POST_UNAVAILABLE');
     }
   } finally {
+    (prisma as any).$transaction=original.transaction;
     (prisma.post as any).findUnique=original.post;(prisma as any).$queryRaw=original.query;
     (prisma.page as any).findUnique=original.page;(prisma.user as any).findUnique=original.user;
   }

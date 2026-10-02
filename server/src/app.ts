@@ -24,7 +24,7 @@ import { getNotificationSettings, updateNotificationSettings } from './controlle
 import { initCronJobs } from './services/cronService';
 import { initSocket } from './services/socketService';
 import { isMediaStorageConfigured } from './services/mediaStorage';
-import prisma from './prisma';
+import prisma, { verifyPagesRuntimeDatabaseRole } from './prisma';
 import { requestContext } from './middleware/requestContext';
 import { readRestoreMaintenance } from './config/maintenance';
 import { readTrustedProxyHops } from './config/trustedProxy';
@@ -184,12 +184,15 @@ app.get('/', (req, res) => {
 if (!restoreMaintenance && !(process.env.NODE_ENV === 'test' && process.env.DISABLE_BACKGROUND_JOBS === 'true')) initCronJobs();
 
 if (require.main === module) {
-    if (!restoreMaintenance) {
-        void import('./pages/pageNotificationService').then(({ startPageOutboxWorker }) => startPageOutboxWorker());
-        void import('./pages/pageLifecycleWorker').then(({ startPageLifecycleWorker }) => startPageLifecycleWorker());
-    }
-    httpServer.listen(PORT, () => {
-        console.log(`Server is running on port ${PORT}`);
+    void verifyPagesRuntimeDatabaseRole().then(() => {
+        if (!restoreMaintenance) {
+            void import('./pages/pageNotificationService').then(({ startPageOutboxWorker }) => startPageOutboxWorker());
+            void import('./pages/pageLifecycleWorker').then(({ startPageLifecycleWorker }) => startPageLifecycleWorker());
+        }
+        httpServer.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
+    }).catch(() => {
+        console.error('Pages runtime database role verification failed.');
+        process.exitCode = 1;
     });
 }
 

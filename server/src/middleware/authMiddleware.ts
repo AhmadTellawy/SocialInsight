@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import prisma from '../prisma';
 import { AuthenticatedSession, resolveSession } from '../services/sessionService';
 import { hasValidCsrf, isTrustedOrigin } from './csrfProtection';
+import { pageRequestDatabaseContext, runWithPageDatabaseContext } from '../pages/pageDatabaseContext';
 
 // Deprecated compatibility export for legacy tests/importers. HTTP and Socket.IO
 // authentication use opaque AuthSession records and never accept this value.
@@ -66,7 +67,7 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
     if (legacyUserId) {
         req.user = { userId: legacyUserId, authMode: 'legacy_bearer' };
         // A bearer token never borrows cookie recent-auth authority.
-        next();
+        runWithPageDatabaseContext(pageRequestDatabaseContext(legacyUserId), next);
         return;
     }
     if (session) {
@@ -77,7 +78,7 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
             res.status(403).json({ error: 'Request could not be verified', code: 'CSRF_REJECTED', requestId: req.requestId });
             return;
         }
-        next();
+        runWithPageDatabaseContext(pageRequestDatabaseContext(session.userId), next);
         return;
     }
     res.status(401).json({ error: 'Authentication required', code: 'AUTH_REQUIRED', requestId: req.requestId });
@@ -95,7 +96,7 @@ export const requireRecentAuth = (req: Request, res: Response, next: NextFunctio
         });
         return;
     }
-    next();
+    runWithPageDatabaseContext(pageRequestDatabaseContext(req.user?.userId), next);
 };
 
 export const optionalAuth = async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
@@ -111,5 +112,5 @@ export const optionalAuth = async (req: Request, _res: Response, next: NextFunct
     } catch {
         // Anonymous access remains anonymous when an optional session is invalid.
     }
-    next();
+    runWithPageDatabaseContext(pageRequestDatabaseContext(req.user?.userId), next);
 };
