@@ -94,9 +94,9 @@ jobs:
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "CREATE ROLE pages_p35_extra NOLOGIN"
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "GRANT pages_p35_extra TO pages_p35_runtime"
           set +e
-          env NODE_ENV=production PORT=3002 TRUST_PROXY_HOPS=1 PAGES_ENABLED=true DATABASE_URL="$DIRECT_URL" timeout 15s node server/dist/app.js > "$P35_REJECTED_ADMIN_LOG" 2>&1
+          env NODE_ENV=production RESTORE_MAINTENANCE=true PORT=3002 TRUST_PROXY_HOPS=1 PAGES_ENABLED=true DATABASE_URL="$DIRECT_URL" timeout 15s node server/dist/app.js > "$P35_REJECTED_ADMIN_LOG" 2>&1
           admin_exit=$?
-          env NODE_ENV=production PORT=3003 TRUST_PROXY_HOPS=1 PAGES_ENABLED=true DATABASE_URL="$DATABASE_URL" timeout 15s node server/dist/app.js > "$P35_REJECTED_MEMBERSHIP_LOG" 2>&1
+          env NODE_ENV=production RESTORE_MAINTENANCE=true PORT=3003 TRUST_PROXY_HOPS=1 PAGES_ENABLED=true DATABASE_URL="$DATABASE_URL" timeout 15s node server/dist/app.js > "$P35_REJECTED_MEMBERSHIP_LOG" 2>&1
           membership_exit=$?
           set -e
           if [ "$admin_exit" -eq 0 ] || [ "$admin_exit" -eq 124 ] || grep -q 'Server is running' "$P35_REJECTED_ADMIN_LOG"; then
