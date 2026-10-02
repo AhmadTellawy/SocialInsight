@@ -77,7 +77,7 @@ jobs:
         run: npx prisma migrate deploy
       - name: Provision restricted ephemeral application role
         run: |
-          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "CREATE ROLE pages_p35_runtime LOGIN IN ROLE socialinsight_runtime"
+          psql "${DIRECT_URL%%\?*}" -v ON_ERROR_STOP=1 -c "CREATE ROLE pages_p35_runtime LOGIN IN ROLE socialinsight_runtime"
           echo "DATABASE_URL=postgresql://pages_p35_runtime@127.0.0.1:5432/postgres?schema=public&connection_limit=12" >> "$GITHUB_ENV"
       - name: Generate and provision ephemeral RLS context signing key
         run: |
@@ -91,8 +91,8 @@ jobs:
           npm run pages:rls-context:provision --prefix server
       - name: Prove Production startup accepts only the restricted runtime role
         run: |
-          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "CREATE ROLE pages_p35_extra NOLOGIN"
-          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "GRANT pages_p35_extra TO pages_p35_runtime"
+          psql "${DIRECT_URL%%\?*}" -v ON_ERROR_STOP=1 -c "CREATE ROLE pages_p35_extra NOLOGIN"
+          psql "${DIRECT_URL%%\?*}" -v ON_ERROR_STOP=1 -c "GRANT pages_p35_extra TO pages_p35_runtime"
           set +e
           env NODE_ENV=production RESTORE_MAINTENANCE=true PORT=3002 TRUST_PROXY_HOPS=1 PAGES_ENABLED=true DATABASE_URL="$DIRECT_URL" timeout 15s node server/dist/app.js > "$P35_REJECTED_ADMIN_LOG" 2>&1
           admin_exit=$?
@@ -109,7 +109,7 @@ jobs:
           fi
           grep -q 'Pages runtime database role verification failed.' "$P35_REJECTED_ADMIN_LOG"
           grep -q 'Pages runtime database role verification failed.' "$P35_REJECTED_MEMBERSHIP_LOG"
-          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "REVOKE pages_p35_extra FROM pages_p35_runtime"
+          psql "${DIRECT_URL%%\?*}" -v ON_ERROR_STOP=1 -c "REVOKE pages_p35_extra FROM pages_p35_runtime"
       - name: Start isolated Production API target with the restricted role
         env:
           NODE_ENV: production
