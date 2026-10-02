@@ -10,6 +10,12 @@ import {
   maxInputBytesForPurpose
 } from '../config/media';
 
+// Keep libvips predictable on the 512 MB API instance. Media requests already
+// have process-level admission control; extra libvips threads and a large
+// operation cache only multiply peak memory while finalizing phone images.
+sharp.concurrency(1);
+sharp.cache(false);
+
 export type NormalizedCrop = {
   x: number;
   y: number;
@@ -209,20 +215,21 @@ export const processMediaBuffer = async (
     : [{ width: availableWidth, kind: 'THUMBNAIL' as MediaVariantKind }];
   const uniqueWidths = Array.from(new Map(outputWidths.map((item) => [item.width, item])).values());
 
-  const variants = await Promise.all(uniqueWidths.map(async ({ width, kind }) => {
+  const variants: ProcessedMediaVariant[] = [];
+  for (const { width, kind } of uniqueWidths) {
     const result = await sharp(normalized.data)
       .extract(pixelCrop)
       .resize({ width, withoutEnlargement: true })
       .webp({ quality: 82, effort: 4 })
       .toBuffer({ resolveWithObject: true });
-    return {
+    variants.push({
       kind,
       width: result.info.width,
       height: result.info.height,
       mime: 'image/webp' as const,
       buffer: result.data
-    };
-  }));
+    });
+  }
   if (
     normalized.data.length > MEDIA_CONFIG.maxPreparedOutputBytes
     || variants.some((variant) => variant.buffer.length > MEDIA_CONFIG.maxPreparedOutputBytes)

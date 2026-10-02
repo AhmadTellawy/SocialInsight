@@ -395,12 +395,43 @@ test('finding-resolution:SI-AS-E04-008', async t => {
     const value = await fixture();
     for (let index = 0; index < 3; index++) await prisma.mediaAsset.create({ data: {
       ownerId: value.id, purpose: 'POST', status: 'PROCESSING', sourceMime: 'image/png', sourceByteSize: 1,
-      uploadBucket: 'fixture', uploadKey: randomUUID(), updatedAt: new Date(Date.now() - 16 * 60_000)
+      uploadBucket: 'fixture', uploadKey: randomUUID(), errorCode: 'FINALIZING:' + randomUUID(),
+      storageCleanupNotBefore: new Date(Date.now() - 1000), updatedAt: new Date(Date.now() - 16 * 60_000)
     } });
     const result = await value.browser.request('/media/uploads', 'POST', { purpose: 'POST', mime: 'image/png', size: value.source.length });
     assert.equal(result.status, 201, JSON.stringify(result.body));
     assert.equal(await prisma.mediaAsset.count({ where: { ownerId: value.id, status: 'PROCESSING' } }), 0);
-    assert.equal(await prisma.mediaAsset.count({ where: { ownerId: value.id, status: 'FAILED', errorCode: 'PROCESSING_LEASE_EXPIRED' } }), 3);
+    assert.equal(await prisma.mediaAsset.count({ where: { ownerId: value.id, status: 'PENDING_DELETE', errorCode: null } }), 3);
+  });
+
+  await t.test('a crashed finalizer lease cleans partial storage and database variants without retry duplicates', async () => {
+    const value = await fixture(), assetId = randomUUID();
+    const sourceKey = `${value.id}/${assetId}/upload.png`;
+    const masterKey = `${value.id}/${assetId}/master.webp`;
+    const privateKey = `${value.id}/${assetId}/private/512.webp`;
+    objects.set('fixture:' + sourceKey, value.source);
+    objects.set('media-originals:' + masterKey, value.source);
+    objects.set('media-private:' + privateKey, value.source);
+    await prisma.mediaAsset.create({ data: {
+      id: assetId, ownerId: value.id, purpose: 'PROFILE_AVATAR', status: 'PROCESSING',
+      accessScope: 'OWNER_ONLY', sourceMime: 'image/png', sourceByteSize: value.source.length,
+      uploadBucket: 'fixture', uploadKey: sourceKey,
+      errorCode: 'FINALIZING:' + randomUUID(), expiresAt: new Date(Date.now() + 60_000),
+      sourceCleanupNotBefore: new Date(Date.now() - 1000),
+      storageCleanupNotBefore: new Date(Date.now() - 1000),
+      updatedAt: new Date(Date.now() - 16 * 60_000),
+      variants: { create: [
+        { kind: 'MASTER', storageBucket: 'media-originals', storageKey: masterKey, width: 256, height: 256, mime: 'image/webp', byteSize: value.source.length, isPublic: false },
+        { kind: 'LARGE', storageBucket: 'media-private', storageKey: privateKey, width: 512, height: 512, mime: 'image/webp', byteSize: value.source.length, isPublic: false }
+      ] }
+    } });
+
+    await media.cleanupExpiredMedia();
+
+    const recovered = await prisma.mediaAsset.findUniqueOrThrow({ where: { id: assetId } });
+    assert.equal(recovered.status, 'DELETED');
+    assert.equal(await prisma.mediaVariant.count({ where: { mediaAssetId: assetId } }), 0);
+    assert.equal([...objects.keys()].some(key => key.includes(assetId)), false);
   });
 
   await t.test('concurrent finalize is single-writer and cancellation prevents revival', async () => {
@@ -408,6 +439,8 @@ test('finding-resolution:SI-AS-E04-008', async t => {
     const first = value.browser.request('/media/' + asset.id + '/finalize', 'POST', {});
     try {
       await gate.ready;
+      const leased = await prisma.mediaAsset.findUniqueOrThrow({ where: { id: asset.id } });
+      assert.match(leased.errorCode || '', /^FINALIZING:/);
       const duplicate = await value.browser.request('/media/' + asset.id + '/finalize', 'POST', {});
       assert.equal(duplicate.status, 409); assert.equal(duplicate.body.code, 'MEDIA_BUSY');
       assert.equal((await value.browser.request('/media/' + asset.id, 'DELETE')).status, 204);

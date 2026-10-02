@@ -21,6 +21,24 @@ test('normalizes a valid post image and preserves a supported original ratio', a
   assert.ok(result.variants.every((variant) => variant.height === Math.round(variant.width / 1.5)));
 });
 
+test('uses the bounded Sharp runtime without cumulative RSS growth across consecutive phone-sized finalizations', async () => {
+  assert.equal(sharp.concurrency(), 1);
+  assert.equal(sharp.cache().memory.max, 0);
+
+  const webp = await makeImage(2400, 1800, 'webp');
+  const jpeg = await makeImage(2400, 1800, 'jpeg');
+  const baselineRss = process.memoryUsage().rss;
+  let peakRss = baselineRss;
+  for (const source of [webp, webp, jpeg]) {
+    const result = await processMediaBuffer(source, 'POST', source === jpeg ? 'image/jpeg' : 'image/webp', {});
+    assert.equal(result.master.width, 2400);
+    assert.deepEqual(result.variants.map(variant => variant.width), [480, 768, 1080]);
+    peakRss = Math.max(peakRss, process.memoryUsage().rss);
+  }
+  const rssGrowth = peakRss - baselineRss;
+  assert.ok(rssGrowth < 128 * 1024 * 1024, `RSS grew by ${rssGrowth} bytes across consecutive finalizations`);
+});
+
 test('clamps an overly wide post ratio without leaving blank crop space', async () => {
   const source = await makeImage(2000, 700);
   const result = await processMediaBuffer(source, 'POST', 'image/jpeg', {});

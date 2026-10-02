@@ -187,6 +187,12 @@ test('metadata in a converter response is rejected before storage', async () => 
   assert.equal(c.asset.variants.length, 0); assert.equal(c.signs, 0);
 }));
 
+test('a truncated WebP converter response is fully decoded and rejected before storage', async () => scenario(async c => {
+  c.output = c.output.subarray(0, Math.max(20, c.output.length - 12));
+  await assert.rejects(prepareMediaUpload('owner', 'asset'), (e: any) => e.code === 'HEIF_CONVERSION_FAILED');
+  assert.equal(c.asset.variants.length, 0); assert.equal(c.signs, 0);
+}));
+
 test('session revocation before preview response returns no signed URL', async () => scenario(async c => {
   let activeSession = true; c.onSign = () => { activeSession = false; };
   await assert.rejects(prepareMediaUpload('owner', 'asset', async () => { if (!activeSession) throw new Error('Session revoked'); }), /Session revoked/);
