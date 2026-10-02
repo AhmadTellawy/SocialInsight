@@ -114,9 +114,10 @@ async function install(page: Page, state: State, baseURL: string, language: 'ar'
   });
 }
 
-export const test = base.extend<{ state: State; word: (key: string) => string; boot: (route?: string) => Promise<void> }>({
+export const test = base.extend<{ state: State; word: (key: string) => string; localized: (english: string, arabic: string) => string; boot: (route?: string) => Promise<void> }>({
   state: async ({}, use) => { await use({ calls: [], unexpected: [], errors: [] }); },
   word: async ({}, use, info) => { const words = (info.project.name.startsWith('ar') ? ar : en) as Record<string, any>; await use(key => words[key] || key.split('.').reduce((obj, part) => obj?.[part], words) || key); },
+  localized: async ({}, use, info) => { const isArabic = info.project.name.startsWith('ar'); await use((english, arabic) => isArabic ? arabic : english); },
   boot: async ({ page, state, baseURL }, use, info) => {
     await use(async (route = '/') => { await install(page, state, baseURL!, info.project.name.startsWith('ar') ? 'ar' : 'en'); await page.goto(route); });
     await info.attach('navigation-api-calls', { body: JSON.stringify(state.calls), contentType: 'application/json' });

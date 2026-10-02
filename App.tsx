@@ -1042,7 +1042,11 @@ const App: React.FC = () => {
           setProfileNextCursor(res.nextCursor);
           setSelectedProfile(user);
           if (user.handle) {
-            navigate(`/@${user.handle}`, { replace: true });
+            navigate({
+              pathname: `/@${encodeURIComponent(user.handle)}`,
+              search: location.search,
+              hash: location.hash,
+            }, { replace: true });
           }
         }).catch(err => {
           if (profileRequestRef.current !== requestId) return;
@@ -1116,7 +1120,7 @@ const App: React.FC = () => {
       if (activeCreationFlow && !path.startsWith('/create/')) setActiveCreationFlow(null);
       if (accountModalType && !path.startsWith('/create/')) setAccountModalType(null);
     }
-  }, [location.pathname, location.search, authBootstrapped, isAuthenticated, userProfile?.id, authModalOpen]);
+  }, [location.pathname, location.search, location.hash, authBootstrapped, isAuthenticated, userProfile?.id, authModalOpen]);
 
   React.useEffect(() => {
     if (!authBootstrapped) return;

@@ -1,4 +1,4 @@
-import { test, expect, back, profilePath, group, post } from './fixtures';
+import { test, expect, back, profile, profilePath, group, post } from './fixtures';
 
 test('profile settings return once to profile then home, with browser Forward intact', async ({ page, boot, word }) => {
   await boot();
@@ -94,17 +94,28 @@ for (const [tab, label] of [['reposts', 'Reposts'], ['groups', 'Groups'], ['draf
   });
 }
 
-test('profile insights have a reloadable URL and return to the selected tab', async ({ page, boot }) => {
+test('profile insights have a reloadable URL and return to the selected tab', async ({ page, boot, localized }) => {
   await boot(`${profilePath}?tab=reposts`);
   await page.locator('button').filter({ has: page.locator('svg.lucide-trending-up') }).first().click();
   await expect(page).toHaveURL(`${profilePath}?tab=reposts&view=analysis`);
-  await expect(page.getByRole('heading', { name: /Your account analytics|تحليلات حسابك/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: localized('Your account analytics', 'تحليلات حسابك'), exact: true })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole('heading', { name: /Your account analytics|تحليلات حسابك/ })).toBeVisible();
-  await page.getByRole('button', { name: /Back|رجوع/, exact: true }).click();
+  await expect(page.getByRole('heading', { name: localized('Your account analytics', 'تحليلات حسابك'), exact: true })).toBeVisible();
+  await page.getByRole('button', { name: localized('Back', 'رجوع'), exact: true }).click();
   await expect(page).toHaveURL(`${profilePath}?tab=reposts`);
   await page.goForward();
-  await expect(page.getByRole('heading', { name: /Your account analytics|تحليلات حسابك/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: localized('Your account analytics', 'تحليلات حسابك'), exact: true })).toBeVisible();
+});
+
+test('legacy profile URL preserves tab, view and hash while replacing its history entry', async ({ page, boot, localized }) => {
+  await boot('/');
+  await page.goto(`/profile/${profile.id}?tab=reposts&view=analysis#profile-insights`);
+  await expect(page).toHaveURL(`${profilePath}?tab=reposts&view=analysis#profile-insights`);
+  await expect(page.getByRole('heading', { name: localized('Your account analytics', 'تحليلات حسابك'), exact: true })).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL('/');
+  await page.goForward();
+  await expect(page).toHaveURL(`${profilePath}?tab=reposts&view=analysis#profile-insights`);
 });
 
 test('post analysis URL survives reload and Back returns to post before feed', async ({ page, boot }) => {
@@ -170,7 +181,7 @@ for (const route of ['/settings/profile/no-such-page', '/settings/profile/userna
     await expect(page.getByTestId('survey-card')).toHaveCount(0);
     await page.reload();
     await expect(page).toHaveURL(route);
-    await page.getByRole('button', { name: /Back|رجوع|العودة/ }).click();
+    await page.getByRole('button', { name: word('common.back'), exact: true }).click();
     await expect(page).toHaveURL('/');
     expect(state.calls.some(call => call.includes('%E0%A4%A'))).toBe(false);
   });
@@ -234,11 +245,11 @@ test('delayed profile response cannot reopen profile after browser Back', async 
   } finally { release(); }
 });
 
-test('privacy reached from demographics returns to its real origin', async ({ page, boot }) => {
+test('privacy reached from demographics returns to its real origin', async ({ page, boot, word, localized }) => {
   await boot('/settings/profile/demographics');
-  await page.locator('button').filter({ hasText: /Privacy Policy|سياسة الخصوصية/ }).click();
+  await page.getByRole('button', { name: word('settings.privacy_policy'), exact: true }).click();
   await expect(page).toHaveURL('/privacy');
-  await expect(page.getByRole('heading', { name: /Privacy Policy|سياسة الخصوصية/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: localized('Privacy Policy', 'سياسة الخصوصية'), exact: true })).toBeVisible();
   await back(page);
   await expect(page).toHaveURL('/settings/profile/demographics');
   await page.goForward();
@@ -263,10 +274,10 @@ test('direct post analysis Back falls back to its post before home', async ({ pa
   await expect(page).toHaveURL('/');
 });
 
-test('direct profile insights Back retains the requested profile tab', async ({ page, boot, word }) => {
+test('direct profile insights Back retains the requested profile tab', async ({ page, boot, word, localized }) => {
   await boot(`${profilePath}?tab=reposts&view=analysis`);
-  await expect(page.getByRole('heading', { name: /Your account analytics|تحليلات حسابك/ })).toBeVisible();
-  await page.getByRole('button', { name: /Back|رجوع/, exact: true }).click();
+  await expect(page.getByRole('heading', { name: localized('Your account analytics', 'تحليلات حسابك'), exact: true })).toBeVisible();
+  await page.getByRole('button', { name: localized('Back', 'رجوع'), exact: true }).click();
   await expect(page).toHaveURL(`${profilePath}?tab=reposts`);
   await expect(page.getByRole('button', { name: word('Reposts'), exact: true })).toHaveClass(/text-blue-600/);
 });
@@ -285,16 +296,23 @@ test('search term and filter survive reload and Back restores previous filter', 
 });
 
 for (const type of ['Poll', 'Survey', 'Quiz', 'Challenge']) {
-  test(`group ${type} creator preserves its group URL on reload and closes to group`, async ({ page, boot }) => {
+  test(`group ${type} creator preserves its group URL on reload and closes to group`, async ({ page, boot, localized }) => {
     await boot(`/group/${group.id}`);
     await page.getByRole('button', { name: type, exact: true }).click();
     await expect(page).toHaveURL(`/create/${type.toLowerCase()}?group=${group.id}`);
-    const heading = type === 'Poll' ? /New Poll|استطلاع جديد/ : type === 'Challenge' ? /New Challenge|تحدٍ جديد/ : `New ${type}`;
+    const heading = type === 'Poll'
+      ? localized('New Poll', 'استطلاع جديد')
+      : type === 'Challenge'
+        ? localized('New Challenge', 'تحدٍ جديد')
+        : `New ${type}`;
     await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
     await page.reload();
     await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
     await expect(page).toHaveURL(`/create/${type.toLowerCase()}?group=${group.id}`);
-    await page.getByRole('button', { name: /Close|إغلاق/, exact: true }).click();
+    const closeButton = type === 'Poll'
+      ? page.getByRole('button', { name: localized('Close', 'إغلاق'), exact: true })
+      : page.getByRole('button', { name: 'Close', exact: true });
+    await closeButton.click();
     await expect(page).toHaveURL(`/group/${group.id}`);
     await expect(page.getByRole('heading', { name: group.name, exact: true })).toBeVisible();
   });
