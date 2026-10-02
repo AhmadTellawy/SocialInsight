@@ -1,6 +1,7 @@
 export const DEFAULT_MEDIA_MAX_INPUT_BYTES = 15 * 1024 * 1024;
 export const PROFILE_COVER_MAX_INPUT_BYTES = 10 * 1024 * 1024;
 export const DEFAULT_MEDIA_MAX_DECODED_PIXELS = 40_000_000;
+export const DEFAULT_HEIF_MAX_SOURCE_PIXELS = 100_000_000;
 export const HEIF_NATIVE_DECODE_TIMEOUT_MS = 15_000;
 
 export type SupportedImageMime = 'image/jpeg' | 'image/png' | 'image/webp';
@@ -52,6 +53,7 @@ export type HeifConverter = (options: {
 export type MediaFileValidationOptions = {
   maxInputBytes?: number;
   maxDecodedPixels?: number;
+  maxHeifSourcePixels?: number;
   heifConverter?: HeifConverter;
   heifHandling?: 'native' | 'server';
 };
@@ -366,6 +368,7 @@ export const validateAndNormalizeImageFile = async (
 ): Promise<ValidatedImageFile> => {
   const maxInputBytes = options.maxInputBytes ?? DEFAULT_MEDIA_MAX_INPUT_BYTES;
   const maxDecodedPixels = options.maxDecodedPixels ?? DEFAULT_MEDIA_MAX_DECODED_PIXELS;
+  const maxHeifSourcePixels = options.maxHeifSourcePixels ?? DEFAULT_HEIF_MAX_SOURCE_PIXELS;
   if (sourceFile.size <= 0) throw new MediaFileValidationError('EMPTY_FILE');
   if (sourceFile.size > maxInputBytes) throw new MediaFileValidationError('FILE_TOO_LARGE');
 
@@ -390,7 +393,7 @@ export const validateAndNormalizeImageFile = async (
     // Fail closed before invoking the decoder: decoding a container without a
     // bounded primary-image size could exhaust memory even when its file is
     // below the byte limit.
-    const sourceDimensions = validatedDimensions(inspected, maxDecodedPixels);
+    const sourceDimensions = validatedDimensions(inspected, maxHeifSourcePixels);
     if (options.heifHandling === 'server') {
       const file = sourceFile.type === inspected.mime
         ? sourceFile

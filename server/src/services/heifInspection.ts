@@ -131,7 +131,7 @@ export const inspectHeifBuffer = (bytes: Buffer): InspectedHeif => {
     (total, dimension) => total + (dimension.width * dimension.height),
     0
   );
-  if (!Number.isSafeInteger(aggregatePixelCount) || aggregatePixelCount > MEDIA_CONFIG.maxDecodedPixels) {
+  if (!Number.isSafeInteger(aggregatePixelCount) || aggregatePixelCount > MEDIA_CONFIG.maxHeifSourcePixels) {
     throw new MediaValidationError('PIXEL_LIMIT_EXCEEDED', 'The image exceeds the safe decoded pixel limit.');
   }
   return {

@@ -90,10 +90,9 @@ async function scenario(run: (context: any) => Promise<void>) {
     (prisma.mediaAsset as any).findUnique = tx.mediaAsset.findUnique;
     globalThis.fetch = async (url: any, init?: RequestInit) => {
       if (String(url).endsWith('/health/ready')) return Response.json({
-        status: 'ready', service: 'heif-converter', protocolVersion: 2,
-        capabilities: { wholeWorkerIsolation: 'landlock-seccomp-v1', supervisor: 'subreaper-v1', failurePolicy: 'fail-closed-v1' },
-        limits: { inputBytes: 15728640, outputBytes: 12582912, maxPixels: 40000000, wholeWorkerMs: 45000 },
-        versions: { libheif: '1.23.3', libde265: '1.1.1', sharp: '0.35.4' }
+        status: 'ready', service: 'cloudflare-images-heic-adapter', protocolVersion: 3,
+        capabilities: { provider: 'cloudflare-images-binding', auth: 'hmac-sha256-v1', sourcePersistence: 'none', output: 'image/webp' },
+        limits: { inputBytes: 15728640, bindingInputBytes: 20000000, outputBytes: 12582912, maxSourcePixels: 100000000, maxEdge: 2400 }
       });
       context.conversions++; context.conversionSignal = init?.signal; await context.onConvert?.();
       return context.response || new Response(context.output, { headers: { 'content-type': 'image/webp' } });
@@ -206,7 +205,7 @@ test('cold HEIF configuration preserves normal image formats and distinguishes c
   assert.deepEqual(disabled.allowedMimeTypes, cold.allowedMimeTypes);
 }));
 
-test('verified V2 configuration advertises HEIF alongside normal image formats', async () => scenario(async () => {
+test('verified Cloudflare adapter configuration advertises HEIF alongside normal image formats', async () => scenario(async () => {
   const ready = await getMediaConfigResponse();
   assert.equal(ready.heifServerPreparationEnabled, true);
   assert.equal(ready.heifServerPreparationConfigured, true);

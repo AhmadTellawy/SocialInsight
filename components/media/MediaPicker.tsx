@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next';
 import { MediaCropSelection, MediaDraft, MediaPurpose } from '../../types';
 import { MediaUploadError, mediaApi } from '../../services/mediaApi';
 import {
+  DEFAULT_HEIF_MAX_SOURCE_PIXELS,
   DEFAULT_MEDIA_MAX_DECODED_PIXELS,
   DEFAULT_MEDIA_MAX_INPUT_BYTES,
   MediaFileValidationError,
@@ -341,6 +342,7 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
               ? PROFILE_COVER_MAX_INPUT_BYTES
               : DEFAULT_MEDIA_MAX_INPUT_BYTES,
             maxDecodedPixels: DEFAULT_MEDIA_MAX_DECODED_PIXELS,
+            maxHeifSourcePixels: DEFAULT_HEIF_MAX_SOURCE_PIXELS,
             heifHandling: 'server'
           }));
         } catch (error) {
@@ -430,9 +432,18 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
           if (error instanceof DOMException && error.name === 'AbortError') continue;
           if (!valuesRef.current.some((item) => item.clientId === draft.clientId)) continue;
           if (error instanceof MediaUploadError && error.phase === 'preparation') {
+            const messageKey = error.code === 'HEIF_CONVERTER_QUOTA_EXCEEDED'
+              ? 'media.heifQuota'
+              : error.code === 'HEIF_CONVERTER_BUSY'
+                ? 'media.heifBusy'
+                : error.code === 'UNSUPPORTED_HEIF_VARIANT'
+                  ? 'media.heifUnsupportedVariant'
+                  : error.code === 'PIXEL_LIMIT_EXCEEDED'
+                    ? 'media.tooManyPixels'
+                    : 'media.heifPreparationFailed';
             patchDraft(draft.clientId, {
               status: 'error', progress: 0, assetId: undefined, previewUrl: '',
-              error: t('media.heifPreparationFailed', { defaultValue: 'We could not prepare this image right now. Try again or remove it.' })
+              error: t(messageKey, { defaultValue: 'We could not prepare this image right now. Try again or remove it.' })
             });
             continue;
           }
