@@ -642,6 +642,7 @@ CREATE POLICY socialinsight_runtime_select ON public."Page"
   FOR SELECT TO socialinsight_runtime
   USING (
     public.socialinsight_page_is_public(id)
+    OR "ownerId" = public.socialinsight_context_user_id()
     OR public.socialinsight_page_actor_has_role(id, ARRAY['OWNER','ADMIN','EDITOR','ANALYST','SYSTEM'])
   );
 CREATE POLICY socialinsight_runtime_insert ON public."Page"

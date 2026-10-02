@@ -323,6 +323,7 @@ SELECT pg_temp.pages_rls_set_context('00000000-0000-4000-8000-00000000a101');
 DO $owner_checks$
 DECLARE
   affected integer;
+  inserted_id text;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM public."Page" WHERE id = '00000000-0000-4000-8000-00000000b102') THEN
     RAISE EXCEPTION 'owner could not see draft Page';
@@ -335,8 +336,37 @@ BEGIN
     WHERE id = '00000000-0000-4000-8000-00000000b102';
   GET DIAGNOSTICS affected = ROW_COUNT;
   IF affected <> 1 THEN RAISE EXCEPTION 'owner update failed'; END IF;
+
+  -- INSERT ... RETURNING must evaluate the owner's direct SELECT predicate;
+  -- the new row cannot yet be discovered through PageMembership.
+  INSERT INTO public."Page" (
+    id, "ownerId", handle, name, category, bio, "representationAt", "createRequestId", "updatedAt"
+  ) VALUES (
+    '00000000-0000-4000-8000-00000000b104', '00000000-0000-4000-8000-00000000a101',
+    'rls_returning_b104', 'RLS returning', 'other', '', CURRENT_TIMESTAMP,
+    '00000000-0000-4000-8000-00000000c104', CURRENT_TIMESTAMP
+  ) RETURNING id INTO inserted_id;
+  IF inserted_id <> '00000000-0000-4000-8000-00000000b104' THEN
+    RAISE EXCEPTION 'signed owner INSERT RETURNING failed';
+  END IF;
 END
 $owner_checks$;
+
+-- A signed, non-owner context still cannot discover or mutate that Page.
+SELECT pg_temp.pages_rls_set_context('00000000-0000-4000-8000-00000000a103');
+DO $returning_stranger_checks$
+DECLARE
+  affected integer;
+BEGIN
+  IF EXISTS (SELECT 1 FROM public."Page" WHERE id = '00000000-0000-4000-8000-00000000b104') THEN
+    RAISE EXCEPTION 'non-owner saw signed owner returned Page';
+  END IF;
+  UPDATE public."Page" SET bio = 'forbidden returning update'
+    WHERE id = '00000000-0000-4000-8000-00000000b104';
+  GET DIAGNOSTICS affected = ROW_COUNT;
+  IF affected <> 0 THEN RAISE EXCEPTION 'non-owner updated signed owner returned Page'; END IF;
+END
+$returning_stranger_checks$;
 
 SELECT pg_temp.pages_rls_set_context('00000000-0000-4000-8000-00000000a102');
 DO $admin_checks$
