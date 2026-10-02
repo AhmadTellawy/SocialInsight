@@ -1,4 +1,4 @@
-import { activePageActor, lockPage, pageAudit, pageIsBlocked, requirePageCapability } from '../pages/pageService';
+import { activePageActor, lockPage, pageAudit, pageIsBlocked, pageTransaction, requirePageCapability } from '../pages/pageService';
 import { pagePostReplay, pagePostRequestKey, recordPagePostCreation } from '../pages/pagePostReplay';
 import { assertPagesEnabled, pageDiscoveryPostWhere } from '../pages/pageFeature';
 import { notifyPagePostInteraction } from '../pages/pageNotificationService';
@@ -3172,9 +3172,10 @@ export const sharePost = async (req: Request, res: Response) => {
             await notify(userId, canonicalSource.authorId, 'share', 'Shared your post', 'post', actualSharedFromId);
         }
 
-        const createdPost = await prisma.post.findFirst({
-            where: { id: newPost.id, ...(involvesPage ? buildVisiblePublishedPostWhere(userId) : {}) },
-            include: {
+        const loadCreatedPost = async (client: Prisma.TransactionClient = prisma) => {
+            const post = await client.post.findFirst({
+                where: { id: newPost.id, ...(involvesPage ? buildVisiblePublishedPostWhere(userId) : {}) },
+                include: {
                 author: { select: SAFE_USER_SELECT },
                 questions: { include: { options: { orderBy: { order: 'asc' } } } },
                 sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
@@ -3201,15 +3202,25 @@ export const sharePost = async (req: Request, res: Response) => {
                         taggedUsers: getVisiblePeopleTagsInclude(userId)
                     }
                 }
-            }
-        });
+                }
+            });
+            if (post) await attachPagePublishers([post], userId, client);
+            if (post && involvesPage && !await client.post.count({
+                where: { id: newPost.id, ...buildVisiblePublishedPostWhere(userId) }
+            })) throw new PagePolicyError('PAGE_SHARE_SOURCE_UNAVAILABLE', 404);
+            return post;
+        };
+        // Page RLS context is transaction-local. Keep both the response read and
+        // publisher hydration on one newly signed transaction after the write commits.
+        const createdPost = involvesPage
+            ? await pageTransaction(loadCreatedPost, 'ReadCommitted')
+            : await loadCreatedPost();
 
         if (!createdPost) {
             res.status(involvesPage ? 404 : 500).json({ error: involvesPage ? 'Shared post is no longer available' : 'Failed to retrieve shared post' });
             return;
         }
 
-        await attachPagePublishers([createdPost],userId);
         const p = serializePostSocialRecord(createdPost as any, userId);
         
         let mappedSharedFrom: any = undefined;
@@ -3254,7 +3265,6 @@ export const sharePost = async (req: Request, res: Response) => {
             targetGroups: mapTargetGroups(p)
         };
 
-        if (involvesPage && !await prisma.post.count({ where: { id: newPost.id, ...buildVisiblePublishedPostWhere(userId) } })) throw new PagePolicyError('PAGE_SHARE_SOURCE_UNAVAILABLE', 404);
         res.json(mappedPost);
     } catch (error) {
         if (respondPagePostError(error,res)) return;

@@ -10,6 +10,11 @@ import { pageRequestDatabaseContext, runWithPageDatabaseContext } from '../pages
 export const JWT_SECRET: string = process.env.JWT_SECRET?.trim() || '';
 
 const legacyCompatEnabled = (): boolean => process.env.AUTH_LEGACY_BEARER_COMPAT === 'true' && Boolean(JWT_SECRET);
+// Router-level optionalAuth and route-level requireAuth run sequentially on the
+// same Request. Keep the verified cookie result in module-private memory so a
+// protected route does not repeat the AuthSession lookup. A request property
+// cannot mint or replace this proof, and failed optional resolution is not cached.
+const optionalSessionResults = new WeakMap<Request, AuthenticatedSession | null>();
 const legacyTtlSeconds = (): number => {
     const parsed = Number.parseInt(process.env.AUTH_LEGACY_BEARER_TTL_SECONDS || '', 10);
     return Math.max(300, Math.min(86_400, Number.isFinite(parsed) ? parsed : 3600));
@@ -50,7 +55,9 @@ declare global {
 export const requireAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     let session: AuthenticatedSession | null;
     try {
-        session = await resolveSession(req);
+        session = optionalSessionResults.has(req)
+            ? optionalSessionResults.get(req) ?? null
+            : await resolveSession(req);
     } catch {
         res.status(401).json({ error: 'Authentication required', code: 'AUTH_REQUIRED', requestId: req.requestId });
         return;
@@ -102,6 +109,7 @@ export const requireRecentAuth = (req: Request, res: Response, next: NextFunctio
 export const optionalAuth = async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
     try {
         const session = await resolveSession(req);
+        optionalSessionResults.set(req, session);
         if (session) {
             req.user = { userId: session.userId, authMode: 'session' };
             req.authSession = session;

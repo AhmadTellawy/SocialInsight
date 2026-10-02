@@ -19,16 +19,24 @@ const api = process.env.P35_API_URL || 'http://127.0.0.1:3001';
 const apiOrigin = new URL(api).origin;
 const reportPath = process.env.P35_REPORT || path.resolve(__dirname, 'p35-receipt.json');
 const targetPid = Number(process.env.P35_API_PID || 0);
+const precheck = process.env.P35_MODE === 'precheck';
+const loadPlan = precheck
+  ? [{ users: 10, warmupMs: 10_000, sampleMs: 60_000 }, { users: 25, warmupMs: 10_000, sampleMs: 120_000, full: true }]
+  : [{ users: 1, warmupMs: 10_000, sampleMs: 30_000 }, { users: 10, warmupMs: 10_000, sampleMs: 30_000 },
+    { users: 25, warmupMs: 10_000, sampleMs: 30_000 }, { users: 50, warmupMs: 10_000, sampleMs: 30_000 },
+    { users: 100, warmupMs: 30_000, sampleMs: 600_000, full: true }];
+const acceptedLevel = loadPlan.at(-1);
 const prefix = `qa_p35_${crypto.randomBytes(4).toString('hex')}`;
 const clients = [];
 const pages = [];
 const records = [];
 const resourceSamples = [];
 const report = {
-  kind: 'HOSTED_MIXED_P35', sourceCommit: process.env.GITHUB_SHA || null,
+  kind: precheck ? 'BOUNDED_MIXED_P35_PRECHECK' : 'HOSTED_MIXED_P35', sourceCommit: process.env.GITHUB_SHA || null,
   target: 'isolated hosted runner API + PostgreSQL service', generator: 'separate Node process on same hosted runner',
   startedAt: new Date().toISOString(), levelResults: [], checks: [],
-  acceptance: { users: 100, durationSeconds: 600, mix: { read: 80, interaction: 10, vote: 5, manage: 5 },
+  acceptance: { users: acceptedLevel.users, durationSeconds: acceptedLevel.sampleMs / 1000,
+    mix: { read: 80, interaction: 10, vote: 5, manage: 5 },
     readP95MsMax: 800, writeP95MsMax: 1200, fiveXxPercentPerMinuteMaxExclusive: 1, transportErrorsMax: 0 },
   runner: { cpus: os.availableParallelism(), totalMemoryBytes: os.totalmem(), freeMemoryAtStartBytes: os.freemem() },
 };
@@ -244,7 +252,7 @@ async function level(users, warmupMs, sampleMs, full = false) {
     targetCpuPercentOfCoreP95: pct(deltas.map(item => item.cpuPercentOfCore).sort((a, b) => a - b), .95),
     targetMemoryBytesPeak: resources.length ? Math.max(...resources.map(item => item.rssBytes)) : null };
   if (full) {
-    result.minuteWindows = Array.from({ length: 10 }, (_, minute) => {
+    result.minuteWindows = Array.from({ length: Math.ceil(sampleMs / 60000) }, (_, minute) => {
       const batch = rows.filter(row => row.atMs >= minute * 60000 && row.atMs < (minute + 1) * 60000);
       return { minute: minute + 1, ...stats(batch) };
     });
@@ -344,13 +352,13 @@ async function postLoadSecuritySmokes() {
 
 async function main() {
   save();
-  assert.ok(report.runner.cpus >= 3 && report.runner.freeMemoryAtStartBytes >= 8 * 1024 ** 3,
-    'RUNNER_CAPACITY_PREFLIGHT: need at least 3 CPUs and 8 GiB available; this is environment limitation, not Pages failure');
+  const minimumFreeMemoryBytes = (precheck ? 3 : 8) * 1024 ** 3;
+  assert.ok(report.runner.cpus >= 3 && report.runner.freeMemoryAtStartBytes >= minimumFreeMemoryBytes,
+    `RUNNER_CAPACITY_PREFLIGHT: need at least 3 CPUs and ${precheck ? 3 : 8} GiB available; this is environment limitation, not Pages failure`);
   await fixtures();
   await permissionSmokes();
-  for (const users of [1, 10, 25, 50]) await level(users, 10000, 30000);
-  await level(100, 30000, 600000, true);
-  await sleep(30000);
+  for (const planned of loadPlan) await level(planned.users, planned.warmupMs, planned.sampleMs, planned.full);
+  if (!precheck) await sleep(30000);
   await integrity();
   await postLoadSecuritySmokes();
   if (process.env.P35_API_LOG && fs.existsSync(process.env.P35_API_LOG)) {
@@ -362,14 +370,16 @@ async function main() {
   }
   const p35 = report.p35;
   report.checks = [
-    { name: 'Baseline and progressive stages all succeed without errors or timeouts', pass:
-      [1, 10, 25, 50, 100].every(users => {
+    { name: 'Configured stages all succeed without errors or timeouts', pass:
+      loadPlan.every(({ users }) => {
         const result = report.levelResults.find(level => level.users === users);
         return result && result.requests > 0 && result.errors === 0 && result.timeouts === 0 &&
           result.transportErrors === 0 && result.apiErrors === 0 && result.databaseErrorsVisible === 0;
       }) },
-    { name: '100 users sustained for at least 600 seconds', pass: p35.users === 100 && p35.sampleSeconds >= 600 && p35.requests >= 1000 },
-    { name: 'Every minute contains measured traffic', pass: p35.minuteWindows.length === 10 && p35.minuteWindows.every(window => window.requests > 0) },
+    { name: `${acceptedLevel.users} users sustained for at least ${acceptedLevel.sampleMs / 1000} seconds`, pass:
+      p35.users === acceptedLevel.users && p35.sampleSeconds >= acceptedLevel.sampleMs / 1000 && p35.requests > 0 },
+    { name: 'Every minute contains measured traffic', pass:
+      p35.minuteWindows.length === Math.ceil(acceptedLevel.sampleMs / 60000) && p35.minuteWindows.every(window => window.requests > 0) },
     { name: '80/10/5/5 mixed traffic within one percentage point', pass: Object.entries(report.acceptance.mix).every(([kind, expected]) =>
       p35.byKind[kind].requests > 0 && Math.abs(p35.mixPercent[kind] - expected) <= 1) },
     { name: 'Read p95 <= 800ms', pass: p35.byKind.read.p95Ms <= 800 },

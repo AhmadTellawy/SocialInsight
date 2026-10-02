@@ -57,3 +57,23 @@ test('optional authentication scopes Page database identity and does not leak it
     assert.equal(currentPageDatabaseContext(),undefined);
   } finally { sessions.resolveSession=original; }
 });
+
+test('requireAuth reuses only the module-private session result verified by optionalAuth', async () => {
+  const original=sessions.resolveSession;
+  try {
+    let resolutions=0;
+    sessions.resolveSession=async()=>{resolutions++;return {id:'session-a',userId:'a',createdAt:new Date(),user:{status:'ACTIVE'}};};
+    const req:any={method:'GET',headers:{}};
+    const {res}=response(); let next=0;
+    await optionalAuth(req,res,()=>next++);
+    await requireAuth(req,res,()=>next++);
+    assert.equal(resolutions,1);
+    assert.equal(next,2);
+    assert.deepEqual(req.user,{userId:'a',authMode:'session'});
+
+    const forged:any={method:'GET',headers:{},user:{userId:'attacker',authMode:'session'},authSession:req.authSession};
+    await requireAuth(forged,res,()=>next++);
+    assert.equal(resolutions,2,'a copied request property must not count as verified request-local proof');
+    assert.deepEqual(forged.user,{userId:'a',authMode:'session'});
+  } finally { sessions.resolveSession=original; }
+});
