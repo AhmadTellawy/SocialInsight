@@ -98,13 +98,13 @@ test('profile insights have a reloadable URL and return to the selected tab', as
   await boot(`${profilePath}?tab=reposts`);
   await page.locator('button').filter({ has: page.locator('svg.lucide-trending-up') }).first().click();
   await expect(page).toHaveURL(`${profilePath}?tab=reposts&view=analysis`);
-  await expect(page.getByRole('heading', { name: 'Global Insights' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Your account analytics' })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Global Insights' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Your account analytics' })).toBeVisible();
   await back(page);
   await expect(page).toHaveURL(`${profilePath}?tab=reposts`);
   await page.goForward();
-  await expect(page.getByRole('heading', { name: 'Global Insights' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Your account analytics' })).toBeVisible();
 });
 
 test('post analysis URL survives reload and Back returns to post before feed', async ({ page, boot }) => {
@@ -265,7 +265,7 @@ test('direct post analysis Back falls back to its post before home', async ({ pa
 
 test('direct profile insights Back retains the requested profile tab', async ({ page, boot, word }) => {
   await boot(`${profilePath}?tab=reposts&view=analysis`);
-  await expect(page.getByRole('heading', { name: 'Global Insights' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Your account analytics' })).toBeVisible();
   await back(page);
   await expect(page).toHaveURL(`${profilePath}?tab=reposts`);
   await expect(page.getByRole('button', { name: word('Reposts'), exact: true })).toHaveClass(/text-blue-600/);

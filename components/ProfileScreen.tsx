@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Settings, Users, Grid, CheckCircle2, MoreHorizontal, MapPin, Link as LinkIcon, Edit3, UserPlus, Shield, ExternalLink, ArrowLeft, Mail, FileText, PieChart, Building2, Globe as GlobeIcon, Plus, ChevronRight, Search, X, UserCircle2, Zap, Info, Lock, BarChart3, TrendingUp, Bookmark, PenTool, Activity, Repeat, Image as ImageIcon, Camera, Trash2, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 
 import { Analytics } from '../utils/analytics';
 import { PostAnswerPayload, Survey, SurveyType, Group, UserProfile } from '../types';
@@ -16,6 +16,7 @@ import { UserAvatar } from './UserAvatar';
 import { MediaImage } from './media/MediaImage';
 import { ProfileMediaEditor } from './ProfileMediaEditor';
 import { RichTextRenderer } from './RichTextRenderer';
+import { useAppNavigation } from '../hooks/useAppNavigation';
 
 interface ProfileScreenProps {
   surveys: Survey[];
@@ -93,12 +94,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onLoadMore
 }) => {
   const { t } = useTranslation();
+  const location = useLocation();
+  const { back, setQuery } = useAppNavigation();
   const { available: pagesAvailable } = usePagesAvailability(userProfile?.id);
   const [activeStatSheet, setActiveStatSheet] = useState<'following' | 'followers' | 'posts' | null>(null);
-  const [showProfileAnalysis, setShowProfileAnalysis] = useState(false);
   const [statSearch, setStatSearch] = useState('');
   const [postFilter, setPostFilter] = useState<'All' | SurveyType>('All');
-  const [activeTab, setActiveTab] = useState<ProfileTab>('content');
   const [isFollowLoading, setIsFollowLoading] = useState(false);
   const [targetUser, setTargetUser] = useState<UserProfile | null>(null);
   const [editingMedia, setEditingMedia] = useState<'avatar' | 'cover' | null>(null);
@@ -110,10 +111,23 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [showLinksSheet, setShowLinksSheet] = useState(false);
 
   const viewUserId = (!user?.id || user.id === userProfile.id) ? userProfile.id : (user as any)?.id;
+  const isMe = !user?.id || user.id === userProfile.id;
+  const suppliedUser = user as (Partial<UserProfile> & { isFollowing?: boolean; followStatus?: string }) | undefined;
   useEffect(() => { setLocallyBlocked(false); setShowBlockDialog(false); setBlockError(false); }, [viewUserId]);
   const initialFollowStatus = (user as any)?.followStatus || ((user as any)?.isFollowing ? 'ACTIVE' : 'NONE');
   const [isFollowing, setLocalFollowingState] = useFollowState(viewUserId, (user as any)?.isFollowing === true || initialFollowStatus === 'ACTIVE', userProfile?.id);
   const [followStatus, setFollowStatus] = useState<string>(initialFollowStatus);
+  const requestedTab = new URLSearchParams(location.search).get('tab');
+  const requestedView = new URLSearchParams(location.search).get('view');
+  const groupPrivacy = (isMe ? userProfile.groupPrivacy : targetUser?.groupPrivacy || suppliedUser?.groupPrivacy) || 'Public';
+  const canViewGroupsTab = isMe || (groupPrivacy !== 'Off' && (groupPrivacy !== 'Followers' || isFollowing));
+  const activeTab: ProfileTab = requestedTab === 'reposts'
+    || (requestedTab === 'groups' && canViewGroupsTab)
+    || ((requestedTab === 'drafts' || requestedTab === 'saved') && isMe)
+    ? requestedTab as ProfileTab
+    : 'content';
+  const setActiveTab = (tab: ProfileTab) => setQuery('tab', tab === 'content' ? null : tab);
+  const showProfileAnalysis = requestedView === 'analysis';
 
   const [drafts, setDrafts] = useState<Survey[]>([]);
   const [savedPosts, setSavedPosts] = useState<Survey[]>([]);
@@ -133,8 +147,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [connectionRetryKey, setConnectionRetryKey] = useState(0);
 
-  const isMe = !user?.id || user.id === userProfile.id;
-  const suppliedUser = user as (Partial<UserProfile> & { isFollowing?: boolean; followStatus?: string }) | undefined;
   const resolvedTargetUser = targetUser?.id === viewUserId ? targetUser : null;
   const hasProfileStats = isMe || !!resolvedTargetUser?.stats || !!suppliedUser?.stats;
   const ownerProfileRefreshRef = useRef<string | null>(null);
@@ -513,9 +525,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
   useEffect(() => {
     if (showProfileAnalysis && !canViewPrivateProfileContent) {
-      setShowProfileAnalysis(false);
+      setQuery('view', null, true);
     }
-  }, [showProfileAnalysis, canViewPrivateProfileContent]);
+  }, [showProfileAnalysis, canViewPrivateProfileContent, setQuery]);
 
   const responsesCount = useMemo(() => {
     return profileUser?.stats?.responses || 0;
@@ -1064,7 +1076,11 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   };
 
   if (showProfileAnalysis && canViewPrivateProfileContent) {
-    return <ProfileAnalysis userProfile={profileUser} onBack={() => setShowProfileAnalysis(false)} />;
+    const parentQuery = new URLSearchParams(location.search);
+    parentQuery.delete('view');
+    const parentSearch = parentQuery.toString();
+    const parentUrl = `${location.pathname}${parentSearch ? `?${parentSearch}` : ''}${location.hash}`;
+    return <ProfileAnalysis userProfile={profileUser} onBack={() => back(parentUrl)} />;
   }
 
   if (isLoading) {
@@ -1311,7 +1327,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
               <button
                 disabled={!hasProfileStats || !canViewPrivateProfileContent}
-                onClick={() => { if (hasProfileStats && canViewPrivateProfileContent) setShowProfileAnalysis(true); }}
+                onClick={() => { if (hasProfileStats && canViewPrivateProfileContent) setQuery('view', 'analysis'); }}
                 className={`flex flex-col items-center group active:scale-95 transition-transform ${!canViewPrivateProfileContent ? 'opacity-30 grayscale cursor-not-allowed' : !hasProfileStats ? 'cursor-wait' : ''}`}
               >
                 <div className="p-2 rounded-xl bg-green-50 text-green-600 mb-2 transition-colors relative">
@@ -1334,7 +1350,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             {tabs.map(tab => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
+                onClick={() => setActiveTab(tab.id as ProfileTab)}
                 className={`flex-1 min-w-[80px] py-4 text-[10px] font-black uppercase tracking-widest border-b-2 transition-all relative whitespace-nowrap ${activeTab === tab.id
                   ? 'text-blue-600 border-blue-600'
                   : 'text-gray-400 border-transparent hover:text-gray-600'

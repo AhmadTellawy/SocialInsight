@@ -502,7 +502,7 @@ const ProfileSettingsContent: React.FC<ProfileSettingsScreenProps> = ({
     return (
       <ProfileLinksManager
         onDirtyChange={setLinkDraftDirty}
-        onBack={() => navigate('/settings/profile/edit-profile', { replace: true })}
+        onBack={() => back('/settings/profile/edit-profile')}
         onLinksChange={(links) => {
           setLinkCount(links.length);
           setProfileForm((current) => ({ ...current, profileLinks: links }));
