@@ -85,6 +85,8 @@ jobs:
           jwt_key="$(openssl rand -hex 48)"
           echo "::add-mask::$rls_context_key"
           echo "::add-mask::$jwt_key"
+          export PAGES_RLS_CONTEXT_KEY_ID=p35-ephemeral
+          export PAGES_RLS_CONTEXT_SIGNING_KEY="$rls_context_key"
           echo "PAGES_RLS_CONTEXT_KEY_ID=p35-ephemeral" >> "$GITHUB_ENV"
           echo "PAGES_RLS_CONTEXT_SIGNING_KEY=$rls_context_key" >> "$GITHUB_ENV"
           echo "JWT_SECRET=$jwt_key" >> "$GITHUB_ENV"
