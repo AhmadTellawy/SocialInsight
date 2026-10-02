@@ -1124,11 +1124,11 @@ export const updatePost = async (req: Request, res: Response) => {
 
         if (data.pageId !== undefined && (data.pageId || null) !== existingPost.pageId) throw new PagePolicyError('PAGE_PUBLISHER_IMMUTABLE',409);
         if (existingPost.pageId) {
-            await authorizePagePublisher(prisma,existingPost.pageId,trustedUserId,{
-                ...data,status:data.status ?? existingPost.status,groupId:data.groupId ?? existingPost.groupId,
-                targetAudience:data.targetAudience ?? existingPost.targetAudience,
-                targetGroups:data.targetGroups ?? existingPost.targetedGroups.map(group=>group.id)
-            },existingPost.status==='DRAFT');
+            await prisma.$transaction(tx => authorizePagePublisher(tx,existingPost.pageId!,trustedUserId,{
+                    ...data,status:data.status ?? existingPost.status,groupId:data.groupId ?? existingPost.groupId,
+                    targetAudience:data.targetAudience ?? existingPost.targetAudience,
+                    targetGroups:data.targetGroups ?? existingPost.targetedGroups.map(group=>group.id)
+                },existingPost.status==='DRAFT'));
         }
         if (!existingPost.pageId && existingPost.authorId !== trustedUserId) {
             res.status(403).json({ error: 'Unauthorized to update this post' });
@@ -2951,7 +2951,9 @@ export const sharePost = async (req: Request, res: Response) => {
         }
         if (publisherPageId) {
             assertPageDestination(req.body);
-            await authorizePagePublisher(prisma, publisherPageId, userId, { ...req.body, status: 'PUBLISHED' });
+            await prisma.$transaction(tx => authorizePagePublisher(tx, publisherPageId, userId,
+                { ...req.body, status: 'PUBLISHED' }),
+                { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 15_000, maxWait: 5_000 });
         }
         const shareRequestKey = publisherPageId ? pagePostRequestKey(req.body.pageCreateKey) : null;
         const captionHash = createHash('sha256').update(cleanCaption).digest('hex');

@@ -20,8 +20,11 @@ export async function notifyPagePostInteraction(input:PageInteraction,transactio
     if(!pagesEnabled(input.actorId)||page.purgedAt||!page.ownerId)return true;
     // Notification suppression never redirects a Page interaction to the historical publishing employee.
     try{await assertPagePublic(tx,page,input.actorId);}catch(error){if(error instanceof PagePolicyError)return true;throw error;}
-    await tx.pageEvent.create({data:{pageId:page.id,recipientId:page.ownerId,kind:'PAGE_ACTIVITY',targetId:input.postId,
-      context:input as unknown as Prisma.InputJsonValue,dedupeKey:'page-activity:'+randomUUID()}});
+    // The interaction actor is intentionally not allowed to SELECT another
+    // recipient's inbox row. createMany avoids INSERT ... RETURNING, so the
+    // write can satisfy the INSERT policy without widening PageEvent reads.
+    await tx.pageEvent.createMany({data:[{pageId:page.id,recipientId:page.ownerId,kind:'PAGE_ACTIVITY',targetId:input.postId,
+      context:input as unknown as Prisma.InputJsonValue,dedupeKey:'page-activity:'+randomUUID()}]});
     return true;
   };
   return transaction?work(transaction):pageTransaction(work);

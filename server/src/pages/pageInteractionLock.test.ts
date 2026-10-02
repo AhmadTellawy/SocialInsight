@@ -41,7 +41,7 @@ function fixture(requirePostLock=true) {
     user:{findUnique:async()=>({id:'viewer',status:'ACTIVE'})},
     pageBlock:{findFirst:async()=>null},
     post:{findUnique:async({where}:any)=>posts.get(where.id),count:async()=>{throw new Error('Model visibility COUNT must not run');}},
-    pageEvent:{create:async()=>{events++;return {};}}
+    pageEvent:{createMany:async()=>{events++;return {count:1};}}
   };
   return {tx,queries,posts,setVisible:(n:number)=>{visibleCount=n;},events:()=>events};
 }

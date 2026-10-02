@@ -55,7 +55,7 @@ for(const scenario of ['forced-anonymous','multiple-disabled','user-options-disa
       },
       option:{findMany:async({where}:any)=>where.id.in.map((id:string)=>({id,question:{id:'question',postId:'post'},withFollowUp:false})),update:async()=>({}),create:async()=>{throw new Error('Disabled custom option must not be created');}},
       answer:{findFirst:async()=>null,create:async()=>({})},
-      pageEvent:{create:async()=>{pendingEvents++;return {};}}
+      pageEvent:{createMany:async()=>{pendingEvents++;return {count:1};}}
     };
     try{
       process.env.PAGES_ENABLED='true';

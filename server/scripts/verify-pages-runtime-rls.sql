@@ -368,6 +368,23 @@ BEGIN
 END
 $returning_stranger_checks$;
 
+-- A signed interaction actor may enqueue another recipient's Page event, but
+-- INSERT must not require or imply SELECT access to that private inbox row.
+SELECT pg_temp.pages_rls_set_context('00000000-0000-4000-8000-00000000a102');
+INSERT INTO public."PageEvent" (id, "pageId", "recipientId", kind, "targetId", context, "dedupeKey") VALUES (
+  '00000000-0000-4000-8000-00000000e101', '00000000-0000-4000-8000-00000000b101',
+  '00000000-0000-4000-8000-00000000a101', 'PAGE_ACTIVITY', '00000000-0000-4000-8000-00000000f101',
+  '{"kind":"like","actorId":"00000000-0000-4000-8000-00000000a102"}'::jsonb,
+  'rls-page-event-e101'
+);
+DO $page_event_visibility_checks$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public."PageEvent" WHERE id = '00000000-0000-4000-8000-00000000e101') THEN
+    RAISE EXCEPTION 'interaction actor read another recipient Page event';
+  END IF;
+END
+$page_event_visibility_checks$;
+
 SELECT pg_temp.pages_rls_set_context('00000000-0000-4000-8000-00000000a102');
 DO $admin_checks$
 DECLARE

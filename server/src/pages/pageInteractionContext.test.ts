@@ -26,7 +26,7 @@ function fixture(){
     },
     post:{findUnique:async({where}:any)=>{state.postReads++;const post=posts.get(where.id);return post?{...post,sharedFrom:post.sharedFrom?{...post.sharedFrom}:null}:null;}},
     comment:{findUnique:async()=>{state.commentReads++;return {pageId:state.commentPage?'page':null};}},
-    pageEvent:{create:async({data}:any)=>{state.events.push(data);return {id:'event',...data};}},
+    pageEvent:{createMany:async({data}:any)=>{state.events.push(...data);return {count:data.length};}},
   };
   return {tx,state,posts,page};
 }

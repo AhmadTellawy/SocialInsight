@@ -43,7 +43,7 @@ function fixture(options:{parent?:Record<string,unknown>|null;postMissing?:boole
         update:async({where,data}:any)=>{assert.equal(where.id,postId);pending.isDeleted=data.isDeleted;return {id:postId,...data};},
       },
       pageAuditEvent:{create:async()=>{operations.push('audit');if(options.auditFails)throw new Error('audit unavailable');pending.audits++;return {id:'audit'};}},
-      pageEvent:{upsert:async({where}:any)=>{if(!pending.events.includes(where.dedupeKey))pending.events.push(where.dedupeKey);return {};}},
+      pageEvent:{createMany:async({data}:any)=>{for(const row of data)if(!pending.events.includes(row.dedupeKey))pending.events.push(row.dedupeKey);return {count:data.length};}},
     };
     const result=await work(tx);stored=pending;return result;
   };

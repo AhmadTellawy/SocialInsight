@@ -135,7 +135,13 @@ export async function pageAudit(tx: PageTx, pageId: string, actorId: string | nu
 
 export async function enqueuePageEvent(tx: PageTx, pageId: string, recipientId: string,
   kind: string, targetId: string, dedupeKey: string) {
-  return tx.pageEvent.upsert({ where: { dedupeKey }, update: {}, create: { pageId, recipientId, kind, targetId, dedupeKey } });
+  // Producers must not need SELECT access to a recipient's private inbox row.
+  // The dedupe key is immutable, so INSERT .. ON CONFLICT DO NOTHING preserves
+  // idempotency without Prisma's RETURNING-based upsert visibility requirement.
+  return tx.pageEvent.createMany({
+    data: [{ pageId, recipientId, kind, targetId, dedupeKey }],
+    skipDuplicates: true
+  });
 }
 
 export async function createPage(userId: string, raw: unknown) {

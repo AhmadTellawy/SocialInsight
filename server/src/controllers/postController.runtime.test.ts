@@ -366,7 +366,7 @@ test('Page likes enqueue notification work in the same transaction as the like a
         user: { findUnique: async () => ({ id: 'viewer', status: 'ACTIVE' }) },
         pageBlock: { findFirst: async () => null },
         userLike: { findUnique: async () => null, create: async () => { sequence.push('like'); return {}; } },
-        pageEvent: { create: async (args: any) => { sequence.push('outbox'); assert.equal(args.data.kind, 'PAGE_ACTIVITY'); assert.equal(args.data.context.kind, 'like'); return {}; } }
+        pageEvent: { createMany: async (args: any) => { sequence.push('outbox'); assert.equal(args.data[0].kind, 'PAGE_ACTIVITY'); assert.equal(args.data[0].context.kind, 'like'); return { count: 1 }; } }
     };
     try {
         process.env.PAGES_ENABLED = 'true';
