@@ -5,11 +5,21 @@ import { useBlocker } from 'react-router-dom';
 import type { MediaCropSelection, UserProfile } from '../types';
 import { api } from '../services/api';
 import { mediaApi, MediaUploadError } from '../services/mediaApi';
-import { validateAndNormalizeImageFile, PROFILE_COVER_MAX_INPUT_BYTES, DEFAULT_MEDIA_MAX_INPUT_BYTES } from '../utils/mediaFileValidation';
+import {
+  DEFAULT_HEIF_MAX_SOURCE_PIXELS,
+  DEFAULT_MEDIA_MAX_DECODED_PIXELS,
+  DEFAULT_MEDIA_MAX_INPUT_BYTES,
+  PROFILE_COVER_MAX_INPUT_BYTES,
+  validateAndNormalizeImageFile
+} from '../utils/mediaFileValidation';
 import { BottomSheet } from './BottomSheet';
 import { MediaCropEditor } from './media/MediaCropEditor';
 
-type Source = { file: File; url: string; altText?: string };
+type Source = { file: File; url: string; altText?: string; assetId?: string; serverPrepared?: boolean };
+
+const releaseSourceUrl = (source: Source | null): void => {
+  if (source?.url.startsWith('blob:')) URL.revokeObjectURL(source.url);
+};
 
 // This editor creates a new owned asset, then attaches it with optimistic concurrency.
 // It never mutates the currently published image while the user is still cropping.
@@ -39,6 +49,7 @@ export const ProfileMediaEditor: React.FC<{
   const [pendingCrop, setPendingCrop] = useState<MediaCropSelection | null>(null);
   const saveLatch = useRef(false);
   const temporaryAsset = useRef<string | null>(null);
+  const preparationController = useRef<AbortController | null>(null);
   const active = useRef(true);
   const assetId = kind === 'avatar' ? loadedProfile.avatarMediaId : loadedProfile.coverMediaId;
   const hasLegacyAvatar = kind === 'avatar' && !assetId && loadedProfile.hasLegacyAvatar === true;
@@ -53,13 +64,41 @@ export const ProfileMediaEditor: React.FC<{
     return () => window.removeEventListener('beforeunload', beforeUnload);
   }, [saving]);
 
-  const prepare = async (file: File): Promise<Source> => {
-    const validated = await validateAndNormalizeImageFile(file, { maxInputBytes: kind === 'cover' ? PROFILE_COVER_MAX_INPUT_BYTES : DEFAULT_MEDIA_MAX_INPUT_BYTES });
+  const prepare = async (file: File, allowServerPreparation = false): Promise<Source> => {
+    const validated = await validateAndNormalizeImageFile(file, {
+      maxInputBytes: kind === 'cover' ? PROFILE_COVER_MAX_INPUT_BYTES : DEFAULT_MEDIA_MAX_INPUT_BYTES,
+      maxDecodedPixels: DEFAULT_MEDIA_MAX_DECODED_PIXELS,
+      maxHeifSourcePixels: DEFAULT_HEIF_MAX_SOURCE_PIXELS,
+      heifHandling: allowServerPreparation ? 'server' : 'native'
+    });
+    if (validated.requiresServerPreparation) {
+      preparationController.current?.abort();
+      const controller = new AbortController();
+      preparationController.current = controller;
+      try {
+        const previousTemporaryAsset = temporaryAsset.current;
+        const prepared = await mediaApi.uploadAndPrepare(validated.file, purpose, (value) => {
+          if (active.current) setProgress(value);
+        }, controller.signal);
+        if (previousTemporaryAsset && previousTemporaryAsset !== prepared.id) {
+          await mediaApi.cancel(previousTemporaryAsset).catch(() => undefined);
+        }
+        temporaryAsset.current = prepared.id;
+        return {
+          file: validated.file,
+          url: prepared.preview.src,
+          assetId: prepared.id,
+          serverPrepared: true
+        };
+      } finally {
+        if (preparationController.current === controller) preparationController.current = null;
+      }
+    }
     return { file: validated.file, url: URL.createObjectURL(validated.file) };
   };
   const publishSource = (next: Source) => {
-    if (!active.current) { URL.revokeObjectURL(next.url); return; }
-    if (sourceRef.current) URL.revokeObjectURL(sourceRef.current.url);
+    if (!active.current) { releaseSourceUrl(next); return; }
+    releaseSourceUrl(sourceRef.current);
     sourceRef.current = next;
     setSource(next);
     setCropping(true);
@@ -100,7 +139,8 @@ export const ProfileMediaEditor: React.FC<{
 
   useEffect(() => () => {
     active.current = false;
-    if (sourceRef.current) URL.revokeObjectURL(sourceRef.current.url);
+    preparationController.current?.abort();
+    releaseSourceUrl(sourceRef.current);
     if (temporaryAsset.current) void mediaApi.cancel(temporaryAsset.current).catch(() => undefined);
   }, []);
 
@@ -113,11 +153,13 @@ export const ProfileMediaEditor: React.FC<{
     setError(null);
     setProgress(0);
     try {
-      if (temporaryAsset.current) {
+      if (!source.serverPrepared && temporaryAsset.current) {
         await mediaApi.cancel(temporaryAsset.current).catch(() => undefined);
         temporaryAsset.current = null;
       }
-      const uploaded = await mediaApi.upload(source.file, purpose, crop, (value) => { if (active.current) setProgress(value); });
+      const uploaded = source.serverPrepared && source.assetId
+        ? await mediaApi.finalize(source.assetId, crop)
+        : await mediaApi.upload(source.file, purpose, crop, (value) => { if (active.current) setProgress(value); });
       temporaryAsset.current = uploaded.id;
       const updated = await api.updateUser(loadedProfile.id, { [`${kind}MediaId`]: uploaded.id, expectedUpdatedAt: loadedProfile.updatedAt });
       temporaryAsset.current = null;
@@ -162,15 +204,35 @@ export const ProfileMediaEditor: React.FC<{
   const chooseFile = async (file?: File) => {
     if (!file || saveLatch.current) return;
     setLoading(true);
+    setProgress(0);
     try {
-      publishSource(await prepare(file));
-    } catch {
-      setError(t('mediaEdit.invalidImage', { defaultValue: 'Choose a valid JPEG, PNG or WebP image within the image size limit.' }));
+      const next = await prepare(file, true);
+      if (!next.serverPrepared && temporaryAsset.current) {
+        await mediaApi.cancel(temporaryAsset.current).catch(() => undefined);
+        temporaryAsset.current = null;
+      }
+      publishSource(next);
+    } catch (caught) {
+      if (caught instanceof DOMException && caught.name === 'AbortError') return;
+      if (caught instanceof MediaUploadError && caught.phase === 'preparation') {
+        const messageKey = caught.code === 'HEIF_CONVERTER_QUOTA_EXCEEDED'
+          ? 'media.heifQuota'
+          : caught.code === 'HEIF_CONVERTER_BUSY'
+            ? 'media.heifBusy'
+            : caught.code === 'UNSUPPORTED_HEIF_VARIANT'
+              ? 'media.heifUnsupportedVariant'
+              : caught.code === 'PIXEL_LIMIT_EXCEEDED'
+                ? 'media.tooManyPixels'
+                : 'media.heifPreparationFailed';
+        setError(t(messageKey, { defaultValue: 'We could not prepare this image right now. Please retry.' }));
+      } else {
+        setError(t('mediaEdit.invalidImage', { defaultValue: 'Choose a valid JPEG, PNG, WebP, HEIC, or HEIF image within the image size limit.' }));
+      }
     } finally { setLoading(false); }
   };
 
   return <>
-    <input ref={input} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" aria-label={t('mediaEdit.choose', { defaultValue: 'Choose image' })} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; void chooseFile(file); }} />
+    <input ref={input} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif" className="hidden" aria-label={t('mediaEdit.choose', { defaultValue: 'Choose image' })} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; void chooseFile(file); }} />
     {cropping && source && <MediaCropEditor imageSrc={source.url} purpose={purpose} lockedAspectRatio={ratio} initialAltText={source.altText} onApply={(crop) => void saveCrop(crop)} onCancel={() => setCropping(false)} />}
     {!cropping && <BottomSheet isOpen onClose={() => { if (!saving && !loading) onClose(); }} title={title}>
       <div className="space-y-3 pb-4" dir={i18n.dir()}>

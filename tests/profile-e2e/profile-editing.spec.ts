@@ -51,6 +51,13 @@ type MockProfile = {
 
 const facebookUrl = 'https://www.facebook.com/share/19LFpJK7Y5';
 const fixtureImage = path.resolve(process.cwd(), 'public/pwa-192x192.png');
+const syntheticHeic = (): Buffer => {
+  const bytes = Buffer.alloc(57);
+  bytes.writeUInt32BE(20, 0); bytes.write('ftyp', 4); bytes.write('heic', 8); bytes.write('heic', 16);
+  bytes.writeUInt32BE(8, 20); bytes.write('hvcC', 24); bytes.writeUInt32BE(20, 28); bytes.write('ispe', 32);
+  bytes.writeUInt32BE(640, 40); bytes.writeUInt32BE(480, 44); bytes.writeUInt32BE(9, 48); bytes.write('mdat', 52); bytes[56] = 1;
+  return bytes;
+};
 
 const ageGroupFor = (birthday: string): string => {
   const [year, month, day] = birthday.split('-').map(Number);
@@ -105,6 +112,7 @@ type MockApiState = {
   links: ProfileLink[];
   mediaPurposeById: Map<string, 'PROFILE_AVATAR' | 'PROFILE_COVER'>;
   mediaSequence: number;
+  mediaPrepareCalls?: number;
   lastMediaPayload?: Record<string, unknown>;
   linkCreateCalls: number;
   profileSaveCalls: number;
@@ -210,6 +218,22 @@ async function installAuthenticatedMockApi(page: Page, state: MockApiState): Pro
         signedUrl: `${url.origin}/__profile_e2e_upload__/${assetId}`,
         expiresInSeconds: 300,
       }, 201);
+    }
+
+    if (method === 'GET' && pathname === '/api/media/config') {
+      return json(route, { heifServerPreparationConfigured: true, heifServerPreparationEnabled: true });
+    }
+
+    const prepareMatch = /^\/api\/media\/([^/]+)\/prepare$/.exec(pathname);
+    if (method === 'POST' && prepareMatch) {
+      const assetId = prepareMatch[1];
+      state.mediaPrepareCalls = (state.mediaPrepareCalls || 0) + 1;
+      return json(route, {
+        id: assetId,
+        status: 'TEMPORARY',
+        sourceMime: 'image/heic',
+        preview: { src: '/pwa-192x192.png', mime: 'image/webp', width: 480, height: 640, aspectRatio: 0.75, expiresInSeconds: 300 },
+      });
     }
 
     const finalizeMatch = /^\/api\/media\/([^/]+)\/finalize$/.exec(pathname);
@@ -331,12 +355,8 @@ for (const language of ['en', 'ar'] as const) {
     await bio.fill('Unsaved profile text stays here');
     const save = page.getByRole('button', { name: language === 'ar' ? 'حفظ' : 'Save', exact: true });
     await expect(save).toBeEnabled();
-    const bytes = Buffer.alloc(57);
-    bytes.writeUInt32BE(20, 0); bytes.write('ftyp', 4); bytes.write('heic', 8); bytes.write('heic', 16);
-    bytes.writeUInt32BE(8, 20); bytes.write('hvcC', 24); bytes.writeUInt32BE(20, 28); bytes.write('ispe', 32);
-    bytes.writeUInt32BE(640, 40); bytes.writeUInt32BE(480, 44); bytes.writeUInt32BE(9, 48); bytes.write('mdat', 52); bytes[56] = 1;
     const input = page.locator('input[type=file][data-media-purpose=PROFILE_AVATAR]');
-    await input.setInputFiles({ name: 'avatar.heic', mimeType: 'image/heic', buffer: bytes });
+    await input.setInputFiles({ name: 'avatar.heic', mimeType: 'image/heic', buffer: syntheticHeic() });
     await expect.poll(() => warmups).toBe(1);
     await expect(page.getByRole('alert').filter({ hasText: language === 'ar' ? 'الصورة' : 'image' })).toBeVisible();
     await expect(save).toBeDisabled();
@@ -606,6 +626,33 @@ test.describe('settings critical acceptance', () => {
     await page.getByRole('button', { name: 'Remove photo', exact: true }).click();
     await expect.poll(() => state.profile.coverMediaId).toBe(null);
     expect(Object.keys(state.lastProfilePayload || {}).sort()).toEqual(['coverMediaId', 'expectedUpdatedAt']);
+  });
+
+  test('ProfileScreen prepares HEIC before cropping and saves avatar and cover', async ({ page }) => {
+    test.setTimeout(60_000);
+    const state = settingsState();
+    await installAuthenticatedMockApi(page, state);
+    await page.goto('/profile');
+
+    await page.getByRole('button', { name: 'Edit profile photo', exact: true }).click();
+    const avatarInput = page.getByLabel('Choose image', { exact: true });
+    await expect(avatarInput).toHaveAttribute('accept', /image\/heic/);
+    await avatarInput.setInputFiles({ name: 'iphone-avatar.heic', mimeType: 'image/heic', buffer: syntheticHeic() });
+    await expect(page.getByTestId('media-crop-editor')).toHaveAttribute('data-media-purpose', 'PROFILE_AVATAR');
+    expect(state.lastMediaPayload).toMatchObject({ purpose: 'PROFILE_AVATAR', mime: 'image/heic' });
+    expect(state.mediaPrepareCalls).toBe(1);
+    await page.getByRole('button', { name: 'Done', exact: true }).click();
+    await expect.poll(() => state.profile.avatarMediaId).toBe('asset-1');
+
+    await page.getByRole('button', { name: 'Edit cover photo', exact: true }).click();
+    const coverInput = page.getByLabel('Choose image', { exact: true });
+    await expect(coverInput).toHaveAttribute('accept', /image\/heif/);
+    await coverInput.setInputFiles({ name: 'iphone-cover.heif', mimeType: 'image/heif', buffer: syntheticHeic() });
+    await expect(page.getByTestId('media-crop-editor')).toHaveAttribute('data-media-purpose', 'PROFILE_COVER');
+    expect(state.lastMediaPayload).toMatchObject({ purpose: 'PROFILE_COVER', mime: 'image/heic' });
+    expect(state.mediaPrepareCalls).toBe(2);
+    await page.getByRole('button', { name: 'Done', exact: true }).click();
+    await expect.poll(() => state.profile.coverMediaId).toBe('asset-2');
   });
 
   test('finding-resolution:SI-AS-E03-002', async ({ page }) => {
