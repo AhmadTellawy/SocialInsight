@@ -36,17 +36,18 @@ SELECT CASE WHEN EXISTS (
   \quit 5
 \endif
 
-SELECT pg_catalog.format(
-  'CREATE ROLE %I LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS',
-  :'runtime_login'
-)
-WHERE NOT EXISTS (
+SELECT CASE WHEN EXISTS (
   SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = :'runtime_login'
-)
-\gexec
+) THEN 1 ELSE 0 END AS runtime_login_exists
+\gset
+
+\if :runtime_login_exists
+  \echo 'Refusing to reuse an existing role; choose a fresh runtime_login or retire the old role through a separately reviewed change'
+  \quit 6
+\endif
 
 SELECT pg_catalog.format(
-  'ALTER ROLE %I LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS',
+  'CREATE ROLE %I LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS',
   :'runtime_login'
 )
 \gexec
@@ -65,13 +66,27 @@ SELECT (
       AND NOT rolreplication AND NOT rolbypassrls
   )
   AND pg_catalog.pg_has_role(:'runtime_login', 'socialinsight_runtime', 'MEMBER')
+  AND 1 = (
+    SELECT count(*) FROM pg_catalog.pg_auth_members membership
+    JOIN pg_catalog.pg_roles member ON member.oid = membership.member
+    WHERE member.rolname = :'runtime_login'
+  )
+  AND NOT pg_catalog.has_schema_privilege(:'runtime_login', 'public', 'CREATE')
+  AND NOT pg_catalog.has_table_privilege(:'runtime_login', 'public._prisma_migrations',
+    'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+  AND NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_class object
+    JOIN pg_catalog.pg_roles owner ON owner.oid = object.relowner
+    JOIN pg_catalog.pg_namespace namespace ON namespace.oid = object.relnamespace
+    WHERE owner.rolname = :'runtime_login' AND namespace.nspname = 'public'
+  )
 )::int AS runtime_login_properties_valid
 \gset
 
 \if :runtime_login_properties_valid
 \else
   \echo 'runtime login property or membership verification failed'
-  \quit 6
+  \quit 7
 \endif
 
 \echo 'Enter the protected runtime password. It will not be echoed.'
