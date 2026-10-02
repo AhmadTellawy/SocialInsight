@@ -524,10 +524,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   );
 
   useEffect(() => {
-    if (showProfileAnalysis && !canViewPrivateProfileContent) {
+    if (showProfileAnalysis && !isMe) {
       setQuery('view', null, true);
     }
-  }, [showProfileAnalysis, canViewPrivateProfileContent, setQuery]);
+  }, [showProfileAnalysis, isMe, setQuery]);
 
   const responsesCount = useMemo(() => {
     return profileUser?.stats?.responses || 0;
@@ -1075,7 +1075,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     }
   };
 
-  if (showProfileAnalysis && canViewPrivateProfileContent) {
+  if (showProfileAnalysis && isMe) {
     const parentQuery = new URLSearchParams(location.search);
     parentQuery.delete('view');
     const parentSearch = parentQuery.toString();
@@ -1281,7 +1281,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           )}
 
           <div className="w-full bg-white rounded-[2.5rem] border border-gray-100 shadow-xl shadow-gray-200/40 px-3 py-6 mb-4">
-            <div className="grid grid-cols-4 gap-0 divide-x divide-gray-50">
+            <div className={`grid ${isMe ? 'grid-cols-4' : 'grid-cols-3'} gap-0 divide-x divide-gray-50`}>
               <button
                 disabled={!hasProfileStats}
                 onClick={() => { if (hasProfileStats) { setStatSearch(''); setActiveStatSheet('following'); } }}
@@ -1325,20 +1325,21 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 <div className="text-[8px] font-black text-gray-400 uppercase tracking-tighter mt-1">{t('Posts')}</div>
               </button>
 
-              <button
-                disabled={!hasProfileStats || !canViewPrivateProfileContent}
-                onClick={() => { if (hasProfileStats && canViewPrivateProfileContent) setQuery('view', 'analysis'); }}
-                className={`flex flex-col items-center group active:scale-95 transition-transform ${!canViewPrivateProfileContent ? 'opacity-30 grayscale cursor-not-allowed' : !hasProfileStats ? 'cursor-wait' : ''}`}
-              >
-                <div className="p-2 rounded-xl bg-green-50 text-green-600 mb-2 transition-colors relative">
-                  <TrendingUp size={16} strokeWidth={2.5} />
-                  {!canViewPrivateProfileContent && <Lock size={8} className="absolute top-1 right-1" />}
-                </div>
-                <div className="text-sm font-black text-gray-900 tabular-nums h-5 flex items-center justify-center">
-                  {renderStatValue(responsesCount, true)}
-                </div>
-                <div className="text-[8px] font-black text-gray-400 uppercase tracking-tighter mt-1">{t('Responses')}</div>
-              </button>
+              {isMe && (
+                <button
+                  disabled={!hasProfileStats}
+                  onClick={() => { if (hasProfileStats) setQuery('view', 'analysis'); }}
+                  className={`flex flex-col items-center group active:scale-95 transition-transform ${!hasProfileStats ? 'cursor-wait' : ''}`}
+                >
+                  <div className="p-2 rounded-xl bg-green-50 text-green-600 mb-2 transition-colors relative">
+                    <TrendingUp size={16} strokeWidth={2.5} />
+                  </div>
+                  <div className="text-sm font-black text-gray-900 tabular-nums h-5 flex items-center justify-center">
+                    {renderStatValue(responsesCount, true)}
+                  </div>
+                  <div className="text-[8px] font-black text-gray-400 uppercase tracking-tighter mt-1">{t('Responses')}</div>
+                </button>
+              )}
             </div>
           </div>
         </div>

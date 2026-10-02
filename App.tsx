@@ -128,6 +128,10 @@ const decodePathSegment = (value: string) => {
   }
 };
 
+const isValidCreationGroupId = (value: string | null): value is string => (
+  Boolean(value && value.length <= 128 && /^[A-Za-z0-9_-]+$/.test(value))
+);
+
 const App: React.FC = () => {
   const { navigate, back, setQuery } = useAppNavigation();
   const location = useLocation();
@@ -187,6 +191,7 @@ const App: React.FC = () => {
   const publishedPageDestination = useRef<string | null>(null);
   const handleCloseModal = () => {
     const pageId = publishedPageDestination.current;
+    const creationGroupId = activeCreationGroupId;
     publishedPageDestination.current = null;
     setEditingDraft(null);
     setActiveCreationFlow(null);
@@ -196,6 +201,8 @@ const App: React.FC = () => {
       navigate(`/pages/manage/${encodeURIComponent(pageId)}`, { replace: true });
     } else if (window.history.state && window.history.state.idx > 0) {
       navigate(-1);
+    } else if (creationGroupId) {
+      navigate(`/group/${encodeURIComponent(creationGroupId)}`, { replace: true });
     } else {
       navigate('/', { replace: true });
     }
@@ -1092,6 +1099,8 @@ const App: React.FC = () => {
         }
         setIsAddMenuOpen(false);
         setAccountModalType(null);
+        const requestedGroupId = new URLSearchParams(location.search).get('group');
+        setActiveCreationGroupId(isValidCreationGroupId(requestedGroupId) ? requestedGroupId : null);
         setActiveCreationFlow(type as any);
       } else if (type === 'group') {
         setIsAddMenuOpen(false);
@@ -1107,7 +1116,7 @@ const App: React.FC = () => {
       if (activeCreationFlow && !path.startsWith('/create/')) setActiveCreationFlow(null);
       if (accountModalType && !path.startsWith('/create/')) setAccountModalType(null);
     }
-  }, [location.pathname, authBootstrapped, isAuthenticated, userProfile?.id, authModalOpen]);
+  }, [location.pathname, location.search, authBootstrapped, isAuthenticated, userProfile?.id, authModalOpen]);
 
   React.useEffect(() => {
     if (!authBootstrapped) return;
@@ -2053,7 +2062,7 @@ const App: React.FC = () => {
                     Quiz: '/create/quiz',
                     Challenge: '/create/challenge',
                   };
-                  navigate(routes[type] || '/create/survey');
+                  navigate(`${routes[type] || '/create/survey'}?group=${encodeURIComponent(activeGroup.id)}`);
                 }}
                 onInviteUser={async (groupId, userId) => {
                   await api.inviteToGroup(groupId, userId);
