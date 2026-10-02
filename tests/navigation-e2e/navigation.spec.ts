@@ -18,7 +18,7 @@ test('profile settings return once to profile then home, with browser Forward in
 
 const settings = [
   ['edit-profile', 'Edit Profile'], ['demographics', 'Demographic Info'], ['notifications-detailed', 'Notification Settings'],
-  ['language', 'Language'], ['account-privacy', 'Account privacy'], ['group-privacy', 'Show my groups on profile'],
+  ['language', 'Language'], ['account-privacy', 'Account privacy'], ['group-privacy', 'settingsV2.privacy.groups'],
 ] as const;
 
 for (const [slug, label] of settings) {

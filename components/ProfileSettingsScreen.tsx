@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { useBlocker, useNavigate, useLocation } from 'react-router-dom';
+import { useBlocker, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, User, Mail, Globe, Lock, Eye, Search, Activity,
   Share2, Users, Bell, Palette, Shield, LifeBuoy, LogOut,
@@ -31,6 +31,7 @@ import { AccountSecurityScreen } from './AccountSecurityScreen';
 import { AccountDataScreen } from './AccountDataScreen';
 import { BlockedAccountsScreen } from './BlockedAccountsScreen';
 import { profileEditHasChanges, profileMediaDraftHasChanged } from '../utils/profileEditState';
+import { useAppNavigation } from '../hooks/useAppNavigation';
 
 interface ProfileSettingsScreenProps {
   userProfile: UserProfile;
@@ -63,7 +64,7 @@ const ProfileSettingsContent: React.FC<ProfileSettingsScreenProps> = ({
   onLogout,
   oauthFeedback
 }) => {
-  const navigate = useNavigate();
+  const { navigate, back } = useAppNavigation();
   const location = useLocation();
   const { t, i18n } = useTranslation();
   const { run: runProtected, dialog: reauthenticationDialog } = useProtectedAccountAction();
@@ -72,9 +73,7 @@ const ProfileSettingsContent: React.FC<ProfileSettingsScreenProps> = ({
 
   const setCurrentSubPage = (page: SubPage) => {
     if (page === 'main') {
-      // A global history length cannot prove that the previous entry belongs
-      // to Opiniup. Profile subpages always return to their known parent.
-      navigate('/settings/profile', { replace: true });
+      back('/settings/profile');
     } else {
       navigate(`/settings/profile/${page}`);
     }
@@ -878,9 +877,9 @@ const ProfileSettingsContent: React.FC<ProfileSettingsScreenProps> = ({
 
 export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = (props) => {
   const location = useLocation();
-  const navigate = useNavigate();
+  const { back } = useAppNavigation();
   const page = location.pathname.split('/settings/profile/')[1];
-  const onBack = () => navigate('/settings/profile', { replace: true });
+  const onBack = () => back('/settings/profile');
   if (page === 'demographics') return <DemographicSettingsScreen userProfile={props.userProfile} onUpdateProfile={props.onUpdateProfile} onBack={onBack} />;
   if (page === 'account-privacy' || page === 'group-privacy' || page === 'language' || page === 'theme') return <AccountPreferencesScreen page={page} userProfile={props.userProfile} onUpdateProfile={props.onUpdateProfile} onBack={onBack} />;
   if (page === 'help') return <SettingsHelpScreen onBack={onBack} />;
