@@ -20,13 +20,7 @@ export function canonicalPath(path: string): string {
 }
 
 export function isKnownPath(path: string): boolean {
-  if (path === '/pages') return true;
-  if (path.startsWith('/pages/')) {
-    const segments = path.slice('/pages/'.length).split('/');
-    if (segments.length === 1) return segments[0] !== 'manage' && Boolean(decodeRouteSegment(segments[0]));
-    if (segments.length === 2 && ['manage', 'staff', 'cases'].includes(segments[0])) return Boolean(decodeRouteSegment(segments[1]));
-    return false;
-  }
+  if (path === '/pages' || path.startsWith('/pages/')) return true;
   if (['/', '/search', '/trends', '/notifications', '/messages', '/profile', '/privacy', '/login', '/signup', '/settings/profile'].includes(path)) return true;
   if (/^\/create\/(poll|survey|quiz|challenge|group|business)$/.test(path)) return true;
   if (path.startsWith('/settings/profile/')) return profileSettingsPages.has(path.slice('/settings/profile/'.length));

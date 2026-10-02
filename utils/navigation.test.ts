@@ -23,9 +23,16 @@ test('only valid route shapes are accepted including every implemented settings 
     '/@person', '/profile/user-id', '/post/post-id', '/group/group-id', '/group/group-id/settings', '/hashtag/%D8%B1%D8%A3%D9%8A',
     ...['poll', 'survey', 'quiz', 'challenge', 'group', 'business'].map(type => `/create/${type}`),
     ...implementedProfileSettingsRoutes]) assert.equal(isKnownPath(p), true, p);
-  for (const p of ['/unknown', '/group/', '/@', '/post/p/settings', '/profile/u/settings', '/group/g/members', '/create/unknown', '/pages/manage', '/pages/manage/page/extra', '/pages/%2Fsecret',
+  for (const p of ['/unknown', '/group/', '/@', '/post/p/settings', '/profile/u/settings', '/group/g/members', '/create/unknown', '/pagesfoo',
     '/settings/profile/username', '/settings/profile/no-such-child', '/settings/profile/edit-profile/extra', '/post/%E0%A4%A',
     '/profile/%2Fsecret', '/group/%5Csecret', '/@name%3Ftab=saved', '/hashtag/%00hidden']) assert.equal(isKnownPath(p), false, p);
+});
+
+test('Page namespace delegates every nested path to the safe Pages boundary', () => {
+  for (const path of ['/pages/', '/pages/manage', '/pages/manage/page/extra', '/pages/%2Fsecret', '/pages/%E0%A4%A']) {
+    assert.equal(isKnownPath(path), true, path);
+  }
+  assert.equal(isKnownPath('/pagesfoo'), false);
 });
 
 test('decoded segments cannot smuggle separators, controls or malformed encoding', () => {
