@@ -74,6 +74,8 @@ SELECT (
   AND NOT pg_catalog.has_schema_privilege(:'runtime_login', 'public', 'CREATE')
   AND NOT pg_catalog.has_table_privilege(:'runtime_login', 'public._prisma_migrations',
     'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+  AND NOT pg_catalog.has_table_privilege(:'runtime_login', 'public.socialinsight_page_context_keys',
+    'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
   AND NOT EXISTS (
     SELECT 1 FROM pg_catalog.pg_class object
     JOIN pg_catalog.pg_roles owner ON owner.oid = object.relowner

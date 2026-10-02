@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createHmac, randomBytes } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { isPageTestUser } from './pageFeature';
 
@@ -42,13 +43,52 @@ export const runWithPageSystemContext = <T>(work: () => T): T => storage.run({
   testUser: false,
 }, work);
 
+const contextKeyId = (): string => {
+  const keyId = process.env.PAGES_RLS_CONTEXT_KEY_ID || '';
+  if (!/^[A-Za-z0-9_-]{1,32}$/.test(keyId)) throw new Error('PAGES_RLS_CONTEXT_KEY_ID_INVALID');
+  return keyId;
+};
+
+const contextSigningKey = (): Buffer => {
+  const encoded = process.env.PAGES_RLS_CONTEXT_SIGNING_KEY || '';
+  if (!/^[0-9a-fA-F]{64,}$/.test(encoded) || encoded.length % 2 !== 0) {
+    throw new Error('PAGES_RLS_CONTEXT_SIGNING_KEY_INVALID');
+  }
+  return Buffer.from(encoded, 'hex');
+};
+
+export function assertPageDatabaseContextSigningConfiguration(): void {
+  contextKeyId();
+  contextSigningKey();
+}
+
+export function signPageDatabaseContext(context: Omit<PageDatabaseContext, 'transaction'>,
+  binding: { backendPid: string; transactionId: string }, now = new Date()): string {
+  if (context.actorId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(context.actorId)) {
+    throw new Error('PAGES_RLS_CONTEXT_ACTOR_INVALID');
+  }
+  if ((context.staff || context.testUser) && !context.actorId || context.system &&
+      (context.actorId !== null || context.staff || context.testUser)) {
+    throw new Error('PAGES_RLS_CONTEXT_SCOPE_INVALID');
+  }
+  const issuedAt = Math.floor(now.getTime() / 1000);
+  const fields = [
+    'v1', contextKeyId(), context.actorId || '0', context.staff ? '1' : '0', context.system ? '1' : '0',
+    context.testUser ? '1' : '0', String(issuedAt), String(issuedAt + 30), binding.backendPid,
+    binding.transactionId, randomBytes(16).toString('hex'),
+  ];
+  const unsigned = fields.join('.');
+  return `${unsigned}.${createHmac('sha256', contextSigningKey()).update(unsigned, 'utf8').digest('hex')}`;
+}
+
 export async function applyPageDatabaseContext(tx: Prisma.TransactionClient): Promise<void> {
   // Unit tests use deliberately narrow transaction doubles. Real Prisma
   // TransactionClient instances always provide $executeRaw.
-  if (typeof (tx as any).$executeRaw !== 'function') return;
+  if (typeof (tx as any).$executeRaw !== 'function' || typeof (tx as any).$queryRaw !== 'function') return;
   const context = storage.getStore() || { actorId: null, staff: false, system: false, testUser: false };
-  await tx.$executeRaw`SELECT set_config('socialinsight.user_id', ${context.actorId || ''}, true),
-    set_config('socialinsight.page_staff', ${context.staff ? 'true' : 'false'}, true),
-    set_config('socialinsight.page_system', ${context.system ? 'true' : 'false'}, true),
-    set_config('socialinsight.page_test_user', ${context.testUser ? 'true' : 'false'}, true)`;
+  const [binding] = await tx.$queryRaw<Array<{ backendPid: string; transactionId: string }>>`
+    SELECT pg_backend_pid()::text AS "backendPid", txid_current()::text AS "transactionId"`;
+  if (!binding) throw new Error('PAGES_RLS_CONTEXT_BINDING_UNAVAILABLE');
+  const signedContext = signPageDatabaseContext(context, binding);
+  await tx.$executeRaw`SELECT set_config('socialinsight.page_context', ${signedContext}, true)`;
 }

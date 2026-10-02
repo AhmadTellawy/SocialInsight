@@ -9,6 +9,7 @@ on:
       - stage-hosted/pages-mixed-p35.cjs
       - stage-hosted/pages-account-erasure.cjs
       - server/src/pages/**
+      - server/src/scripts/**
       - server/prisma/schema.prisma
       - server/prisma/migrations/**
       - server/src/services/postVisibilityService.ts
@@ -53,6 +54,8 @@ jobs:
       PORT: '3001'
       P35_REPORT: ${{ github.workspace }}/p35-receipt.json
       P35_API_LOG: ${{ github.workspace }}/p35-api.log
+      P35_REJECTED_ADMIN_LOG: ${{ github.workspace }}/p35-rejected-admin.log
+      P35_REJECTED_MEMBERSHIP_LOG: ${{ github.workspace }}/p35-rejected-membership.log
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -76,18 +79,48 @@ jobs:
         run: |
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "CREATE ROLE pages_p35_runtime LOGIN IN ROLE socialinsight_runtime"
           echo "DATABASE_URL=postgresql://pages_p35_runtime@127.0.0.1:5432/postgres?schema=public&connection_limit=12" >> "$GITHUB_ENV"
-      - name: Generate ephemeral signing key
+      - name: Generate and provision ephemeral RLS context signing key
         run: |
-          signing_key="$(openssl rand -hex 48)"
-          echo "::add-mask::$signing_key"
-          echo "JWT_SECRET=$signing_key" >> "$GITHUB_ENV"
-      - name: Start isolated API target
+          rls_context_key="$(openssl rand -hex 32)"
+          jwt_key="$(openssl rand -hex 48)"
+          echo "::add-mask::$rls_context_key"
+          echo "::add-mask::$jwt_key"
+          echo "PAGES_RLS_CONTEXT_KEY_ID=p35-ephemeral" >> "$GITHUB_ENV"
+          echo "PAGES_RLS_CONTEXT_SIGNING_KEY=$rls_context_key" >> "$GITHUB_ENV"
+          echo "JWT_SECRET=$jwt_key" >> "$GITHUB_ENV"
+          npm run pages:rls-context:provision --prefix server
+      - name: Prove Production startup accepts only the restricted runtime role
+        run: |
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "CREATE ROLE pages_p35_extra NOLOGIN"
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "GRANT pages_p35_extra TO pages_p35_runtime"
+          set +e
+          env NODE_ENV=production PORT=3002 TRUST_PROXY_HOPS=1 PAGES_ENABLED=true DATABASE_URL="$DIRECT_URL" timeout 15s node server/dist/app.js > "$P35_REJECTED_ADMIN_LOG" 2>&1
+          admin_exit=$?
+          env NODE_ENV=production PORT=3003 TRUST_PROXY_HOPS=1 PAGES_ENABLED=true DATABASE_URL="$DATABASE_URL" timeout 15s node server/dist/app.js > "$P35_REJECTED_MEMBERSHIP_LOG" 2>&1
+          membership_exit=$?
+          set -e
+          if [ "$admin_exit" -eq 0 ] || [ "$admin_exit" -eq 124 ] || grep -q 'Server is running' "$P35_REJECTED_ADMIN_LOG"; then
+            echo 'Administrator connection passed the production startup guard'
+            exit 1
+          fi
+          if [ "$membership_exit" -eq 0 ] || [ "$membership_exit" -eq 124 ] || grep -q 'Server is running' "$P35_REJECTED_MEMBERSHIP_LOG"; then
+            echo 'Unexpectedly-membered runtime connection passed the production startup guard'
+            exit 1
+          fi
+          grep -q 'Pages runtime database role verification failed.' "$P35_REJECTED_ADMIN_LOG"
+          grep -q 'Pages runtime database role verification failed.' "$P35_REJECTED_MEMBERSHIP_LOG"
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "REVOKE pages_p35_extra FROM pages_p35_runtime"
+      - name: Start isolated Production API target with the restricted role
+        env:
+          NODE_ENV: production
+          TRUST_PROXY_HOPS: '1'
+          PAGES_LIFECYCLE_PAUSED: 'true'
         run: |
           cd server
           nohup node dist/app.js > "$GITHUB_WORKSPACE/p35-api.log" 2>&1 &
           echo "P35_API_PID=$!" >> "$GITHUB_ENV"
           for i in {1..40}; do
-            if curl --silent --fail http://127.0.0.1:3001/api/health > /dev/null; then exit 0; fi
+            if curl --silent --fail http://127.0.0.1:3001/ > /dev/null; then exit 0; fi
             sleep 2
           done
           echo 'API target did not become healthy'

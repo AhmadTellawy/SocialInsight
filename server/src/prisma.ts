@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
-import { applyPageDatabaseContext, currentPageDatabaseContext, runWithPageTransaction } from './pages/pageDatabaseContext';
+import { applyPageDatabaseContext, assertPageDatabaseContextSigningConfiguration, currentPageDatabaseContext,
+  runWithPageSystemContext, runWithPageTransaction } from './pages/pageDatabaseContext';
 
 const base = new PrismaClient();
 
@@ -45,6 +46,13 @@ export async function verifyPagesRuntimeDatabaseRole(): Promise<void> {
         WHERE object.relowner = r.oid AND namespace.nspname = 'public')::bigint AS "ownedPublicObjects"
     FROM pg_roles r WHERE r.rolname = current_user`;
   assertPagesRuntimeDatabaseRoleRecord(role);
+  assertPageDatabaseContextSigningConfiguration();
+  await base.$transaction(async tx => runWithPageSystemContext(async () => {
+    await applyPageDatabaseContext(tx);
+    const [challenge] = await tx.$queryRaw<Array<{ valid: boolean }>>`
+      SELECT public.socialinsight_context_is_system() AS valid`;
+    if (challenge?.valid !== true) throw new Error('PAGES_RLS_CONTEXT_CHALLENGE_FAILED');
+  }));
 }
 
 export type PagesRuntimeDatabaseRoleRecord = {

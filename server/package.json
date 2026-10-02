@@ -10,6 +10,7 @@
     "db:sync-groups": "ts-node src/scripts/syncGroupsCLI.ts",
     "render-build": "prisma generate && tsc && prisma migrate deploy && ts-node src/scripts/provisionMediaStorage.ts",
     "media:provision": "ts-node src/scripts/provisionMediaStorage.ts",
+    "pages:rls-context:provision": "ts-node src/scripts/provisionPagesRlsContext.ts",
     "media:backfill": "ts-node src/scripts/backfillLegacyMedia.ts",
     "media:cleanup-base64": "ts-node src/scripts/cleanupLegacyBase64.ts",
     "social-tags:backfill": "ts-node src/scripts/backfillSocialTags.ts",

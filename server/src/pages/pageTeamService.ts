@@ -70,11 +70,17 @@ export async function respondPageInvitation(invitationId: string, actorId: strin
       await activePageActor(tx, invitation.senderId);
       await assertTeamUnblocked(tx, page.id, invitation.senderId, actorId);
       if (await pageRole(tx, page, actorId)) throw new PagePolicyError('PAGE_ALREADY_ON_TEAM', 409);
-      await tx.pageMembership.create({ data: { pageId: page.id, userId: actorId, role: invitation.role } });
+      const [accepted] = await tx.$queryRaw<Array<{ page_id: string; accepted_role: string }>>`
+        SELECT * FROM public.socialinsight_accept_page_invitation(${invitationId})`;
+      if (!accepted || accepted.page_id !== page.id || accepted.accepted_role !== invitation.role) {
+        throw new PagePolicyError('PAGE_INVITATION_REVOKED', 409);
+      }
       await refreshPageSafety(tx, page.id);
     }
     const status = { accept: 'ACCEPTED', reject: 'REJECTED', withdraw: 'WITHDRAWN' }[action];
-    await tx.pageInvitation.update({ where: { id: invitationId }, data: { status, decidedAt: new Date() } });
+    if (action !== 'accept') {
+      await tx.pageInvitation.update({ where: { id: invitationId }, data: { status, decidedAt: new Date() } });
+    }
     await pageAudit(tx, page.id, actorId, `INVITATION_${status}`, invitationId);
     await enqueuePageEvent(tx, page.id, action === 'withdraw' ? invitation.recipientId : invitation.senderId,
       `PAGE_INVITATION_${status}`, invitationId, `${invitationId}:${status}`);
@@ -178,15 +184,17 @@ export async function respondPageTransfer(transferId: string, actorId: string, a
       await activePageActor(tx, transfer.senderId, true);
       await assertTeamUnblocked(tx, page.id, transfer.senderId, actorId);
       if (!await pageRole(tx, page, actorId)) throw new PagePolicyError('PAGE_TRANSFER_TEAM_MEMBER_REQUIRED', 409);
-      // A single owner reference changes atomically; no OWNER membership exists.
-      await tx.pageMembership.delete({ where: { pageId_userId: { pageId: page.id, userId: actorId } } });
-      await tx.page.update({ where: { id: page.id }, data: { ownerId: actorId } });
-      await tx.pageMembership.upsert({ where: { pageId_userId: { pageId: page.id, userId: transfer.senderId } },
-        update: { role: 'ADMIN' }, create: { pageId: page.id, userId: transfer.senderId, role: 'ADMIN' } });
+      const [accepted] = await tx.$queryRaw<Array<{ page_id: string; accepted_role: string }>>`
+        SELECT * FROM public.socialinsight_accept_page_transfer(${transferId})`;
+      if (!accepted || accepted.page_id !== page.id || accepted.accepted_role !== 'OWNER') {
+        throw new PagePolicyError('PAGE_TRANSFER_REVOKED', 409);
+      }
       await revokeIneligibleInvitations(tx,page.id,transfer.senderId,'ADMIN');
     }
     const status = { accept: 'ACCEPTED', reject: 'REJECTED', withdraw: 'WITHDRAWN' }[action];
-    await tx.pageOwnershipTransfer.update({ where: { id: transferId }, data: { status, decidedAt: new Date() } });
+    if (action !== 'accept') {
+      await tx.pageOwnershipTransfer.update({ where: { id: transferId }, data: { status, decidedAt: new Date() } });
+    }
     await pageAudit(tx, page.id, actorId, `OWNERSHIP_TRANSFER_${status}`, transferId);
     for (const recipientId of new Set([transfer.senderId, transfer.recipientId])) {
       await enqueuePageEvent(tx, page.id, recipientId, `PAGE_TRANSFER_${status}`, page.id, `${transferId}:${status}:${recipientId}`);
