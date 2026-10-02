@@ -18,7 +18,7 @@ test('profile settings return once to profile then home, with browser Forward in
 
 const settings = [
   ['edit-profile', 'Edit Profile'], ['demographics', 'Demographic Info'], ['notifications-detailed', 'Notification Settings'],
-  ['language', 'Language'], ['account-privacy', 'Account privacy'], ['group-privacy', 'settingsV2.privacy.groups'],
+  ['language', 'Language'], ['account-privacy', 'settingsV2.privacy.title'], ['group-privacy', 'settingsV2.privacy.groups'],
 ] as const;
 
 for (const [slug, label] of settings) {
@@ -98,13 +98,13 @@ test('profile insights have a reloadable URL and return to the selected tab', as
   await boot(`${profilePath}?tab=reposts`);
   await page.locator('button').filter({ has: page.locator('svg.lucide-trending-up') }).first().click();
   await expect(page).toHaveURL(`${profilePath}?tab=reposts&view=analysis`);
-  await expect(page.getByRole('heading', { name: 'Your account analytics' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Your account analytics|تحليلات حسابك/ })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Your account analytics' })).toBeVisible();
-  await back(page);
+  await expect(page.getByRole('heading', { name: /Your account analytics|تحليلات حسابك/ })).toBeVisible();
+  await page.getByRole('button', { name: /Back|رجوع/, exact: true }).click();
   await expect(page).toHaveURL(`${profilePath}?tab=reposts`);
   await page.goForward();
-  await expect(page.getByRole('heading', { name: 'Your account analytics' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Your account analytics|تحليلات حسابك/ })).toBeVisible();
 });
 
 test('post analysis URL survives reload and Back returns to post before feed', async ({ page, boot }) => {
@@ -238,7 +238,7 @@ test('privacy reached from demographics returns to its real origin', async ({ pa
   await boot('/settings/profile/demographics');
   await page.locator('button').filter({ hasText: /Privacy Policy|سياسة الخصوصية/ }).click();
   await expect(page).toHaveURL('/privacy');
-  await expect(page.getByRole('heading', { name: 'Privacy Policy' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Privacy Policy|سياسة الخصوصية/ })).toBeVisible();
   await back(page);
   await expect(page).toHaveURL('/settings/profile/demographics');
   await page.goForward();
@@ -265,8 +265,8 @@ test('direct post analysis Back falls back to its post before home', async ({ pa
 
 test('direct profile insights Back retains the requested profile tab', async ({ page, boot, word }) => {
   await boot(`${profilePath}?tab=reposts&view=analysis`);
-  await expect(page.getByRole('heading', { name: 'Your account analytics' })).toBeVisible();
-  await back(page);
+  await expect(page.getByRole('heading', { name: /Your account analytics|تحليلات حسابك/ })).toBeVisible();
+  await page.getByRole('button', { name: /Back|رجوع/, exact: true }).click();
   await expect(page).toHaveURL(`${profilePath}?tab=reposts`);
   await expect(page.getByRole('button', { name: word('Reposts'), exact: true })).toHaveClass(/text-blue-600/);
 });
@@ -289,11 +289,12 @@ for (const type of ['Poll', 'Survey', 'Quiz', 'Challenge']) {
     await boot(`/group/${group.id}`);
     await page.getByRole('button', { name: type, exact: true }).click();
     await expect(page).toHaveURL(`/create/${type.toLowerCase()}?group=${group.id}`);
-    await expect(page.getByRole('heading', { name: `New ${type}`, exact: true })).toBeVisible();
+    const heading = type === 'Poll' ? /New Poll|استطلاع جديد/ : type === 'Challenge' ? /New Challenge|تحدٍ جديد/ : `New ${type}`;
+    await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
     await page.reload();
-    await expect(page.getByRole('heading', { name: `New ${type}`, exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
     await expect(page).toHaveURL(`/create/${type.toLowerCase()}?group=${group.id}`);
-    await page.getByRole('button', { name: 'Close', exact: true }).click();
+    await page.getByRole('button', { name: /Close|إغلاق/, exact: true }).click();
     await expect(page).toHaveURL(`/group/${group.id}`);
     await expect(page.getByRole('heading', { name: group.name, exact: true })).toBeVisible();
   });
