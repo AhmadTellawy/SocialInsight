@@ -35,6 +35,9 @@
     "messages": "Messages",
     "profile": "Profile"
   },
+  "navigation": {
+    "notFound": "Page not found"
+  },
   "common": {
     "back": "Back",
     "more": "More options",

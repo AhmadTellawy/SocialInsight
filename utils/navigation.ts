@@ -2,7 +2,8 @@ export const profilePath = (user: { id: string; handle?: string }) => user.handl
   ? `/@${encodeURIComponent(user.handle)}` : `/profile/${encodeURIComponent(user.id)}`;
 
 export const profileSettingsPages = new Set([
-  'edit-profile', 'links', 'language', 'demographics', 'notifications-detailed', 'group-privacy', 'account-privacy',
+  'edit-profile', 'links', 'email-phone', 'account-access', 'language', 'demographics', 'notifications-detailed',
+  'group-privacy', 'account-privacy', 'help', 'theme', 'security', 'data', 'blocked', 'view-as',
 ]);
 
 export function decodeRouteSegment(value: string): string {

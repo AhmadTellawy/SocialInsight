@@ -46,6 +46,22 @@ for (const [slug, label] of settings) {
   });
 }
 
+for (const route of [
+  '/settings/profile/theme',
+  '/settings/profile/data',
+  '/settings/profile/help',
+  '/settings/profile/view-as',
+]) {
+  test(`implemented settings URL ${route} bypasses the not-found boundary`, async ({ page, boot, word }) => {
+    await boot(route);
+    await expect(page).toHaveURL(route);
+    await expect(page.getByRole('heading', { name: word('navigation.notFound') })).toHaveCount(0);
+    await page.reload();
+    await expect(page).toHaveURL(route);
+    await expect(page.getByRole('heading', { name: word('navigation.notFound') })).toHaveCount(0);
+  });
+}
+
 test('profile links nested return preserves editor and does not duplicate it', async ({ page, boot, word }) => {
   await boot('/settings/profile');
   await page.getByRole('button', { name: new RegExp(word('Edit Profile')) }).first().click();
@@ -144,10 +160,13 @@ for (const [input, output] of [
 }
 
 for (const route of ['/settings/profile/no-such-page', '/settings/profile/username', '/settings/profile/edit-profile/extra', '/post/%E0%A4%A', '/group', '/not-a-route']) {
-  test(`invalid URL ${route} renders not-found and offers safe Back`, async ({ page, boot, word, state }) => {
+  test(`invalid URL ${route} renders localized not-found and offers safe Back`, async ({ page, boot, word, state }, testInfo) => {
     await boot(route);
     await expect(page).toHaveURL(route);
-    await expect(page.locator('h1')).toHaveText(word('navigation.notFound') === 'navigation.notFound' ? 'Page not found' : word('navigation.notFound'));
+    const language = testInfo.project.name.startsWith('ar') ? 'ar' : 'en';
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(word('navigation.notFound'));
+    await expect(page.locator('html')).toHaveAttribute('lang', language);
+    await expect(page.locator('html')).toHaveAttribute('dir', language === 'ar' ? 'rtl' : 'ltr');
     await expect(page.getByTestId('survey-card')).toHaveCount(0);
     await page.reload();
     await expect(page).toHaveURL(route);

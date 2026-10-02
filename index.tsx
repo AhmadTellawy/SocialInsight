@@ -57,7 +57,14 @@ const NotFoundScreen = () => {
 /** Reject raw unknown paths before App can render or start its data effects. */
 const NavigationBoundary = () => {
   const location = useLocation();
+  const { i18n } = useTranslation();
   const pathname = canonicalPath(location.pathname);
+  const language = i18n.resolvedLanguage || i18n.language || 'en';
+
+  React.useEffect(() => {
+    document.documentElement.lang = language;
+    document.documentElement.dir = ['ar', 'ur'].includes(language.split('-')[0]) ? 'rtl' : 'ltr';
+  }, [language]);
 
   if (pathname !== location.pathname) {
     return <Navigate replace to={{ pathname, search: location.search, hash: location.hash }} />;

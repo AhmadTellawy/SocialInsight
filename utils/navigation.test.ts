@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canonicalPath, decodeRouteSegment, hasAppPredecessor, isKnownPath, profilePath, profileSettingsPages } from './navigation.ts';
+import { canonicalPath, decodeRouteSegment, hasAppPredecessor, isKnownPath, profilePath } from './navigation.ts';
 
 test('canonical aliases and trailing separators preserve group identities', () => {
   assert.equal(canonicalPath('/groups/one/settings/'), '/group/one/settings');
@@ -11,12 +11,18 @@ test('canonical aliases and trailing separators preserve group identities', () =
 });
 
 test('only valid route shapes are accepted including every implemented settings child', () => {
+  const implementedProfileSettingsRoutes = [
+    '/settings/profile/edit-profile', '/settings/profile/links', '/settings/profile/email-phone', '/settings/profile/account-access',
+    '/settings/profile/language', '/settings/profile/demographics', '/settings/profile/notifications-detailed',
+    '/settings/profile/group-privacy', '/settings/profile/account-privacy', '/settings/profile/help', '/settings/profile/theme',
+    '/settings/profile/security', '/settings/profile/data', '/settings/profile/blocked', '/settings/profile/view-as',
+  ];
   for (const p of ['/', '/search', '/trends', '/notifications', '/messages', '/profile', '/privacy', '/login', '/signup', '/settings/profile',
     '/pages', '/pages/create', '/pages/mine', '/pages/invitations', '/pages/blocks', '/pages/staff', '/pages/cases',
     '/pages/example-page', '/pages/manage/page-id', '/pages/staff/case-id', '/pages/cases/case-id',
     '/@person', '/profile/user-id', '/post/post-id', '/group/group-id', '/group/group-id/settings', '/hashtag/%D8%B1%D8%A3%D9%8A',
     ...['poll', 'survey', 'quiz', 'challenge', 'group', 'business'].map(type => `/create/${type}`),
-    ...[...profileSettingsPages].map(page => `/settings/profile/${page}`)]) assert.equal(isKnownPath(p), true, p);
+    ...implementedProfileSettingsRoutes]) assert.equal(isKnownPath(p), true, p);
   for (const p of ['/unknown', '/group/', '/@', '/post/p/settings', '/profile/u/settings', '/group/g/members', '/create/unknown', '/pages/manage', '/pages/manage/page/extra', '/pages/%2Fsecret',
     '/settings/profile/username', '/settings/profile/no-such-child', '/settings/profile/edit-profile/extra', '/post/%E0%A4%A',
     '/profile/%2Fsecret', '/group/%5Csecret', '/@name%3Ftab=saved', '/hashtag/%00hidden']) assert.equal(isKnownPath(p), false, p);
