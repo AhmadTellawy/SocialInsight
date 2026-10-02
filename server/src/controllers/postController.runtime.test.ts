@@ -4,7 +4,55 @@ import test, { after } from 'node:test';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'post-controller-runtime-test-secret';
 
 const prisma = require('../prisma').default as typeof import('../prisma').default;
-const { getComments, likePost, likeComment, savePost, hidePost, reportPost, getPageManagedPostResults, deletePost } = require('./postController') as typeof import('./postController');
+const { createPost, getComments, likePost, likeComment, savePost, hidePost, reportPost, getPageManagedPostResults, deletePost } = require('./postController') as typeof import('./postController');
+
+test('Page post preflight acquires its RLS-protected Page lock inside a transaction', async () => {
+    const originalTransaction = prisma.$transaction;
+    const originalQueryRaw = prisma.$queryRaw;
+    const priorPagesEnabled = process.env.PAGES_ENABLED;
+    const pageId = '00000000-0000-4000-8000-000000000101';
+    const actorId = '00000000-0000-4000-8000-000000000102';
+    let transactionCalls = 0;
+    let baseQueries = 0;
+    const txQueries: string[] = [];
+    const tx: any = {
+        $queryRaw: async (query: any) => {
+            const sql = query.sql || (Array.isArray(query) ? query.join('?') : String(query));
+            txQueries.push(sql);
+            if (/FROM "Page"/.test(sql)) return [{
+                id: pageId, ownerId: actorId, purgedAt: null, deletionRequestedAt: null,
+                platformState: 'NONE', publicationState: 'DRAFT'
+            }];
+            if (/FROM users/.test(sql)) return [{ id: actorId, status: 'ACTIVE', emailVerifiedAt: new Date() }];
+            return [];
+        },
+        user: { findUnique: async () => ({ status: 'ACTIVE' }) },
+        pageBlock: { findFirst: async () => null },
+        pageAuditEvent: { findUnique: async () => { throw new Error('preflight-stop'); } }
+    };
+    try {
+        process.env.PAGES_ENABLED = 'true';
+        (prisma as any).$queryRaw = async () => { baseQueries += 1; return []; };
+        (prisma as any).$transaction = async (work: (client: any) => Promise<unknown>) => {
+            transactionCalls += 1;
+            return work(tx);
+        };
+        const { response, state } = responseState();
+        await createPost({
+            body: { pageId, pageCreateKey: '00000000-0000-4000-8000-000000000103', status: 'DRAFT', type: 'Poll' },
+            user: { userId: actorId, authMode: 'token' }
+        } as any, response);
+        assert.equal(state.statusCode, 500, JSON.stringify({ body: state.body, txQueries }));
+        assert.equal(transactionCalls, 1);
+        assert.equal(baseQueries, 0, 'The Page lock must not escape onto an unsigned pooled connection');
+        assert.ok(txQueries.some(sql => /FROM "Page".*FOR UPDATE/.test(sql)));
+    } finally {
+        (prisma as any).$transaction = originalTransaction;
+        (prisma as any).$queryRaw = originalQueryRaw;
+        if (priorPagesEnabled === undefined) delete process.env.PAGES_ENABLED;
+        else process.env.PAGES_ENABLED = priorPagesEnabled;
+    }
+});
 
 test('deleting a source post preserves another publisher share and tombstones only the source', async () => {
     const originalFind = prisma.post.findUnique;

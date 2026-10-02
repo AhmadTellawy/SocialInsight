@@ -710,18 +710,22 @@ export const createPost = async (req: Request, res: Response) => {
         const authorId = req.user!.userId;
         const publisherPageId = data.pageId == null ? null : typeof data.pageId === 'string' && /^[0-9a-f-]{36}$/i.test(data.pageId) ? data.pageId : undefined;
         if (publisherPageId === undefined) throw new PagePolicyError('PAGE_INVALID_PUBLISHER');
-        if (publisherPageId) await authorizePagePublisher(prisma, publisherPageId, authorId, data);
         const pageRequestKey = publisherPageId ? pagePostRequestKey(data.pageCreateKey) : null;
-        if (publisherPageId && pageRequestKey) {
-            const replay=await pagePostReplay(prisma,publisherPageId,authorId,pageRequestKey);
-            if(replay){
-                if (req.user!.authMode === 'session') {
-                    await prisma.$transaction(async (tx) => {
-                        await authorizePagePublisher(tx, publisherPageId, authorId, data);
-                        await lockAccountSecurity(tx, authorId);
-                        await assertActiveAccountSession(tx, req, false);
-                    });
+        if (publisherPageId) {
+            // Page authorization takes an exclusive row lock. Under FORCE RLS,
+            // SELECT ... FOR UPDATE also requires the signed UPDATE policy, so
+            // this preflight must run in the request-scoped Page transaction.
+            const replay = await prisma.$transaction(async (tx) => {
+                await authorizePagePublisher(tx, publisherPageId, authorId, data);
+                if (!pageRequestKey) return null;
+                const existing = await pagePostReplay(tx, publisherPageId, authorId, pageRequestKey);
+                if (existing && req.user!.authMode === 'session') {
+                    await lockAccountSecurity(tx, authorId);
+                    await assertActiveAccountSession(tx, req, false);
                 }
+                return existing;
+            });
+            if(replay){
                 await attachPagePublishers([replay],authorId);
                 return res.json(mapPostForClient(replay,authorId));
             }
