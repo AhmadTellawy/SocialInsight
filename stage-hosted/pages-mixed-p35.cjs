@@ -13,6 +13,7 @@ const serverRequire = createRequire(path.resolve(__dirname, '../server/package.j
 // Fixture setup and metrics inspection use the ephemeral migration principal;
 // the API process under load uses the restricted DATABASE_URL runtime login.
 const prisma = new (serverRequire('@prisma/client').PrismaClient)({ datasourceUrl: process.env.DIRECT_URL });
+const { applyPageDatabaseContext, runWithPageSystemContext } = serverRequire('./dist/pages/pageDatabaseContext.js');
 const bcrypt = serverRequire('bcryptjs');
 const api = process.env.P35_API_URL || 'http://127.0.0.1:3001';
 const apiOrigin = new URL(api).origin;
@@ -33,6 +34,13 @@ const report = {
 };
 const save = () => fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+// The migration principal can bypass RLS but not Page integrity triggers. Seed
+// only deliberate worker-state transitions with the same signed DB context as
+// the real lifecycle worker; ordinary fixtures remain admin-only setup.
+const pageSystemTransaction = work => runWithPageSystemContext(() => prisma.$transaction(async tx => {
+  await applyPageDatabaseContext(tx);
+  return work(tx);
+}));
 const pct = (sorted, p) => sorted.length ? sorted[Math.max(0, Math.ceil(sorted.length * p) - 1)] : null;
 const stats = rows => {
   const latencies = rows.map(row => row.ms).sort((a, b) => a - b);
@@ -321,12 +329,13 @@ async function postLoadSecuritySmokes() {
     targetId: erasurePost.id, reason: 'OTHER', description: 'Synthetic Page report',
     targetSnapshot: { title: erasurePost.title, description: erasurePost.description } } });
   const holdUntil = new Date(Date.now() + 86400000);
-  await prisma.page.update({ where: { id: erasurePage.id }, data: { purgedAt: new Date(), legalHoldUntil: holdUntil } });
-  await prisma.pagePurgeJob.create({ data: { pageId: erasurePage.id, phase: 'REPORTS' } });
+  await pageSystemTransaction(tx => tx.page.update({ where: { id: erasurePage.id },
+    data: { purgedAt: new Date(), legalHoldUntil: holdUntil } }));
+  await pageSystemTransaction(tx => tx.pagePurgeJob.create({ data: { pageId: erasurePage.id, phase: 'REPORTS' } }));
   const { processPagePurgeBatch } = serverRequire('./dist/pages/pageLifecycleWorker.js');
   assert.equal((await processPagePurgeBatch(erasurePage.id)).state, 'held');
   assert.ok(await prisma.report.findUnique({ where: { id: storedReport.id } }));
-  await prisma.page.update({ where: { id: erasurePage.id }, data: { legalHoldUntil: null } });
+  await pageSystemTransaction(tx => tx.page.update({ where: { id: erasurePage.id }, data: { legalHoldUntil: null } }));
   assert.equal((await processPagePurgeBatch(erasurePage.id, { now: new Date(Date.now() + 120000) })).state, 'progress');
   assert.equal(await prisma.report.findUnique({ where: { id: storedReport.id } }), null);
   report.securitySmokes = { externalSharePreserved: true, sourceTombstoned: true, accountOutboxErasure: true,

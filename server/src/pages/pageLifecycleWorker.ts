@@ -15,12 +15,25 @@ const phases = ['NOTIFICATIONS', 'ANSWERS', 'RESPONSES', 'COMMENT_LIKES', 'COMME
 type Phase = typeof phases[number];
 type Job = { pageId: string; phase: Phase; shareCursor: string | null; attempts: number; availableAt: Date; completedAt: Date | null };
 type BatchOptions = { limit?: number; now?: Date; purgeAsset?: (id: string) => Promise<void> };
+type PagePurgeBatchResult =
+  | { state: 'idle' }
+  | { state: 'held' }
+  | { state: 'completed' }
+  | { state: 'media'; ids: string[] }
+  | { state: 'progress'; erased: number }
+  | { state: 'retry'; code: string };
 // Raw writes target TIMESTAMP WITHOUT TIME ZONE columns. Bind UTC text so a
 // worker running outside UTC cannot shift its retry window by local offset.
 const utcTimestamp = (value: Date) => Prisma.sql`(${value.toISOString()}::timestamptz AT TIME ZONE 'UTC')`;
 
 /** Admit irrevocable erasure under the same Page lock as cancellation. All content stays inaccessible. */
 export async function admitPagePurges(limit = 10, now = new Date()): Promise<number> {
+  // This exported worker primitive is also used by bounded recovery and the
+  // disposable erasure harness. It must carry the same server-only context
+  // as the scheduled cycle rather than relying on each caller to remember it.
+  if (!currentPageDatabaseContext()?.system) {
+    return runWithPageSystemContext(() => admitPagePurges(limit, now));
+  }
   const cutoff = pageRetentionCutoff(PAGE_POLICY.deletionGraceDays, now);
   const caseCutoff = pageRetentionCutoff(PAGE_POLICY.closedCaseRetentionDays, now);
   const due = await pageTransaction(tx => tx.page.findMany({ where: { purgedAt: null, deletionRequestedAt: { lte: cutoff },
@@ -185,7 +198,12 @@ async function erasePhase(tx: PageTx, job: Job, size: number, now: Date): Promis
   }
 }
 
-export async function processPagePurgeBatch(pageId: string, options: BatchOptions = {}) {
+export async function processPagePurgeBatch(pageId: string, options: BatchOptions = {}): Promise<PagePurgeBatchResult> {
+  // Keep direct, trusted invocations equivalent to the scheduled lifecycle
+  // worker. The guard makes the recursive call terminate after one wrap.
+  if (!currentPageDatabaseContext()?.system) {
+    return runWithPageSystemContext(() => processPagePurgeBatch(pageId, options));
+  }
   const now = options.now ?? new Date(), size = pageLifecycleLimit(options.limit ?? 100);
   const token = randomUUID();
   try {

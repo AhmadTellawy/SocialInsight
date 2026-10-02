@@ -3,14 +3,31 @@ import { lockAccountSecurity } from './mfaService';
 import { countOtherActiveOwners, lockGroupRow } from './groupOwnershipService';
 import { appendDeletionDecision, captureDeletionMediaPointer, DeletionDecisionInput, DeletionJournalError, normalizeDeletionDecision } from './deletionJournalService';
 import { preparePageAccountDeletion, finishPageAccountDeletion } from '../pages/pageAccountLifecycle';
+import { applyPageDatabaseContext, runWithPageSystemContext } from '../pages/pageDatabaseContext';
 
 export type AccountErasureOptions = { decisionId: string; replay?: DeletionDecisionInput; deleteOwnedPages?: unknown };
+
+// Account erasure is a trusted, already-authorized server workflow. Its Page
+// transitions (withdrawals, deletion admission, audit redaction) must run with
+// the same signed system context as a worker, even when its caller supplied an
+// existing Prisma transaction.
+export async function runAccountErasureInPageSystemContext<T>(tx: Prisma.TransactionClient,
+  work: () => Promise<T>): Promise<T> {
+  return runWithPageSystemContext(async () => {
+    await applyPageDatabaseContext(tx);
+    return work();
+  });
+}
 
 // Trusted core only. HTTP callers must first check recent authentication,
 // active session and group ownership. Offline restore tooling supplies a
 // validated captured decision while the restored deployment is quarantined.
 // Every logical erasure and its immutable decision share the caller's DB tx.
 export async function purgeAccount(tx: Prisma.TransactionClient, id: string, options: AccountErasureOptions) {
+  return runAccountErasureInPageSystemContext(tx, () => purgeAccountInPageSystemContext(tx, id, options));
+}
+
+async function purgeAccountInPageSystemContext(tx: Prisma.TransactionClient, id: string, options: AccountErasureOptions) {
   const replay = options.replay ? normalizeDeletionDecision(options.replay) : undefined;
   if (replay && (replay.id !== options.decisionId || replay.subjectKind !== 'ACCOUNT' || replay.subjectId !== id || replay.action !== 'ACCOUNT_ERASE')) throw new DeletionJournalError('DELETION_DECISION_CONFLICT');
   await lockAccountSecurity(tx, id);
