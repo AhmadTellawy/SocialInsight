@@ -187,6 +187,16 @@ test('metadata in a converter response is rejected before storage', async () => 
   assert.equal(c.asset.variants.length, 0); assert.equal(c.signs, 0);
 }));
 
+test('a finalization storage failure retires deterministic keys instead of allowing a racing retry', async () => scenario(async c => {
+  await prepareMediaUpload('owner', 'asset');
+  c.onUpload = () => { throw new Error('Synthetic ambiguous finalization write'); };
+  await assert.rejects(finalizeMediaUpload('owner', 'asset', { aspectRatio: 1 }), /Synthetic ambiguous finalization write/);
+  assert.equal(c.asset.status, 'PENDING_DELETE');
+  assert.equal(c.asset.errorCode, null);
+  c.onUpload = undefined;
+  await assert.rejects(finalizeMediaUpload('owner', 'asset', { aspectRatio: 1 }), (e: any) => e.code === 'MEDIA_BUSY');
+}));
+
 test('a truncated WebP converter response is fully decoded and rejected before storage', async () => scenario(async c => {
   c.output = c.output.subarray(0, Math.max(20, c.output.length - 12));
   await assert.rejects(prepareMediaUpload('owner', 'asset'), (e: any) => e.code === 'HEIF_CONVERSION_FAILED');

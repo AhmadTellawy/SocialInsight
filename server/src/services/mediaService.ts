@@ -658,7 +658,16 @@ export const finalizeMediaUpload = async (ownerId: string, assetId: string, requ
       await getMediaStorage().remove(bucket, keys).catch(() => undefined);
     }
     const code = error instanceof MediaValidationError ? error.code : 'PROCESSING_FAILED';
-    await prisma.mediaAsset.updateMany({ where: { id: asset.id, status: 'PROCESSING', errorCode: finalizingLease, deletedAt: null, owner: { status: 'ACTIVE' } }, data: { status: 'FAILED', errorCode: code } }).catch(() => undefined);
+    const storageWasPlanned = uploadedObjects.length > 0;
+    await prisma.mediaAsset.updateMany({
+      where: { id: asset.id, status: 'PROCESSING', errorCode: finalizingLease, deletedAt: null, owner: { status: 'ACTIVE' } },
+      // Once deterministic storage keys have been registered, a timed-out
+      // provider write or its compensation may still settle. Retire this asset
+      // instead of allowing a retry to reuse those keys and race that cleanup.
+      data: storageWasPlanned
+        ? { status: 'PENDING_DELETE', errorCode: null }
+        : { status: 'FAILED', errorCode: code }
+    }).catch(() => undefined);
     throw error;
   }
   } finally { decoderAdmission.close(); }
