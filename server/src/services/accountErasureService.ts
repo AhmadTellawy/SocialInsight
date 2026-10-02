@@ -6,16 +6,18 @@ import { preparePageAccountDeletion, finishPageAccountDeletion } from '../pages/
 import { applyPageDatabaseContext, runWithPageSystemContext } from '../pages/pageDatabaseContext';
 
 export type AccountErasureOptions = { decisionId: string; replay?: DeletionDecisionInput; deleteOwnedPages?: unknown };
+export type RefreshPageSystemContext = () => Promise<void>;
 
 // Account erasure is a trusted, already-authorized server workflow. Its Page
 // transitions (withdrawals, deletion admission, audit redaction) must run with
 // the same signed system context as a worker, even when its caller supplied an
 // existing Prisma transaction.
 export async function runAccountErasureInPageSystemContext<T>(tx: Prisma.TransactionClient,
-  work: () => Promise<T>): Promise<T> {
+  work: (refresh: RefreshPageSystemContext) => Promise<T>): Promise<T> {
   return runWithPageSystemContext(async () => {
-    await applyPageDatabaseContext(tx);
-    return work();
+    const refresh = async () => applyPageDatabaseContext(tx);
+    await refresh();
+    return work(refresh);
   });
 }
 
@@ -24,10 +26,12 @@ export async function runAccountErasureInPageSystemContext<T>(tx: Prisma.Transac
 // validated captured decision while the restored deployment is quarantined.
 // Every logical erasure and its immutable decision share the caller's DB tx.
 export async function purgeAccount(tx: Prisma.TransactionClient, id: string, options: AccountErasureOptions) {
-  return runAccountErasureInPageSystemContext(tx, () => purgeAccountInPageSystemContext(tx, id, options));
+  return runAccountErasureInPageSystemContext(tx,
+    refresh => purgeAccountInPageSystemContext(tx, id, options, refresh));
 }
 
-async function purgeAccountInPageSystemContext(tx: Prisma.TransactionClient, id: string, options: AccountErasureOptions) {
+async function purgeAccountInPageSystemContext(tx: Prisma.TransactionClient, id: string, options: AccountErasureOptions,
+  refreshPageSystemContext: RefreshPageSystemContext) {
   const replay = options.replay ? normalizeDeletionDecision(options.replay) : undefined;
   if (replay && (replay.id !== options.decisionId || replay.subjectKind !== 'ACCOUNT' || replay.subjectId !== id || replay.action !== 'ACCOUNT_ERASE')) throw new DeletionJournalError('DELETION_DECISION_CONFLICT');
   await lockAccountSecurity(tx, id);
@@ -132,6 +136,9 @@ async function purgeAccountInPageSystemContext(tx: Prisma.TransactionClient, id:
     const group = await tx.group.findUnique({ where: { id: member.groupId }, select: { isDeleted: true } });
     if (group && !group.isDeleted && !(await countOtherActiveOwners(tx, member.groupId, id))) unresolvedGroupIds.push(member.groupId);
   }
+  // Account cleanup can approach the 30-second token lifetime. Re-sign on the
+  // same pinned transaction immediately before the final Page mutations.
+  await refreshPageSystemContext();
   await finishPageAccountDeletion(tx, affectedPageIds);
   return { decision, unresolvedGroupIds };
 }
