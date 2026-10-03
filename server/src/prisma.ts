@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { applyPageDatabaseContext, assertPageDatabaseContextSigningConfiguration, currentPageDatabaseContext,
-  runWithPageSystemContext, runWithPageTransaction } from './pages/pageDatabaseContext';
+  pageCoordinationSnapshot, pagePerfEvent, runWithPageSystemContext, runWithPageTransaction } from './pages/pageDatabaseContext';
 
 const base = new PrismaClient();
 
@@ -17,12 +17,42 @@ const prisma = new Proxy(base, {
       return typeof value === 'function' ? value.bind(transaction) : value;
     }
     if (property === '$transaction' && context) {
-      return (input: any, options?: any) => {
+      return async (input: any, options?: any) => {
         if (typeof input !== 'function') return (target.$transaction as any)(input, options);
-        return (target.$transaction as any)(async (tx: any) => {
-          await applyPageDatabaseContext(tx);
-          return runWithPageTransaction(tx, () => input(tx));
-        }, options);
+        const requestedAt = process.hrtime.bigint();
+        let enteredAt: bigint | undefined;
+        let protectedBodyStartedAt: bigint | undefined;
+        let bodyEndedAt: bigint | undefined;
+        let transaction: object | undefined;
+        let outcome = 'committed';
+        try {
+          return await (target.$transaction as any)(async (tx: any) => {
+            transaction = tx;
+            enteredAt = process.hrtime.bigint();
+            await applyPageDatabaseContext(tx);
+            protectedBodyStartedAt = process.hrtime.bigint();
+            try { return await runWithPageTransaction(tx, () => input(tx)); }
+            finally { bodyEndedAt = process.hrtime.bigint(); }
+          }, options);
+        } catch (error) {
+          outcome = 'rolled_back';
+          throw error;
+        } finally {
+          const endedAt = process.hrtime.bigint();
+          const milliseconds = (end: bigint, start: bigint) => Math.round(Number(end - start) / 10_000) / 100;
+          const lock = transaction ? pageCoordinationSnapshot(transaction) : undefined;
+          pagePerfEvent('pages_transaction_phase', {
+            outcome,
+            acquireWaitMs: enteredAt ? milliseconds(enteredAt, requestedAt) : milliseconds(endedAt, requestedAt),
+            rlsSetupMs: enteredAt && protectedBodyStartedAt ? milliseconds(protectedBodyStartedAt, enteredAt) : null,
+            protectedBodyMs: protectedBodyStartedAt && bodyEndedAt ? milliseconds(bodyEndedAt, protectedBodyStartedAt) : null,
+            commitEndMs: bodyEndedAt ? milliseconds(endedAt, bodyEndedAt) : null,
+            totalMs: milliseconds(endedAt, requestedAt),
+            advisoryHoldMs: lock ? milliseconds(endedAt, lock.acquiredAt) : null,
+            advisoryLockCount: lock?.lockCount ?? 0,
+            advisoryExclusiveCount: lock?.exclusiveCount ?? 0,
+          });
+        }
       };
     }
     const value = Reflect.get(target, property, receiver);

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { Prisma } from '@prisma/client';
 import prisma from '../prisma';
 import { pageTransaction, updatePageInfo } from './pageService';
+import { pageRequestDatabaseContext, runWithPageDatabaseContext } from './pageDatabaseContext';
 
 const conflict = (code: string, sqlState?: string) => new Prisma.PrismaClientKnownRequestError('fixture',
   { code, clientVersion: 'test', ...(sqlState ? { meta: { code: sqlState } } : {}) });
@@ -40,6 +41,33 @@ test('Page transaction preserves three-attempt cap and does not retry unrelated 
   } finally { prisma.$transaction = original; }
 });
 
+test('Page transaction applies exactly one signed RLS binding and context pair', async () => {
+  const original = prisma.$transaction;
+  const originalKeyId = process.env.PAGES_RLS_CONTEXT_KEY_ID;
+  const originalSigningKey = process.env.PAGES_RLS_CONTEXT_SIGNING_KEY;
+  let bindings = 0, contexts = 0;
+  try {
+    process.env.PAGES_RLS_CONTEXT_KEY_ID = 'unit';
+    process.env.PAGES_RLS_CONTEXT_SIGNING_KEY = '11'.repeat(32);
+    (prisma as any).$transaction = async (action: any) => action({
+      $queryRaw: async () => { bindings++; return [{ backendPid: '1', transactionId: '2' }]; },
+      $executeRaw: async () => { contexts++; return 1; },
+    });
+    const actorId = '00000000-0000-4000-8000-000000000001';
+    const result = await runWithPageDatabaseContext(pageRequestDatabaseContext(actorId),
+      () => pageTransaction(async () => 'ok'));
+    assert.equal(result, 'ok');
+    assert.equal(bindings, 1);
+    assert.equal(contexts, 1);
+  } finally {
+    (prisma as any).$transaction = original;
+    if (originalKeyId === undefined) delete process.env.PAGES_RLS_CONTEXT_KEY_ID;
+    else process.env.PAGES_RLS_CONTEXT_KEY_ID = originalKeyId;
+    if (originalSigningKey === undefined) delete process.env.PAGES_RLS_CONTEXT_SIGNING_KEY;
+    else process.env.PAGES_RLS_CONTEXT_SIGNING_KEY = originalSigningKey;
+  }
+});
+
 function infoFixture(options: { revoked?: boolean; deleting?: boolean; missingContact?: boolean; auditFails?: boolean; inactive?: boolean } = {}) {
   const events: string[] = [];
   const page: any = { id: 'page', ownerId: 'owner', name: 'Current name', handle: 'stable_handle',
@@ -50,8 +78,10 @@ function infoFixture(options: { revoked?: boolean; deleting?: boolean; missingCo
     assert.deepEqual(config, { isolationLevel: 'ReadCommitted', maxWait: 5000, timeout: 15000 });
     let pending = { ...stored }, pendingAudits = audits;
     const tx: any = {
-      $queryRaw: async (strings: TemplateStringsArray) => {
-        const sql = strings.join('?');
+      $queryRaw: async (query: any) => {
+        const sql = Array.isArray(query) ? query.join('?') : query?.strings?.join('?') || String(query);
+        if (sql.includes('pg_try_advisory_xact_lock')) return [{ locked: true }];
+        if (sql.includes('pg_advisory_xact_lock')) { events.push('page-advisory'); return []; }
         if (sql.includes('"Page"')) {
           assert.ok(sql.endsWith('FOR UPDATE')); events.push('page-lock');
           // These values model changes committed by the winner before this lock is acquired.
@@ -86,7 +116,7 @@ test('Page info takes exclusive Page and actor share locks before current role, 
     (prisma as any).$transaction = fixture.transaction;
     const result = await updatePageInfo('admin', 'page', { name: 'New name' });
     assert.equal(result.name, 'New name'); assert.equal(result.role, 'ADMIN');
-    assert.deepEqual(fixture.events, ['page-lock', 'page-read', 'actor-lock', 'actor-read', 'role-read', 'write', 'audit']);
+    assert.deepEqual(fixture.events, ['page-advisory', 'page-lock', 'page-read', 'actor-lock', 'actor-read', 'role-read', 'write', 'audit']);
     assert.equal(fixture.state().audits, 1); assert.equal(fixture.state().stored.ownerId, 'owner');
     assert.equal(fixture.state().stored.handle, 'stable_handle');
   } finally { prisma.$transaction = original; }

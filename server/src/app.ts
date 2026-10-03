@@ -91,11 +91,15 @@ const requestRouteTemplate = (req: express.Request): string => {
 // feed/database performance are visible without logging user data or queries.
 app.use((req, res, next) => {
     const startedAt = process.hrtime.bigint();
+    const isApiRequest = req.originalUrl.split('?', 1)[0].startsWith('/api/');
     res.once('finish', () => {
-        if (!req.path.startsWith('/api/')) return;
+        // req.path is rewritten while mounted routers run; retain the original
+        // classification so completed API requests are not silently omitted.
+        if (!isApiRequest) return;
         const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
         console.info(JSON.stringify({
             event: 'http_request_completed',
+            atMs: Date.now(),
             method: req.method,
             path: requestRouteTemplate(req),
             status: res.statusCode,
@@ -181,11 +185,12 @@ app.get('/', (req, res) => {
 });
 
 // Initialize scheduled jobs
-if (!restoreMaintenance && !(process.env.NODE_ENV === 'test' && process.env.DISABLE_BACKGROUND_JOBS === 'true')) initCronJobs();
+const backgroundJobsDisabled = process.env.DISABLE_BACKGROUND_JOBS === 'true';
+if (!restoreMaintenance && !backgroundJobsDisabled) initCronJobs();
 
 if (require.main === module) {
     void verifyPagesRuntimeDatabaseRole().then(() => {
-        if (!restoreMaintenance) {
+        if (!restoreMaintenance && !backgroundJobsDisabled) {
             void import('./pages/pageNotificationService').then(({ startPageOutboxWorker }) => startPageOutboxWorker());
             void import('./pages/pageLifecycleWorker').then(({ startPageLifecycleWorker }) => startPageLifecycleWorker());
         }

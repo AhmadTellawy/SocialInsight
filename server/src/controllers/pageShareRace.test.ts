@@ -21,9 +21,10 @@ for (const restriction of ['privacy', 'block', 'clicked-wrapper'] as const) {
     let writes = 0;
     let finalPredicate: any;
     const tx: any = {
-      $executeRaw: async () => { accountLockAcquired = true; return 1; },
       $queryRaw: async (query: any) => {
         const sql = Array.isArray(query) ? query.join('') : query.strings.join('');
+        if (sql.includes('pg_try_advisory_xact_lock')) { accountLockAcquired = true; return [{ locked: true }]; }
+        if (sql.includes('pg_advisory_xact_lock')) { sourceLocksAcquired = true; return []; }
         if (sql.includes('AS "visible"')) return [{ visible: true }];
         if (sql.includes('FROM users') && sql.includes('FOR UPDATE')) sourceLocksAcquired = true;
         if (sql.includes('FROM "Page"')) return [page];
@@ -140,9 +141,10 @@ test('Page share hydrates its successful response inside a signed restricted-con
     },
     $queryRaw: async (query: any) => {
       const sql = Array.isArray(query) ? query.join('') : query?.strings?.join('') || query?.sql || String(query);
+      if (sql.includes('pg_try_advisory_xact_lock')) return [{ locked: true }];
       if (sql.includes('pg_backend_pid')) return [{ backendPid: '123', transactionId: String(signedContexts + 1) }];
       if (sql.includes('SELECT p."id"') && sql.includes('FROM "Page" p')) {
-        assert.equal(committedShare, true, 'publisher hydration must follow the successful share transaction');
+        assert.equal(committedShare, false, 'publisher hydration must complete before the share transaction commits');
         assert.ok(signedContexts > 0, 'restricted Page reads require a signed transaction context');
         restrictedHydration = true;
         return [{ ...page, _viewerRole: null, _ownerActive: true, _isFollowing: false }];

@@ -8,10 +8,12 @@ export type PageDatabaseContext = {
   staff: boolean;
   system: boolean;
   testUser: boolean;
+  requestId?: string;
   transaction?: Prisma.TransactionClient;
 };
 
 const storage = new AsyncLocalStorage<PageDatabaseContext>();
+const coordination = new WeakMap<object, { acquiredAt: bigint; lockCount: number; exclusiveCount: number }>();
 
 const configuredIds = (name: 'PAGES_STAFF_REVIEWERS' | 'PAGES_STAFF_OWNERSHIP'): Set<string> =>
   new Set((process.env[name] || '').split(',').map(value => value.trim()).filter(Boolean));
@@ -29,12 +31,32 @@ export const runWithPageTransaction = <T>(transaction: Prisma.TransactionClient,
   return storage.run({ ...current, transaction }, work);
 };
 
-export const pageRequestDatabaseContext = (actorId?: string | null): Omit<PageDatabaseContext, 'transaction'> => ({
+export const pageRequestDatabaseContext = (actorId?: string | null, requestId?: string): Omit<PageDatabaseContext, 'transaction'> => ({
   actorId: actorId || null,
   staff: isConfiguredPageStaff(actorId),
   system: false,
   testUser: isPageTestUser(actorId),
+  ...(requestId ? { requestId } : {}),
 });
+
+export const pagePerfEvent = (event: string, values: Record<string, unknown>): void => {
+  if (process.env.PAGES_PERF_TELEMETRY !== 'true') return;
+  const requestId = storage.getStore()?.requestId;
+  console.info(JSON.stringify({ event, atMs: Date.now(), ...(requestId ? { requestId } : {}), ...values }));
+};
+
+export const markPageCoordinationAcquired = (transaction: object, lockCount: number,
+  exclusiveCount: number): void => {
+  const current = coordination.get(transaction);
+  if (current) {
+    current.lockCount = Math.max(current.lockCount, lockCount);
+    current.exclusiveCount = Math.max(current.exclusiveCount, exclusiveCount);
+    return;
+  }
+  coordination.set(transaction, { acquiredAt: process.hrtime.bigint(), lockCount, exclusiveCount });
+};
+
+export const pageCoordinationSnapshot = (transaction: object) => coordination.get(transaction);
 
 export const runWithPageSystemContext = <T>(work: () => T): T => storage.run({
   actorId: null,
@@ -86,9 +108,17 @@ export async function applyPageDatabaseContext(tx: Prisma.TransactionClient): Pr
   // TransactionClient instances always provide $executeRaw.
   if (typeof (tx as any).$executeRaw !== 'function' || typeof (tx as any).$queryRaw !== 'function') return;
   const context = storage.getStore() || { actorId: null, staff: false, system: false, testUser: false };
+  const bindingStarted = process.hrtime.bigint();
   const [binding] = await tx.$queryRaw<Array<{ backendPid: string; transactionId: string }>>`
     SELECT pg_backend_pid()::text AS "backendPid", txid_current()::text AS "transactionId"`;
   if (!binding) throw new Error('PAGES_RLS_CONTEXT_BINDING_UNAVAILABLE');
+  const bindingMs = Number(process.hrtime.bigint() - bindingStarted) / 1_000_000;
   const signedContext = signPageDatabaseContext(context, binding);
+  const setStarted = process.hrtime.bigint();
   await tx.$executeRaw`SELECT set_config('socialinsight.page_context', ${signedContext}, true)`;
+  const setConfigMs = Number(process.hrtime.bigint() - setStarted) / 1_000_000;
+  pagePerfEvent('pages_rls_context', {
+    bindingMs: Math.round(bindingMs * 100) / 100,
+    setConfigMs: Math.round(setConfigMs * 100) / 100,
+  });
 }

@@ -85,6 +85,13 @@ export const lockAccountSecurity = async (tx: any, userId: string): Promise<void
     await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${`account-security:${userId}`}, 0))`);
 };
 
+/** Page-first transactions must not wait on a user-first lifecycle transaction. */
+export const tryLockAccountSecurity = async (tx: any, userId: string): Promise<boolean> => {
+    const [result] = await tx.$queryRaw(Prisma.sql`
+        SELECT pg_try_advisory_xact_lock(hashtextextended(${`account-security:${userId}`}, 0)) AS locked`) as Array<{ locked: boolean }>;
+    return result?.locked === true;
+};
+
 // Caller holds the per-user transaction lock. A used step/code is persisted in the same transaction as its protected action.
 export const consumeMfaProof = async (tx: any, userId: string, code: string): Promise<boolean> => {
     const mfa = await tx.userMfa.findUnique({ where: { userId } });

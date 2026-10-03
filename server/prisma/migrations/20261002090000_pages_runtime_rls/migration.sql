@@ -880,7 +880,10 @@ DROP POLICY IF EXISTS socialinsight_runtime_update ON public."PageAuditEvent";
 DROP POLICY IF EXISTS socialinsight_runtime_delete ON public."PageAuditEvent";
 CREATE POLICY socialinsight_runtime_select ON public."PageAuditEvent"
   FOR SELECT TO socialinsight_runtime
-  USING (public.socialinsight_page_actor_has_role("pageId", ARRAY['OWNER','ADMIN','SYSTEM']));
+  USING (
+    public.socialinsight_page_actor_has_role("pageId", ARRAY['OWNER','ADMIN','SYSTEM'])
+    OR "actorId" = public.socialinsight_context_user_id()
+  );
 CREATE POLICY socialinsight_runtime_insert ON public."PageAuditEvent"
   FOR INSERT TO socialinsight_runtime
   WITH CHECK (

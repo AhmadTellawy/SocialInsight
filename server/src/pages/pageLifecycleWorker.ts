@@ -4,7 +4,7 @@ import prisma from '../prisma';
 import { purgeMediaAsset } from '../services/mediaService';
 import { PAGE_POLICY } from './pagePolicy';
 import { pagesEnabled } from './pageFeature';
-import { PageTx, pageAudit, pageTransaction } from './pageService';
+import { coordinatePageLocks, PageTx, pageAudit, pageTransaction } from './pageService';
 import { pageErasureHeld, pageLifecycleLimit, pageRetentionCutoff, processPageRetention } from './pageRetentionService';
 import { currentPageDatabaseContext, runWithPageSystemContext } from './pageDatabaseContext';
 
@@ -44,6 +44,7 @@ export async function admitPagePurges(limit = 10, now = new Date()): Promise<num
   let admitted = 0;
   for (const candidate of due) {
     const changed = await pageTransaction(async tx => {
+      await coordinatePageLocks(tx, [{ pageId: candidate.id, mode: 'exclusive' }]);
       await tx.$queryRaw`SELECT id FROM "Page" WHERE id = ${candidate.id} FOR UPDATE`;
       const page = await tx.page.findUnique({ where: { id: candidate.id } });
       if (!page || page.purgedAt || !page.deletionRequestedAt || page.deletionRequestedAt > cutoff || await pageErasureHeld(tx, page.id, now) ||
@@ -208,6 +209,7 @@ export async function processPagePurgeBatch(pageId: string, options: BatchOption
   const token = randomUUID();
   try {
     const result = await pageTransaction(async tx => {
+      await coordinatePageLocks(tx, [{ pageId, mode: 'exclusive' }]);
       await tx.$queryRaw`SELECT id FROM "Page" WHERE id = ${pageId} FOR UPDATE`;
       const page = await tx.page.findUnique({ where: { id: pageId } });
       const jobs = await tx.$queryRaw<Job[]>`SELECT * FROM "PagePurgeJob" WHERE "pageId" = ${pageId} FOR UPDATE`;

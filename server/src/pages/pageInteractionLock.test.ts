@@ -28,6 +28,7 @@ function fixture(requirePostLock=true) {
         assert.match(sql,/sharedFromId/);
         return [{visible:visibleCount===2}];
       }
+      if(sql.includes('pg_try_advisory_xact_lock'))return [{locked:true}];
       if(sql.includes('AS "visible"'))return [{visible:true}];
       if(sql.includes('FROM "Post"')&&sql.endsWith('FOR UPDATE')){
         locked=true;
@@ -50,16 +51,18 @@ async function enabled(work:()=>Promise<void>){const old=process.env.PAGES_ENABL
 test('public interaction locks sorted Pages before sorted Posts, and outbox never upgrades Page lock',async()=>enabled(async()=>{
   const f=fixture();
   await guardPagePostInteractions(f.tx,['wrapper','source','wrapper'],'viewer','source');
-  const pageLocks=()=>f.queries.filter(q=>q.sql.includes('FROM "Page"')&&/FOR (SHARE|UPDATE)$/.test(q.sql));
-  assert.deepEqual(pageLocks().map(q=>q.values[0]),['a-page','z-page']);
-  assert.ok(pageLocks().every(q=>q.sql.endsWith('FOR SHARE')));
+  const pageLocks=()=>f.queries.filter(q=>q.sql.includes('pg_advisory_xact_lock_shared'));
+  const pageReads=()=>f.queries.filter(q=>q.sql.includes('SELECT "Page".* FROM "Page"'));
+  assert.equal(pageLocks().length,2);
+  assert.deepEqual(pageReads().map(q=>q.values[0]),['a-page','z-page']);
+  assert.ok(pageReads().every(q=>!q.sql.includes('FOR UPDATE')&&!q.sql.includes('FOR SHARE')));
   const postLock=f.queries.findIndex(q=>q.sql.includes('FROM "Post"')&&q.sql.endsWith('FOR UPDATE'));
   assert.ok(f.queries.every((q,index)=>!pageLocks().includes(q)||index<postLock));
   assert.match(f.queries[postLock].sql,/ORDER BY "id" FOR UPDATE$/);
   assert.deepEqual(f.queries[postLock].values,['source','wrapper']);
   await notifyPagePostInteraction({postId:'source',actorId:'viewer',kind:'like'},f.tx);
   assert.equal(f.events(),1);
-  assert.ok(pageLocks().every(q=>q.sql.endsWith('FOR SHARE')));
+  assert.equal(pageLocks().length,2);
 }));
 
 test('post/source visibility loss after the lock aborts the public interaction',async()=>enabled(async()=>{
@@ -108,10 +111,11 @@ test('disabled Pages reject through the real locked guards before visibility and
   }
 });
 
-test('role mutation guard retains exclusive Page lock',async()=>enabled(async()=>{
+test('child-content persistence guard uses a shared Page lifecycle lock',async()=>enabled(async()=>{
   const f=fixture(false);
   await guardPagePostPersistence(f.tx,'source','viewer');
-  assert.ok(f.queries.some(q=>q.sql.includes('FROM "Page"')&&q.sql.endsWith('FOR UPDATE')));
+  assert.ok(f.queries.some(q=>q.sql.includes('pg_advisory_xact_lock_shared')));
+  assert.ok(f.queries.some(q=>q.sql.includes('FROM "Page"')&&!q.sql.endsWith('FOR UPDATE')&&!q.sql.endsWith('FOR SHARE')));
 }));
 
 test('Page boundary denies invisible Page/source mutations while preserving management and recovery bypasses',async()=>enabled(async()=>{
@@ -125,13 +129,14 @@ test('Page boundary denies invisible Page/source mutations while preserving mana
       pageMembership:{findUnique:async()=>null},
       $queryRaw:(...args:any[])=>txQuery(...args),
     });
-    for(const scenario of ['page-denied','source-denied','page-visible','personal','remove-save','managed-draft','detail'] as const) {
+    for(const scenario of ['page-denied','source-denied','page-visible','personal','remove-save','managed-draft','detail','share-controller','like-controller','comment-controller','vote-controller'] as const) {
       let queries=0,nextCalls=0,status=200,body:any;
       txPostFind=async()=>({pageId:scenario==='personal'||scenario==='source-denied'?null:'page',sharedFrom:scenario==='source-denied'?{pageId:'page'}:null});
       txPageFind=async()=>({id:'page',ownerId:'viewer',purgedAt:null,publicationState:'DRAFT'});
       txUserFind=async()=>({status:'ACTIVE'});
       txQuery=async(query:any)=>{queries++;assert.match(query.text,/sharedFromId/);return [{visible:scenario==='page-visible'}];};
-      const req:any={path:scenario==='remove-save'?'/post/save':scenario==='managed-draft'||scenario==='detail'?'/post':'/post/like',method:scenario==='remove-save'?'DELETE':scenario==='managed-draft'?'PUT':scenario==='detail'?'GET':'POST',user:{userId:'viewer'}};
+      const controllerPath=scenario==='share-controller'?'share':scenario==='like-controller'?'like':scenario==='comment-controller'?'comments':scenario==='vote-controller'?'vote':null;
+      const req:any={path:scenario==='remove-save'?'/post/save':controllerPath?`/post/${controllerPath}`:scenario==='managed-draft'||scenario==='detail'?'/post':'/post/report',method:scenario==='remove-save'?'DELETE':scenario==='managed-draft'?'PUT':scenario==='detail'?'GET':'POST',user:{userId:'viewer'}};
       const res:any={setHeader(){},status(code:number){status=code;return this;},json(value:any){body=value;return this;}};
       await pagePostBoundary(req,res,(error?:any)=>{assert.equal(error,undefined);nextCalls++;});
       const denied=scenario==='page-denied'||scenario==='source-denied';

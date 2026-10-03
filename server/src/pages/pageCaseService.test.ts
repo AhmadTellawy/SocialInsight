@@ -17,7 +17,9 @@ function fixture(options:{parent?:Record<string,unknown>|null;postMissing?:boole
     const getCase=(id:string)=>id===parentId?parent:pending.cases.find(row=>row.id===id);
     const tx:any={
       $queryRaw:async(query:any,...values:any[])=>{
-        const sql=Array.isArray(query)?query.join('?'):query.sql;
+        const sql=Array.isArray(query)?query.join('?'):query.strings?.join('?')||query.sql;
+        if(sql.includes('pg_try_advisory_xact_lock'))return [{locked:true}];
+        if(sql.includes('pg_advisory_xact_lock')){operations.push('page-advisory');return [];}
         if(sql.includes('AS "visible"'))return [{visible:true}];
         if(sql.includes('FROM "Page"')){assert.ok(sql.endsWith('FOR UPDATE'));operations.push('page-lock');return [page];}
         assert.ok(sql.includes('FROM users')&&sql.endsWith('FOR SHARE'));operations.push('actor-lock');

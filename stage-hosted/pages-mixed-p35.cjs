@@ -31,6 +31,7 @@ const clients = [];
 const pages = [];
 const records = [];
 const resourceSamples = [];
+const databaseWaitSamples = [];
 const report = {
   kind: precheck ? 'BOUNDED_MIXED_P35_PRECHECK' : 'HOSTED_MIXED_P35', sourceCommit: process.env.GITHUB_SHA || null,
   target: 'isolated hosted runner API + PostgreSQL service', generator: 'separate Node process on same hosted runner',
@@ -42,6 +43,12 @@ const report = {
 };
 const save = () => fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const routeKey = url => url.startsWith('/pages/manage/') ? '/pages/manage/:id'
+  : url.startsWith('/pages/') ? '/pages/:handle'
+  : url.startsWith('/posts?pageId=') ? '/posts?pageId=:id'
+  : /^\/posts\/[^/]+\/(like|comments|vote)$/.test(url) ? url.replace(/^\/posts\/[^/]+/, '/posts/:id')
+  : /^\/posts\/[^/]+$/.test(url) ? '/posts/:id'
+  : url.split('?', 1)[0];
 // The migration principal can bypass RLS but not Page integrity triggers. Seed
 // only deliberate worker-state transitions with the same signed DB context as
 // the real lifecycle worker; ordinary fixtures remain admin-only setup.
@@ -73,7 +80,7 @@ async function call(client, url, method = 'GET', body, kind, started = 0) {
       let value = {};
       try { value = JSON.parse(raw); } catch { value = { text: raw.slice(0, 120) }; }
       const result = { status, value, error };
-      if (kind) records.push({ kind, atMs: Math.round(begun - started), ms: Math.round((performance.now() - begun) * 100) / 100,
+      if (kind) records.push({ kind, route: routeKey(url), atMs: Math.round(begun - started), ms: Math.round((performance.now() - begun) * 100) / 100,
         status, timeout: error === 'TIMEOUT', code: String(value.code || error || '') });
       resolve(result);
     };
@@ -223,13 +230,36 @@ function targetResources() {
   } catch { /* Target process may have exited; the HTTP result records that failure. */ }
 }
 
+let databaseSampleBusy = false;
+async function sampleDatabaseWaits() {
+  if (databaseSampleBusy) return;
+  databaseSampleBusy = true;
+  try {
+    const activity = await prisma.$queryRawUnsafe(`
+      SELECT state, wait_event_type AS "waitEventType", wait_event AS "waitEvent", count(*)::int AS count
+      FROM pg_stat_activity WHERE usename = 'pages_p35_runtime'
+      GROUP BY state, wait_event_type, wait_event ORDER BY state, wait_event_type, wait_event`);
+    const [locks] = await prisma.$queryRawUnsafe(`
+      SELECT count(*) FILTER (WHERE NOT granted)::int AS waiting,
+        count(*) FILTER (WHERE locktype = 'advisory' AND granted)::int AS "grantedAdvisory"
+      FROM pg_locks lock_state JOIN pg_stat_activity activity ON activity.pid = lock_state.pid
+      WHERE activity.usename = 'pages_p35_runtime'`);
+    databaseWaitSamples.push({ at: Date.now(), activity, locks });
+  } catch (error) {
+    databaseWaitSamples.push({ at: Date.now(), error: String(error?.code || error?.name || 'UNKNOWN') });
+  } finally { databaseSampleBusy = false; }
+}
+
 async function level(users, warmupMs, sampleMs, full = false) {
   const start = performance.now();
+  const levelStartedAtMs = Date.now();
   const sampleStart = start + warmupMs;
+  const sampleStartedAtMs = levelStartedAtMs + warmupMs;
   const end = sampleStart + sampleMs;
   const first = records.length;
   const firstResource = resourceSamples.length;
   const timer = setInterval(targetResources, 1000);
+  const databaseTimer = setInterval(() => void sampleDatabaseWaits(), 250);
   await Promise.all(clients.slice(0, users).map(async client => {
     await sleep(client.index * 10);
     while (performance.now() < end) {
@@ -239,18 +269,36 @@ async function level(users, warmupMs, sampleMs, full = false) {
     }
   }));
   clearInterval(timer);
+  clearInterval(databaseTimer);
+  while (databaseSampleBusy) await sleep(10);
+  const sampleEndedAtMs = Date.now();
   const rows = records.slice(first);
   const seconds = (performance.now() - sampleStart) / 1000;
   const resources = resourceSamples.slice(firstResource);
+  const waits = databaseWaitSamples.filter(sample => sample.at >= sampleStartedAtMs && sample.at <= sampleEndedAtMs);
   const deltas = resources.slice(1).map((item, index) => ({
     cpuPercentOfCore: Math.round((item.cpuTicks - resources[index].cpuTicks) / ((item.at - resources[index].at) / 1000) * 100 / 100),
     rssBytes: item.rssBytes }));
   const result = { users, warmupSeconds: warmupMs / 1000, sampleSeconds: Math.round(seconds),
+    telemetryWindow: { sampleStartedAtMs, sampleEndedAtMs },
     ...stats(rows), throughputRps: Math.round(rows.length / seconds * 100) / 100,
     byKind: Object.fromEntries(['read', 'interaction', 'vote', 'manage'].map(kind => [kind, stats(rows.filter(row => row.kind === kind))])),
+    byRoute: Object.fromEntries([...new Set(rows.map(row => row.route))].sort()
+      .map(route => [route, stats(rows.filter(row => row.route === route))])),
     write: stats(rows.filter(row => row.kind !== 'read')),
     targetCpuPercentOfCoreP95: pct(deltas.map(item => item.cpuPercentOfCore).sort((a, b) => a - b), .95),
-    targetMemoryBytesPeak: resources.length ? Math.max(...resources.map(item => item.rssBytes)) : null };
+    targetMemoryBytesPeak: resources.length ? Math.max(...resources.map(item => item.rssBytes)) : null,
+    databaseWaits: {
+      samples: waits.length,
+      maxConnections: Math.max(0, ...waits.map(sample => (sample.activity || []).reduce((sum, row) => sum + row.count, 0))),
+      maxActive: Math.max(0, ...waits.map(sample => (sample.activity || []).filter(row => row.state === 'active').reduce((sum, row) => sum + row.count, 0))),
+      maxIdleInTransaction: Math.max(0, ...waits.map(sample => (sample.activity || []).filter(row => row.state === 'idle in transaction').reduce((sum, row) => sum + row.count, 0))),
+      maxWaitingLocks: Math.max(0, ...waits.map(sample => sample.locks?.waiting || 0)),
+      maxGrantedAdvisoryLocks: Math.max(0, ...waits.map(sample => sample.locks?.grantedAdvisory || 0)),
+      observedWaitEvents: [...new Set(waits.flatMap(sample => (sample.activity || [])
+        .filter(row => row.waitEventType || row.waitEvent).map(row => `${row.waitEventType || 'none'}:${row.waitEvent || 'none'}`)))].sort(),
+      errors: waits.filter(sample => sample.error).length,
+    } };
   if (full) {
     result.minuteWindows = Array.from({ length: Math.ceil(sampleMs / 60000) }, (_, minute) => {
       const batch = rows.filter(row => row.atMs >= minute * 60000 && row.atMs < (minute + 1) * 60000);
@@ -331,8 +379,21 @@ async function postLoadSecuritySmokes() {
   const erasurePage = await ok(clients[0], '/pages', 'POST', { requestId: crypto.randomUUID(),
     name: `${prefix} Erasure Page`, handle: `${prefix}_erasure`, category: 'company',
     bio: 'Synthetic erasure check', representationConfirmed: true }, 201);
+  await prisma.pageMembership.createMany({ data: [
+    { pageId: erasurePage.id, userId: clients[5].id, role: 'ADMIN' },
+    { pageId: erasurePage.id, userId: clients[6].id, role: 'EDITOR' },
+  ] });
   const erasurePost = await ok(clients[0], '/posts', 'POST', postPayload('Poll',
     { pageId: erasurePage.id, pageCreateKey: crypto.randomUUID(), status: 'DRAFT' }));
+  const adminDraft = await ok(clients[5], '/posts', 'POST', postPayload('Poll',
+    { pageId: erasurePage.id, pageCreateKey: crypto.randomUUID(), status: 'DRAFT' }));
+  await ok(clients[0], `/pages/manage/${erasurePage.id}/lifecycle`, 'POST', { action: 'publish' });
+  await ok(clients[0], `/pages/manage/${erasurePage.id}/lifecycle`, 'POST', { action: 'unpublish' });
+  const unpublishedDraft = await ok(clients[0], '/posts', 'POST', postPayload('Poll',
+    { pageId: erasurePage.id, pageCreateKey: crypto.randomUUID(), status: 'DRAFT' }));
+  const editorUnpublishedDraft = await ok(clients[6], '/posts', 'POST', postPayload('Poll',
+    { pageId: erasurePage.id, pageCreateKey: crypto.randomUUID(), status: 'DRAFT' }));
+  assert.ok(erasurePost.id && adminDraft.id && unpublishedDraft.id && editorUnpublishedDraft.id);
   const storedReport = await prisma.report.create({ data: { reporterId: recipient.id, targetType: 'POST',
     targetId: erasurePost.id, reason: 'OTHER', description: 'Synthetic Page report',
     targetSnapshot: { title: erasurePost.title, description: erasurePost.description } } });
@@ -346,7 +407,9 @@ async function postLoadSecuritySmokes() {
   await pageSystemTransaction(tx => tx.page.update({ where: { id: erasurePage.id }, data: { legalHoldUntil: null } }));
   assert.equal((await processPagePurgeBatch(erasurePage.id, { now: new Date(Date.now() + 120000) })).state, 'progress');
   assert.equal(await prisma.report.findUnique({ where: { id: storedReport.id } }), null);
-  report.securitySmokes = { externalSharePreserved: true, sourceTombstoned: true, accountOutboxErasure: true,
+  report.securitySmokes = { externalSharePreserved: true, sourceTombstoned: true,
+    initialDraftPagePostCreatedByOwnerAndAdmin: true,
+    unpublishedPagePostCreatedByOwnerAndEditor: true, accountOutboxErasure: true,
     otherRecipientExclusionsPreserved: true, senderEventsAndInboxErased: true, reportSnapshotErasedAfterHold: true };
 }
 
@@ -363,10 +426,54 @@ async function main() {
   await postLoadSecuritySmokes();
   if (process.env.P35_API_LOG && fs.existsSync(process.env.P35_API_LOG)) {
     const log = fs.readFileSync(process.env.P35_API_LOG, 'utf8');
+    const events = log.split('\n').flatMap(line => {
+      try { const value = JSON.parse(line); return value?.event ? [value] : []; } catch { return []; }
+    });
+    const metric = (event, field, window) => {
+      const values = events.filter(row => row.event === event && Number.isFinite(row[field]) &&
+          (!window || Number.isFinite(row.atMs) && row.atMs >= window.sampleStartedAtMs && row.atMs <= window.sampleEndedAtMs))
+        .map(row => row[field]).sort((left, right) => left - right);
+      return { count: values.length, p50Ms: pct(values, .5), p95Ms: pct(values, .95), maxMs: values.at(-1) ?? null };
+    };
     report.targetLogSignals = {
       prismaOrDatabaseErrorLines: log.split('\n').filter(line => /PrismaClient|P20\d\d|database (error|unavailable)|connection pool|pool timeout/i.test(line)).length,
       httpFiveXxLines: log.split('\n').filter(line => /"event":"http_request_completed"/.test(line) && /"status":5\d\d/.test(line)).length,
     };
+    report.performancePhases = {
+      requestTotal: metric('http_request_completed', 'durationMs'),
+      transactionAcquire: metric('pages_transaction_phase', 'acquireWaitMs'),
+      rlsSetup: metric('pages_transaction_phase', 'rlsSetupMs'),
+      rlsBinding: metric('pages_rls_context', 'bindingMs'),
+      rlsSetConfig: metric('pages_rls_context', 'setConfigMs'),
+      protectedBody: metric('pages_transaction_phase', 'protectedBodyMs'),
+      commitEnd: metric('pages_transaction_phase', 'commitEndMs'),
+      transactionTotal: metric('pages_transaction_phase', 'totalMs'),
+      pageTransactionEndToEnd: metric('pages_transaction_completed', 'totalMs'),
+      advisoryWait: metric('pages_advisory_lock', 'durationMs'),
+      advisoryHold: metric('pages_transaction_phase', 'advisoryHoldMs'),
+      localAdmissionWait: metric('pages_local_admission', 'waitMs'),
+      shareHydration: metric('pages_share_hydration', 'durationMs'),
+      shareSerialization: metric('pages_share_serialization', 'durationMs'),
+    };
+    report.performancePhasesByLevel = Object.fromEntries(report.levelResults.map(level => {
+      const window = level.telemetryWindow;
+      return [String(level.users), {
+        requestTotal: metric('http_request_completed', 'durationMs', window),
+        transactionAcquireStart: metric('pages_transaction_phase', 'acquireWaitMs', window),
+        rlsSetup: metric('pages_transaction_phase', 'rlsSetupMs', window),
+        rlsBinding: metric('pages_rls_context', 'bindingMs', window),
+        rlsSetConfig: metric('pages_rls_context', 'setConfigMs', window),
+        protectedBody: metric('pages_transaction_phase', 'protectedBodyMs', window),
+        commitEnd: metric('pages_transaction_phase', 'commitEndMs', window),
+        transactionTotal: metric('pages_transaction_phase', 'totalMs', window),
+        pageTransactionEndToEnd: metric('pages_transaction_completed', 'totalMs', window),
+        advisoryWait: metric('pages_advisory_lock', 'durationMs', window),
+        advisoryHold: metric('pages_transaction_phase', 'advisoryHoldMs', window),
+        localAdmissionWait: metric('pages_local_admission', 'waitMs', window),
+        postCommitShareHydration: metric('pages_share_hydration', 'durationMs', window),
+        shareSerialization: metric('pages_share_serialization', 'durationMs', window),
+      }];
+    }));
   }
   const p35 = report.p35;
   report.checks = [

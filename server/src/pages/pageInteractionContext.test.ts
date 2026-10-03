@@ -16,9 +16,11 @@ function fixture(){
   const tx:any={
     $queryRaw:async(query:any,...values:any[])=>{
       const sql=Array.isArray(query)?query.join('?'):query.sql;
+      if(sql.includes('pg_try_advisory_xact_lock'))return [{locked:true}];
+      if(sql.includes('pg_advisory_xact_lock')){state.pageLocks++;return [];}
       if(sql.includes('AS "visible"')){state.publicChecks++;return [{visible:state.visible}];}
       if(sql.includes('SELECT NOT EXISTS')){state.postChecks++;return [{visible:state.postVisible}];}
-      if(sql.includes('FROM "Page"')&&sql.endsWith('FOR SHARE')){state.pageLocks++;return [{...page}];}
+      if(sql.includes('FROM "Page"'))return [{...page}];
       if(sql.includes('FROM users'))return [{id:values[0],status:'ACTIVE',emailVerifiedAt:null}];
       assert.match(sql,/FROM "Post"/);assert.match(sql,/ORDER BY "id" FOR UPDATE$/);
       if(state.afterLock)state.afterLock();

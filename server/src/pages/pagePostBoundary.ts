@@ -16,6 +16,12 @@ export async function pagePostBoundary(req: Request, res: Response, next: NextFu
       res.setHeader('Vary', 'Authorization');
       return next();
     }
+    // These mutations perform their own canonical visibility check and then
+    // revalidate under coordinated Page/Post locks. A separate boundary
+    // transaction both consumes a pool slot and can observe stale state before
+    // an already-queued lifecycle writer. Keep the controller transaction as
+    // the single authoritative decision point.
+    if (req.method === 'POST' && ['share', 'like', 'comments', 'vote'].includes(parts[1])) return next();
     await pageTransaction(async tx => {
       let postId = parts[0];
       if (parts[0] === 'comments') {

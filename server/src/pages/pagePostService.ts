@@ -1,7 +1,7 @@
 import { Page, Post, Prisma } from '@prisma/client';
 import prisma from '../prisma';
 import { assertPageDestination, hasPageCapability, isPagePublic, PageCapability, PagePolicyError, PageRole, pagePublicWhere } from './pagePolicy';
-import { activePageActor, assertPagePublic, lockPage, lockPageForInteraction, pageIsBlocked, pageRole, PageTx, requirePageCapability } from './pageService';
+import { activePageActor, assertPagePublic, lockPage, lockPageForInteraction, lockPagesForInteraction, pageIsBlocked, pageRole, PageTx, requirePageCapability } from './pageService';
 import { arePublishedPostsVisible } from '../services/postVisibilitySql';
 import { assertPagesEnabled, isPageTestUser, pagesEnabled } from './pageFeature';
 
@@ -20,10 +20,11 @@ export function consumePageInteractionLock(tx: PageTx, postId: string, actorId?:
 }
 
 export async function authorizePagePublisher(tx: PageTx, pageId: string, actorId: string,
-  input: { status?:unknown; groupId?:unknown; targetGroups?:unknown; targetedGroups?:unknown; targetAudience?:unknown }, publicationRequired=true) {
+  input: { status?:unknown; groupId?:unknown; targetGroups?:unknown; targetedGroups?:unknown; targetAudience?:unknown }, publicationRequired=true,
+  coordinatedPage?: Page) {
   assertPagesEnabled(actorId);
   assertPageDestination(input);
-  const page = await lockPage(tx,pageId);
+  const page = coordinatedPage || await lockPageForInteraction(tx,pageId);
   await activePageActor(tx,actorId);
   await requirePageCapability(tx,page,actorId,'manageContent');
   if(await pageIsBlocked(tx,page.id,actorId))throw new PagePolicyError('PAGE_PERMISSION_DENIED',403);
@@ -103,12 +104,17 @@ export async function attachPagePublishers(posts:any[],viewerId?:string|null,cli
   }
 }
 
-export async function guardPagePostPersistence(tx:PageTx,postId:string,actorId?:string|null, requireOpen=false):Promise<void> {
+export async function guardPagePostPersistence(tx:PageTx,postId:string,actorId?:string|null, requireOpen=false,
+  coordinatedPages?:ReadonlyMap<string,Page>):Promise<void> {
   const post=await tx.post.findUnique({where:{id:postId},select:{pageId:true,sharedFrom:{select:{pageId:true}},status:true,isDeleted:true,expiresAt:true}});
   const pageIds=[...new Set([post?.pageId,post?.sharedFrom?.pageId].filter((id):id is string=>!!id))].sort();
   if(!pageIds.length)return;
   const pages=[];
-  for(const pageId of pageIds)pages.push(await lockPage(tx,pageId));
+  for(const pageId of pageIds) {
+    const coordinated = coordinatedPages?.get(pageId);
+    if (coordinatedPages && !coordinated) throw new PagePolicyError('PAGE_SHARE_SOURCE_CHANGED',409);
+    pages.push(coordinated || await lockPageForInteraction(tx,pageId));
+  }
   if(actorId)await activePageActor(tx,actorId);
   for(const page of pages)await assertPagePublic(tx,page,actorId);
   const current = await tx.post.findUnique({where:{id:postId},select:{isDeleted:true,status:true,expiresAt:true,targetAudience:true}});
@@ -135,8 +141,7 @@ export async function guardPagePostInteractions(tx:PageTx,postIds:string[],actor
   if(!guarded.length)return false; // Preserve the existing personal-only interaction path.
   const pageIds=[...new Set(guarded.flatMap(post=>[post.pageId,post.sharedFrom?.pageId]).filter((id):id is string=>!!id))].sort();
   const lockedPostIds=[...new Set(refs.flatMap(post=>[post.id,post.sharedFrom?.id]).filter((id):id is string=>!!id))].sort();
-  const pages=[];
-  for(const pageId of pageIds)pages.push(await lockPageForInteraction(tx,pageId));
+  const pages=await lockPagesForInteraction(tx,pageIds);
   if(actorId)await activePageActor(tx,actorId);
   const lockedPosts = await tx.$queryRaw<Array<Pick<Post, 'id' | 'pageId' | 'sharedFromId' | 'status' | 'isDeleted' | 'expiresAt'>>>(Prisma.sql`
     SELECT "id", "pageId", "sharedFromId", "status", "isDeleted", "expiresAt"

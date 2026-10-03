@@ -1,4 +1,4 @@
-import { activePageActor, lockPage, pageAudit, pageIsBlocked, pageTransaction, requirePageCapability } from '../pages/pageService';
+import { activePageActor, lockPage, lockPagesForShare, pageAudit, pageIsBlocked, pageTransaction, requirePageCapability, withPageCoordinationAdmission } from '../pages/pageService';
 import { pagePostReplay, pagePostRequestKey, recordPagePostCreation } from '../pages/pagePostReplay';
 import { assertPagesEnabled, pageDiscoveryPostWhere } from '../pages/pageFeature';
 import { notifyPagePostInteraction } from '../pages/pageNotificationService';
@@ -7,7 +7,7 @@ import { prepareGuestParticipationProof, readGuestParticipationHash, guestProofM
 import { AggregateResults } from '../services/aggregateResults';
 import { Request, Response } from 'express';
 import { createHash } from 'node:crypto';
-import { lockAccountSecurity, AccountSecurityError } from '../services/mfaService';
+import { lockAccountSecurity, tryLockAccountSecurity, AccountSecurityError } from '../services/mfaService';
 import { assertActiveAccountSession } from '../services/accountSecurityPolicy';
 import { MentionState, MentionSurface, PeopleTagStatus, Prisma } from '@prisma/client';
 import prisma from '../prisma';
@@ -66,6 +66,7 @@ import { attachPageCommentPublishers, attachPagePublishers, authorizePagePublish
 import { assertPageDestination, PagePolicyError } from '../pages/pagePolicy';
 import { canonicalShareSourceId, copiedPageRootId, withoutCopiedPageText } from '../pages/pageShareCopy';
 import { hiddenCopiedShareIds } from '../pages/pageShareVisibility';
+import { pagePerfEvent } from '../pages/pageDatabaseContext';
 import {
     PostOptionValidationError,
     buildPostReportDedupeKey,
@@ -1057,7 +1058,11 @@ export const createPost = async (req: Request, res: Response) => {
             targetGroups: mapTargetGroups(post)
         };
 
-        await attachPagePublishers([mappedPost], authorId);
+        if (publisherPageId) {
+            await pageTransaction(tx => attachPagePublishers([mappedPost], authorId, tx), 'ReadCommitted');
+        } else {
+            await attachPagePublishers([mappedPost], authorId);
+        }
         res.json(mappedPost);
     } catch (error) {
         if (respondPagePostError(error, res)) return;
@@ -1930,7 +1935,7 @@ export const votePost = async (req: Request, res: Response) => {
         let pageVoteNotificationHandled = false;
         let notificationOptionId = optionsToProcess[0];
 
-        await prisma.$transaction(async (tx) => {
+        await withPageCoordinationAdmission(post.pageId ? [{ pageId: post.pageId, mode: 'shared' }] : [], () => prisma.$transaction(async (tx) => {
             const pageInteraction = await guardPagePostInteractions(tx,[rawId,id],actorUserId,id);
             if (actorUserId && (!pageInteraction || req.user?.authMode === 'session')) {
                 await lockAccountSecurity(tx, actorUserId);
@@ -2189,7 +2194,7 @@ export const votePost = async (req: Request, res: Response) => {
             if (actorUserId && shouldNotify && !finalIsAnonymous) {
                 pageVoteNotificationHandled = await notifyPagePostInteraction({ postId: id, actorId: actorUserId, kind: 'vote', optionId: notificationOptionId }, tx);
             }
-        }, { maxWait: 10000, timeout: 10000 });
+        }, { maxWait: 10000, timeout: 10000 }));
 
         if (actorUserId && shouldNotify && !finalIsAnonymous && post.authorId && !pageVoteNotificationHandled) {
             await notify(actorUserId, post.authorId as string, 'vote', 'voted on your post', 'survey', id, { optionId: notificationOptionId });
@@ -2577,7 +2582,11 @@ export const createComment = async (req: Request, res: Response) => {
             }
         }
 
-        const transactionResult = await prisma.$transaction(async (tx) => {
+        const commentLocks = [
+            ...(commentTarget.pageId ? [{ pageId: commentTarget.pageId, mode: 'shared' as const }] : []),
+            ...(officialPageId ? [{ pageId: officialPageId, mode: 'shared' as const }] : []),
+        ];
+        const transactionResult = await withPageCoordinationAdmission(commentLocks, () => prisma.$transaction(async (tx) => {
             if (officialPageId) {
                 // Role-authorized replies retain exclusive Page locks throughout.
                 if (rawId !== id) await guardPagePostPersistence(tx,rawId,userId);
@@ -2606,19 +2615,22 @@ export const createComment = async (req: Request, res: Response) => {
             if (!pageCommentEntities || pageCommentEntities.some(entity => entity.type === 'hashtag')) {
                 await reconcileCommentHashtags(tx, createdComment.id, cleanText);
             }
-            const comment = await tx.comment.findUniqueOrThrow({
-                where: { id: createdComment.id },
-                include: {
-                    user: { select: SAFE_USER_SELECT },
-                    mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
-                    likesList: { select: { userId: true } },
-                    replies: true
-                }
-            });
             const pageNotificationHandled = await notifyPagePostInteraction({ postId: id, actorId: userId, kind: parentId ? 'reply' : 'comment', commentId: createdComment.id, parentCommentId: parentId || undefined, excludedRecipientIds: mentionResult.targetUserIds }, tx);
-            return { comment, targetPost, mentionResult, pageNotificationHandled };
+            return { commentId: createdComment.id, targetPost, mentionResult, pageNotificationHandled };
+        }));
+        const { targetPost, mentionResult } = transactionResult;
+
+        // Response hydration does not participate in the Page lifecycle
+        // invariant; run it after the shared advisory transaction commits.
+        const comment = await prisma.comment.findUniqueOrThrow({
+            where: { id: transactionResult.commentId },
+            include: {
+                user: { select: SAFE_USER_SELECT },
+                mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+                likesList: { select: { userId: true } },
+                replies: true
+            }
         });
-        const { comment, targetPost, mentionResult } = transactionResult;
 
         await dispatchNotificationIds(mentionResult.notificationIds);
 
@@ -2668,7 +2680,8 @@ export const likePost = async (req: Request, res: Response) => {
                 return;
             }
         }
-        const result = await prisma.$transaction(async (tx) => {
+        const result = await withPageCoordinationAdmission(targetPostCheck?.pageId
+            ? [{ pageId: targetPostCheck.pageId, mode: 'shared' }] : [], () => prisma.$transaction(async (tx) => {
             await guardPagePostInteractions(tx, [rawId,id], userId);
             const existing = await tx.userLike.findUnique({ where: { userId_postId: { userId, postId: id } } });
             if (existing) {
@@ -2679,7 +2692,7 @@ export const likePost = async (req: Request, res: Response) => {
             const targetPost = await tx.post.update({ where: { id }, data: { likesCount: existing ? { decrement: 1 } : { increment: 1 } } });
             const pageNotificationHandled = !existing && await notifyPagePostInteraction({ postId: id, actorId: userId, kind: 'like' }, tx);
             return { isLiked: !existing, targetPost, pageNotificationHandled };
-        });
+        }));
         if (result.isLiked && result.targetPost.authorId && !result.pageNotificationHandled) {
             await notify(userId, result.targetPost.authorId, 'like', 'liked your post', 'survey', id);
         }
@@ -2949,12 +2962,7 @@ export const sharePost = async (req: Request, res: Response) => {
         if (publisherPageId !== null && (typeof publisherPageId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(publisherPageId))) {
             throw new PagePolicyError('PAGE_ID_INVALID', 400);
         }
-        if (publisherPageId) {
-            assertPageDestination(req.body);
-            await prisma.$transaction(tx => authorizePagePublisher(tx, publisherPageId, userId,
-                { ...req.body, status: 'PUBLISHED' }),
-                { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 15_000, maxWait: 5_000 });
-        }
+        if (publisherPageId) assertPageDestination(req.body);
         const shareRequestKey = publisherPageId ? pagePostRequestKey(req.body.pageCreateKey) : null;
         const captionHash = createHash('sha256').update(cleanCaption).digest('hex');
         if (cleanCaption && !validateMentionRecipientLimit(cleanCaption, res, 'post')) return;
@@ -3010,16 +3018,78 @@ export const sharePost = async (req: Request, res: Response) => {
 
         const sourceRefs = await prisma.post.findMany({ where: { id: { in: [...new Set([id, actualSharedFromId])] } }, select: { id: true, authorId: true, pageId: true } });
         const involvesPage = !!publisherPageId || sourceRefs.some(source => !!source.pageId);
+        const sourcePageIds = [...new Set(sourceRefs.map(source => source.pageId)
+            .filter((value): value is string => Boolean(value)))].sort();
+        const loadCreatedPost = async (client: Prisma.TransactionClient | typeof prisma, postId: string) => {
+            const post = await client.post.findFirst({
+                where: { id: postId, ...(involvesPage ? buildVisiblePublishedPostWhere(userId) : {}) },
+                include: {
+                author: { select: SAFE_USER_SELECT },
+                questions: { include: { options: { orderBy: { order: 'asc' } } } },
+                sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                media: POST_MEDIA_INCLUDE,
+                targetedGroups: true,
+                mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+                taggedUsers: getVisiblePeopleTagsInclude(userId),
+                sharedFrom: {
+                    include: {
+                        author: {
+                            select: {
+                                ...SAFE_USER_SELECT,
+                                following: userId ? {
+                                    where: { followerId: userId, status: 'ACTIVE' },
+                                    select: { followerId: true }
+                                } : false
+                            }
+                        },
+                        questions: { include: { options: { orderBy: { order: 'asc' } } } },
+                        sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
+                        media: POST_MEDIA_INCLUDE,
+                        targetedGroups: true,
+                        mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+                        taggedUsers: getVisiblePeopleTagsInclude(userId)
+                    }
+                }
+                }
+            });
+            if (post) await attachPagePublishers([post], userId, client);
+            if (post && involvesPage && !await client.post.count({
+                where: { id: postId, ...buildVisiblePublishedPostWhere(userId) }
+            })) throw new PagePolicyError('PAGE_SHARE_SOURCE_UNAVAILABLE', 404);
+            return post;
+        };
+        const hydrateCreatedPost = async (client: Prisma.TransactionClient | typeof prisma, postId: string) => {
+            const hydrationStarted = process.hrtime.bigint();
+            const post = await loadCreatedPost(client, postId);
+            pagePerfEvent('pages_share_hydration', { durationMs: Math.round(
+                Number(process.hrtime.bigint() - hydrationStarted) / 10_000) / 100 });
+            return post;
+        };
         const shareAction = async (tx: Prisma.TransactionClient) => {
-            // Lock both publisher and source in the same order as lifecycle mutations.
-            const pageIds = [...new Set([publisherPageId, ...sourceRefs.map(source => source.pageId)].filter((value): value is string => Boolean(value)))].sort();
-            for (const pageId of pageIds) await lockPage(tx, pageId);
+            // Coordinate the full Page set once. Sharing mutates Post children,
+            // so source and destination use shared Page lifecycle guards.
+            const coordinatedPages = await lockPagesForShare(tx, publisherPageId, sourcePageIds);
             // Personal and Page shares both require a live actor session and a
             // canonical source reread. Page-owned sources intentionally do not
             // inherit the publishing employee's personal privacy settings.
-            const userIds = [...new Set([userId, ...sourceRefs.filter(source => !source.pageId).map(source => source.authorId)])].sort();
+            const supportingActors = sourcePageIds.length ? await tx.$queryRaw<Array<{ userId: string }>>(Prisma.sql`
+                SELECT DISTINCT support."userId" FROM (
+                    SELECT p."ownerId" AS "userId" FROM "Page" p
+                    WHERE p.id IN (${Prisma.join(sourcePageIds)}) AND p."ownerId" IS NOT NULL
+                    UNION
+                    SELECT membership."userId" FROM "PageMembership" membership
+                    WHERE membership."pageId" IN (${Prisma.join(sourcePageIds)})
+                      AND membership.role IN ('ADMIN', 'EDITOR')
+                ) support ORDER BY support."userId"`) : [];
+            const userIds = [...new Set([userId, ...sourceRefs.filter(source => !source.pageId).map(source => source.authorId),
+                ...supportingActors.map(actor => actor.userId)])].sort();
             if (!involvesPage || req.user!.authMode === 'session') {
-                for (const lockedUserId of userIds) await lockAccountSecurity(tx, lockedUserId);
+                for (const lockedUserId of userIds) {
+                    const locked = involvesPage
+                        ? await tryLockAccountSecurity(tx, lockedUserId)
+                        : (await lockAccountSecurity(tx, lockedUserId), true);
+                    if (!locked) throw new PagePolicyError('PAGE_SHARE_CONFLICT', 409);
+                }
             }
             await tx.$queryRaw(Prisma.sql`SELECT id FROM users WHERE id IN (${Prisma.join(userIds)}) ORDER BY id FOR UPDATE`);
             if (!involvesPage || req.user!.authMode === 'session') await assertActiveAccountSession(tx, req, false);
@@ -3071,18 +3141,21 @@ export const sharePost = async (req: Request, res: Response) => {
             if (sharedTemplate.pageId && sharedTemplate.sharedRootPageId) {
                 throw new PagePolicyError('PAGE_SHARE_SOURCE_UNAVAILABLE', 403);
             }
-            if (publisherPageId) await authorizePagePublisher(tx, publisherPageId, userId, { ...req.body, status: 'PUBLISHED' });
-            await guardPagePostPersistence(tx,id,userId);
-            await guardPagePostPersistence(tx,actualSharedFromId,userId);
+            if (publisherPageId) await authorizePagePublisher(tx, publisherPageId, userId,
+                { ...req.body, status: 'PUBLISHED' }, true, coordinatedPages.get(publisherPageId));
+            await guardPagePostPersistence(tx,id,userId,false,coordinatedPages);
+            await guardPagePostPersistence(tx,actualSharedFromId,userId,false,coordinatedPages);
             if (publisherPageId && shareRequestKey) {
                 const receipt = await tx.pageAuditEvent.findUnique({ where: { id: shareRequestKey } });
                 if (receipt) {
                     const outcome = receipt.data as { captionHash?: string; postId?: string; unshared?: boolean };
                     if (receipt.pageId !== publisherPageId || receipt.actorId !== userId || receipt.action !== 'SHARE_COMPLETED' || receipt.targetId !== actualSharedFromId || outcome.captionHash !== captionHash) throw new PagePolicyError('PAGE_REQUEST_KEY_CONFLICT', 409);
-                    if (outcome.unshared) return { newPost: null, notificationIds: [] as string[] };
+                    if (outcome.unshared) return { newPost: null, createdPost: null, notificationIds: [] as string[] };
                     const replay = outcome.postId ? await tx.post.findUnique({ where: { id: outcome.postId }, select: { id: true, isDeleted: true, pageId: true } }) : null;
                     if (!replay || replay.isDeleted || replay.pageId !== publisherPageId) throw new PagePolicyError('PAGE_REQUEST_ALREADY_COMPLETED', 409);
-                    return { newPost: { id: replay.id }, notificationIds: [] as string[] };
+                    const createdPost = await hydrateCreatedPost(tx, replay.id);
+                    if (!createdPost) throw new PagePolicyError('PAGE_SHARE_SOURCE_UNAVAILABLE', 404);
+                    return { newPost: { id: replay.id }, createdPost, notificationIds: [] as string[] };
                 }
             }
             if (!cleanCaption) {
@@ -3095,7 +3168,7 @@ export const sharePost = async (req: Request, res: Response) => {
                     await tx.post.updateMany({ where: { id: actualSharedFromId, sharesCount: { gt: 0 } }, data: { sharesCount: { decrement: 1 } } });
                     if (publisherPageId) await pageAudit(tx, publisherPageId, userId, 'CONTENT_UNSHARED', existingRepost.id);
                     if (publisherPageId && shareRequestKey) await tx.pageAuditEvent.create({ data: { id: shareRequestKey, pageId: publisherPageId, actorId: userId, action: 'SHARE_COMPLETED', targetId: actualSharedFromId, data: { captionHash, unshared: true } } });
-                    return { newPost: null, notificationIds: [] as string[] };
+                    return { newPost: null, createdPost: null, notificationIds: [] as string[] };
                 }
             }
             const newPost = await tx.post.create({
@@ -3146,21 +3219,21 @@ export const sharePost = async (req: Request, res: Response) => {
                 surfaces: getPostMentionSurfaces(newPost)
             });
             await reconcilePostHashtags(tx, newPost.id, getPostHashtagTexts(newPost));
+            const createdPost = involvesPage ? await hydrateCreatedPost(tx, newPost.id) : null;
+            if (involvesPage && !createdPost) throw new PagePolicyError('PAGE_SHARE_SOURCE_UNAVAILABLE', 404);
             return {
                 newPost,
+                createdPost,
                 notificationIds: mentionResult.notificationIds
             };
         };
-        let transactionResult;
-        for (let attempt = 0; ; attempt++) {
-            try {
-                transactionResult = await prisma.$transaction(shareAction, involvesPage ? { isolationLevel: 'ReadCommitted', timeout: 15000, maxWait: 5000 } : undefined);
-                break;
-            } catch (error) {
-                const conflict = error instanceof Prisma.PrismaClientKnownRequestError && (error.code === 'P2034' || error.code === 'P2010' && ['40P01','40001'].includes(String(error.meta?.code)));
-                if (!involvesPage || !conflict || attempt >= 2) throw error;
-            }
-        }
+        const shareLocks = [
+            ...sourcePageIds.map(pageId => ({ pageId, mode: 'shared' as const })),
+            ...(publisherPageId ? [{ pageId: publisherPageId, mode: 'shared' as const }] : []),
+        ];
+        const transactionResult = involvesPage
+            ? await withPageCoordinationAdmission(shareLocks, () => pageTransaction(shareAction, 'ReadCommitted'))
+            : await prisma.$transaction(shareAction);
         await dispatchNotificationIds(transactionResult.notificationIds);
         const newPost = transactionResult.newPost;
         if (!newPost) {
@@ -3172,55 +3245,18 @@ export const sharePost = async (req: Request, res: Response) => {
             await notify(userId, canonicalSource.authorId, 'share', 'Shared your post', 'post', actualSharedFromId);
         }
 
-        const loadCreatedPost = async (client: Prisma.TransactionClient = prisma) => {
-            const post = await client.post.findFirst({
-                where: { id: newPost.id, ...(involvesPage ? buildVisiblePublishedPostWhere(userId) : {}) },
-                include: {
-                author: { select: SAFE_USER_SELECT },
-                questions: { include: { options: { orderBy: { order: 'asc' } } } },
-                sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
-                media: POST_MEDIA_INCLUDE,
-                targetedGroups: true,
-                mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
-                taggedUsers: getVisiblePeopleTagsInclude(userId),
-                sharedFrom: {
-                    include: {
-                        author: {
-                            select: {
-                                ...SAFE_USER_SELECT,
-                                following: userId ? {
-                                    where: { followerId: userId, status: 'ACTIVE' },
-                                    select: { followerId: true }
-                                } : false
-                            }
-                        },
-                        questions: { include: { options: { orderBy: { order: 'asc' } } } },
-                        sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } },
-                        media: POST_MEDIA_INCLUDE,
-                        targetedGroups: true,
-                        mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
-                        taggedUsers: getVisiblePeopleTagsInclude(userId)
-                    }
-                }
-                }
-            });
-            if (post) await attachPagePublishers([post], userId, client);
-            if (post && involvesPage && !await client.post.count({
-                where: { id: newPost.id, ...buildVisiblePublishedPostWhere(userId) }
-            })) throw new PagePolicyError('PAGE_SHARE_SOURCE_UNAVAILABLE', 404);
-            return post;
-        };
-        // Page RLS context is transaction-local. Keep both the response read and
-        // publisher hydration on one newly signed transaction after the write commits.
-        const createdPost = involvesPage
-            ? await pageTransaction(loadCreatedPost, 'ReadCommitted')
-            : await loadCreatedPost();
+        // Page responses are hydrated while the shared lifecycle locks are still
+        // held, so a winning write cannot be turned into a post-commit 404 by a
+        // concurrent unpublish, block, membership, or account transition.
+        const createdPost = transactionResult.createdPost
+            || (!involvesPage ? await hydrateCreatedPost(prisma, newPost.id) : null);
 
         if (!createdPost) {
             res.status(involvesPage ? 404 : 500).json({ error: involvesPage ? 'Shared post is no longer available' : 'Failed to retrieve shared post' });
             return;
         }
 
+        const serializationStarted = process.hrtime.bigint();
         const p = serializePostSocialRecord(createdPost as any, userId);
         
         let mappedSharedFrom: any = undefined;
@@ -3265,6 +3301,8 @@ export const sharePost = async (req: Request, res: Response) => {
             targetGroups: mapTargetGroups(p)
         };
 
+        pagePerfEvent('pages_share_serialization', { durationMs: Math.round(
+            Number(process.hrtime.bigint() - serializationStarted) / 10_000) / 100 });
         res.json(mappedPost);
     } catch (error) {
         if (respondPagePostError(error,res)) return;

@@ -12,8 +12,10 @@ function fixture(options: { member?: boolean; revokeOnLock?: boolean; inactive?:
     const key = { pageId_userId: { pageId: 'page', userId: 'member' } };
     const page = { id: 'page', ownerId: 'owner', purgedAt: null, safetyHiddenAt: null };
     const tx: any = {
-      $queryRaw: async (strings: TemplateStringsArray) => {
-        const sql = strings.join('?');
+      $queryRaw: async (query: any) => {
+        const sql = Array.isArray(query) ? query.join('?') : query?.strings?.join('?') || String(query);
+        if (sql.includes('pg_try_advisory_xact_lock')) return [{ locked: true }];
+        if (sql.includes('pg_advisory_xact_lock')) { events.push('page-advisory'); return []; }
         if (sql.includes('"Page"')) {
           assert.ok(sql.endsWith('FOR UPDATE')); events.push('page-lock');
           // Models a team removal committed before this request acquired the Page lock.
@@ -58,7 +60,7 @@ test('Team outsider is denied before membership, invitation, transfer, audit or 
     (prisma as any).$transaction = f.transaction; const before = f.state();
     await assert.rejects(leavePageTeam('page', 'member'), { code: 'PAGE_PERMISSION_DENIED', status: 403 });
     assert.deepEqual(f.state(), before);
-    assert.deepEqual(f.events, ['page-lock', 'actor-lock', 'actor-read', 'membership-read']);
+    assert.deepEqual(f.events, ['page-advisory', 'page-lock', 'actor-lock', 'actor-read', 'membership-read']);
   } finally { prisma.$transaction = original; }
 });
 
@@ -68,10 +70,10 @@ test('Current team member leaves once, withdraws own pending grants and creates 
     (prisma as any).$transaction = f.transaction;
     assert.deepEqual(await leavePageTeam('page', 'member'), { left: true });
     assert.deepEqual(f.state(), { member: false, invitation: 'WITHDRAWN', transfer: 'WITHDRAWN', audits: 1 });
-    assert.deepEqual(f.events, ['page-lock', 'actor-lock', 'actor-read', 'membership-read', 'membership-delete', 'invitation-withdraw', 'transfer-withdraw', 'audit', 'safety']);
+    assert.deepEqual(f.events, ['page-advisory', 'page-lock', 'actor-lock', 'actor-read', 'membership-read', 'membership-delete', 'invitation-withdraw', 'transfer-withdraw', 'audit', 'safety']);
     const after = f.state(); f.events.length = 0;
     await assert.rejects(leavePageTeam('page', 'member'), { code: 'PAGE_PERMISSION_DENIED', status: 403 });
-    assert.deepEqual(f.state(), after); assert.deepEqual(f.events, ['page-lock', 'actor-lock', 'actor-read', 'membership-read']);
+    assert.deepEqual(f.state(), after); assert.deepEqual(f.events, ['page-advisory', 'page-lock', 'actor-lock', 'actor-read', 'membership-read']);
   } finally { prisma.$transaction = original; }
 });
 
@@ -81,7 +83,7 @@ test('Membership removed before Page lock acquisition cannot create a false leav
     (prisma as any).$transaction = f.transaction;
     await assert.rejects(leavePageTeam('page', 'member'), { code: 'PAGE_PERMISSION_DENIED', status: 403 });
     assert.deepEqual(f.state(), { member: false, invitation: 'PENDING', transfer: 'PENDING', audits: 0 });
-    assert.deepEqual(f.events, ['page-lock', 'actor-lock', 'actor-read', 'membership-read']);
+    assert.deepEqual(f.events, ['page-advisory', 'page-lock', 'actor-lock', 'actor-read', 'membership-read']);
   } finally { prisma.$transaction = original; }
 });
 
@@ -93,7 +95,7 @@ test('Owner transfer requirement and inactive actor denial remain before members
       await assert.rejects(leavePageTeam('page', inactive ? 'member' : 'owner'), {
         code: inactive ? 'PAGE_ACTIVE_ACCOUNT_REQUIRED' : 'PAGE_OWNER_MUST_TRANSFER', status: inactive ? 401 : 409,
       });
-      assert.deepEqual(f.state(), before); assert.deepEqual(f.events, ['page-lock', 'actor-lock', 'actor-read']);
+      assert.deepEqual(f.state(), before); assert.deepEqual(f.events, ['page-advisory', 'page-lock', 'actor-lock', 'actor-read']);
     }
   } finally { prisma.$transaction = original; }
 });

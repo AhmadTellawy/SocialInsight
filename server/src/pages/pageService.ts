@@ -1,10 +1,12 @@
 import { Page, Prisma, User } from '@prisma/client';
+import { createHash } from 'node:crypto';
 import prisma from '../prisma';
 import { hasPageCapability, isPagePublic, PAGE_POLICY, PageCapability, PagePolicyError,
   PageRole, pagePublicWhere } from './pagePolicy';
 import { pageCreateSchema, pagePatchSchema, validatePageCta } from './pageValidation';
 import { assertPagesEnabled, isPageTestUser, pagesEnabled } from './pageFeature';
-import { applyPageDatabaseContext, currentPageDatabaseContext, runWithPageTransaction } from './pageDatabaseContext';
+import { currentPageDatabaseContext, markPageCoordinationAcquired, pagePerfEvent, runWithPageDatabaseContext, runWithPageTransaction } from './pageDatabaseContext';
+import { tryLockAccountSecurity } from '../services/mfaService';
 
 export type PageTx = Prisma.TransactionClient;
 export const pageDaysFrom = (days: number, now = new Date()) => new Date(now.getTime() + days * 86400000);
@@ -14,22 +16,44 @@ export async function pageTransaction<T>(action: (tx: PageTx) => Promise<T>,
   isolationLevel: 'Serializable' | 'ReadCommitted' = 'Serializable'): Promise<T> {
   const active = currentPageDatabaseContext()?.transaction;
   if (active) return action(active);
-  for (let attempt = 0; ; attempt++) {
+  const execute = async (): Promise<T> => {
+    const requestedAt = process.hrtime.bigint();
+    for (let attempt = 0; ; attempt++) {
     try {
-      return await prisma.$transaction(async tx => {
-        await applyPageDatabaseContext(tx);
-        return runWithPageTransaction(tx, () => action(tx));
+      const attemptStarted = process.hrtime.bigint();
+      const result = await prisma.$transaction(async tx => {
+        const enteredAt = process.hrtime.bigint();
+        try { return await runWithPageTransaction(tx, () => action(tx)); }
+        finally {
+          const bodyMs = Number(process.hrtime.bigint() - enteredAt) / 1_000_000;
+          pagePerfEvent('pages_transaction_body', { attempt: attempt + 1,
+            bodyMs: Math.round(bodyMs * 100) / 100 });
+        }
       }, { isolationLevel, maxWait: 5000, timeout: 15000 });
+      const totalMs = Number(process.hrtime.bigint() - requestedAt) / 1_000_000;
+      const attemptMs = Number(process.hrtime.bigint() - attemptStarted) / 1_000_000;
+      pagePerfEvent('pages_transaction_completed', { attempts: attempt + 1,
+        attemptMs: Math.round(attemptMs * 100) / 100, totalMs: Math.round(totalMs * 100) / 100 });
+      return result;
     } catch (error) {
       const conflict = error instanceof Prisma.PrismaClientKnownRequestError &&
         (error.code === 'P2034' || error.code === 'P2010' && ['40001', '40P01'].includes(String(error.meta?.code)));
       if (attempt < 2 && conflict) continue;
       throw error;
     }
-  }
+  } };
+  // The Prisma proxy is the single authority that binds and signs the RLS
+  // context. Give non-request/background callers a restricted anonymous
+  // context so the proxy performs exactly one binding + set_config pair.
+  return currentPageDatabaseContext() ? execute() : runWithPageDatabaseContext({
+    actorId: null, staff: false, system: false, testUser: false,
+  }, execute);
 }
 
 export async function activePageActor(tx: PageTx, userId: string, confirmed = false) {
+  // Account erasure is account-first then Page-first. Page operations fail fast
+  // on the second lock class instead of forming a blocking Page->account cycle.
+  if (!await tryLockAccountSecurity(tx, userId)) throw new PagePolicyError('PAGE_ACCOUNT_BUSY', 409);
   // Share-lock the account so suspension cannot commit between validation and mutation.
   const [user] = await tx.$queryRaw<Array<Pick<User, 'id' | 'status' | 'emailVerifiedAt'>>>`
     SELECT "id", "status", "email_verified_at" AS "emailVerifiedAt" FROM users WHERE "id" = ${userId} FOR SHARE`;
@@ -38,17 +62,173 @@ export async function activePageActor(tx: PageTx, userId: string, confirmed = fa
   return user;
 }
 
-export async function lockPage(tx: PageTx, pageId: string): Promise<Page> {
-  const [page] = await tx.$queryRaw<Page[]>`SELECT "Page".* FROM "Page" WHERE "id" = ${pageId} FOR UPDATE`;
+export type PageCoordinationLock = { pageId: string; mode: 'shared' | 'exclusive' };
+
+type LocalCoordinationWaiter = { mode: 'shared' | 'exclusive'; resolve: (release: () => void) => void };
+type LocalCoordinationState = { readers: number; writer: boolean; queue: LocalCoordinationWaiter[] };
+const localCoordination = new Map<string, LocalCoordinationState>();
+
+const acquireLocalCoordination = (key: string, mode: 'shared' | 'exclusive'): Promise<() => void> => {
+  const state = localCoordination.get(key) || { readers: 0, writer: false, queue: [] };
+  localCoordination.set(key, state);
+  return new Promise(resolve => {
+    const waiter: LocalCoordinationWaiter = { mode, resolve };
+    state.queue.push(waiter);
+    const pump = () => {
+      if (state.writer) return;
+      // Existing readers may admit only the contiguous shared prefix. Once an
+      // exclusive waiter reaches the head, later readers wait behind it.
+      if (state.readers) {
+        while (state.queue[0]?.mode === 'shared') {
+          const shared = state.queue.shift()!;
+          state.readers += 1;
+          shared.resolve(() => {
+            state.readers -= 1;
+            if (!state.readers) pump();
+          });
+        }
+        return;
+      }
+      const first = state.queue[0];
+      if (!first) {
+        localCoordination.delete(key);
+        return;
+      }
+      if (first.mode === 'exclusive') {
+        state.queue.shift();
+        state.writer = true;
+        first.resolve(() => {
+          state.writer = false;
+          pump();
+        });
+        return;
+      }
+      while (state.queue[0]?.mode === 'shared') {
+        const shared = state.queue.shift()!;
+        state.readers += 1;
+        shared.resolve(() => {
+          state.readers -= 1;
+          if (!state.readers) pump();
+        });
+      }
+    };
+    pump();
+  });
+};
+
+/**
+ * Fair process-local admission keeps requests waiting for the same Page out of
+ * the Prisma pool. PostgreSQL advisory locks remain the cross-process source of
+ * correctness; this gate is only a bounded pool-pressure optimization.
+ */
+export async function withPageCoordinationAdmission<T>(locks: PageCoordinationLock[], action: () => Promise<T>): Promise<T> {
+  const modes = new Map<string, { key: bigint; mode: 'shared' | 'exclusive' }>();
+  for (const lock of locks) {
+    if (!lock.pageId) continue;
+    const key = pageCoordinationKey(lock.pageId);
+    const id = key.toString();
+    const current = modes.get(id);
+    if (!current || lock.mode === 'exclusive') modes.set(id, { key, mode: lock.mode });
+  }
+  const ordered = [...modes.values()].sort((left, right) => left.key < right.key ? -1 : left.key > right.key ? 1 : 0);
+  const startedAt = process.hrtime.bigint();
+  const releases: Array<() => void> = [];
+  try {
+    for (const lock of ordered) releases.push(await acquireLocalCoordination(lock.key.toString(), lock.mode));
+    pagePerfEvent('pages_local_admission', {
+      lockCount: ordered.length,
+      exclusiveCount: ordered.filter(lock => lock.mode === 'exclusive').length,
+      waitMs: Math.round(Number(process.hrtime.bigint() - startedAt) / 10_000) / 100,
+    });
+    return await action();
+  } finally {
+    for (const release of releases.reverse()) release();
+  }
+}
+
+const pageCoordinationKey = (pageId: string): bigint => createHash('sha256')
+  .update(`socialinsight:page:v1:${pageId.toLowerCase()}`, 'utf8').digest().readBigInt64BE(0);
+
+/**
+ * Transaction-scoped coordination for Page state. Hash collisions can only
+ * over-serialize unrelated Pages; they cannot let two operations on one Page
+ * escape the same lock. A materialized input sorted by the actual signed
+ * 64-bit lock key gives every multi-Page caller one global acquisition order.
+ */
+export async function coordinatePageLocks(tx: PageTx, locks: PageCoordinationLock[]): Promise<void> {
+  const modes = new Map<string, { key: bigint; mode: 'shared' | 'exclusive' }>();
+  for (const lock of locks) {
+    if (!lock.pageId) continue;
+    const key = pageCoordinationKey(lock.pageId);
+    const keyId = key.toString();
+    const current = modes.get(keyId);
+    if (!current || lock.mode === 'exclusive') modes.set(keyId, { key, mode: lock.mode });
+  }
+  const ordered = [...modes.values()].sort((left, right) => left.key < right.key ? -1 : left.key > right.key ? 1 : 0);
+  if (!ordered.length || typeof (tx as any).$queryRaw !== 'function') return;
+  const startedAt = process.hrtime.bigint();
+  // Acquire sequentially in the global signed-key order. A sorted SELECT does
+  // not itself guarantee expression evaluation order in PostgreSQL.
+  for (const lock of ordered) {
+    const statement = lock.mode === 'exclusive'
+      ? Prisma.sql`SELECT pg_advisory_xact_lock(${lock.key})`
+      : Prisma.sql`SELECT pg_advisory_xact_lock_shared(${lock.key})`;
+    // Prisma cannot deserialize PostgreSQL's void advisory-lock return type.
+    if (typeof (tx as any).$executeRaw === 'function') await tx.$executeRaw(statement);
+    else await tx.$queryRaw(statement);
+  }
+  markPageCoordinationAcquired(tx as object, ordered.length,
+    ordered.filter(lock => lock.mode === 'exclusive').length);
+  const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+  pagePerfEvent('pages_advisory_lock', { lockCount: ordered.length,
+    exclusiveCount: ordered.filter(lock => lock.mode === 'exclusive').length,
+    durationMs: Math.round(durationMs * 100) / 100 });
+}
+
+async function readLockedPage(tx: PageTx, pageId: string, rowLock: boolean): Promise<Page> {
+  const rows = rowLock
+    ? await tx.$queryRaw<Page[]>`SELECT "Page".* FROM "Page" WHERE "id" = ${pageId} FOR UPDATE`
+    : await tx.$queryRaw<Page[]>`SELECT "Page".* FROM "Page" WHERE "id" = ${pageId}`;
+  const page = rows[0];
   if (!page || page.purgedAt) throw new PagePolicyError('PAGE_NOT_FOUND', 404);
   return page;
 }
 
-/** Public interactions share this lock; lifecycle/team mutations retain lockPage's exclusive lock. */
+export async function lockPage(tx: PageTx, pageId: string): Promise<Page> {
+  await coordinatePageLocks(tx, [{ pageId, mode: 'exclusive' }]);
+  // Keep the historical row lock until every raw Page-row coordinator has
+  // migrated to advisory locking. The advisory lock orders the new paths;
+  // FOR UPDATE still coordinates with retained analytics/retention paths.
+  return readLockedPage(tx, pageId, true);
+}
+
+/** Public interactions coordinate without a row lock, so SELECT RLS remains the read boundary. */
 export async function lockPageForInteraction(tx: PageTx, pageId: string): Promise<Page> {
-  const [page] = await tx.$queryRaw<Page[]>`SELECT "Page".* FROM "Page" WHERE "id" = ${pageId} FOR SHARE`;
-  if (!page || page.purgedAt) throw new PagePolicyError('PAGE_NOT_FOUND', 404);
-  return page;
+  await coordinatePageLocks(tx, [{ pageId, mode: 'shared' }]);
+  return readLockedPage(tx, pageId, false);
+}
+
+export async function lockPagesForInteraction(tx: PageTx, pageIds: string[]): Promise<Page[]> {
+  const ordered = [...new Set(pageIds)].sort();
+  await coordinatePageLocks(tx, ordered.map(pageId => ({ pageId, mode: 'shared' })));
+  const pages: Page[] = [];
+  for (const pageId of ordered) pages.push(await readLockedPage(tx, pageId, false));
+  return pages;
+}
+
+/** Share creation mutates Post children, not Page rows; lifecycle/team writers remain exclusive. */
+export async function lockPagesForShare(tx: PageTx, destinationPageId: string | null,
+  sourcePageIds: string[]): Promise<Map<string, Page>> {
+  const locks: PageCoordinationLock[] = sourcePageIds.map(pageId => ({ pageId, mode: 'shared' }));
+  if (destinationPageId) locks.push({ pageId: destinationPageId, mode: 'shared' });
+  await coordinatePageLocks(tx, locks);
+  const modes = new Map<string, boolean>();
+  for (const lock of locks) modes.set(lock.pageId, lock.mode === 'exclusive' || modes.get(lock.pageId) === true);
+  const pages = new Map<string, Page>();
+  for (const [pageId, rowLock] of [...modes].sort(([left], [right]) => left.localeCompare(right))) {
+    pages.set(pageId, await readLockedPage(tx, pageId, rowLock));
+  }
+  return pages;
 }
 
 export async function pageRole(tx: PageTx, page: Pick<Page, 'id' | 'ownerId'>, userId?: string | null): Promise<PageRole | null> {
@@ -173,7 +353,7 @@ export async function updatePageInfo(userId: string, pageId: string, raw: unknow
   // The exclusive Page lock serializes info/team/lifecycle writes. ReadCommitted reads
   // the winning state after waiting; the actor SHARE lock also prevents account removal.
   // Every decision and the audit stay in this transaction; no quota/handle changes occur here.
-  return pageTransaction(async tx => {
+  return withPageCoordinationAdmission([{ pageId, mode: 'exclusive' }], () => pageTransaction(async tx => {
     const page = await lockPage(tx, pageId);
     await activePageActor(tx, userId);
     // activePageActor holds the account SHARE lock until this transaction ends.
@@ -184,7 +364,7 @@ export async function updatePageInfo(userId: string, pageId: string, raw: unknow
     const updated = await tx.page.update({ where: { id: pageId }, data: patch });
     await pageAudit(tx, pageId, userId, 'PAGE_INFO_UPDATED', undefined, { fields: Object.keys(patch) });
     return pageManagementDto(updated, role!);
-  }, 'ReadCommitted');
+  }, 'ReadCommitted'));
 }
 
 export async function changePageLifecycle(userId: string, pageId: string,
