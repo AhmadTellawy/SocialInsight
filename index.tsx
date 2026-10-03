@@ -3,25 +3,14 @@ import ReactDOM from 'react-dom/client';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import App from './App';
 import { registerSW } from 'virtual:pwa-register';
+import { registerPwa } from './utils/pwaRegistration';
 import './i18n';
 import './styles/theme.css';
 
-// Register the PWA service worker
-registerSW({ 
-  immediate: true,
-  onNeedRefresh() {
-    window.location.reload();
-  },
-  onOfflineReady() {
-    console.log('App ready to work offline');
-  }
-});
-
-if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    window.location.reload();
-  });
-}
+// Update the worker in the background. Never reload an active page: doing so can
+// abort an in-flight media upload/finalization. The new worker controls the next
+// navigation without interrupting the current user action.
+registerPwa(registerSW);
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
