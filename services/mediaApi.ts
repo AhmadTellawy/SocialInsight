@@ -28,9 +28,22 @@ type SignedUploadSession = {
 };
 
 export class MediaUploadError extends Error {
-  constructor(message: string, public readonly assetId?: string, public readonly phase?: 'upload' | 'preparation' | 'processing') {
+  constructor(
+    message: string,
+    public readonly assetId?: string,
+    public readonly phase?: 'upload' | 'preparation' | 'processing',
+    public readonly code?: string,
+    public readonly retryAfterSeconds?: number
+  ) {
     super(message);
     this.name = 'MediaUploadError';
+  }
+}
+
+class MediaApiError extends Error {
+  constructor(message: string, public readonly code?: string, public readonly retryAfterSeconds?: number) {
+    super(message);
+    this.name = 'MediaApiError';
   }
 }
 
@@ -134,11 +147,13 @@ const cachePresentation = (assetId: string, value: MediaPresentation): void => {
 };
 
 const parseError = async (response: Response, fallback: string): Promise<Error> => {
+  const retryAfter = response.headers.get('retry-after');
+  const retryAfterSeconds = retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter) : undefined;
   try {
     const payload = await response.json();
-    return new Error(payload.error || fallback);
+    return new MediaApiError(payload.error || fallback, typeof payload.code === 'string' ? payload.code : undefined, retryAfterSeconds);
   } catch {
-    return new Error(fallback);
+    return new MediaApiError(fallback, undefined, retryAfterSeconds);
   }
 };
 
@@ -240,7 +255,9 @@ export const mediaApi = {
       throw new MediaUploadError(
         error instanceof Error ? error.message : 'HEIC/HEIF image preparation failed.',
         undefined,
-        'preparation'
+        'preparation',
+        error instanceof MediaApiError ? error.code : undefined,
+        error instanceof MediaApiError ? error.retryAfterSeconds : undefined
       );
     }
   },

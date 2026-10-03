@@ -221,6 +221,7 @@ test('rejects oversized HEIF dimensions before invoking the converter', async ()
   await assert.rejects(
     validateAndNormalizeImageFile(source, {
       maxDecodedPixels: 9_999,
+      maxHeifSourcePixels: 9_999,
       heifConverter: async () => {
         converterCalls += 1;
         return new Blob([jpegBytes(10, 10)], { type: 'image/jpeg' });

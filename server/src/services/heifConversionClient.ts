@@ -77,18 +77,17 @@ const probeReadiness = async (baseUrl: URL, fetchImpl: FetchLike, timeoutMs: num
     if (!response.ok) { discardResponse(response); return false; }
     const body = JSON.parse((await readBoundedBody(response, 8 * 1024, controller.signal)).toString('utf8'));
     return body?.status === 'ready'
-      && body.service === 'heif-converter'
-      && body.protocolVersion === 2
-      && body.capabilities?.wholeWorkerIsolation === 'landlock-seccomp-v1'
-      && body.capabilities?.supervisor === 'subreaper-v1'
-      && body.capabilities?.failurePolicy === 'fail-closed-v1'
+      && body.service === 'cloudflare-images-heic-adapter'
+      && body.protocolVersion === 3
+      && body.capabilities?.provider === 'cloudflare-images-binding'
+      && body.capabilities?.auth === 'hmac-sha256-v1'
+      && body.capabilities?.sourcePersistence === 'none'
+      && body.capabilities?.output === 'image/webp'
       && body.limits?.inputBytes === MEDIA_CONFIG.maxInputBytes
+      && body.limits?.bindingInputBytes === 20_000_000
       && body.limits?.outputBytes === MEDIA_CONFIG.maxPreparedOutputBytes
-      && body.limits?.maxPixels === MEDIA_CONFIG.maxDecodedPixels
-      && body.limits?.wholeWorkerMs === MEDIA_CONFIG.heifWholeWorkerTimeoutMs
-      && body.versions?.libheif === '1.23.3'
-      && body.versions?.libde265 === '1.1.1'
-      && body.versions?.sharp === '0.35.4';
+      && body.limits?.maxSourcePixels === MEDIA_CONFIG.maxHeifSourcePixels
+      && body.limits?.maxEdge === MEDIA_CONFIG.maxMasterEdge;
   } catch {
     return false;
   } finally {
@@ -257,6 +256,7 @@ export const convertHeifRemotely = async (
         headers: {
           'content-type': 'application/octet-stream',
           'content-length': String(input.length),
+          'x-si-source-mime': sourceMime,
           'x-si-timestamp': timestamp,
           'x-si-request-id': requestId,
           'x-si-body-sha256': bodyHash,
@@ -265,7 +265,8 @@ export const convertHeifRemotely = async (
         body: Uint8Array.from(input).buffer,
         signal: controller.signal
       });
-      if (response.status !== 429 || attempt === 1) break;
+      if (response.status !== 429 || attempt === 1
+        || response.headers.get('x-si-error-code') === 'IMAGES_QUOTA_EXCEEDED') break;
       const { delayMs: retryDelayMs } = retryDelayFor(response);
       discardResponse(response);
       if (retryDelayMs === null || retryDelayMs + MEDIA_CONFIG.heifWholeWorkerTimeoutMs > deadline - Date.now()) break;
@@ -273,8 +274,19 @@ export const convertHeifRemotely = async (
     }
     if (!response) throw new Error('converter response unavailable');
     if (!response.ok || response.headers.get('content-type')?.split(';', 1)[0] !== 'image/webp') {
+      const providerError = response.headers.get('x-si-error-code');
+      const retryAfterSeconds = retryDelayFor(response).retryAfterSeconds;
       discardResponse(response);
-      if (response.status === 429) throw new HeifConversionError('HEIF_CONVERTER_BUSY', 'Image conversion is busy. Please retry.', 429, retryDelayFor(response).retryAfterSeconds);
+      if (response.status === 429 && providerError === 'IMAGES_QUOTA_EXCEEDED') {
+        throw new HeifConversionError('HEIF_CONVERTER_QUOTA_EXCEEDED', 'Image conversion capacity is temporarily exhausted.', 429, retryAfterSeconds);
+      }
+      if (response.status === 429) throw new HeifConversionError('HEIF_CONVERTER_BUSY', 'Image conversion is busy. Please retry.', 429, retryAfterSeconds);
+      if (response.status === 422 && providerError === 'IMAGE_TOO_MANY_PIXELS') {
+        throw new MediaValidationError('PIXEL_LIMIT_EXCEEDED', 'The image exceeds the supported pixel limit.', 422);
+      }
+      if (response.status === 422 && ['UNSUPPORTED_HEIF_VARIANT', 'UNSUPPORTED_MEDIA_SEQUENCE', 'UNSUPPORTED_MEDIA_TYPE'].includes(providerError || '')) {
+        throw new MediaValidationError('UNSUPPORTED_HEIF_VARIANT', 'This HEIC/HEIF image variant is not supported.', 422);
+      }
       if (response.status >= 500 || [401, 403, 404].includes(response.status)) {
         throw new HeifConversionError('HEIF_CONVERTER_UNAVAILABLE', 'HEIC/HEIF conversion is temporarily unavailable.', 503);
       }

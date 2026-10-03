@@ -35,6 +35,7 @@ const addHours = (date: Date, hours: number): Date => new Date(date.getTime() + 
 type AuthorizeMediaWrite = (tx: Prisma.TransactionClient) => Promise<unknown>;
 const MEDIA_OPERATION_TIMEOUT_MS = 60_000;
 const PROCESSING_LEASE_MS = 15 * 60_000;
+const FINALIZING_LEASE_PREFIX = 'FINALIZING:';
 const SOURCE_UPLOAD_LIFETIME_MS = (7200 + 300) * 1000;
 // MediaAsset is the durable reservation ledger. These account-level ceilings
 // are derived from the product's per-file, post-gallery, and concurrency limits
@@ -116,7 +117,10 @@ const reclaimStaleOwnerProcessing = async (tx: Prisma.TransactionClient, ownerId
       deletedAt: null,
       updatedAt: { lte: new Date(Date.now() - PROCESSING_LEASE_MS) }
     },
-    data: { status: 'FAILED', errorCode: 'PROCESSING_LEASE_EXPIRED' }
+    // A dead process may already have written deterministic variant keys. Do
+    // not make that asset retryable: retire it through the exact-key deletion
+    // ledger so a new upload starts cleanly and cannot inherit partial output.
+    data: { status: 'PENDING_DELETE', errorCode: null }
   });
 };
 
@@ -456,7 +460,9 @@ const validatePreparedWebp = async (
       throw new Error('Unsafe converted output');
     }
     // Metadata parsing alone does not prove the compressed payload can decode.
-    await track(sharp(buffer, options).raw().toBuffer());
+    // stats() walks the decoded pixels without materializing a full raw-image
+    // Buffer in Node (about 17 MB for a 1800x2400 RGBA phone image).
+    await track(sharp(buffer, options).stats());
     return { width, height };
   } catch {
     throw new MediaValidationError('HEIF_CONVERSION_FAILED', 'The converted HEIC/HEIF image failed validation.');
@@ -568,6 +574,7 @@ export const finalizeMediaUpload = async (ownerId: string, assetId: string, requ
   const decoderAdmission = acquireDecoderAdmission();
   try {
   const processingDeadline = Date.now() + PROCESSING_LEASE_MS;
+  const finalizingLease = `${FINALIZING_LEASE_PREFIX}${randomUUID()}`;
   const asset = await prisma.$transaction(async tx => {
   await assertMediaWriter(tx, ownerId, authorize);
   await assertOwnerProcessingCapacity(tx, ownerId);
@@ -588,7 +595,7 @@ export const finalizeMediaUpload = async (ownerId: string, assetId: string, requ
 
   const claimed = await tx.mediaAsset.updateMany({
     where: { id: asset.id, status: { in: ['TEMPORARY', 'FAILED', 'READY'] } },
-    data: { status: 'PROCESSING', errorCode: null, storageCleanupNotBefore: new Date(Math.max(asset.storageCleanupNotBefore?.getTime() || 0, processingDeadline)) }
+    data: { status: 'PROCESSING', errorCode: finalizingLease, storageCleanupNotBefore: new Date(Math.max(asset.storageCleanupNotBefore?.getTime() || 0, processingDeadline)) }
   });
   if (claimed.count !== 1) {
     throw new MediaValidationError('MEDIA_BUSY', 'This image is already being processed.', 409);
@@ -609,8 +616,8 @@ export const finalizeMediaUpload = async (ownerId: string, assetId: string, requ
     const records = plans.map(plan => processedVariantRecord(asset, plan.variant, plan.bucket, plan.key, false));
     const assertProcessing = async (tx: Prisma.TransactionClient) => {
       await assertMediaWriter(tx, ownerId, authorize);
-      const current = await tx.mediaAsset.findUnique({ where: { id: asset.id }, select: { status: true, deletedAt: true } });
-      if (current?.status !== 'PROCESSING' || current.deletedAt || Date.now() >= processingDeadline) throw new MediaValidationError('MEDIA_PROCESSING_CANCELLED', 'This image is no longer available for processing.', 409);
+      const current = await tx.mediaAsset.findUnique({ where: { id: asset.id }, select: { status: true, errorCode: true, deletedAt: true } });
+      if (current?.status !== 'PROCESSING' || current.errorCode !== finalizingLease || current.deletedAt || Date.now() >= processingDeadline) throw new MediaValidationError('MEDIA_PROCESSING_CANCELLED', 'This image is no longer available for processing.', 409);
     };
     // Register every possible object before I/O. Deletion can then retry exact
     // removals, including uploads that complete after cancellation or timeout.
@@ -684,7 +691,16 @@ export const finalizeMediaUpload = async (ownerId: string, assetId: string, requ
       await getMediaStorage().remove(bucket, keys).catch(() => undefined);
     }
     const code = error instanceof MediaValidationError ? error.code : 'PROCESSING_FAILED';
-    await prisma.mediaAsset.updateMany({ where: { id: asset.id, status: 'PROCESSING', deletedAt: null, owner: { status: 'ACTIVE' } }, data: { status: 'FAILED', errorCode: code } }).catch(() => undefined);
+    const storageWasPlanned = uploadedObjects.length > 0;
+    await prisma.mediaAsset.updateMany({
+      where: { id: asset.id, status: 'PROCESSING', errorCode: finalizingLease, deletedAt: null, owner: { status: 'ACTIVE' } },
+      // Once deterministic storage keys have been registered, a timed-out
+      // provider write or its compensation may still settle. Retire this asset
+      // instead of allowing a retry to reuse those keys and race that cleanup.
+      data: storageWasPlanned
+        ? { status: 'PENDING_DELETE', errorCode: null }
+        : { status: 'FAILED', errorCode: code }
+    }).catch(() => undefined);
     throw error;
   }
   } finally { decoderAdmission.close(); }
@@ -1634,10 +1650,19 @@ export const cleanupExpiredMedia = async (limit = 100): Promise<number> => {
   for (const assetId of [...settledScopeOperations.keys()].slice(0, Math.min(limit, 25))) {
     await retrySettledMediaScopeCleanup(assetId).catch(() => undefined);
   }
-  // An interrupted HEIF request never reuses the same preparation key. Retire
-  // stale leases and let the existing exact-key cleanup retry late writes.
+  // Interrupted preparation/finalization never reuses the same asset. Retire
+  // stale leases and let the existing exact-key cleanup retry partial or late
+  // writes. The null case safely recovers pre-lease finalizers from older code.
   await prisma.mediaAsset.updateMany({
-    where: { status: 'PROCESSING', errorCode: { startsWith: 'HEIF_PREPARING:' }, updatedAt: { lte: new Date(Date.now() - PROCESSING_LEASE_MS) } },
+    where: {
+      status: 'PROCESSING',
+      updatedAt: { lte: new Date(Date.now() - PROCESSING_LEASE_MS) },
+      OR: [
+        { errorCode: { startsWith: 'HEIF_PREPARING:' } },
+        { errorCode: { startsWith: FINALIZING_LEASE_PREFIX } },
+        { errorCode: null }
+      ]
+    },
     data: { status: 'PENDING_DELETE', errorCode: null }
   });
   const staleSourceUploads = await prisma.mediaAsset.findMany({

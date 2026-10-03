@@ -34,6 +34,7 @@ test('accepts bounded HEIC and generic HEIF still-image containers', () => {
   assert.deepEqual(inspectHeifBuffer(fixture('heic', [[1600, 1200], [240, 160]])), {
     mime: 'image/heic', width: 1600, height: 1200, aggregatePixelCount: 1_958_400
   });
+  assert.equal(inspectHeifBuffer(fixture('heic', [[8064, 6048]])).aggregatePixelCount, 48_771_072);
 });
 
 test('rejects sequences, AVIF, missing or excessive properties, and pixel bombs', () => {
@@ -43,7 +44,7 @@ test('rejects sequences, AVIF, missing or excessive properties, and pixel bombs'
   assert.throws(() => inspectHeifBuffer(fixture('heic', [])), MediaValidationError);
   assert.throws(() => inspectHeifBuffer(fixture('heic', Array.from({ length: 17 }, () => [10, 10]))), MediaValidationError);
   assert.throws(
-    () => inspectHeifBuffer(fixture('heic', [[10_000, 5_000]])),
+    () => inspectHeifBuffer(fixture('heic', [[20_000, 6_000]])),
     (error: unknown) => error instanceof MediaValidationError && error.code === 'PIXEL_LIMIT_EXCEEDED'
   );
 });

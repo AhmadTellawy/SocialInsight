@@ -19,10 +19,9 @@ const originalEnv = {
 };
 
 const readyBody = () => ({
-  status: 'ready', service: 'heif-converter', protocolVersion: 2,
-  capabilities: { wholeWorkerIsolation: 'landlock-seccomp-v1', supervisor: 'subreaper-v1', failurePolicy: 'fail-closed-v1' },
-  limits: { inputBytes: 15728640, outputBytes: 12582912, maxPixels: 40000000, wholeWorkerMs: 45000 },
-  versions: { libheif: '1.23.3', libde265: '1.1.1', sharp: '0.35.4' }
+  status: 'ready', service: 'cloudflare-images-heic-adapter', protocolVersion: 3,
+  capabilities: { provider: 'cloudflare-images-binding', auth: 'hmac-sha256-v1', sourcePersistence: 'none', output: 'image/webp' },
+  limits: { inputBytes: 15728640, bindingInputBytes: 20000000, outputBytes: 12582912, maxSourcePixels: 100000000, maxEdge: 2400 }
 });
 const flush = () => new Promise<void>(resolve => setImmediate(resolve));
 
@@ -36,14 +35,14 @@ test.afterEach(() => {
   else process.env.HEIF_CONVERTER_SECRET = originalEnv.secret;
 });
 
-test('advertises readiness only for the pinned converter runtime', async () => {
+test('advertises readiness only for the pinned Cloudflare adapter contract', async () => {
   configure();
   const ready = await verifyHeifConversionReadiness(true, async () => Response.json(readyBody()));
   assert.equal(ready, true);
   resetHeifReadinessForTests();
   const stale = await verifyHeifConversionReadiness(true, async () => Response.json({
     ...readyBody(),
-    versions: { libheif: '1.23.2', libde265: '1.1.1', sharp: '0.35.4' }
+    capabilities: { ...readyBody().capabilities, provider: 'unverified-provider' }
   }));
   assert.equal(stale, false);
 });
@@ -80,6 +79,7 @@ test('signs the exact body and accepts only bounded WebP output', async () => {
       `v1=${createHmac('sha256', 'unit-test-secret-with-at-least-32-bytes').update(`v1\n${timestamp}\n${requestId}\n${hash}`).digest('hex')}`
     );
     assert.equal(headers.get('content-type'), 'application/octet-stream');
+    assert.equal(headers.get('x-si-source-mime'), 'image/heic');
     assert.equal(headers.get('x-si-body-sha256'), hash);
     assert.equal(init?.redirect, 'error');
     return new Response(output, { status: 200, headers: { 'content-type': 'image/webp', 'content-length': String(output.length) } });
@@ -264,15 +264,43 @@ test('rejects wrong MIME, converter errors, and oversized responses', async () =
   );
 });
 
-test('version-only health and every missing or changed isolation capability fail closed', async () => {
+test('maps Cloudflare quota exhaustion without repeating an expensive conversion', async () => {
   configure();
-  const old = { status: 'ready', service: 'heif-converter', versions: readyBody().versions };
+  let requests = 0;
+  await assert.rejects(
+    () => convertHeifRemotely(Buffer.from('input'), 'image/heic', async () => {
+      requests += 1;
+      return new Response('', {
+        status: 429,
+        headers: { 'x-si-error-code': 'IMAGES_QUOTA_EXCEEDED', 'retry-after': '3600' }
+      });
+    }),
+    (error: unknown) => error instanceof HeifConversionError
+      && error.code === 'HEIF_CONVERTER_QUOTA_EXCEEDED'
+      && error.retryAfterSeconds === 3600
+  );
+  assert.equal(requests, 1);
+});
+
+test('maps an unsupported HEIF variant to a safe validation error', async () => {
+  configure();
+  await assert.rejects(
+    () => convertHeifRemotely(Buffer.from('input'), 'image/heif', async () => new Response('', {
+      status: 422,
+      headers: { 'x-si-error-code': 'UNSUPPORTED_HEIF_VARIANT' }
+    })),
+    (error: unknown) => error instanceof MediaValidationError && error.code === 'UNSUPPORTED_HEIF_VARIANT'
+  );
+});
+
+test('legacy health and every missing or changed adapter capability fail closed', async () => {
+  configure();
+  const old = { status: 'ready', service: 'heif-converter', protocolVersion: 2 };
   assert.equal(await verifyHeifConversionReadiness(true, async () => Response.json(old)), false);
   for (const path of [
     ['status'], ['service'], ['protocolVersion'],
-    ['capabilities', 'wholeWorkerIsolation'], ['capabilities', 'supervisor'], ['capabilities', 'failurePolicy'],
-    ['limits', 'inputBytes'], ['limits', 'outputBytes'], ['limits', 'maxPixels'], ['limits', 'wholeWorkerMs'],
-    ['versions', 'libheif'], ['versions', 'libde265'], ['versions', 'sharp']
+    ['capabilities', 'provider'], ['capabilities', 'auth'], ['capabilities', 'sourcePersistence'], ['capabilities', 'output'],
+    ['limits', 'inputBytes'], ['limits', 'bindingInputBytes'], ['limits', 'outputBytes'], ['limits', 'maxSourcePixels'], ['limits', 'maxEdge']
   ]) {
     for (const replacement of [undefined, 'unverified']) {
       const body: any = readyBody();
