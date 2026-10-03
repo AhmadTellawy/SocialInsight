@@ -177,12 +177,12 @@ export const respondPagePostError = (error:unknown,res:{status:(code:number)=>{j
   return true;
 };
 
-export async function attachPageCommentPublishers(comments:any[],viewerId?:string|null) {
+export async function attachPageCommentPublishers(comments:any[],viewerId?:string|null,client:PageTx=prisma) {
   const targets:any[]=[];
   const collect=(comment:any)=>{if(comment.pageId)targets.push(comment);for(const reply of comment.replies||[])collect(reply);};
   comments.forEach(collect);
   const wrappers=targets.map(comment=>({pageId:comment.pageId}));
-  await attachPagePublishers(wrappers,viewerId);
+  await attachPagePublishers(wrappers,viewerId,client);
   targets.forEach((comment,index)=>{
     comment.user=(wrappers[index] as any).author;
     comment.pageCapabilities=(wrappers[index] as any).pageCapabilities;

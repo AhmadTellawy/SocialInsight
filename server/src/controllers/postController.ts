@@ -2627,21 +2627,19 @@ export const createComment = async (req: Request, res: Response) => {
                 await reconcileCommentHashtags(tx, createdComment.id, cleanText);
             }
             const pageNotificationHandled = await notifyPagePostInteraction({ postId: id, actorId: userId, kind: parentId ? 'reply' : 'comment', commentId: createdComment.id, parentCommentId: parentId || undefined, excludedRecipientIds: mentionResult.targetUserIds }, tx);
-            return { commentId: createdComment.id, targetPost, mentionResult, pageNotificationHandled };
+            const comment = await tx.comment.findUniqueOrThrow({
+                where: { id: createdComment.id },
+                include: {
+                    user: { select: SAFE_USER_SELECT },
+                    mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+                    likesList: { select: { userId: true } },
+                    replies: true
+                }
+            });
+            await attachPageCommentPublishers([comment],userId,tx);
+            return { comment, targetPost, mentionResult, pageNotificationHandled };
         }));
-        const { targetPost, mentionResult } = transactionResult;
-
-        // Response hydration does not participate in the Page lifecycle
-        // invariant; run it after the shared advisory transaction commits.
-        const comment = await prisma.comment.findUniqueOrThrow({
-            where: { id: transactionResult.commentId },
-            include: {
-                user: { select: SAFE_USER_SELECT },
-                mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
-                likesList: { select: { userId: true } },
-                replies: true
-            }
-        });
+        const { comment, targetPost, mentionResult } = transactionResult;
 
         await dispatchNotificationIds(mentionResult.notificationIds);
 
@@ -2663,7 +2661,6 @@ export const createComment = async (req: Request, res: Response) => {
             );
         }
 
-        await attachPageCommentPublishers([comment],userId);
         res.json(mapComment(comment, userId));
     } catch (error) {
         if(respondPagePostError(error,res))return;
@@ -3544,11 +3541,11 @@ export const updateComment = async (req: Request, res: Response) => {
                     }
                 }
             });
+            await attachPageCommentPublishers([updated],userId,tx);
             return { updated, mentionResult };
         });
 
         await dispatchNotificationIds(result.mentionResult.notificationIds);
-        await attachPageCommentPublishers([result.updated],userId);
         res.json(mapComment(result.updated, userId));
     } catch (error) {
         if(respondPagePostError(error,res))return;

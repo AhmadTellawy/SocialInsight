@@ -148,7 +148,9 @@ async function runCreateComment(input: CommentScenario) {
     id: 'post', authorId: 'publisher-user', pageId: isPage ? (input.pageId || 'page') : null,
     allowComments: true, targetAudience: 'Public', targetedGroups: [], status: 'PUBLISHED', isDeleted: false
   };
-  const calls = { mentions: 0, hashtags: 0, dispatch: [] as string[][], legacyNotify: 0, guards: 0, attach: 0, capabilityChecks: 0, order: [] as string[] };
+  const calls = { mentions: 0, hashtags: 0, dispatch: [] as string[][], legacyNotify: 0, guards: 0, attach: 0,
+    attachInTransaction: false, capabilityChecks: 0, order: [] as string[] };
+  let transactionActive = false;
   const activity: any[] = [];
   const committed = { comments: 0, counters: 0, outbox: 0 };
   const created = {
@@ -179,18 +181,24 @@ async function runCreateComment(input: CommentScenario) {
         }
       };
       try {
+        transactionActive = true;
         const result = await work(tx);
         if (isPage) pending.outbox += activity.length - activityCountBefore;
         Object.assign(committed, pending);
         return result;
       } catch (error) {
         throw error;
+      } finally {
+        transactionActive = false;
       }
     });
     mock.method(pagePost, 'guardPagePostInteractions', async () => { calls.guards++; calls.order.push('guard'); return isPage; });
     mock.method(pagePost, 'guardPagePostPersistence', async () => { throw new Error('official comments must not upgrade the shared Page guard'); });
     mock.method(pagePost, 'hasPostPageCapability', async () => { calls.capabilityChecks++; calls.order.push('capability'); return Boolean(input.official); });
-    mock.method(pagePost, 'attachPageCommentPublishers', async () => { calls.attach++; });
+    mock.method(pagePost, 'attachPageCommentPublishers', async (_comments: any[], _viewerId: string, client: any) => {
+      calls.attach++;
+      calls.attachInTransaction = transactionActive && Boolean(client);
+    });
     mock.method(mentions, 'reconcileCommentMentions', async () => {
       calls.mentions++;
       return input.mentionResult || { targetUserIds: [], notificationIds: [], created: 0, retained: 0, removed: 0, unresolved: 0, ineligible: 0 };
@@ -260,6 +268,7 @@ test('official Page comments keep one shared guard and recheck reply capability 
   assert.equal(result.status, 200, JSON.stringify(result.body));
   assert.equal(result.calls.guards, 1);
   assert.equal(result.calls.capabilityChecks, 2, 'preflight and in-transaction checks are both required');
+  assert.equal(result.calls.attachInTransaction, true, 'publisher hydration must complete before the transaction commits');
   assert.deepEqual(result.calls.order, ['capability', 'guard', 'capability', 'notify']);
   assert.equal(result.activity.length, 1);
 });

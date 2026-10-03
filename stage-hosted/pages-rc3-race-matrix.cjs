@@ -341,6 +341,41 @@ async function main() {
         updatedOfficial: updated?.text === 'RC3 concurrently updated official comment' };
     });
 
+    await addRace('official comment response hydrates before Page unpublish', async () => {
+      const before = await admin.comment.count({ where: { postId: sourceA.id } });
+      const outcome = await withPageBarrier(Pg, directUrl, observer, {
+        name: 'official_comment_before_unpublish', pageId: pageA.id, blockerMode: 'exclusive', minimumWaiters: 2,
+        first: () => actors.owner.client.request(`/posts/${sourceA.id}/comments`, 'POST',
+          { text: 'RC3 comment commits before unpublish', pageId: pageA.id }),
+        second: () => actors.owner.secondary.request(`/pages/manage/${pageA.id}/lifecycle`, 'POST', { action: 'unpublish' }),
+      });
+      const after = await admin.comment.count({ where: { postId: sourceA.id } });
+      const republish = await actors.owner.client.request(`/pages/manage/${pageA.id}/lifecycle`, 'POST', { action: 'publish' });
+      return { pass: outcome.first.status === 200 && outcome.second.status === 200 &&
+          outcome.first.body.author?.id === pageA.id && after === before + 1 && republish.status === 200,
+        waitObserved: outcome.waitObserved, hydratedPageIdentity: outcome.first.body.author?.id === pageA.id,
+        first: { status: outcome.first.status, code: outcome.first.body.code || null },
+        second: { status: outcome.second.status, code: outcome.second.body.code || null },
+        commentDelta: after - before, republishStatus: republish.status };
+    });
+    await addRace('Page unpublish rejects official comment before persistence', async () => {
+      const before = await admin.comment.count({ where: { postId: sourceA.id } });
+      const outcome = await withPageBarrier(Pg, directUrl, observer, {
+        name: 'unpublish_before_official_comment', pageId: pageA.id, blockerMode: 'shared', minimumWaiters: 2,
+        first: () => actors.owner.client.request(`/pages/manage/${pageA.id}/lifecycle`, 'POST', { action: 'unpublish' }),
+        second: () => actors.owner.secondary.request(`/posts/${sourceA.id}/comments`, 'POST',
+          { text: 'RC3 comment must lose after unpublish', pageId: pageA.id }),
+      });
+      const after = await admin.comment.count({ where: { postId: sourceA.id } });
+      const republish = await actors.owner.client.request(`/pages/manage/${pageA.id}/lifecycle`, 'POST', { action: 'publish' });
+      return { pass: outcome.first.status === 200 && outcome.second.status === 404 &&
+          outcome.second.body.code === 'PAGE_NOT_FOUND' && after === before && republish.status === 200,
+        waitObserved: outcome.waitObserved,
+        first: { status: outcome.first.status, code: outcome.first.body.code || null },
+        second: { status: outcome.second.status, code: outcome.second.body.code || null },
+        commentDelta: after - before, republishStatus: republish.status };
+    });
+
     const voteOptionA = await admin.option.findFirst({ where: { question: { postId: sourceA.id } }, select: { id: true } });
     const voteOptionC = await admin.option.findFirst({ where: { question: { postId: sourceC.id } }, select: { id: true } });
     assert.ok(voteOptionA?.id && voteOptionC?.id, 'vote options missing');
