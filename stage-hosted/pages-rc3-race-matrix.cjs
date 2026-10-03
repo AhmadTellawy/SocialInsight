@@ -139,22 +139,50 @@ async function withPageBarrier(Pg, directUrl, observer, spec) {
   const key = pageLockKey(spec.pageId);
   const sql = spec.blockerMode === 'shared' ? 'SELECT pg_advisory_xact_lock_shared($1)' : 'SELECT pg_advisory_xact_lock($1)';
   await blocker.query(sql, [key.toString()]);
-  const startedAt = performance.now(); let first, second, snapshot;
+  const startedAt = performance.now(); let first, second, snapshot, secondSnapshot = null;
   try {
     first = spec.first();
     snapshot = await waitForRuntimeAdvisoryWait(observer);
     second = spec.second();
-    await sleep(50);
+    if ((spec.minimumWaiters || 1) > 1) {
+      secondSnapshot = await waitForRuntimeAdvisoryWait(observer, spec.minimumWaiters);
+    } else await sleep(50);
     const beforeRelease = await observer.query(`
       SELECT state, wait_event_type AS "waitEventType", wait_event AS "waitEvent", count(*)::int AS count
       FROM pg_stat_activity WHERE usename = 'pages_rc3_runtime'
       GROUP BY state, wait_event_type, wait_event ORDER BY state, wait_event_type, wait_event`);
     report.lockSamples.push({ race: spec.name, blockerMode: spec.blockerMode, keyOrder: key.toString(),
-      firstWait: snapshot, beforeRelease: beforeRelease.rows });
+      firstWait: snapshot, secondWait: secondSnapshot, beforeRelease: beforeRelease.rows });
     await blocker.query('COMMIT');
     const [firstResult, secondResult] = await Promise.all([first, second]);
     return { first: firstResult, second: secondResult, durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
       waitObserved: true };
+  } catch (error) {
+    await blocker.query('ROLLBACK').catch(() => {});
+    if (first) await Promise.resolve(first).catch(() => {});
+    if (second) await Promise.resolve(second).catch(() => {});
+    throw error;
+  } finally { await blocker.end().catch(() => {}); }
+}
+
+async function withAccountBarrier(Pg, directUrl, observer, spec) {
+  const blocker = new Pg.Client({ connectionString: directUrl, application_name: `rc3_account_barrier_${spec.name}` });
+  await blocker.connect(); await blocker.query('BEGIN');
+  await blocker.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`account-security:${spec.userId}`]);
+  const startedAt = performance.now(); let first, second, snapshot;
+  try {
+    first = spec.first();
+    snapshot = await waitForRuntimeAdvisoryWait(observer);
+    second = spec.second();
+    // Page operations deliberately fail fast on a busy account lock, so the
+    // contender is not expected to become a second PostgreSQL waiter.
+    await sleep(100);
+    report.lockSamples.push({ race: spec.name, blockerMode: 'account-exclusive',
+      keyOrder: 'hashtextextended(account-security:<fixture-id>,0)', firstWait: snapshot });
+    await blocker.query('COMMIT');
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    return { first: firstResult, second: secondResult,
+      durationMs: Math.round((performance.now() - startedAt) * 100) / 100, waitObserved: true };
   } catch (error) {
     await blocker.query('ROLLBACK').catch(() => {});
     if (first) await Promise.resolve(first).catch(() => {});
@@ -202,7 +230,7 @@ async function main() {
 
     const bcrypt = serverRequire('bcryptjs'); const fixturePassword = crypto.randomBytes(24).toString('hex');
     const actors = {};
-    for (const [index, role] of ['owner','admin','editor','outsider','candidate','source2'].entries()) {
+    for (const [index, role] of ['owner','admin','editor','outsider','candidate','source2','voteFirst','erasureFirst'].entries()) {
       const id = crypto.randomUUID(), email = `rc3_${runId}_${role}@example.test`, handle = `rc3_${crypto.randomBytes(5).toString('hex')}`;
       await admin.user.create({ data: { id, name: `RC3 ${role}`, handle, email, passwordHash: bcrypt.hashSync(fixturePassword, 8),
         status: 'ACTIVE', emailVerifiedAt: new Date(), isPrivate: false, mediaPrivacyTarget: false } });
@@ -282,6 +310,65 @@ async function main() {
       }
       save();
     };
+
+    const baselineOfficial = expectStatus(await actors.owner.client.request(`/posts/${sourceA.id}/comments`, 'POST',
+      { text: 'RC3 baseline official comment', pageId: pageA.id }), [200, 201], 'baseline official comment').body;
+    await addRace('official Page comment create/update concurrency', async () => {
+      const outcome = await withPageBarrier(Pg, directUrl, observer, {
+        name: 'official_comment_create_update', pageId: pageA.id, blockerMode: 'exclusive', minimumWaiters: 2,
+        first: () => actors.owner.client.request(`/posts/${sourceA.id}/comments`, 'POST',
+          { text: 'RC3 concurrent official comment', pageId: pageA.id }),
+        second: () => actors.owner.secondary.request(`/posts/comments/${baselineOfficial.id}`, 'PUT',
+          { text: 'RC3 concurrently updated official comment' }),
+      });
+      const safeConflict = outcome.second.status === 409 && outcome.second.body.code === 'PAGE_ACCOUNT_BUSY';
+      const retry = safeConflict
+        ? await actors.owner.secondary.request(`/posts/comments/${baselineOfficial.id}`, 'PUT',
+          { text: 'RC3 concurrently updated official comment' })
+        : outcome.second;
+      const created = outcome.first.body.id
+        ? await admin.comment.findUnique({ where: { id: outcome.first.body.id } }) : null;
+      const updated = await admin.comment.findUnique({ where: { id: baselineOfficial.id } });
+      return { pass: [200, 201].includes(outcome.first.status) &&
+          (outcome.second.status === 200 || safeConflict) && retry.status === 200 &&
+          !outcome.first.transport && !outcome.second.transport && created?.pageId === pageA.id &&
+          updated?.text === 'RC3 concurrently updated official comment',
+        waitObserved: outcome.waitObserved, safeConflict,
+        first: { status: outcome.first.status, code: outcome.first.body.code || null },
+        second: { status: outcome.second.status, code: outcome.second.body.code || null },
+        retry: { status: retry.status, code: retry.body.code || null },
+        createdOfficial: created?.pageId === pageA.id,
+        updatedOfficial: updated?.text === 'RC3 concurrently updated official comment' };
+    });
+
+    const voteOptionA = await admin.option.findFirst({ where: { question: { postId: sourceA.id } }, select: { id: true } });
+    const voteOptionC = await admin.option.findFirst({ where: { question: { postId: sourceC.id } }, select: { id: true } });
+    assert.ok(voteOptionA?.id && voteOptionC?.id, 'vote options missing');
+    await addRace('vote commits before account erasure', async () => {
+      const first = await actors.voteFirst.client.request(`/posts/${sourceA.id}/vote`, 'POST', { optionId: voteOptionA.id });
+      const second = await actors.voteFirst.secondary.request('/account', 'DELETE', {});
+      const retained = await admin.response.findFirst({ where: { postId: sourceA.id }, select: { userId: true, isAnonymous: true } });
+      return { pass: first.status === 200 && second.status === 200 && retained?.userId === null && retained?.isAnonymous === true,
+        ordering: 'explicit response boundary: vote commit then erasure request',
+        first: { status: first.status, code: first.body.code || null },
+        second: { status: second.status, code: second.body.code || null }, retainedResponseAnonymized: retained?.userId === null && retained?.isAnonymous === true };
+    });
+    await addRace('account erasure wins against concurrent vote', async () => {
+      const outcome = await withAccountBarrier(Pg, directUrl, observer, {
+        name: 'account_erasure_before_vote', userId: actors.erasureFirst.id,
+        first: () => actors.erasureFirst.client.request('/account', 'DELETE', {}),
+        second: () => actors.erasureFirst.secondary.request(`/posts/${sourceC.id}/vote`, 'POST', { optionId: voteOptionC.id }),
+      });
+      const retry = await actors.erasureFirst.secondary.request(`/posts/${sourceC.id}/vote`, 'POST', { optionId: voteOptionC.id });
+      const losingRows = await admin.response.count({ where: { postId: sourceC.id } });
+      return { pass: outcome.first.status === 200 && outcome.second.status === 409 &&
+          outcome.second.body.code === 'PAGE_ACCOUNT_BUSY' && [400, 401, 403].includes(retry.status) && losingRows === 0,
+        waitObserved: outcome.waitObserved, safeConflict: outcome.second.body.code === 'PAGE_ACCOUNT_BUSY',
+        first: { status: outcome.first.status, code: outcome.first.body.code || null },
+        second: { status: outcome.second.status, code: outcome.second.body.code || null },
+        postCommitRetry: { status: retry.status, code: retry.body.code || null, error: retry.body.error || null },
+        losingResponseRows: losingRows };
+    });
 
     await addRace('cross-Page A-to-B share', async () => {
       const result = await share(actors.admin, sourceA.id, pageB.id, 'cross-page');
@@ -462,7 +549,7 @@ async function main() {
     }, async ({ second }) => ({ pass: [403, 404, 409].includes(second.status) && !await auditExists(second.requestKey) }));
 
     const allRacePass = report.races.every(race => race.pass);
-    report.checks.push({ name: 'real PostgreSQL share/lifecycle/block/membership/delete/deactivate race matrix', pass: allRacePass,
+    report.checks.push({ name: 'real PostgreSQL share/comment/vote-erasure/lifecycle/block/membership/delete/deactivate race matrix', pass: allRacePass,
       passed: report.races.filter(race => race.pass).length, total: report.races.length });
     const sourceACounters = await admin.post.findUnique({ where: { id: sourceA.id }, select: { sharesCount: true } });
     const sourceAActualShares = await admin.post.count({ where: { sharedFromId: sourceA.id, isDeleted: false } });

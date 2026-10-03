@@ -19,6 +19,7 @@ test('management content rechecks revoked membership after acquiring the Page lo
   const tx: any = {
     $queryRaw: async (query: any) => {
       const sql = Array.isArray(query) ? query.join('') : query.sql;
+      if (sql.includes('pg_try_advisory_xact_lock')) return [{ locked: true }];
       if (sql.includes('FROM "Page"')) return [{ id: 'page', ownerId: 'owner', purgedAt: null }];
       if (sql.includes('FROM users')) return [{ id: 'viewer', status: 'ACTIVE' }];
       return [];

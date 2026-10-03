@@ -724,10 +724,10 @@ export const createPost = async (req: Request, res: Response) => {
                     await lockAccountSecurity(tx, authorId);
                     await assertActiveAccountSession(tx, req, false);
                 }
+                if (existing) await attachPagePublishers([existing], authorId, tx);
                 return existing;
             });
             if(replay){
-                await attachPagePublishers([replay],authorId);
                 return res.json(mapPostForClient(replay,authorId));
             }
         }
@@ -873,7 +873,10 @@ export const createPost = async (req: Request, res: Response) => {
             }
             if(publisherPageId && pageRequestKey){
                 const replay=await pagePostReplay(tx,publisherPageId,authorId,pageRequestKey);
-                if(replay)return {post:replay,createdOptions:replay.questions[0]?.options || [],createdSections:replay.sections,notificationIds:[] as string[],replayed:true as const};
+                if(replay){
+                    await attachPagePublishers([replay], authorId, tx);
+                    return {post:replay,createdOptions:replay.questions[0]?.options || [],createdSections:replay.sections,notificationIds:[] as string[],replayed:true as const};
+                }
             }
             const newPost = await tx.post.create({
                 data: postData,
@@ -994,6 +997,10 @@ export const createPost = async (req: Request, res: Response) => {
             if (publisherPageId && prepared.assetIds.length) await tx.mediaAsset.updateMany({
                 where: { id: { in: prepared.assetIds } }, data: { pageId: publisherPageId }
             });
+            // Page identity is part of the authoritative create/replay result.
+            // Hydrate it before releasing the Page lifecycle lock so a concurrent
+            // unpublish/revoke cannot turn a committed write into a failed response.
+            if (publisherPageId) await attachPagePublishers([newPost], authorId, tx);
             return {
                 post: newPost,
                 createdOptions: optionsList,
@@ -1058,9 +1065,7 @@ export const createPost = async (req: Request, res: Response) => {
             targetGroups: mapTargetGroups(post)
         };
 
-        if (publisherPageId) {
-            await pageTransaction(tx => attachPagePublishers([mappedPost], authorId, tx), 'ReadCommitted');
-        } else {
+        if (!publisherPageId) {
             await attachPagePublishers([mappedPost], authorId);
         }
         res.json(mappedPost);
@@ -2587,13 +2592,19 @@ export const createComment = async (req: Request, res: Response) => {
             ...(officialPageId ? [{ pageId: officialPageId, mode: 'shared' as const }] : []),
         ];
         const transactionResult = await withPageCoordinationAdmission(commentLocks, () => prisma.$transaction(async (tx) => {
-            if (officialPageId) {
-                // Role-authorized replies retain exclusive Page locks throughout.
-                if (rawId !== id) await guardPagePostPersistence(tx,rawId,userId);
-                await guardPagePostPersistence(tx,id,userId);
-                const page=await lockPage(tx,officialPageId);await requirePageCapability(tx,page,userId,'reply');
-            } else await guardPagePostInteractions(tx,[rawId,id],userId);
-            if(commentTarget.pageId && !(await tx.post.findUnique({where:{id},select:{allowComments:true}}))?.allowComments) throw new PagePolicyError('PAGE_COMMENTS_DISABLED',403);
+            // Comments do not mutate Page lifecycle state. Use the globally ordered
+            // shared interaction guard and never upgrade it to an exclusive Page
+            // lock in this transaction. Fresh capability is rechecked under that
+            // guard; the guard context remains available to the notification path.
+            await guardPagePostInteractions(tx,[rawId,id],userId);
+            const currentTarget = commentTarget.pageId
+                ? await tx.post.findUnique({where:{id},select:{allowComments:true,pageId:true}})
+                : null;
+            if(commentTarget.pageId && (!currentTarget || currentTarget.pageId !== commentTarget.pageId)) throw new PagePolicyError('PAGE_POST_UNAVAILABLE',404);
+            if (officialPageId && (currentTarget?.pageId !== officialPageId || !await hasPostPageCapability(officialPageId,userId,'reply',tx))) {
+                throw new PagePolicyError('PAGE_PERMISSION_DENIED',403);
+            }
+            if(commentTarget.pageId && !currentTarget?.allowComments) throw new PagePolicyError('PAGE_COMMENTS_DISABLED',403);
             if (commentTarget.pageId && parentId && !await tx.comment.count({ where: { id: parentId, postId: id } })) throw new PagePolicyError('COMMENT_NOT_FOUND',404);
             const createdComment = await tx.comment.create({
                 data: { text: cleanText, userId, postId: id, parentId, pageId:officialPageId }
@@ -3498,10 +3509,15 @@ export const updateComment = async (req: Request, res: Response) => {
         if (!validateMentionRecipientLimit(cleanText, res, 'comment')) return;
 
         const result = await prisma.$transaction(async (tx) => {
-            await guardPagePostPersistence(tx,comment.postId,userId);
+            await guardPagePostInteractions(tx,[comment.postId],userId);
             const current = await tx.comment.findUnique({ where: { id } });
             if (!current) throw new PagePolicyError('COMMENT_NOT_FOUND', 404);
-            if(current.pageId){const page=await lockPage(tx,current.pageId);await requirePageCapability(tx,page,userId,'reply');}
+            if(current.pageId){
+                const currentPost = await tx.post.findUnique({ where: { id: current.postId }, select: { pageId: true } });
+                if(currentPost?.pageId !== current.pageId || !await hasPostPageCapability(current.pageId,userId,'reply',tx)) {
+                    throw new PagePolicyError('COMMENT_PERMISSION_DENIED', 403);
+                }
+            }
             else if (current.userId !== userId) throw new PagePolicyError('COMMENT_PERMISSION_DENIED', 403);
             await tx.comment.update({ where: { id }, data: { text: cleanText } });
             const mentionResult = await reconcileCommentMentions(tx, {

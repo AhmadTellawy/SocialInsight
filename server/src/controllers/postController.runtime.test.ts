@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
-import test, { after } from 'node:test';
+import test, { after, mock } from 'node:test';
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'post-controller-runtime-test-secret';
 
 const prisma = require('../prisma').default as typeof import('../prisma').default;
+const pagePost = require('../pages/pagePostService') as typeof import('../pages/pagePostService');
+const pageReplay = require('../pages/pagePostReplay') as typeof import('../pages/pagePostReplay');
 const { createPost, getComments, likePost, likeComment, savePost, hidePost, reportPost, getPageManagedPostResults, deletePost } = require('./postController') as typeof import('./postController');
 
 test('Page post preflight acquires its RLS-protected Page lock inside a transaction', async () => {
@@ -19,6 +21,7 @@ test('Page post preflight acquires its RLS-protected Page lock inside a transact
         $queryRaw: async (query: any) => {
             const sql = query.sql || (Array.isArray(query) ? query.join('?') : String(query));
             txQueries.push(sql);
+            if (/pg_try_advisory_xact_lock/.test(sql)) return [{ locked: true }];
             if (/FROM "Page"/.test(sql)) return [{
                 id: pageId, ownerId: actorId, purgedAt: null, deletionRequestedAt: null,
                 platformState: 'NONE', publicationState: 'DRAFT'
@@ -45,12 +48,65 @@ test('Page post preflight acquires its RLS-protected Page lock inside a transact
         assert.equal(state.statusCode, 500, JSON.stringify({ body: state.body, txQueries }));
         assert.equal(transactionCalls, 1);
         assert.equal(baseQueries, 0, 'The Page lock must not escape onto an unsigned pooled connection');
-        assert.ok(txQueries.some(sql => /FROM "Page".*FOR UPDATE/.test(sql)));
+        assert.ok(txQueries.some(sql => /pg_advisory_xact_lock_shared/.test(sql)));
+        assert.ok(txQueries.some(sql => /FROM "Page"/.test(sql)));
     } finally {
         (prisma as any).$transaction = originalTransaction;
         (prisma as any).$queryRaw = originalQueryRaw;
         if (priorPagesEnabled === undefined) delete process.env.PAGES_ENABLED;
         else process.env.PAGES_ENABLED = priorPagesEnabled;
+    }
+});
+
+test('Page create replay hydrates publisher identity before its persistence transaction commits', async () => {
+    const originalTransaction = prisma.$transaction;
+    let inTransaction = false;
+    let committed = false;
+    let hydrationCalls = 0;
+    const replay: any = {
+        id: '00000000-0000-4000-8000-000000000201',
+        pageId: '00000000-0000-4000-8000-000000000202', authorId: 'internal-actor',
+        author: { id: 'internal-actor', name: 'Internal', handle: 'internal', avatar: '' },
+        type: 'Post', status: 'DRAFT', title: 'Replay', description: '', image: null,
+        likesCount: 0, sharesCount: 0, responseCount: 0, commentsCount: 0,
+        allowAnonymous: false, forceAnonymous: false, randomPairing: false,
+        demographics: [], targetedGroups: [], questions: [], sections: [], media: [],
+        mentions: [], taggedUsers: [], responses: [], likes: [], shares: [], savedBy: [], sharedFrom: null
+    };
+    try {
+        (prisma as any).$transaction = async (work: any) => {
+            inTransaction = true;
+            const result = await work({});
+            inTransaction = false;
+            committed = true;
+            return result;
+        };
+        mock.method(pagePost, 'authorizePagePublisher', async () => ({} as any));
+        mock.method(pageReplay, 'pagePostReplay', async () => replay);
+        mock.method(pagePost, 'attachPagePublishers', async (posts: any[]) => {
+            assert.equal(inTransaction, true, 'Page hydration must run under the persistence transaction');
+            assert.equal(committed, false);
+            hydrationCalls++;
+            posts[0].authorId = posts[0].pageId;
+            posts[0].author = { id: posts[0].pageId, kind: 'PAGE', name: 'Page', handle: 'page', avatar: '' };
+            posts[0].pageCapabilities = [];
+        });
+        const { response, state } = responseState();
+        await createPost({
+            body: {
+                pageId: replay.pageId,
+                pageCreateKey: '00000000-0000-4000-8000-000000000203',
+                status: 'DRAFT', type: 'Post'
+            },
+            user: { userId: 'actor', authMode: 'token' }
+        } as any, response);
+        assert.equal(state.statusCode, 200, JSON.stringify(state.body));
+        assert.equal(hydrationCalls, 1);
+        assert.equal(committed, true);
+        assert.equal(replay.author.kind, 'PAGE');
+    } finally {
+        mock.restoreAll();
+        (prisma as any).$transaction = originalTransaction;
     }
 });
 
@@ -250,6 +306,7 @@ for (const [name, handler] of Object.entries({ likePost, likeComment, savePost, 
         const tx: any = {
             $queryRaw: async (query: any) => {
                 const sql = Array.isArray(query) ? query.join('') : query.sql;
+                if (sql.includes('pg_try_advisory_xact_lock')) return [{ locked: true }];
                 if (sql.includes('FROM "Page"')) { pageLocks += 1; return [{ id: 'page-1', publicationState: 'UNPUBLISHED', platformState: 'NONE', safetyHiddenAt: null, deletionRequestedAt: null, purgedAt: null }]; }
                 if (sql.includes('FROM users')) return [{ id: 'viewer-1', status: 'ACTIVE', emailVerifiedAt: null }];
                 return [];
@@ -301,6 +358,7 @@ for (const scenario of [
         const tx: any = {
             $queryRaw: async (query: any) => {
                 const sql = Array.isArray(query) ? query.join('') : query.sql;
+                if (sql.includes('pg_try_advisory_xact_lock')) return [{ locked: true }];
                 if (sql.includes('FROM "Page"')) return [{ id: pageId, ownerId: scenario.role === 'OWNER' ? 'viewer' : 'owner', publicationState: 'UNPUBLISHED', purgedAt: null }];
               if (sql.includes('FROM users')) return [{ id: 'viewer', status: 'ACTIVE', emailVerifiedAt: null }];
                 return [];
@@ -355,6 +413,7 @@ test('Page likes enqueue notification work in the same transaction as the like a
     const tx: any = {
         $queryRaw: async (query: any) => {
             const sql = Array.isArray(query) ? query.join('') : query.sql;
+            if (sql.includes('pg_try_advisory_xact_lock')) return [{ locked: true }];
             if (sql.includes('AS visible') || sql.includes('AS "visible"')) return [{ visible: true }];
             if (sql.includes('FROM "Page"')) return [page];
             if (sql.includes('FROM users')) return [{ id: 'viewer', status: 'ACTIVE', emailVerifiedAt: null }];

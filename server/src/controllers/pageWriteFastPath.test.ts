@@ -133,6 +133,7 @@ test('restricted Page audiences and official replies keep capability preflight b
 
 type CommentScenario = {
   pageId?: string | null;
+  official?: boolean;
   text: string;
   parentId?: string;
   mentionResult?: any;
@@ -147,27 +148,28 @@ async function runCreateComment(input: CommentScenario) {
     id: 'post', authorId: 'publisher-user', pageId: isPage ? (input.pageId || 'page') : null,
     allowComments: true, targetAudience: 'Public', targetedGroups: [], status: 'PUBLISHED', isDeleted: false
   };
-  const calls = { mentions: 0, hashtags: 0, dispatch: [] as string[][], legacyNotify: 0, guards: 0, attach: 0 };
+  const calls = { mentions: 0, hashtags: 0, dispatch: [] as string[][], legacyNotify: 0, guards: 0, attach: 0, capabilityChecks: 0, order: [] as string[] };
   const activity: any[] = [];
   const committed = { comments: 0, counters: 0, outbox: 0 };
+  const created = {
+    id: 'comment', text: input.text.trim(), userId: 'actor', postId: 'post',
+    parentId: input.parentId || null, pageId: input.official ? post.pageId : null, createdAt: new Date(0),
+    user: { id: 'actor', name: 'Actor', handle: 'actor', avatar: '', verifiedBadge: false },
+    mentions: [], likes: 0, likesList: [], replies: []
+  };
   try {
     replace(restores, prisma.post, 'findUnique', async ({ select }: any) =>
       select?.sharedFromId ? { id: 'post', sharedFromId: null, sharedCaption: null } : post);
     replace(restores, prisma.comment, 'findUnique', async () => input.parentId
       ? { id: input.parentId, postId: 'post', userId: 'parent-user' }
       : null);
+    replace(restores, prisma.comment, 'findUniqueOrThrow', async () => created);
     replace(restores, prisma, '$transaction', async (work: any) => {
       const pending = { ...committed };
       const activityCountBefore = activity.length;
-      const created = {
-        id: 'comment', text: input.text.trim(), userId: 'actor', postId: 'post',
-        parentId: input.parentId || null, pageId: null, createdAt: new Date(0),
-        user: { id: 'actor', name: 'Actor', handle: 'actor', avatar: '', verifiedBadge: false },
-        mentions: [], likes: 0, likesList: [], replies: []
-      };
       const tx: any = {
         post: {
-          findUnique: async () => ({ allowComments: true }),
+          findUnique: async () => ({ allowComments: true, pageId: post.pageId }),
           update: async () => { pending.counters++; return { authorId: 'publisher-user' }; }
         },
         comment: {
@@ -185,8 +187,9 @@ async function runCreateComment(input: CommentScenario) {
         throw error;
       }
     });
-    mock.method(pagePost, 'guardPagePostInteractions', async () => { calls.guards++; return isPage; });
-    mock.method(pagePost, 'hasPostPageCapability', async () => false);
+    mock.method(pagePost, 'guardPagePostInteractions', async () => { calls.guards++; calls.order.push('guard'); return isPage; });
+    mock.method(pagePost, 'guardPagePostPersistence', async () => { throw new Error('official comments must not upgrade the shared Page guard'); });
+    mock.method(pagePost, 'hasPostPageCapability', async () => { calls.capabilityChecks++; calls.order.push('capability'); return Boolean(input.official); });
     mock.method(pagePost, 'attachPageCommentPublishers', async () => { calls.attach++; });
     mock.method(mentions, 'reconcileCommentMentions', async () => {
       calls.mentions++;
@@ -198,6 +201,7 @@ async function runCreateComment(input: CommentScenario) {
       return 0;
     });
     mock.method(pageActivity, 'notifyPagePostInteraction', async (event: any) => {
+      calls.order.push('notify');
       activity.push(event);
       if (input.outboxError) throw input.outboxError;
       return isPage;
@@ -210,7 +214,7 @@ async function runCreateComment(input: CommentScenario) {
     const { state, response } = responseFixture();
     await createComment({
       params: { id: 'post' }, user: { userId: 'actor' },
-      body: { text: input.text, ...(input.parentId ? { parentId: input.parentId } : {}) }
+      body: { text: input.text, ...(input.parentId ? { parentId: input.parentId } : {}), ...(input.official ? { pageId: post.pageId } : {}) }
     } as any, response);
     return { ...state, calls, activity, committed };
   } finally {
@@ -251,6 +255,15 @@ test('Page entity comments and personal plain comments retain reconciliation and
   assert.deepEqual(personal.committed, { comments: 1, counters: 1, outbox: 0 });
 });
 
+test('official Page comments keep one shared guard and recheck reply capability before notification', async () => {
+  const result = await runCreateComment({ text: 'Official reply', official: true });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.calls.guards, 1);
+  assert.equal(result.calls.capabilityChecks, 2, 'preflight and in-transaction checks are both required');
+  assert.deepEqual(result.calls.order, ['capability', 'guard', 'capability', 'notify']);
+  assert.equal(result.activity.length, 1);
+});
+
 test('comment entity limits still fail closed and transaction failures roll back comment, counter and outbox', async () => {
   const tooManyMentions = Array.from({ length: 11 }, (_, index) => `@person${index}`).join(' ');
   const mentionLimit = await runCreateComment({ text: tooManyMentions });
@@ -284,6 +297,7 @@ test('editing a Page comment to plain text still reconciles removals for mention
   try {
     replace(restores, prisma.comment, 'findUnique', async () => comment);
     replace(restores, prisma, '$transaction', async (work: any) => work({
+      post: { findUnique: async () => ({ pageId: 'page' }) },
       comment: {
         findUnique: async () => comment,
         update: async () => updated,
@@ -291,10 +305,8 @@ test('editing a Page comment to plain text still reconciles removals for mention
       }
     }));
     mock.method(pagePost, 'hasPostPageCapability', async () => true);
-    mock.method(pagePost, 'guardPagePostPersistence', async () => { calls.guard++; });
+    mock.method(pagePost, 'guardPagePostInteractions', async () => { calls.guard++; return true; });
     mock.method(pagePost, 'attachPageCommentPublishers', async () => {});
-    mock.method(pageService, 'lockPage', async () => ({ id: 'page' } as any));
-    mock.method(pageService, 'requirePageCapability', async () => 'EDITOR' as any);
     mock.method(mentions, 'reconcileCommentMentions', async () => {
       calls.mentions++;
       return { targetUserIds: [], notificationIds: [], created: 0, retained: 0, removed: 1, unresolved: 0, ineligible: 0 };

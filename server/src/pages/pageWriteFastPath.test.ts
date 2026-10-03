@@ -3,6 +3,9 @@ import test from 'node:test';
 import prisma from '../prisma';
 import { updatePageInfo } from './pageService';
 
+process.env.PAGES_RLS_CONTEXT_KEY_ID ||= 'page-write-fast-path';
+process.env.PAGES_RLS_CONTEXT_SIGNING_KEY ||= '11'.repeat(32);
+
 type Role = 'OWNER' | 'ADMIN' | 'EDITOR' | 'ANALYST' | null;
 
 function managementFixture(input: { actorId: string; ownerId?: string; role?: Role; inactive?: boolean; auditFails?: boolean }) {
@@ -18,8 +21,17 @@ function managementFixture(input: { actorId: string; ownerId?: string; role?: Ro
     assert.deepEqual(options, { isolationLevel: 'ReadCommitted', maxWait: 5000, timeout: 15000 });
     let pending = { ...committed }, pendingAudits = committedAudits;
     const tx: any = {
+      $executeRaw: async (query: any) => {
+        const sql = Array.isArray(query) ? query.join('') : query.strings.join('');
+        if (sql.includes('set_config')) return 1;
+        assert.match(sql, /pg_advisory_xact_lock/);
+        events.push('page-advisory-lock');
+        return 1;
+      },
       $queryRaw: async (query: any) => {
         const sql = Array.isArray(query) ? query.join('') : query.strings.join('');
+        if (sql.includes('pg_backend_pid')) return [{ backendPid: '1', transactionId: '1' }];
+        if (sql.includes('pg_try_advisory_xact_lock')) return [{ locked: true }];
         if (sql.includes('FROM "Page"')) {
           assert.ok(sql.endsWith('FOR UPDATE'));
           events.push('page-lock');
@@ -78,8 +90,8 @@ test('Page info permits owner and admin with one actor lock and a fresh role rea
       assert.equal(result.role, scenario.expected);
       assert.equal(result.name, 'After');
       assert.deepEqual(fixture.events, scenario.reads
-        ? ['page-lock', 'actor-lock', 'fresh-role', 'write', 'audit']
-        : ['page-lock', 'actor-lock', 'write', 'audit']);
+        ? ['page-advisory-lock', 'page-lock', 'actor-lock', 'fresh-role', 'write', 'audit']
+        : ['page-advisory-lock', 'page-lock', 'actor-lock', 'write', 'audit']);
       assert.equal(fixture.state().membershipReads, scenario.reads);
       assert.equal(fixture.state().userDelegateReads, 0);
       assert.equal(fixture.state().committedAudits, 1);
@@ -119,7 +131,7 @@ test('Page info keeps audit in the same transaction so audit failure rolls back 
   try {
     (prisma as any).$transaction = fixture.transaction;
     await assert.rejects(updatePageInfo('admin', 'page', { name: 'After' }), /audit unavailable/);
-    assert.deepEqual(fixture.events, ['page-lock', 'actor-lock', 'fresh-role', 'write', 'audit']);
+    assert.deepEqual(fixture.events, ['page-advisory-lock', 'page-lock', 'actor-lock', 'fresh-role', 'write', 'audit']);
     assert.equal(fixture.state().committed.name, 'Before');
     assert.equal(fixture.state().committedAudits, 0);
     assert.equal(fixture.state().userDelegateReads, 0);

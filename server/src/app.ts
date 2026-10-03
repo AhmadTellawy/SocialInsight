@@ -184,16 +184,38 @@ app.get('/', (req, res) => {
     res.send('Social Insight API is running');
 });
 
-// Initialize scheduled jobs
 const backgroundJobsDisabled = process.env.DISABLE_BACKGROUND_JOBS === 'true';
-if (!restoreMaintenance && !backgroundJobsDisabled) initCronJobs();
+
+type RuntimeStartupDependencies = {
+    verifyDatabaseRole: () => Promise<void>;
+    startCronJobs: () => void;
+    loadOutboxWorker: () => Promise<{ startPageOutboxWorker: () => unknown }>;
+    loadLifecycleWorker: () => Promise<{ startPageLifecycleWorker: () => unknown }>;
+};
+
+export const initializeRuntimeServices = async (dependencies: RuntimeStartupDependencies = {
+    verifyDatabaseRole: verifyPagesRuntimeDatabaseRole,
+    startCronJobs: initCronJobs,
+    loadOutboxWorker: () => import('./pages/pageNotificationService'),
+    loadLifecycleWorker: () => import('./pages/pageLifecycleWorker')
+}): Promise<void> => {
+    // Verification is the startup fence: no timer-backed worker may start until
+    // the restricted Pages runtime role has been proven safe.
+    await dependencies.verifyDatabaseRole();
+    if (restoreMaintenance || backgroundJobsDisabled) return;
+    const [{ startPageOutboxWorker }, { startPageLifecycleWorker }] = await Promise.all([
+        dependencies.loadOutboxWorker(),
+        dependencies.loadLifecycleWorker()
+    ]);
+    // Resolve worker modules before creating any timers. A packaging/import
+    // failure must not leave cron running in a process that cannot fully start.
+    dependencies.startCronJobs();
+    startPageOutboxWorker();
+    startPageLifecycleWorker();
+};
 
 if (require.main === module) {
-    void verifyPagesRuntimeDatabaseRole().then(() => {
-        if (!restoreMaintenance && !backgroundJobsDisabled) {
-            void import('./pages/pageNotificationService').then(({ startPageOutboxWorker }) => startPageOutboxWorker());
-            void import('./pages/pageLifecycleWorker').then(({ startPageLifecycleWorker }) => startPageLifecycleWorker());
-        }
+    void initializeRuntimeServices().then(() => {
         httpServer.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
     }).catch(() => {
         console.error('Pages runtime database role verification failed.');

@@ -23,6 +23,7 @@ for(const scenario of ['forced-anonymous','multiple-disabled','user-options-disa
     const tx:any={
       $queryRaw:async(query:any)=>{
         const sql=Array.isArray(query)?query.join(''):query.strings.join('');
+        if(sql.includes('pg_try_advisory_xact_lock'))return [{locked:true}];
         if(sql.startsWith('SELECT NOT EXISTS')){assert.equal(postLocked,true);return [{visible:true}];}
         if(sql.includes('AS "visible"'))return [{visible:true}];
         if(sql.includes('FROM "Page"')){
