@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { registerPwa } from './pwaRegistration.ts';
+import { PWA_REGISTER_TYPE, registerPwa } from './pwaRegistration.ts';
 
 test('PWA registration never installs an automatic reload callback that can abort active uploads', () => {
+  assert.equal(PWA_REGISTER_TYPE, 'prompt');
   let options: Record<string, unknown> | undefined;
   const result = registerPwa((candidate) => {
     options = candidate;
