@@ -14,6 +14,7 @@ async function installFixture(page: Page, options: FixtureOptions = {}) {
   const state = { profile, verified: false, exportCalls: 0, mutations: [] as string[], visitorQueries: 0,
     sessionExpired: false, failFeed: false, feedCalls: 0, logoutCalls: 0,
     posts: [] as Record<string, unknown>[], votes: [] as Record<string, unknown>[], avatarWrites: [] as Record<string, unknown>[],
+    pageDeletionImpact: [] as Array<{ id: string; name: string; handle: string }>, deletionPayloads: [] as Record<string, unknown>[],
     blocked: [{ id: 'blocked-person', name: 'Blocked fixture person', handle: 'blocked_fixture', avatar: '' }],
     failUnblock: false, failVisitor: false };
   await page.addInitScript(({ profile }) => {
@@ -43,9 +44,10 @@ async function installFixture(page: Page, options: FixtureOptions = {}) {
       return state.verified ? json(route, { formatVersion: 1, profile: { name: profile.name }, posts: [] }) : json(route, { code: 'REAUTHENTICATION_REQUIRED' }, 401);
     }
     if (pathname === '/api/account' || pathname === '/api/account/deactivate' || pathname.startsWith('/api/auth/sessions/')) {
-      if (pathname === '/api/account' && method === 'DELETE') state.sessionExpired = true;
+      if (pathname === '/api/account' && method === 'DELETE') { state.sessionExpired = true; state.deletionPayloads.push(request.postDataJSON()); }
       state.mutations.push(`${method} ${pathname}`); return json(route, { success: true });
     }
+    if (pathname === `/api/users/${profile.id}/page-deletion-impact` && method === 'GET') return json(route, { pages: state.pageDeletionImpact });
     if (pathname === `/api/users/${profile.id}` && url.searchParams.get('viewAs') === 'visitor') {
       state.visitorQueries++;
       if (state.failVisitor) return json(route, { error: 'Synthetic unavailable visitor DTO' }, 503);
@@ -105,6 +107,7 @@ test('protected export cancellation makes no download; retry verifies identity a
 
 test('deletion confirmation supports keyboard focus trapping and Escape without invoking a destructive endpoint', async ({ page }) => {
   const state = await installFixture(page);
+  state.pageDeletionImpact = [{ id: 'owned-page-for-cancellation', name: 'Owned fixture Page', handle: 'owned_fixture_page' }];
   await page.goto('/settings/profile/data');
   const trigger = page.getByRole('button', { name: 'Delete account permanently' });
   await trigger.click();
@@ -112,10 +115,13 @@ test('deletion confirmation supports keyboard focus trapping and Escape without 
   await expect(dialog.getByRole('button', { name: 'Confirm', exact: true })).toBeDisabled();
   const input = dialog.getByLabel('Type DELETE', { exact: true });
   await input.fill('delete');
+  await expect(dialog.getByRole('link', { name: 'Owned fixture Page', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Confirm', exact: true })).toBeDisabled();
+  await dialog.getByRole('checkbox').check();
   await expect(dialog.getByRole('button', { name: 'Confirm', exact: true })).toBeEnabled();
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).focus();
   await page.keyboard.press('Tab');
-  await expect(input).toBeFocused();
+  await expect(dialog.getByRole('link', { name: 'Owned fixture Page', exact: true })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
   await expect(trigger).toBeFocused();
@@ -186,15 +192,18 @@ test('finding-resolution:SI-AS-E03-001', async ({ page, context, baseURL }) => {
 
 test('successful deletion enters the guest state without depending on another logout request', async ({ page }) => {
   const state = await installFixture(page);
+  state.pageDeletionImpact = [{ id: 'owned-page-for-deletion', name: 'Owned deletion Page', handle: 'owned_deletion_page' }];
   await page.goto('/settings/profile/data');
   await page.getByRole('button', { name: 'Delete account permanently' }).click();
   const dialog = page.getByRole('dialog', { name: 'Confirm permanent deletion' });
   await dialog.getByLabel('Type DELETE', { exact: true }).fill('DELETE');
+  await dialog.getByRole('checkbox').check();
   await dialog.getByRole('button', { name: 'Confirm', exact: true }).click();
   await expect.poll(() => new URL(page.url()).pathname).toMatch(/^\/(?:login)?$/);
   await expect(page.getByRole('heading', { name: 'Your data and account' })).toHaveCount(0);
   expect(await page.evaluate(() => localStorage.getItem('si_user'))).toBeNull();
   expect(state.mutations).toEqual(['DELETE /api/account']);
+  expect(state.deletionPayloads).toEqual([{ deleteOwnedPages: ['owned-page-for-deletion'] }]);
   expect(state.logoutCalls).toBe(0);
 });
 

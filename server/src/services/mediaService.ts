@@ -789,6 +789,7 @@ type MediaScopeOperation = {
 
 const settledScopeOperations = new Map<string, MediaScopeOperation>();
 const settledCleanupInFlight = new Set<string>();
+const activePublicPromotions = new Map<string, Promise<void>>();
 
 const rememberSettledOperation = (operation: MediaScopeOperation): void => {
   // Overflow remains durably blocked and recoverable after runtime shutdown.
@@ -824,12 +825,14 @@ const claimMediaScopeOperation = async (
   if (mode === 'PROMOTE' && initial?.pageId) {
     throw new MediaValidationError('PAGE_MEDIA_MUST_REMAIN_PRIVATE', 'Page media must remain private.', 409);
   }
-  if (!initial || initial.deletedAt || !['READY', 'ATTACHED'].includes(initial.status)) throw mediaBusy();
+  if (!initial) throw mediaBusy();
   if (mode === 'PROMOTE') {
     await assertPublicPromotion(tx, initial, authorize);
+    if (initial.deletedAt || !['READY', 'ATTACHED'].includes(initial.status)) throw mediaBusy();
     if (initial.accessScope === 'PUBLIC' && initial.variants.some(variant => variant.isPublic)) return null;
     if (initial.variants.some(variant => variant.isPublic)) throw mediaBusy();
   } else {
+    if (initial.deletedAt || !['READY', 'ATTACHED'].includes(initial.status)) throw mediaBusy();
     await assertMediaWriter(tx, initial.ownerId, authorize);
   }
 
@@ -887,6 +890,10 @@ const finishMediaScopeOperation = async (
       where: { id: operation.asset.id },
       select: { status: true, errorCode: true, storageCleanupNotBefore: true }
     });
+    // Account erasure is terminal and deliberately clears the live operation
+    // token. Storage cleanup has already settled before this point; never let a
+    // late scope operation restore metadata or a pre-deletion status.
+    if (scope !== 'PUBLIC' && current?.status === 'PENDING_DELETE') return;
     if (!current || current.status !== 'PROCESSING' || current.errorCode !== operation.token) throw mediaBusy();
     const result = await tx.mediaAsset.updateMany({
       where: { id: operation.asset.id, status: 'PROCESSING', errorCode: operation.token, ...(scope === 'PUBLIC' ? { pageId: null } : {}) },
@@ -924,6 +931,9 @@ export const promoteMediaAsset = async (assetId: string, authorize?: AuthorizeMe
   if (identity?.pageId) throw new MediaValidationError('PAGE_MEDIA_MUST_REMAIN_PRIVATE', 'Page media must remain private.', 409);
   const operation = await claimMediaScopeOperation(assetId, 'PROMOTE', undefined, authorize);
   if (!operation) return;
+  let settlePromotion!: () => void;
+  const promotionSettled = new Promise<void>(resolve => { settlePromotion = resolve; });
+  activePublicPromotions.set(assetId, promotionSettled);
   try {
     for (const variant of operation.asset.variants.filter(value => !value.isPublic && value.kind !== 'MASTER')) {
       const body = await getMediaStorage().download(variant.storageBucket, variant.storageKey);
@@ -946,6 +956,9 @@ export const promoteMediaAsset = async (assetId: string, authorize?: AuthorizeMe
       rememberSettledOperation(operation);
     }
     throw error;
+  } finally {
+    settlePromotion();
+    if (activePublicPromotions.get(assetId) === promotionSettled) activePublicPromotions.delete(assetId);
   }
 };
 export const prepareMediaAttachments = async (
@@ -1147,6 +1160,7 @@ export const ATTACHED_MEDIA_SCOPE_SELECT = {
   id: true,
   purpose: true,
   status: true,
+  errorCode: true,
   accessScope: true,
   variants: { select: { isPublic: true } },
   avatarFor: { select: { id: true } },
@@ -1174,7 +1188,11 @@ export const resolveAttachedMediaScopeFromState = (
   asset: any,
   ownerIsPrivate: boolean
 ): MediaAccessScope => {
-  if (!asset || asset.status !== 'ATTACHED') return 'OWNER_ONLY';
+  const scopeLease = typeof asset?.errorCode === 'string'
+    ? asset.errorCode.match(/^MEDIA_SCOPE:[0-9a-f-]{36}:[0-9a-f-]{36}:(?:PROMOTE|RESTRICT|RECOVER):(READY|ATTACHED|PENDING_DELETE):/)
+    : null;
+  const effectiveStatus = asset?.status === 'PROCESSING' && scopeLease ? scopeLease[1] : asset?.status;
+  if (!asset || effectiveStatus !== 'ATTACHED') return 'OWNER_ONLY';
   if ((asset.purpose === 'PROFILE_AVATAR' && asset.avatarFor)
     || (asset.purpose === 'PROFILE_COVER' && asset.coverFor)) {
     return ownerIsPrivate ? 'RESTRICTED' : 'PUBLIC';
@@ -1231,7 +1249,19 @@ export const restrictMediaAsset = async (assetId: string, scope: MediaAccessScop
   if (scope === 'PUBLIC') throw new MediaValidationError('INVALID_MEDIA_SCOPE', 'Use the public promotion operation.', 409);
   const identity = await prisma.mediaAsset.findUnique({ where: { id: assetId }, select: { id: true } });
   if (!identity) return;
-  const operation = await claimMediaScopeOperation(assetId, 'RESTRICT', scope, authorize);
+  let operation: MediaScopeOperation | null;
+  try {
+    operation = await claimMediaScopeOperation(assetId, 'RESTRICT', scope, authorize);
+  } catch (error) {
+    // A restriction in the same runtime may arrive while a public storage write
+    // is in flight. Wait for that exact writer to settle, then re-authorize and
+    // claim normally. Other-runtime operations remain fail-closed as MEDIA_BUSY.
+    const promotion = activePublicPromotions.get(assetId);
+    if (!(error instanceof MediaValidationError) || error.code !== 'MEDIA_BUSY') throw error;
+    if (promotion) await promotion;
+    else if (!(await retrySettledMediaScopeCleanup(assetId))) throw error;
+    operation = await claimMediaScopeOperation(assetId, 'RESTRICT', scope, authorize);
+  }
   if (!operation) return;
   try {
     await removeOperationPublicCopies(assetId);

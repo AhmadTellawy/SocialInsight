@@ -201,15 +201,17 @@ test('durable scope barrier rejects Page attachment during public I/O and recove
     pauseUpload();const promotion=promoteMediaAsset('race');await enteredPromise;
     assert.equal(asset.status,'PROCESSING');assert.ok(asset.errorCode.startsWith('MEDIA_SCOPE:'));
     await assert.rejects(attachPage);await assert.rejects(()=>markMediaAttached(['race'],'RESTRICTED'));
-    await assert.rejects(()=>restrictMediaAsset('race'));
+    let restrictionSettled=false;
+    const restriction=restrictMediaAsset('race').finally(()=>{restrictionSettled=true;});
+    await Promise.resolve();
+    assert.equal(restrictionSettled,false,'restriction waits for the active promotion to settle');
     await assert.rejects(()=>finalizeMediaUpload('actor','race',{}));await assert.rejects(()=>purgeMediaAsset('race'));
     assert.equal(await retrySettledMediaScopeCleanup('race'),false,'cannot retry an active upload');
     await assert.rejects(()=>recoverStoppedMediaScopeOperation('race',asset.errorCode,
       {runtimeId:mediaScopeRuntimeId,confirmedStopped:true,evidenceRef:'test/live-runtime'}));
-    release();await promotion;blockUpload=false;
-    assert.equal(asset.status,'READY');assert.equal(asset.accessScope,'PUBLIC');assert.equal(objects.size,1);
-    await assert.rejects(attachPage,'stale private preparation cannot attach a now-public asset');
-    await restrictMediaAsset('race');assert.equal(objects.size,0);await attachPage();
+    release();await promotion;await restriction;blockUpload=false;
+    assert.equal(asset.status,'READY');assert.equal(asset.accessScope,'RESTRICTED');assert.equal(objects.size,0);
+    await attachPage();
     const before=uploadCount;await assert.rejects(()=>promoteMediaAsset('race'));assert.equal(uploadCount,before);
 
     reset();rejectUpload=true;rejectRemoval=true;

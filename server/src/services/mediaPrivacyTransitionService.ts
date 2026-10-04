@@ -102,10 +102,15 @@ export const processMediaPrivacyTransition = async (transitionId: string): Promi
       where: {
         ownerId: transition.userId,
         purpose: { in: ['POST', 'PROFILE_AVATAR', 'PROFILE_COVER', 'QUESTION_IMAGE', 'OPTION_IMAGE'] },
-        status: 'ATTACHED',
-        ...(targetIsPrivate
-          ? { OR: [{ accessScope: 'PUBLIC' as const }, { variants: { some: { isPublic: true } } }] }
-          : { OR: [{ accessScope: { not: 'PUBLIC' as const } }, { variants: { some: { isPublic: true } } }] }),
+        AND: [
+          { OR: [
+            { status: 'ATTACHED' },
+            { status: 'PROCESSING', errorCode: { startsWith: 'MEDIA_SCOPE:' } }
+          ] },
+          targetIsPrivate
+            ? { OR: [{ accessScope: 'PUBLIC' as const }, { variants: { some: { isPublic: true } } }] }
+            : { OR: [{ accessScope: { not: 'PUBLIC' as const } }, { variants: { some: { isPublic: true } } }] }
+        ],
         ...(transition.cursorAssetId ? { id: { gt: transition.cursorAssetId } } : {})
       },
       orderBy: { id: 'asc' },

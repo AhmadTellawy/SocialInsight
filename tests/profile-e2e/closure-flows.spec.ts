@@ -86,7 +86,7 @@ async function openShare(page: Page, index = 1) {
   await page.goto('/');
   await expect(page.getByText(`Closure share fixture ${index}`, { exact: true })).toBeVisible({ timeout: 20_000 });
   await page.getByRole('button', { name: 'Share', exact: true }).nth(index).click();
-  await expect(page.getByRole('button', { name: 'Copy Link', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Copy link', exact: true })).toBeVisible();
 }
 
 for (const language of ['en', 'ar'] as const) for (const width of [390, 1280]) {
@@ -145,7 +145,7 @@ test('handle validation, unavailable name and stale version preserve the editor 
 
 test('actual App bootstrap retains offline event IDs on reload and removes only acknowledged events after recovery', async ({ page }) => {
   const state = await fixture(page);
-  await openShare(page); await page.getByRole('button', { name: 'Copy Link', exact: true }).click();
+  await openShare(page); await page.getByRole('button', { name: 'Copy link', exact: true }).click();
   await expect.poll(async () => (await queuedShares(page)).length).toBe(1);
   const original = (await queuedShares(page))[0];
   expect(original).toMatchObject({ method: 'COPY_LINK', post_id: 'closure-share-1', source_surface: 'FEED', position_in_feed: 1 });
@@ -164,7 +164,7 @@ test('actual App bootstrap retains offline event IDs on reload and removes only 
 test('confirmed App logout removes queued data and fences later online flushes', async ({ page }) => {
   await page.clock.install();
   const state = await fixture(page);
-  await openShare(page); await page.getByRole('button', { name: 'Copy Link', exact: true }).click();
+  await openShare(page); await page.getByRole('button', { name: 'Copy link', exact: true }).click();
   await expect.poll(async () => (await queuedShares(page)).length).toBe(1);
   const id = (await queuedShares(page))[0].id;
   await page.goto('/settings/profile'); await page.getByRole('button', { name: 'Log Out', exact: true }).click();
@@ -194,15 +194,15 @@ for (const outcome of ['success', 'cancel', 'fallback-cancel'] as const) {
       } });
     }, outcome);
     await openShare(page);
-    await page.getByRole('button', { name: /Share Outside/ }).click();
+    await page.getByRole('button', { name: /^Share outside/ }).click();
     await expect.poll(() => page.evaluate(() => (window as any).__nativeShareCalls.length), { timeout: 40_000 }).toBe(outcome === 'fallback-cancel' ? 2 : 1);
     expect(await page.evaluate(() => (window as any).__nativeShareCalls.map((call: any) => call.fileCount))).toEqual(outcome === 'fallback-cancel' ? [1, 0] : [1]);
     if (outcome === 'success') {
       await expect.poll(async () => (await queuedShares(page)).length).toBe(1);
       expect((await queuedShares(page))[0]).toMatchObject({ method: 'NATIVE_SHARE', source_surface: 'FEED', position_in_feed: 1, post_id: 'closure-share-1' });
-      await expect(page.getByRole('button', { name: 'Copy Link', exact: true })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'Copy link', exact: true })).toHaveCount(0);
     } else {
-      await expect(page.getByRole('button', { name: /Share Outside/ })).toBeEnabled();
+      await expect(page.getByRole('button', { name: /^Share outside/ })).toBeEnabled();
       expect(await queuedShares(page)).toEqual([]);
     }
   });

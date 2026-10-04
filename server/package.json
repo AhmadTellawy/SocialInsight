@@ -50,6 +50,7 @@
   },
   "overrides": {
     "brace-expansion": "1.1.21",
+    "braces": "$braces",
     "qs": "6.16.0"
   },
   "devDependencies": {
@@ -63,6 +64,7 @@
     "@types/node-cron": "^3.0.11",
     "@types/uuid": "^10.0.0",
     "@types/web-push": "^3.6.4",
+    "braces": "file:../vendor/braces-3.0.4-socialinsight.1.tgz",
     "nodemon": "^3.1.9",
     "prisma": "6.12.0",
     "socket.io-client": "^4.8.3",

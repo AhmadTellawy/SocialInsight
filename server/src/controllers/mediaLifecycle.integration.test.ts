@@ -406,16 +406,17 @@ test('finding-resolution:SI-AS-E04-008', async t => {
 
   await t.test('a crashed finalizer lease cleans partial storage and database variants without retry duplicates', async () => {
     const value = await fixture(), assetId = randomUUID();
+    const originalsBucket = require('../config/media').MEDIA_CONFIG.buckets.originals as string;
     const sourceKey = `${value.id}/${assetId}/upload.png`;
     const masterKey = `${value.id}/${assetId}/master.webp`;
     const privateKey = `${value.id}/${assetId}/private/512.webp`;
-    objects.set('fixture:' + sourceKey, value.source);
+    objects.set(originalsBucket + ':' + sourceKey, value.source);
     objects.set('media-originals:' + masterKey, value.source);
     objects.set('media-private:' + privateKey, value.source);
     await prisma.mediaAsset.create({ data: {
       id: assetId, ownerId: value.id, purpose: 'PROFILE_AVATAR', status: 'PROCESSING',
       accessScope: 'OWNER_ONLY', sourceMime: 'image/png', sourceByteSize: value.source.length,
-      uploadBucket: 'fixture', uploadKey: sourceKey,
+      uploadBucket: originalsBucket, uploadKey: sourceKey,
       errorCode: 'FINALIZING:' + randomUUID(), expiresAt: new Date(Date.now() + 60_000),
       sourceCleanupNotBefore: new Date(Date.now() - 1000),
       storageCleanupNotBefore: new Date(Date.now() - 1000),
@@ -497,6 +498,37 @@ test('finding-resolution:SI-AS-E04-008', async t => {
     assert.equal(objects.has(promoted.uploadBucket! + ':' + promoted.uploadKey!), false);
     const cleaned = await prisma.mediaAsset.findUniqueOrThrow({ where: { id: asset.id } });
     assert.equal(cleaned.uploadBucket, null); assert.equal(cleaned.uploadKey, null);
+  });
+  await t.test('published Page identity media stays private in storage and revokes guest reads on unpublish', async () => {
+    const pagesEnabled = process.env.PAGES_ENABLED;
+    process.env.PAGES_ENABLED = 'true';
+    try {
+      const value = await fixture(), asset = await uploadFixture(value, 'PROFILE_AVATAR');
+      await prisma.user.update({ where: { id: value.id }, data: { emailVerifiedAt: new Date() } });
+      assert.equal((await value.browser.request('/media/' + asset.id + '/finalize', 'POST', {})).status, 200);
+      const handle = 'media_stage_' + randomUUID().replace(/-/g, '').slice(0, 12);
+      const created = await value.browser.request('/pages', 'POST', {
+        requestId: randomUUID(), name: 'Media Stage Page', handle, category: 'company',
+        bio: 'Synthetic restricted-role Page media integration fixture.', representationConfirmed: true
+      });
+      assert.equal(created.status, 201, JSON.stringify(created.body));
+      const pageId = created.body.id;
+      assert.equal((await value.browser.request('/pages/manage/' + pageId + '/lifecycle', 'POST', { action: 'publish' })).status, 200);
+      const attached = await value.browser.request('/pages/manage/' + pageId + '/media', 'PUT', {
+        avatarMediaId: asset.id, coverMediaId: null
+      });
+      assert.equal(attached.status, 200, JSON.stringify(attached.body));
+      const stored = await prisma.mediaAsset.findUniqueOrThrow({ where: { id: asset.id }, include: { variants: true } });
+      assert.equal(stored.pageId, pageId); assert.equal(stored.accessScope, 'RESTRICTED');
+      assert.equal(stored.variants.some(variant => variant.isPublic), false);
+      assert.equal((await new Browser().request('/media/' + asset.id + '/content')).status, 200);
+      assert.equal((await value.browser.request('/pages/manage/' + pageId + '/lifecycle', 'POST', { action: 'unpublish' })).status, 200);
+      assert.equal((await new Browser().request('/media/' + asset.id + '/content')).status, 404);
+      assert.equal((await value.browser.request('/media/' + asset.id + '/content')).status, 200);
+    } finally {
+      if (pagesEnabled === undefined) delete process.env.PAGES_ENABLED;
+      else process.env.PAGES_ENABLED = pagesEnabled;
+    }
   });
   await t.test('private active accounts can publish group identity images while deletion still fences promotion', async () => {
     const value = await fixture();
@@ -585,12 +617,14 @@ test('finding-resolution:SI-AS-E04-008', async t => {
     assert.equal((await value.browser.request('/media/' + asset.id + '/finalize', 'POST', {})).status, 200);
     const gate = pause(); onUpload = gate.hook;
     const promoted = media.promoteMediaAsset(asset.id).then(() => null, error => error);
+    let restricted!: Promise<void>;
     try {
       await gate.ready;
       await prisma.user.update({ where: { id: value.id }, data: { isPrivate: true, mediaPrivacyTarget: true } });
-      await media.restrictMediaAsset(asset.id);
+      restricted = media.restrictMediaAsset(asset.id);
     } finally { onUpload = undefined; gate.release(); }
     assert.ok(await promoted);
+    await restricted;
     assert.equal((await prisma.mediaAsset.findUniqueOrThrow({ where: { id: asset.id } })).accessScope, 'RESTRICTED');
     const publicVariants = await prisma.mediaVariant.findMany({ where: { mediaAssetId: asset.id, isPublic: true } });
     for (const variant of publicVariants) assert.equal(objects.has(variant.storageBucket + ':' + variant.storageKey), false);
