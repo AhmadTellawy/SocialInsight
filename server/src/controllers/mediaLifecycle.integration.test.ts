@@ -47,6 +47,34 @@ before(async () => {
   base = 'http://127.0.0.1:' + (server.address() as any).port;
 });
 
+test('restricted runtime health remains fail-closed without migration-table access', async () => {
+  const [privilege] = await prisma.$queryRaw<Array<{ allowed: boolean }>>`
+    SELECT pg_catalog.has_table_privilege(current_user, 'public._prisma_migrations', 'SELECT') AS allowed`;
+  assert.equal(privilege.allowed, false);
+  await assert.rejects(prisma.$queryRaw`SELECT id FROM public._prisma_migrations`, (error: any) => error.meta?.code === '42501');
+  const browser = new Browser();
+  const healthy = await browser.request('/health');
+  assert.equal(healthy.status, 200, JSON.stringify(healthy.body));
+  assert.equal(healthy.body.migrations, 'ok');
+
+  const administrator = new (require('@prisma/client').PrismaClient)({ datasourceUrl: process.env.DIRECT_URL });
+  const id = randomUUID();
+  try {
+    await administrator.$executeRaw`
+      INSERT INTO public._prisma_migrations (id, checksum, migration_name, started_at, applied_steps_count)
+      VALUES (${id}, ${'0'.repeat(64)}, ${'cp87_health_fixture_' + id}, CURRENT_TIMESTAMP, 0)`;
+    const failed = await browser.request('/health');
+    assert.equal(failed.status, 503, JSON.stringify(failed.body));
+    assert.equal(failed.body.migrations, 'failed');
+    assert.equal(failed.body.failedMigrations, 1);
+    await administrator.$executeRaw`UPDATE public._prisma_migrations SET rolled_back_at = CURRENT_TIMESTAMP WHERE id = ${id}`;
+    assert.equal((await browser.request('/health')).status, 200);
+  } finally {
+    await administrator.$executeRaw`DELETE FROM public._prisma_migrations WHERE id = ${id}`;
+    await administrator.$disconnect();
+  }
+});
+
 test('owner can observe and cancel a pending public privacy transition without stale publication', async t => {
   const attachedPrivateAvatar = async (retainedPublicKeys: boolean) => {
     const value = await fixture(), asset = await uploadFixture(value);

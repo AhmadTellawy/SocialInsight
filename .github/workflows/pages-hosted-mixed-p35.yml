@@ -122,7 +122,7 @@ jobs:
           nohup node dist/app.js > "$GITHUB_WORKSPACE/p35-api.log" 2>&1 &
           echo "P35_API_PID=$!" >> "$GITHUB_ENV"
           for i in {1..40}; do
-            if curl --silent --fail http://127.0.0.1:3001/ > /dev/null; then exit 0; fi
+            if curl --silent --fail http://127.0.0.1:3001/api/health > /dev/null; then exit 0; fi
             sleep 2
           done
           echo 'API target did not become healthy'

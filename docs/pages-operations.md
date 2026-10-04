@@ -12,7 +12,7 @@
 
 This is a release runbook, not evidence of a production deployment.
 
-The hosted P35 workflow uses a fresh PostgreSQL service only. It provisions a masked ephemeral RLS context key, starts the actual API with `NODE_ENV=production` and the restricted login, then proves that both the migration/admin connection and a login with an additional role membership fail before binding a port. The workload may use `DIRECT_URL` only to create and inspect synthetic fixtures; it never becomes the API process connection. It checks `/` for readiness because `/api/health` deliberately attempts migration-history inspection, which is prohibited to the restricted runtime role.
+The hosted P35 workflow uses a fresh PostgreSQL service only. It provisions a masked ephemeral RLS context key, starts the actual API with `NODE_ENV=production` and the restricted login, then proves that both the migration/admin connection and a login with an additional role membership fail before binding a port. The workload may use `DIRECT_URL` only to create and inspect synthetic fixtures; it never becomes the API process connection. `/api/health` reads only the unfinished-migration count through an argument-free, locked-search-path helper; direct migration-history access remains prohibited. Unknown state or an unfinished, non-rolled-back migration still returns HTTP 503.
 
 - `PAGES_ENABLED=true` enables Pages globally. Exact `true` is required.
 - `PAGES_TEST_USERS` permits named pilot accounts; discovery still excludes marked test fixtures. A pilot does not start global Page deletion or retention.

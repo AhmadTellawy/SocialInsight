@@ -68,8 +68,15 @@ test('age-group cache refresh is scheduled daily and uses an atomic set-based up
 
 test('health endpoint fails closed when Prisma has an unfinished migration', () => {
   const source = readFileSync(resolve(__dirname, '../app.ts'), 'utf8');
-  assert.match(source, /FROM "_prisma_migrations"/);
-  assert.match(source, /"finished_at" IS NULL[\s\S]*"rolled_back_at" IS NULL/);
+  const migration = readFileSync(resolve(__dirname,
+    '../../prisma/migrations/20261005011000_runtime_migration_health/migration.sql'), 'utf8');
+  assert.match(source, /SELECT public\.socialinsight_failed_migration_count\(\)/);
+  assert.doesNotMatch(source, /FROM "_prisma_migrations"/);
+  assert.match(migration, /FROM public\."_prisma_migrations"/);
+  assert.match(migration, /"finished_at" IS NULL[\s\S]*"rolled_back_at" IS NULL/);
+  assert.match(migration, /SECURITY DEFINER[\s\S]*SET search_path = pg_catalog, pg_temp/);
+  assert.match(migration, /REVOKE ALL ON FUNCTION public\.socialinsight_failed_migration_count\(\) FROM PUBLIC/);
+  assert.match(migration, /GRANT EXECUTE ON FUNCTION public\.socialinsight_failed_migration_count\(\) TO socialinsight_runtime/);
   assert.match(source, /failedMigrations > 0[\s\S]*status\(503\)/);
   assert.match(source, /migrations: 'failed'/);
 });

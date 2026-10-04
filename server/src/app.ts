@@ -153,12 +153,11 @@ app.get('/api/health', async (_req, res) => {
     let failedMigrations: number;
     try {
         const [migrationState] = await prisma.$queryRaw<Array<{ failedCount: bigint }>>`
-            SELECT COUNT(*)::bigint AS "failedCount"
-            FROM "_prisma_migrations"
-            WHERE "finished_at" IS NULL
-              AND "rolled_back_at" IS NULL
+            SELECT public.socialinsight_failed_migration_count() AS "failedCount"
         `;
-        failedMigrations = Number(migrationState?.failedCount || 0);
+        if (typeof migrationState?.failedCount !== 'bigint') throw new Error('MIGRATION_HEALTH_INVALID');
+        failedMigrations = Number(migrationState.failedCount);
+        if (!Number.isSafeInteger(failedMigrations) || failedMigrations < 0) throw new Error('MIGRATION_HEALTH_INVALID');
     } catch {
         res.status(503).json({ status: 'error', database: 'connected', migrations: 'unknown', mediaStorage });
         return;
