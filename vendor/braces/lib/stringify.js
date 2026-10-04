@@ -1,8 +1,10 @@
 'use strict';
 
 const utils = require('./utils');
+const validateAst = require('./validate-ast');
 
 module.exports = (ast, options = {}) => {
+  validateAst(ast);
   const stringify = (node, parent = {}) => {
     const invalidBlock = options.escapeInvalid && utils.isInvalidBrace(parent);
     const invalidNode = node.invalid === true && options.escapeInvalid === true;

@@ -2,8 +2,10 @@
 
 const fill = require('fill-range');
 const utils = require('./utils');
+const validateAst = require('./validate-ast');
 
 const compile = (ast, options = {}) => {
+  validateAst(ast);
   const walk = (node, parent = {}) => {
     const invalidBlock = utils.isInvalidBrace(parent);
     const invalidNode = node.invalid === true && options.escapeInvalid === true;

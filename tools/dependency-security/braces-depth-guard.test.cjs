@@ -41,3 +41,41 @@ test('allows nesting through the documented local limit', () => {
 
   assert.doesNotThrow(() => braces(pattern));
 });
+
+test('guards every string walker and mixed nesting at the exact boundary', () => {
+  for (const method of ['compile', 'expand', 'stringify', 'parse', 'create']) {
+    for (const [open, close] of [['{', '}'], ['(', ')'], ['{(', ')}']]) {
+      const accepted = open.repeat(open.length === 2 ? 50 : 100) + 'a' + close.repeat(close.length === 2 ? 50 : 100);
+      assert.doesNotThrow(() => braces[method](accepted));
+      expectDepthGuard(() => braces[method](open + accepted + close));
+    }
+  }
+  expectDepthGuard(() => braces(['ordinary-{a,b}', '{'.repeat(101) + 'a']));
+  expectDepthGuard(() => braces('{'.repeat(101) + 'a', { maxLength: Infinity }));
+  assert.throws(() => braces.parse('a'.repeat(10001)), SyntaxError);
+});
+
+test('guards caller-supplied ASTs, including fake root nodes and cycles', () => {
+  for (const type of ['brace', 'paren', 'root']) {
+    let ast = { type: 'text', value: 'a' };
+    for (let depth = 0; depth < 3500; depth++) ast = { type, nodes: [ast] };
+    for (const method of ['compile', 'expand', 'stringify']) {
+      expectDepthGuard(() => braces[method](ast));
+    }
+  }
+  const cycle = { type: 'root', nodes: [] };
+  cycle.nodes.push(cycle);
+  for (const method of ['compile', 'expand', 'stringify']) {
+    assert.throws(() => braces[method](cycle), /Cyclic AST/);
+    const ast = braces.parse('x-{a,b}');
+    assert.doesNotThrow(() => braces[method](ast));
+  }
+});
+
+test('preserves escaped, quoted, bracketed and unmatched literal syntax', () => {
+  assert.equal(braces.stringify('"' + '{'.repeat(150) + '"'), '{'.repeat(150));
+  assert.equal(braces.stringify('[' + '{'.repeat(150) + ']'), '[' + '{'.repeat(150) + ']');
+  assert.equal(braces.stringify('\\{'.repeat(150)), '{'.repeat(150));
+  assert.deepEqual(braces.expand('x-{a,b'), ['x-{a,b']);
+  assert.deepEqual(braces(['a-{b,c}', 'd'], { expand: true }), ['a-b', 'a-c', 'd']);
+});

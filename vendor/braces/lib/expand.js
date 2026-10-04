@@ -3,6 +3,7 @@
 const fill = require('fill-range');
 const stringify = require('./stringify');
 const utils = require('./utils');
+const validateAst = require('./validate-ast');
 
 const append = (queue = '', stash = '', enclose = false) => {
   const result = [];
@@ -31,6 +32,7 @@ const append = (queue = '', stash = '', enclose = false) => {
 };
 
 const expand = (ast, options = {}) => {
+  validateAst(ast);
   const rangeLimit = options.rangeLimit === undefined ? 1000 : options.rangeLimit;
 
   const walk = (node, parent = {}) => {
