@@ -216,6 +216,20 @@ async function main() {
     await admin.$executeRawUnsafe(`CREATE ROLE pages_rc3_runtime LOGIN PASSWORD '${runtimePassword}' IN ROLE socialinsight_runtime`);
     command('RLS_CONTEXT_PROVISION_FAILED', process.execPath, [path.join(server, 'dist/scripts/provisionPagesRlsContext.js')], { cwd: server, env });
     const Pg = pgRequire('pg'); observer = new Pg.Client({ connectionString: directUrl }); await observer.connect();
+    const signedProbe = async (actorId, system, work) => {
+      assert.equal(new URL(runtimeUrl).hostname, '127.0.0.1');
+      const probe = new Pg.Client({ connectionString: runtimeUrl }); await probe.connect();
+      try {
+        await probe.query('BEGIN');
+        const binding=(await probe.query('SELECT pg_backend_pid()::text AS pid,txid_current()::text AS txid,floor(extract(epoch FROM clock_timestamp()))::bigint AS epoch')).rows[0];
+        const payload=['v1','rc3-ephemeral',actorId||'0','0',system?'1':'0','0',binding.epoch,Number(binding.epoch)+30,binding.pid,binding.txid,crypto.randomBytes(16).toString('hex')].join('.');
+        const token=payload+'.'+crypto.createHmac('sha256',Buffer.from(signingKey,'hex')).update(payload).digest('hex');
+        await probe.query("SELECT set_config('socialinsight.page_context',$1,true)",[token]);
+        const result=await work(probe);await probe.query('COMMIT');return result;
+      }catch(error){await probe.query('ROLLBACK');throw error;}finally{await probe.end();}
+    };
+    const decisionAcl=(await observer.query("SELECT count(*)::int AS n FROM pg_proc function CROSS JOIN LATERAL aclexplode(function.proacl) privilege WHERE function.oid='public.socialinsight_decide_page_invitation(text,text)'::regprocedure AND privilege.grantee<>function.proowner AND privilege.grantee<>(SELECT oid FROM pg_roles WHERE rolname='socialinsight_runtime')")).rows[0].n;
+    assert.equal(decisionAcl,0);report.checks.push({name:'decision RPC has only owner/runtime EXECUTE, no PUBLIC/provider grant',pass:true});
     const forceRows = await observer.query(`SELECT relname, relforcerowsecurity FROM pg_class WHERE relname IN ('Page','PageMembership') ORDER BY relname`);
     assert.ok(forceRows.rows.length === 2 && forceRows.rows.every(row => row.relforcerowsecurity));
     report.checks.push({ name: 'current migrations + FORCE RLS', pass: true, tables: forceRows.rows.map(row => row.relname) });
@@ -241,10 +255,58 @@ async function main() {
 
     const draftPage = expectStatus(await actors.owner.client.request('/pages', 'POST', { requestId: crypto.randomUUID(),
       name: 'RC3 Draft Matrix', handle: `rc3draft${crypto.randomBytes(4).toString('hex')}`, category: 'company', bio: 'draft matrix', representationConfirmed: true }), [201], 'create draft page').body;
-    await admin.pageMembership.createMany({ data: [
-      { pageId: draftPage.id, userId: actors.admin.id, role: 'ADMIN' },
-      { pageId: draftPage.id, userId: actors.editor.id, role: 'EDITOR' },
-    ] });
+    // Live CP89 exposed a missing API/RLS boundary: direct fixture membership
+    // seeding never exercises an unprivileged recipient's Draft acceptance.
+    const invitationChecks = [];
+    for (const [actor, role] of [['admin','ADMIN'],['editor','EDITOR'],['candidate','ANALYST']]) {
+      // Model an independent stale team-safety hide. Acceptance may repair only
+      // that derived flag, not Draft/publication/platform state or ownership.
+      await signedProbe(null,true,probe=>probe.query('UPDATE public."Page" SET "safetyHiddenAt"=CURRENT_TIMESTAMP,"platformState"=$1 WHERE id=$2',[actor==='admin'?'SUSPENDED':'NONE',draftPage.id]));
+      const invitation = expectStatus(await actors.owner.client.request(`/pages/manage/${draftPage.id}/invitations`, 'POST',
+        { recipientId: actors[actor].id, role }), [201], `Draft invitation ${role}`).body;
+      expectStatus(await actors.outsider.client.request(`/pages/invitations/${invitation.id}/accept`, 'POST', {}), [404], 'stranger invitation denial');
+      const inbox = expectStatus(await actors[actor].client.request('/pages/invitations'), [200], `Draft invitation inbox ${role}`).body;
+      assert.ok(inbox.items.some(item => item.id === invitation.id && item.page.id === draftPage.id));
+      expectStatus(await actors[actor].client.request(`/pages/manage/${draftPage.id}`), [403,404], 'pre-membership management denial');
+      await assert.rejects(signedProbe(actors.outsider.id,false,probe=>probe.query('SELECT * FROM public.socialinsight_decide_page_invitation($1,$2)',[invitation.id,'accept'])),error=>error.code==='42501');
+      expectStatus(await actors[actor].client.request(`/pages/invitations/${invitation.id}/accept`, 'POST', {}), [200], `Draft invitation acceptance ${role}`);
+      assert.equal((await admin.pageMembership.findUnique({ where: { pageId_userId: { pageId: draftPage.id, userId: actors[actor].id } } })).role, role);
+      assert.equal(await admin.pageAuditEvent.count({ where: { pageId: draftPage.id, targetId: invitation.id, action: 'INVITATION_ACCEPTED' } }), 1);
+      assert.equal(await admin.pageEvent.count({ where: { dedupeKey: `${invitation.id}:ACCEPTED` } }), 1);
+      const acceptedPage=await admin.page.findUniqueOrThrow({where:{id:draftPage.id}});
+      assert.equal(acceptedPage.safetyHiddenAt,null);assert.equal(acceptedPage.publicationState,'DRAFT');assert.equal(acceptedPage.ownerId,actors.owner.id);assert.equal(acceptedPage.platformState,actor==='admin'?'SUSPENDED':'NONE');
+      assert.equal((await observer.query('SELECT count(*)::int AS n FROM public.socialinsight_page_transition_admissions WHERE page_id=$1',[draftPage.id])).rows[0].n,0);
+      if(actor==='admin')await assert.rejects(signedProbe(actors.admin.id,false,probe=>probe.query('UPDATE public."Page" SET "publicationState"=$1 WHERE id=$2',['PUBLISHED',draftPage.id])),error=>error.code==='42501');
+      else await signedProbe(actors[actor].id,false,async probe=>{const update=await probe.query('UPDATE public."Page" SET "publicationState"=$1 WHERE id=$2',['PUBLISHED',draftPage.id]);assert.equal(update.rowCount,0);});
+      await signedProbe(null,true,probe=>probe.query('UPDATE public."Page" SET "platformState"=$1 WHERE id=$2',['NONE',draftPage.id]));
+      expectStatus(await actors[actor].client.request(`/pages/invitations/${invitation.id}/accept`, 'POST', {}), [409], 'accept retry cannot duplicate');
+      invitationChecks.push({role, action:'accept', pendingDraftInbox:true, outsiderDenied:true, rawSignedRpcStrangerDenied:true, auditAndEventExactlyOnce:true, derivedSafetyOnlyRestored:true, lifecycleAndOwnershipUnchanged:true, admissionConsumed:true, arbitraryLifecycleUpdateDenied:true, pass:true});
+    }
+    const rejection = expectStatus(await actors.owner.client.request(`/pages/manage/${draftPage.id}/invitations`, 'POST',
+      { recipientId: actors.voteFirst.id, role: 'EDITOR' }), [201], 'Draft rejection invitation').body;
+    expectStatus(await actors.voteFirst.client.request(`/pages/invitations/${rejection.id}/reject`, 'POST', {}), [200], 'Draft recipient rejection');
+    assert.equal(await admin.pageMembership.count({where:{pageId:draftPage.id,userId:actors.voteFirst.id}}),0);
+    assert.equal(await admin.pageAuditEvent.count({where:{targetId:rejection.id,action:'INVITATION_REJECTED'}}),1);
+    assert.equal(await admin.pageEvent.count({where:{dedupeKey:`${rejection.id}:REJECTED`}}),1);
+    expectStatus(await actors.voteFirst.client.request(`/pages/invitations/${rejection.id}/accept`, 'POST', {}), [409], 'rejected invitation cannot accept');
+    invitationChecks.push({action:'reject', membershipAbsent:true, auditAndEventExactlyOnce:true, pass:true});
+    const withdrawn = expectStatus(await actors.owner.client.request(`/pages/manage/${draftPage.id}/invitations`, 'POST',
+      {recipientId:actors.erasureFirst.id,role:'EDITOR'}),[201],'withdrawal invitation').body;
+    expectStatus(await actors.owner.client.request(`/pages/invitations/${withdrawn.id}/withdraw`,'POST',{}),[200],'owner withdrawal');
+    expectStatus(await actors.erasureFirst.client.request(`/pages/invitations/${withdrawn.id}/accept`,'POST',{}),[409],'withdrawn invitation cannot accept');
+    invitationChecks.push({action:'withdraw', recipientAcceptDenied:true, pass:true});
+    const demotedSenderInvitation=expectStatus(await actors.admin.client.request(`/pages/manage/${draftPage.id}/invitations`,'POST',
+      {recipientId:actors.outsider.id,role:'ANALYST'}),[201],'admin invitation before demotion').body;
+    await signedProbe(null,true,probe=>probe.query('UPDATE public."PageMembership" SET role=$1 WHERE "pageId"=$2 AND "userId"=$3',['EDITOR',draftPage.id,actors.admin.id]));
+    await assert.rejects(signedProbe(actors.outsider.id,false,probe=>probe.query('SELECT * FROM public.socialinsight_decide_page_invitation($1,$2)',[demotedSenderInvitation.id,'accept'])),error=>error.code==='42501');
+    expectStatus(await actors.outsider.client.request(`/pages/invitations/${demotedSenderInvitation.id}/accept`,'POST',{}),[409],'demoted sender grant rejected');
+    assert.equal(await admin.pageMembership.count({where:{pageId:draftPage.id,userId:actors.outsider.id}}),0);
+    assert.equal(await admin.pageAuditEvent.count({where:{targetId:demotedSenderInvitation.id,action:'INVITATION_ACCEPTED'}}),0);
+    await signedProbe(null,true,probe=>probe.query('UPDATE public."PageMembership" SET role=$1 WHERE "pageId"=$2 AND "userId"=$3',['ADMIN',draftPage.id,actors.admin.id]));
+    expectStatus(await actors.owner.client.request(`/pages/invitations/${demotedSenderInvitation.id}/withdraw`,'POST',{}),[200],'withdraw demoted sender fixture');
+    invitationChecks.push({action:'accept-after-sender-demotion', pendingGrantRevalidated:true, rawAndHttpDenied:true, noMembershipOrAudit:true, pass:true});
+    report.invitationDecisions={status:'PASS',checks:invitationChecks};
+    report.checks.push({name:'real Draft invitation inbox/ADMIN-EDITOR-ANALYST acceptance/rejection/withdrawal and atomic audit-outbox',pass:true});save();
     const draftCases = [];
     for (const role of ['owner','admin','editor']) {
       const response = await actors[role].client.request('/posts', 'POST', postPayload(`rc3-${role}-draft`, 'DRAFT',
@@ -600,7 +662,8 @@ async function main() {
     report.boundedPrecheck = draftPass && allRacePass && report.checks.at(-1).pass
       ? { status: 'ELIGIBLE_NOT_STARTED_BY_MATRIX_HARNESS' }
       : { status: 'NOT_RUN_CORRECTNESS_GATE_RED', users10: 'NOT_RUN', users25: 'NOT_RUN' };
-    report.fullP35 = { status: 'NOT_RUN', justified: false, reason: 'Race/Draft correctness gate is red.' };
+    report.fullP35 = { status: 'NOT_RUN', justified: report.checks.every(check=>check.pass),
+      reason: 'This isolated correctness/recovery harness does not run hosted P35; exact final-SHA GitHub receipt is required separately.' };
     await runtimePrisma.$disconnect();
 
     const log = `${fs.readFileSync(apiLogPath, 'utf8')}\n${fs.readFileSync(path.join(evidenceDir, 'api-secondary.log'), 'utf8')}`;

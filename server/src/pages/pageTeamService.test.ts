@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import prisma from '../prisma';
-import { leavePageTeam } from './pageTeamService';
+import { Prisma } from '@prisma/client';
+import { leavePageTeam, respondPageInvitation } from './pageTeamService';
 
 function fixture(options: { member?: boolean; revokeOnLock?: boolean; inactive?: boolean; auditFails?: boolean } = {}) {
   const events: string[] = [];
@@ -107,4 +108,90 @@ test('Audit failure rolls back membership removal and pending invitation and tra
     await assert.rejects(leavePageTeam('page', 'member'), /audit unavailable/);
     assert.deepEqual(f.state(), before); assert.equal(f.events.includes('safety'), false);
   } finally { prisma.$transaction = original; }
+});
+
+function decisionFixture(options: { role?: string; status?: string; expired?: boolean; inactive?: boolean; wrongResult?: boolean; deniedRpc?: boolean } = {}) {
+  const events: string[] = [];
+  let stored = { status: options.status || 'PENDING', member: false, audits: 0, outbox: 0 };
+  const invitation = () => ({ id: 'invitation', pageId: 'draft-page', recipientId: 'recipient', senderId: 'sender',
+    role: options.role || 'EDITOR', status: stored.status, expiresAt: new Date(Date.now() + (options.expired ? -60000 : 60000)) });
+  const transaction = async (work: any) => {
+    const pending = { ...stored };
+    const tx: any = {
+      pageInvitation: { findUnique: async () => invitation(), findUniqueOrThrow: async () => invitation() },
+      $queryRaw: async (query: any, ...values: any[]) => {
+        const sql = Array.isArray(query) ? query.join('?') : query?.strings?.join('?') || String(query);
+        const params = Array.isArray(query) ? values : query.values || values;
+        if (sql.includes('pg_try_advisory_xact_lock')) return [{ locked: true }];
+        if (sql.includes('pg_advisory_xact_lock')) { events.push('advisory'); return []; }
+        if (sql.includes('FROM users')) { events.push('active-account'); return [{ id: params[0], status: options.inactive ? 'SUSPENDED' : 'ACTIVE', emailVerifiedAt: new Date() }]; }
+        if (sql.includes('socialinsight_decide_page_invitation')) {
+          events.push('decision-rpc');
+          if (options.deniedRpc) throw new Prisma.PrismaClientKnownRequestError('denied', { code: 'P2010', clientVersion: '6.12.0', meta: { code: '42501' } });
+          assert.deepEqual(params, ['invitation', params[1]]); assert.ok(['accept','reject'].includes(params[1]));
+          pending.status = params[1] === 'accept' ? 'ACCEPTED' : 'REJECTED';
+          pending.member = params[1] === 'accept'; pending.audits++; pending.outbox++;
+          return [{page_id:options.wrongResult?'other-page':'draft-page',decided_status:pending.status,accepted_role:pending.member?invitation().role:null}];
+        }
+        throw new Error('Recipient must never borrow Page FOR UPDATE or ordinary Page DML');
+      },
+      page: new Proxy({}, { get() { throw new Error('Recipient Page access must remain in the narrow RPC'); } }),
+    };
+    const result = await work(tx); stored = pending; return result;
+  };
+  return { transaction, events, state: () => ({ ...stored }) };
+}
+
+test('Draft recipient accepts ADMIN/EDITOR/ANALYST through one atomic RPC without Page UPDATE authority', async () => {
+  const original = prisma.$transaction;
+  try { for (const role of ['ADMIN','EDITOR','ANALYST']) {
+    const f=decisionFixture({role});(prisma as any).$transaction=f.transaction;
+    assert.deepEqual(await respondPageInvitation('invitation','recipient','accept'),{status:'ACCEPTED',pageId:'draft-page'});
+    assert.deepEqual(f.state(),{status:'ACCEPTED',member:true,audits:1,outbox:1});
+    assert.deepEqual(f.events,['advisory','active-account','active-account','decision-rpc']);
+    await assert.rejects(respondPageInvitation('invitation','recipient','accept'),{code:'PAGE_INVITATION_EXPIRED',status:409});
+    assert.deepEqual(f.state(),{status:'ACCEPTED',member:true,audits:1,outbox:1});
+  }} finally { prisma.$transaction=original; }
+});
+
+test('Draft recipient rejection records one decision without creating membership or reading Page', async () => {
+  const original=prisma.$transaction,f=decisionFixture();
+  try {(prisma as any).$transaction=f.transaction;
+    assert.deepEqual(await respondPageInvitation('invitation','recipient','reject'),{status:'REJECTED',pageId:'draft-page'});
+    assert.deepEqual(f.state(),{status:'REJECTED',member:false,audits:1,outbox:1});
+    assert.deepEqual(f.events,['advisory','active-account','decision-rpc']);
+  }finally{prisma.$transaction=original;}
+});
+
+test('Invitation stranger is denied before coordination, accounts or decision RPC', async () => {
+  const original=prisma.$transaction,f=decisionFixture();
+  try{(prisma as any).$transaction=f.transaction;const before=f.state();
+    await assert.rejects(respondPageInvitation('invitation','stranger','accept'),{code:'PAGE_INVITATION_NOT_FOUND',status:404});
+    assert.deepEqual(f.state(),before);assert.deepEqual(f.events,[]);
+  }finally{prisma.$transaction=original;}
+});
+
+test('Withdrawn, expired and inactive-recipient invitations never reach the transition RPC', async () => {
+  const original=prisma.$transaction;
+  try{for(const options of [{status:'WITHDRAWN'},{expired:true},{inactive:true}]){
+    const f=decisionFixture(options);(prisma as any).$transaction=f.transaction;const before=f.state();
+    await assert.rejects(respondPageInvitation('invitation','recipient','accept'));
+    assert.deepEqual(f.state(),before);assert.ok(!f.events.includes('decision-rpc'));
+  }}finally{prisma.$transaction=original;}
+});
+
+test('A mismatched RPC acknowledgement rolls back membership, audit and outbox together', async () => {
+  const original=prisma.$transaction,f=decisionFixture({wrongResult:true});
+  try{(prisma as any).$transaction=f.transaction;const before=f.state();
+    await assert.rejects(respondPageInvitation('invitation','recipient','accept'),{code:'PAGE_INVITATION_REVOKED',status:409});
+    assert.deepEqual(f.state(),before);
+  }finally{prisma.$transaction=original;}
+});
+
+test('Database revalidation denial maps to recoverable invitation conflict, not server500', async () => {
+  const original=prisma.$transaction,f=decisionFixture({deniedRpc:true});
+  try{(prisma as any).$transaction=f.transaction;const before=f.state();
+    await assert.rejects(respondPageInvitation('invitation','recipient','accept'),{code:'PAGE_INVITATION_REVOKED',status:409});
+    assert.deepEqual(f.state(),before);
+  }finally{prisma.$transaction=original;}
 });

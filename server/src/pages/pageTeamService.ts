@@ -1,8 +1,9 @@
 import bcrypt from 'bcryptjs';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { PAGE_POLICY, PagePolicyError, PageRole, mayManagePageRole } from './pagePolicy';
 import { pageHandleSchema } from './pageValidation';
-import { activePageActor, enqueuePageEvent, lockPage, pageAudit, pageDaysFrom, pageIsBlocked,
+import { activePageActor, coordinatePageLocks, enqueuePageEvent, lockPage, pageAudit, pageDaysFrom, pageIsBlocked,
   pageManagementDto, pageRole, pageTransaction, PageTx, requirePageCapability } from './pageService';
 
 const inviteSchema = z.object({ recipientId: z.string().uuid(), role: z.enum(['ADMIN', 'EDITOR', 'ANALYST']) }).strict();
@@ -54,35 +55,43 @@ export async function respondPageInvitation(invitationId: string, actorId: strin
   return pageTransaction(async tx => {
     const initial = await tx.pageInvitation.findUnique({ where: { id: invitationId } });
     if (!initial) throw new PagePolicyError('PAGE_INVITATION_NOT_FOUND', 404);
+    if (action !== 'withdraw') {
+      // A recipient is not a Page editor yet. FOR UPDATE requires the Page's
+      // UPDATE policy even when SELECT is allowed, so it cannot precede the
+      // narrowly scoped signed-recipient RPC. Keep the canonical advisory lock.
+      if (initial.recipientId !== actorId) throw new PagePolicyError('PAGE_INVITATION_NOT_FOUND', 404);
+      await coordinatePageLocks(tx, [{ pageId: initial.pageId, mode: 'exclusive' }]);
+      await activePageActor(tx, actorId);
+      const invitation = await tx.pageInvitation.findUniqueOrThrow({ where: { id: invitationId } });
+      if (invitation.status === 'WITHDRAWN') throw new PagePolicyError('PAGE_INVITATION_REVOKED', 409);
+      if (invitation.status !== 'PENDING' || invitation.expiresAt <= new Date()) throw new PagePolicyError('PAGE_INVITATION_EXPIRED', 409);
+      if (action === 'accept') await activePageActor(tx, invitation.senderId);
+      try {
+        const [decision] = await tx.$queryRaw<Array<{ page_id: string; decided_status: string; accepted_role: string | null }>>`
+          SELECT * FROM public.socialinsight_decide_page_invitation(${invitationId}, ${action})`;
+        const status = action === 'accept' ? 'ACCEPTED' : 'REJECTED';
+        if (!decision || decision.page_id !== invitation.pageId || decision.decided_status !== status
+            || (action === 'accept' && decision.accepted_role !== invitation.role)) {
+          throw new PagePolicyError('PAGE_INVITATION_REVOKED', 409);
+        }
+        return { status, pageId: decision.page_id };
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2010'
+            && String(error.meta?.code) === '42501') throw new PagePolicyError('PAGE_INVITATION_REVOKED', 409);
+        throw error;
+      }
+    }
     const page = await lockPage(tx, initial.pageId);
     await activePageActor(tx, actorId);
     const invitation = await tx.pageInvitation.findUniqueOrThrow({ where: { id: invitationId } });
-    if (action === 'withdraw') {
-      const role = await requirePageCapability(tx, page, actorId, 'manageTeam');
-      if (!mayManagePageRole(role, invitation.role as PageRole)) throw new PagePolicyError('PAGE_PERMISSION_DENIED', 403);
-    } else if (invitation.recipientId !== actorId) throw new PagePolicyError('PAGE_INVITATION_NOT_FOUND', 404);
+    const role = await requirePageCapability(tx, page, actorId, 'manageTeam');
+    if (!mayManagePageRole(role, invitation.role as PageRole)) throw new PagePolicyError('PAGE_PERMISSION_DENIED', 403);
     if (invitation.status === 'WITHDRAWN') throw new PagePolicyError('PAGE_INVITATION_REVOKED',409);
     if (invitation.status !== 'PENDING' || invitation.expiresAt <= new Date()) throw new PagePolicyError('PAGE_INVITATION_EXPIRED', 409);
-    if (action === 'accept') {
-      if (page.deletionRequestedAt) throw new PagePolicyError('PAGE_DELETING', 409);
-      const senderRole = await pageRole(tx, page, invitation.senderId);
-      if (!senderRole || !mayManagePageRole(senderRole, invitation.role as PageRole)) throw new PagePolicyError('PAGE_INVITATION_REVOKED', 409);
-      await activePageActor(tx, invitation.senderId);
-      await assertTeamUnblocked(tx, page.id, invitation.senderId, actorId);
-      if (await pageRole(tx, page, actorId)) throw new PagePolicyError('PAGE_ALREADY_ON_TEAM', 409);
-      const [accepted] = await tx.$queryRaw<Array<{ page_id: string; accepted_role: string }>>`
-        SELECT * FROM public.socialinsight_accept_page_invitation(${invitationId})`;
-      if (!accepted || accepted.page_id !== page.id || accepted.accepted_role !== invitation.role) {
-        throw new PagePolicyError('PAGE_INVITATION_REVOKED', 409);
-      }
-      await refreshPageSafety(tx, page.id);
-    }
-    const status = { accept: 'ACCEPTED', reject: 'REJECTED', withdraw: 'WITHDRAWN' }[action];
-    if (action !== 'accept') {
-      await tx.pageInvitation.update({ where: { id: invitationId }, data: { status, decidedAt: new Date() } });
-    }
+    const status = 'WITHDRAWN';
+    await tx.pageInvitation.update({ where: { id: invitationId }, data: { status, decidedAt: new Date() } });
     await pageAudit(tx, page.id, actorId, `INVITATION_${status}`, invitationId);
-    await enqueuePageEvent(tx, page.id, action === 'withdraw' ? invitation.recipientId : invitation.senderId,
+    await enqueuePageEvent(tx, page.id, invitation.recipientId,
       `PAGE_INVITATION_${status}`, invitationId, `${invitationId}:${status}`);
     return { status, pageId: page.id };
   });
