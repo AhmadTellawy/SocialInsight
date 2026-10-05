@@ -23,6 +23,7 @@ import { evaluateNotificationVisibility } from './notificationVisibilityService'
 
 interface NotifyOptions {
     dedupe?: boolean;
+    deferDispatch?: boolean;
 }
 
 const errorName = (error: unknown): string => error instanceof Error ? error.name : 'unknown';
@@ -175,7 +176,7 @@ export const notify = async (
             }
         });
 
-        await dispatchNotificationRecord(newNotification, normalizedPayload);
+        if (!options.deferDispatch) await dispatchNotificationRecord(newNotification, normalizedPayload);
 
         return newNotification;
     } catch (error) {

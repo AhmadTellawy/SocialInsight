@@ -1,3 +1,4 @@
+import { loadVisibleInteractionTarget } from '../services/interactionReadService';
 import { activePageActor, lockPage, lockPagesForShare, pageAudit, pageIsBlocked, pageTransaction, requirePageCapability, withPageCoordinationAdmission } from '../pages/pageService';
 import { pagePostReplay, pagePostRequestKey, recordPagePostCreation } from '../pages/pagePostReplay';
 import { assertPagesEnabled, pageDiscoveryPostWhere } from '../pages/pageFeature';
@@ -2230,50 +2231,48 @@ export const getParticipants = async (req: Request, res: Response) => {
     const limit = parseReadLimit(req.query.limit, 30, 50);
     const cursor = firstQueryString(req.query.cursor)?.trim() || undefined;
     try {
-        const id = await resolveInteractionTarget(rawId, 'vote');
-        const currentUserId = req.user?.userId;
-        const post = await prisma.post.findFirst({
-            where: { id, ...buildVisiblePublishedPostWhere(currentUserId) },
-            select: {
-                id: true,
-                authorId: true,
-                pageId: true,
-                forceAnonymous: true,
-                resultsWho: true,
-                resultsTiming: true,
-                expiresAt: true
-            } as any
-        });
-        if (!post) {
-            res.status(404).json({ error: 'Post not found' });
-            return;
-        }
+        const result = await prisma.$transaction(async (tx) => {
+            const currentUserId = req.user?.userId;
+            const post = await loadVisibleInteractionTarget(tx, rawId, 'vote', currentUserId);
+            if (!post) {
+                res.status(404);
+                return { error: 'Post not found' };
+            }
+            const id = post.id;
+            res.setHeader('Cache-Control', 'private, no-store');
+            res.setHeader('Vary', 'Authorization, Cookie');
 
-        const resultAccess = await evaluatePublisherPostResultsAccess(prisma, post as any, currentUserId, readGuestParticipationHash(req));
-        if (!resultAccess.allowed) {
-            return res.status(403).json({ error: resultAccess.reason === 'timing' ? 'Results are not available yet' : 'You do not have access to these results' });
-        }
+            const resultAccess = await evaluatePublisherPostResultsAccess(tx, post as any, currentUserId, readGuestParticipationHash(req));
+            if (!resultAccess.allowed) {
+                res.status(403);
+                return { error: resultAccess.reason === 'timing' ? 'Results are not available yet' : 'You do not have access to these results' };
+            }
 
-        res.setHeader('Cache-Control', 'private, no-store');
-        res.setHeader('Vary', 'Authorization, Cookie');
-        if ((post as any).forceAnonymous === true) return res.json([]);
+            res.setHeader('Cache-Control', 'private, no-store');
+            res.setHeader('Vary', 'Authorization, Cookie');
+            if (post.forceAnonymous === true) { res.setHeader('X-Total-Count', '0'); return []; }
 
-        const responses = await prisma.response.findMany({
-            where: { postId: id, isAnonymous: false, userId: { not: null }, user: { status: 'ACTIVE' } },
-            include: { user: { select: SAFE_USER_SELECT } },
-            orderBy: [{ id: 'desc' }],
-            take: limit + 1,
-            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {})
-        });
-        const hasMore = responses.length > limit;
-        if (hasMore) responses.pop();
-        applyNextCursorHeader(res, responses, hasMore);
+            const where = { postId: id, isAnonymous: false, userId: { not: null }, user: { status: 'ACTIVE' } };
+            const [responses, totalCount] = await Promise.all([tx.response.findMany({
+                where,
+                include: { user: { select: SAFE_USER_SELECT } },
+                orderBy: [{ id: 'desc' }],
+                take: limit + 1,
+                ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {})
+            }), tx.response.count({ where })]);
+            res.setHeader('X-Total-Count', String(totalCount));
+            const hasMore = responses.length > limit;
+            if (hasMore) responses.pop();
+            applyNextCursorHeader(res, responses, hasMore);
         
-        const mapped = responses
-            .filter((response: any) => response.user)
-            .map((response: any) => ({ ...serializeUserMediaRecord(response.user), isAnonymous: false }));
-        res.json(mapped);
+            const mapped = responses
+                .filter((response: any) => response.user)
+                .map((response: any) => ({ ...serializeUserMediaRecord(response.user), isAnonymous: false }));
+            return mapped;
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+        return res.json(result);
     } catch (error) {
+        logPostRequestFailure(req, 'getParticipants_failed', error);
         res.status(500).json({ error: 'Failed to fetch participants' });
     }
 };
@@ -2438,62 +2437,64 @@ export const getComments = async (req: Request, res: Response) => {
     const cursor = firstQueryString(req.query.cursor)?.trim() || undefined;
     const focusId = firstQueryString(req.query.focusId)?.trim() || undefined;
     try {
-        const id = await resolveInteractionTarget(rawId, 'comment');
-        const commentTarget = await prisma.post.findFirst({
-            where: { id, ...buildVisiblePublishedPostWhere(userId) },
-            select: {
-                id: true
+        const result = await prisma.$transaction(async (tx) => {
+            const commentTarget = await loadVisibleInteractionTarget(tx, rawId, 'comment', userId);
+            if (!commentTarget) {
+                res.status(404);
+                return { error: 'Post not found' };
             }
-        });
+            const id = commentTarget.id;
+            res.setHeader('Cache-Control', 'private, no-store');
+            res.setHeader('Vary', 'Authorization, Cookie');
 
-        if (!commentTarget) {
-            res.status(404).json({ error: 'Post not found' });
-            return;
-        }
-
-        const commentInclude = {
-            user: { select: SAFE_USER_SELECT },
-            mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
-            likesList: userId ? { where: { userId }, take: 1, select: { userId: true } } : false,
-            replies: {
-                orderBy: { createdAt: 'asc' as const },
-                include: {
-                    user: { select: SAFE_USER_SELECT },
-                    mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
-                    likesList: userId ? { where: { userId }, take: 1, select: { userId: true } } : false
+            const commentInclude = {
+                user: { select: SAFE_USER_SELECT },
+                mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+                likesList: userId ? { where: { userId }, take: 1, select: { userId: true } } : false,
+                replies: {
+                    orderBy: { createdAt: 'asc' as const },
+                    include: {
+                        user: { select: SAFE_USER_SELECT },
+                        mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
+                        likesList: userId ? { where: { userId }, take: 1, select: { userId: true } } : false
+                    }
                 }
+            } satisfies Prisma.CommentInclude;
+
+            const [commentPage, focusedComment, totalCount] = await Promise.all([
+                tx.comment.findMany({
+                    where: { postId: id, parentId: null },
+                    take: limit + 1,
+                    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+                    include: commentInclude,
+                    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }]
+                }),
+                focusId && !cursor
+                    ? tx.comment.findFirst({
+                        where: {
+                            postId: id,
+                            parentId: null,
+                            OR: [{ id: focusId }, { replies: { some: { id: focusId } } }]
+                        },
+                        include: commentInclude
+                    })
+                    : Promise.resolve(null),
+                tx.comment.count({ where: { postId: id } })
+            ]);
+            res.setHeader('X-Total-Count', String(totalCount));
+            const hasMore = commentPage.length > limit;
+            if (hasMore) commentPage.pop();
+            applyNextCursorHeader(res, commentPage, hasMore);
+
+            if (focusedComment && !commentPage.some(comment => comment.id === focusedComment.id)) {
+                commentPage.push(focusedComment);
             }
-        } satisfies Prisma.CommentInclude;
-
-        const [commentPage, focusedComment] = await Promise.all([
-            prisma.comment.findMany({
-                where: { postId: id, parentId: null },
-                take: limit + 1,
-                ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-                include: commentInclude,
-                orderBy: [{ createdAt: 'desc' }, { id: 'desc' }]
-            }),
-            focusId && !cursor
-                ? prisma.comment.findFirst({
-                    where: {
-                        postId: id,
-                        parentId: null,
-                        OR: [{ id: focusId }, { replies: { some: { id: focusId } } }]
-                    },
-                    include: commentInclude
-                })
-                : Promise.resolve(null)
-        ]);
-        const hasMore = commentPage.length > limit;
-        if (hasMore) commentPage.pop();
-        applyNextCursorHeader(res, commentPage, hasMore);
-
-        if (focusedComment && !commentPage.some(comment => comment.id === focusedComment.id)) {
-            commentPage.push(focusedComment);
-        }
-        await attachPageCommentPublishers(commentPage,userId);
-        res.json(commentPage.map(c => mapComment(c, userId)));
+            await attachPageCommentPublishers(commentPage,userId,tx);
+            return commentPage.map(c => mapComment(c, userId));
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+        return res.json(result);
     } catch (error) {
+        logPostRequestFailure(req, 'getComments_failed', error);
         res.status(500).json({ error: 'Failed to fetch comments' });
     }
 };
@@ -2567,9 +2568,9 @@ export const createComment = async (req: Request, res: Response) => {
 
         if (!validateMentionRecipientLimit(cleanText, res, 'comment')) return;
 
-        // Only newly inserted Page comments can have no previous text relations.
+        // Newly inserted comments have no previous text relations.
         // Editing a comment always reconciles removals, even when its new text is plain.
-        const pageCommentEntities = commentTarget.pageId ? parseTextEntities(cleanText) : null;
+        const commentEntities = parseTextEntities(cleanText);
 
         let parentComment: { postId: string; userId: string } | null = null;
         if (parentId) {
@@ -2613,7 +2614,7 @@ export const createComment = async (req: Request, res: Response) => {
                 where: { id },
                 data: { commentsCount: { increment: 1 } }
             });
-            const mentionResult = pageCommentEntities && !pageCommentEntities.some(entity => entity.type === 'mention')
+            const mentionResult = commentEntities && !commentEntities.some(entity => entity.type === 'mention')
                 ? { targetUserIds: [] as string[], notificationIds: [] as string[], created: 0, retained: 0, removed: 0, unresolved: 0, ineligible: 0 }
                 : await reconcileCommentMentions(tx, {
                 postId: id,
@@ -2623,10 +2624,10 @@ export const createComment = async (req: Request, res: Response) => {
                 parentCommentId: parentId || undefined,
                 text: cleanText
             });
-            if (!pageCommentEntities || pageCommentEntities.some(entity => entity.type === 'hashtag')) {
+            if (commentEntities.some(entity => entity.type === 'hashtag')) {
                 await reconcileCommentHashtags(tx, createdComment.id, cleanText);
             }
-            const pageNotificationHandled = await notifyPagePostInteraction({ postId: id, actorId: userId, kind: parentId ? 'reply' : 'comment', commentId: createdComment.id, parentCommentId: parentId || undefined, excludedRecipientIds: mentionResult.targetUserIds }, tx);
+            const pageNotificationHandled = commentTarget.pageId ? await notifyPagePostInteraction({ postId: id, actorId: userId, kind: parentId ? 'reply' : 'comment', commentId: createdComment.id, parentCommentId: parentId || undefined, excludedRecipientIds: mentionResult.targetUserIds }, tx) : false;
             const comment = await tx.comment.findUniqueOrThrow({
                 where: { id: createdComment.id },
                 include: {
@@ -2641,7 +2642,7 @@ export const createComment = async (req: Request, res: Response) => {
         }));
         const { comment, targetPost, mentionResult } = transactionResult;
 
-        await dispatchNotificationIds(mentionResult.notificationIds);
+        const dispatchIds = [...mentionResult.notificationIds];
 
         const commentNavigation = parentId
             ? { postId: id, commentId: parentId, replyId: comment.id, sourceType: 'reply' }
@@ -2649,7 +2650,7 @@ export const createComment = async (req: Request, res: Response) => {
 
         const conversationalRecipientId = parentComment?.userId || targetPost.authorId;
         if (!transactionResult.pageNotificationHandled && conversationalRecipientId && !mentionResult.targetUserIds.includes(conversationalRecipientId)) {
-            await notify(
+            const notification = await notify(
                 userId,
                 conversationalRecipientId,
                 'response',
@@ -2657,11 +2658,14 @@ export const createComment = async (req: Request, res: Response) => {
                 'post',
                 id,
                 commentNavigation,
-                { dedupe: true }
+                { dedupe: true, deferDispatch: true }
             );
+            if (notification?.id) dispatchIds.push(notification.id);
         }
 
-        res.json(mapComment(comment, userId));
+        res.json({ ...mapComment(comment, userId), commentsCount: targetPost.commentsCount });
+        // All notification rows are durable before success. Delivery is secondary.
+        void dispatchNotificationIds(dispatchIds).catch(() => logPostRequestFailure(req, 'comment_notification_dispatch_failed', { code: 'DELIVERY_FAILED' }));
     } catch (error) {
         if(respondPagePostError(error,res))return;
         if (error instanceof MentionLimitError || error instanceof HashtagLimitError) {
@@ -2748,28 +2752,31 @@ export const getPostLikers = async (req: Request, res: Response) => {
     const limit = parseReadLimit(req.query.limit, 30, 50);
     const cursor = firstQueryString(req.query.cursor)?.trim() || undefined;
     try {
-        const id = await resolveInteractionTarget(rawId, 'like');
-        const currentUserId = req.user?.userId;
-        const targetPost = await prisma.post.findFirst({
-            where: { id, ...buildVisiblePublishedPostWhere(currentUserId) },
-            select: { id: true }
-        });
-        if (!targetPost) {
-            res.status(404).json({ error: 'Post not found' });
-            return;
-        }
-        const likes = await prisma.userLike.findMany({
-            where: { postId: id },
-            include: { user: { select: SAFE_USER_SELECT } },
-            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-            take: limit + 1,
-            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {})
-        });
-        const hasMore = likes.length > limit;
-        if (hasMore) likes.pop();
-        applyNextCursorHeader(res, likes, hasMore);
-        res.json(likes.map(l => serializeUserMediaRecord(l.user)));
+        const result = await prisma.$transaction(async (tx) => {
+            const currentUserId = req.user?.userId;
+            const targetPost = await loadVisibleInteractionTarget(tx, rawId, 'like', currentUserId);
+            if (!targetPost) {
+                res.status(404);
+                return { error: 'Post not found' };
+            }
+            const id = targetPost.id;
+            res.setHeader('Cache-Control', 'private, no-store');
+            res.setHeader('Vary', 'Authorization, Cookie');
+            const likes = await tx.userLike.findMany({
+                where: { postId: id },
+                include: { user: { select: SAFE_USER_SELECT } },
+                orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+                take: limit + 1,
+                ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {})
+            });
+            const hasMore = likes.length > limit;
+            if (hasMore) likes.pop();
+            applyNextCursorHeader(res, likes, hasMore);
+            return likes.map(l => serializeUserMediaRecord(l.user));
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+        return res.json(result);
     } catch (error) {
+        logPostRequestFailure(req, 'getPostLikers_failed', error);
         res.status(500).json({ error: 'Failed to fetch likers' });
     }
 };
@@ -3572,7 +3579,7 @@ export const deleteComment = async (req: Request, res: Response) => {
             return res.status(403).json({ error: 'Unauthorized to delete this comment' });
         }
 
-        await prisma.$transaction(async (tx) => {
+        const updatedPost = await prisma.$transaction(async (tx) => {
             const current = await tx.comment.findUnique({ where: { id }, include: { post: { select: { pageId: true } } } });
             if (!current) throw new PagePolicyError('COMMENT_NOT_FOUND', 404);
             if(current.post.pageId && (current.pageId || current.userId !== userId)){const page=await lockPage(tx,current.post.pageId);await requirePageCapability(tx,page,userId,'moderateComments');await pageAudit(tx,page.id,userId,'COMMENT_DELETED',id);}
@@ -3611,13 +3618,13 @@ export const deleteComment = async (req: Request, res: Response) => {
 
             await tx.comment.delete({ where: { id } });
 
-            await tx.post.update({
+            return tx.post.update({
                 where: { id: comment.postId },
                 data: { commentsCount: { decrement: 1 + replyIds.length } }
             });
         });
 
-        res.json({ success: true, message: 'Comment deleted successfully' });
+        res.json({ success: true, message: 'Comment deleted successfully', commentsCount: updatedPost.commentsCount });
     } catch (error) {
         if(respondPagePostError(error,res))return;
         console.error("Delete Comment Error:", error);

@@ -7,6 +7,44 @@ const prisma = require('../prisma').default as typeof import('../prisma').defaul
 const pagePost = require('../pages/pagePostService') as typeof import('../pages/pagePostService');
 const pageReplay = require('../pages/pagePostReplay') as typeof import('../pages/pagePostReplay');
 const { createPost, getComments, likePost, likeComment, savePost, hidePost, reportPost, getPageManagedPostResults, deletePost } = require('./postController') as typeof import('./postController');
+const { getParticipants } = require('./postController') as typeof import('./postController');
+
+test('participants keep anonymous identities out of both list and total, with one visibility read', async () => {
+    const originals = { transaction: prisma.$transaction, queryRaw: prisma.$queryRaw, findMany: prisma.response.findMany, count: prisma.response.count };
+    let visibilityReads = 0;
+    let listWhere: any;
+    let countWhere: any;
+    try {
+        (prisma as any).$transaction = async (work: any, options: any) => {
+            assert.equal(options.isolationLevel, 'RepeatableRead'); return work(prisma);
+        };
+        (prisma as any).$queryRaw = async () => { visibilityReads++; return [{ id: 'p', authorId: 'owner', resultsWho: 'Public', resultsTiming: 'AnyTime', forceAnonymous: false }]; };
+        (prisma.response as any).findMany = async ({ where }: any) => { listWhere = where; return []; };
+        (prisma.response as any).count = async ({ where }: any) => { countWhere = where; return 0; };
+        const { response, state } = responseState();
+        await getParticipants({ params: { id: 'p' }, query: {}, headers: {}, cookies: {} } as any, response);
+        assert.equal(state.statusCode, 200); assert.equal(state.headers['X-Total-Count'], '0');
+        assert.deepEqual(listWhere, countWhere); assert.equal(listWhere.isAnonymous, false);
+        assert.deepEqual(listWhere.userId, { not: null }); assert.equal(visibilityReads, 1);
+    } finally {
+        (prisma as any).$transaction = originals.transaction; (prisma as any).$queryRaw = originals.queryRaw;
+        (prisma.response as any).findMany = originals.findMany; (prisma.response as any).count = originals.count;
+    }
+});
+
+for (const mode of ['hidden', 'restricted-results', 'forced-anonymous']) test(`participants fail closed: ${mode}`, async () => {
+    const originals = { transaction: prisma.$transaction, queryRaw: prisma.$queryRaw, findMany: prisma.response.findMany };
+    try {
+        (prisma as any).$transaction = async (work: any) => work(prisma);
+        (prisma as any).$queryRaw = async () => mode === 'hidden' ? [] : [{ id: 'p', authorId: 'owner', resultsWho: mode === 'restricted-results' ? 'OnlyMe' : 'Public', resultsTiming: 'AnyTime', forceAnonymous: mode === 'forced-anonymous' }];
+        (prisma.response as any).findMany = async () => { throw new Error('Identities must not be read'); };
+        const { response, state } = responseState();
+        await getParticipants({ params: { id: 'p' }, query: {}, headers: {}, cookies: {} } as any, response);
+        assert.equal(state.statusCode, mode === 'hidden' ? 404 : mode === 'restricted-results' ? 403 : 200);
+        if (mode === 'forced-anonymous') { assert.deepEqual(state.body, []); assert.equal(state.headers['X-Total-Count'], '0'); }
+        else assert.equal(state.headers['X-Total-Count'], undefined);
+    } finally { (prisma as any).$transaction = originals.transaction; (prisma as any).$queryRaw = originals.queryRaw; (prisma.response as any).findMany = originals.findMany; }
+});
 
 test('Page post preflight acquires its RLS-protected Page lock inside a transaction', async () => {
     const originalTransaction = prisma.$transaction;
@@ -199,6 +237,9 @@ const commentRecord = (id: string, replies: any[] = []) => ({
 });
 
 test('comments use a bounded cursor page and append a requested deep-link target once', async () => {
+    const originalTransaction = prisma.$transaction;
+    const originalQueryRaw = prisma.$queryRaw;
+    const originalCommentCount = prisma.comment.count;
     const originalPostFindUnique = prisma.post.findUnique;
     const originalPostFindFirst = prisma.post.findFirst;
     const originalCommentFindMany = prisma.comment.findMany;
@@ -207,6 +248,9 @@ test('comments use a bounded cursor page and append a requested deep-link target
     let focusQuery: any;
 
     try {
+        (prisma as any).$transaction = async (work: any) => work(prisma);
+        (prisma as any).$queryRaw = async () => [{ id: 'post-1', sharedFromId: null }];
+        (prisma.comment as any).count = async () => 4;
         (prisma.post as any).findUnique = async () => ({ id: 'post-1', sharedFromId: null, sharedCaption: null });
         (prisma.post as any).findFirst = async () => ({ id: 'post-1' });
         (prisma.comment as any).findMany = async (args: any) => {
@@ -230,9 +274,13 @@ test('comments use a bounded cursor page and append a requested deep-link target
         assert.deepEqual(pageQuery.orderBy, [{ createdAt: 'desc' }, { id: 'desc' }]);
         assert.deepEqual(focusQuery.where.OR, [{ id: 'reply-9' }, { replies: { some: { id: 'reply-9' } } }]);
         assert.equal(state.headers['X-Next-Cursor'], 'comment-2');
+        assert.equal(state.headers['X-Total-Count'], '4');
         assert.deepEqual(state.body.map((comment: any) => comment.id), ['comment-3', 'comment-2', 'comment-0']);
         assert.equal(state.body[2].replies[0].id, 'reply-9');
     } finally {
+        (prisma as any).$transaction = originalTransaction;
+        (prisma as any).$queryRaw = originalQueryRaw;
+        (prisma.comment as any).count = originalCommentCount;
         (prisma.post as any).findUnique = originalPostFindUnique;
         (prisma.post as any).findFirst = originalPostFindFirst;
         (prisma.comment as any).findMany = originalCommentFindMany;
