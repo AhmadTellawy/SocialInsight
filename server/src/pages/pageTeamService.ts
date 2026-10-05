@@ -122,18 +122,25 @@ export async function changePageMember(pageId: string, actorId: string, userId: 
 
 export async function leavePageTeam(pageId: string, actorId: string) {
   return pageTransaction(async tx => {
-    const page = await lockPage(tx, pageId);
+    await coordinatePageLocks(tx, [{ pageId, mode: 'exclusive' }]);
     await activePageActor(tx, actorId);
+    const page = await tx.page.findUnique({ where: { id: pageId } });
+    if (!page || page.purgedAt) throw new PagePolicyError('PAGE_NOT_FOUND', 404);
     if (page.ownerId === actorId) throw new PagePolicyError('PAGE_OWNER_MUST_TRANSFER', 409);
     const membershipKey = { pageId_userId: { pageId, userId: actorId } };
     // The Page lock serializes departure with team changes; only a current member may leave.
     const membership = await tx.pageMembership.findUnique({ where: membershipKey, select: { userId: true } });
     if (!membership) throw new PagePolicyError('PAGE_PERMISSION_DENIED', 403);
-    await tx.pageMembership.delete({ where: membershipKey });
-    await revokeIneligibleInvitations(tx,pageId,actorId,null);
-    await tx.pageOwnershipTransfer.updateMany({ where: { pageId, recipientId: actorId, status: 'PENDING' }, data: { status: 'WITHDRAWN', decidedAt: new Date() } });
-    await pageAudit(tx, pageId, actorId, 'MEMBER_LEFT');
-    await refreshPageSafety(tx, pageId);
+    // The signed member may remove only self. Departure also removes Draft
+    // SELECT rights, so pending grants/audit/safety finish atomically in the RPC.
+    try {
+      const [result] = await tx.$queryRaw<Array<{ left: boolean }>>`SELECT public.socialinsight_leave_page_team(${pageId}) AS left`;
+      if (result?.left !== true) throw new PagePolicyError('PAGE_PERMISSION_DENIED',403);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2010'
+          && String(error.meta?.code) === '42501') throw new PagePolicyError('PAGE_PERMISSION_DENIED',403);
+      throw error;
+    }
     return { left: true };
   });
 }
@@ -180,30 +187,32 @@ export async function respondPageTransfer(transferId: string, actorId: string, a
   return pageTransaction(async tx => {
     const initial = await tx.pageOwnershipTransfer.findUnique({ where: { id: transferId } });
     if (!initial) throw new PagePolicyError('PAGE_TRANSFER_NOT_FOUND', 404);
+    if (action !== 'withdraw') {
+      if (initial.recipientId !== actorId) throw new PagePolicyError('PAGE_TRANSFER_NOT_FOUND',404);
+      await coordinatePageLocks(tx,[{pageId:initial.pageId,mode:'exclusive'}]);
+      await activePageActor(tx,actorId,true);
+      const transfer = await tx.pageOwnershipTransfer.findUniqueOrThrow({where:{id:transferId}});
+      if (transfer.status !== 'PENDING' || transfer.expiresAt <= new Date()) throw new PagePolicyError('PAGE_TRANSFER_EXPIRED',409);
+      if (action === 'accept') await activePageActor(tx,transfer.senderId,true);
+      try {
+        const [decision] = await tx.$queryRaw<Array<{page_id:string;decided_status:string}>>`
+          SELECT * FROM public.socialinsight_decide_page_transfer(${transferId},${action})`;
+        const status=action==='accept'?'ACCEPTED':'REJECTED';
+        if (!decision || decision.page_id!==transfer.pageId || decision.decided_status!==status) throw new PagePolicyError('PAGE_TRANSFER_REVOKED',409);
+        return {status,pageId:decision.page_id};
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code==='P2010'
+            && String(error.meta?.code)==='42501') throw new PagePolicyError('PAGE_TRANSFER_REVOKED',409);
+        throw error;
+      }
+    }
     const page = await lockPage(tx, initial.pageId);
     await activePageActor(tx, actorId, true);
     const transfer = await tx.pageOwnershipTransfer.findUniqueOrThrow({ where: { id: transferId } });
-    if ((action === 'withdraw' && actorId !== page.ownerId) ||
-        (action !== 'withdraw' && transfer.recipientId !== actorId)) throw new PagePolicyError('PAGE_TRANSFER_NOT_FOUND', 404);
+    if (actorId !== page.ownerId) throw new PagePolicyError('PAGE_TRANSFER_NOT_FOUND', 404);
     if (transfer.status !== 'PENDING' || transfer.expiresAt <= new Date()) throw new PagePolicyError('PAGE_TRANSFER_EXPIRED', 409);
-    if (action === 'accept') {
-      await tx.$queryRaw`SELECT id FROM users WHERE id = ${actorId} FOR UPDATE`;
-      if (await tx.page.count({where:{ownerId:actorId,purgedAt:null}}) >= PAGE_POLICY.ownedPageLimit) throw new PagePolicyError('PAGE_OWNED_LIMIT',409);
-      if (page.ownerId !== transfer.senderId || page.deletionRequestedAt) throw new PagePolicyError('PAGE_TRANSFER_REVOKED', 409);
-      await activePageActor(tx, transfer.senderId, true);
-      await assertTeamUnblocked(tx, page.id, transfer.senderId, actorId);
-      if (!await pageRole(tx, page, actorId)) throw new PagePolicyError('PAGE_TRANSFER_TEAM_MEMBER_REQUIRED', 409);
-      const [accepted] = await tx.$queryRaw<Array<{ page_id: string; accepted_role: string }>>`
-        SELECT * FROM public.socialinsight_accept_page_transfer(${transferId})`;
-      if (!accepted || accepted.page_id !== page.id || accepted.accepted_role !== 'OWNER') {
-        throw new PagePolicyError('PAGE_TRANSFER_REVOKED', 409);
-      }
-      await revokeIneligibleInvitations(tx,page.id,transfer.senderId,'ADMIN');
-    }
-    const status = { accept: 'ACCEPTED', reject: 'REJECTED', withdraw: 'WITHDRAWN' }[action];
-    if (action !== 'accept') {
-      await tx.pageOwnershipTransfer.update({ where: { id: transferId }, data: { status, decidedAt: new Date() } });
-    }
+    const status = 'WITHDRAWN';
+    await tx.pageOwnershipTransfer.update({ where: { id: transferId }, data: { status, decidedAt: new Date() } });
     await pageAudit(tx, page.id, actorId, `OWNERSHIP_TRANSFER_${status}`, transferId);
     for (const recipientId of new Set([transfer.senderId, transfer.recipientId])) {
       await enqueuePageEvent(tx, page.id, recipientId, `PAGE_TRANSFER_${status}`, page.id, `${transferId}:${status}:${recipientId}`);

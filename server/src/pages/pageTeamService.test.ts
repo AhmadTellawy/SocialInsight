@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import prisma from '../prisma';
 import { Prisma } from '@prisma/client';
-import { leavePageTeam, respondPageInvitation } from './pageTeamService';
+import { leavePageTeam, respondPageInvitation, respondPageTransfer } from './pageTeamService';
 
 function fixture(options: { member?: boolean; revokeOnLock?: boolean; inactive?: boolean; auditFails?: boolean } = {}) {
   const events: string[] = [];
@@ -17,11 +17,12 @@ function fixture(options: { member?: boolean; revokeOnLock?: boolean; inactive?:
         const sql = Array.isArray(query) ? query.join('?') : query?.strings?.join('?') || String(query);
         if (sql.includes('pg_try_advisory_xact_lock')) return [{ locked: true }];
         if (sql.includes('pg_advisory_xact_lock')) { events.push('page-advisory'); return []; }
-        if (sql.includes('"Page"')) {
-          assert.ok(sql.endsWith('FOR UPDATE')); events.push('page-lock');
-          // Models a team removal committed before this request acquired the Page lock.
-          if (options.revokeOnLock) stored.member = pending.member = false;
-          return [page];
+        if (sql.includes('socialinsight_leave_page_team')) {
+          events.push('leave-rpc');
+          assert.ok(pending.member);
+          pending.member=false;pending.invitation='WITHDRAWN';pending.transfer='WITHDRAWN';
+          if(options.auditFails)throw new Error('audit unavailable');
+          pending.audits++;return [{left:true}];
         } else {
           assert.ok(sql.endsWith('FOR SHARE')); events.push('actor-lock'); events.push('actor-read');
           return [{ id: 'member', status: options.inactive ? 'SUSPENDED' : 'ACTIVE', emailVerifiedAt: null }];
@@ -29,7 +30,7 @@ function fixture(options: { member?: boolean; revokeOnLock?: boolean; inactive?:
       },
       user: { findUnique: async () => { throw new Error('Actor lock must return its current row without a second fetch'); } },
       page: {
-        findUnique: async () => { throw new Error('Page lock must return its current row without a second fetch'); },
+        findUnique: async () => { events.push('page-read'); if(options.revokeOnLock)stored.member=pending.member=false;return page; },
         findUniqueOrThrow: async () => { events.push('safety'); return { ...page, owner: { status: 'ACTIVE' } }; },
       },
       pageMembership: {
@@ -61,7 +62,7 @@ test('Team outsider is denied before membership, invitation, transfer, audit or 
     (prisma as any).$transaction = f.transaction; const before = f.state();
     await assert.rejects(leavePageTeam('page', 'member'), { code: 'PAGE_PERMISSION_DENIED', status: 403 });
     assert.deepEqual(f.state(), before);
-    assert.deepEqual(f.events, ['page-advisory', 'page-lock', 'actor-lock', 'actor-read', 'membership-read']);
+    assert.deepEqual(f.events, ['page-advisory', 'actor-lock', 'actor-read', 'page-read', 'membership-read']);
   } finally { prisma.$transaction = original; }
 });
 
@@ -71,10 +72,10 @@ test('Current team member leaves once, withdraws own pending grants and creates 
     (prisma as any).$transaction = f.transaction;
     assert.deepEqual(await leavePageTeam('page', 'member'), { left: true });
     assert.deepEqual(f.state(), { member: false, invitation: 'WITHDRAWN', transfer: 'WITHDRAWN', audits: 1 });
-    assert.deepEqual(f.events, ['page-advisory', 'page-lock', 'actor-lock', 'actor-read', 'membership-read', 'membership-delete', 'invitation-withdraw', 'transfer-withdraw', 'audit', 'safety']);
+    assert.deepEqual(f.events, ['page-advisory', 'actor-lock', 'actor-read', 'page-read', 'membership-read', 'leave-rpc']);
     const after = f.state(); f.events.length = 0;
     await assert.rejects(leavePageTeam('page', 'member'), { code: 'PAGE_PERMISSION_DENIED', status: 403 });
-    assert.deepEqual(f.state(), after); assert.deepEqual(f.events, ['page-advisory', 'page-lock', 'actor-lock', 'actor-read', 'membership-read']);
+    assert.deepEqual(f.state(), after); assert.deepEqual(f.events, ['page-advisory', 'actor-lock', 'actor-read', 'page-read', 'membership-read']);
   } finally { prisma.$transaction = original; }
 });
 
@@ -84,7 +85,7 @@ test('Membership removed before Page lock acquisition cannot create a false leav
     (prisma as any).$transaction = f.transaction;
     await assert.rejects(leavePageTeam('page', 'member'), { code: 'PAGE_PERMISSION_DENIED', status: 403 });
     assert.deepEqual(f.state(), { member: false, invitation: 'PENDING', transfer: 'PENDING', audits: 0 });
-    assert.deepEqual(f.events, ['page-advisory', 'page-lock', 'actor-lock', 'actor-read', 'membership-read']);
+    assert.deepEqual(f.events, ['page-advisory', 'actor-lock', 'actor-read', 'page-read', 'membership-read']);
   } finally { prisma.$transaction = original; }
 });
 
@@ -96,7 +97,7 @@ test('Owner transfer requirement and inactive actor denial remain before members
       await assert.rejects(leavePageTeam('page', inactive ? 'member' : 'owner'), {
         code: inactive ? 'PAGE_ACTIVE_ACCOUNT_REQUIRED' : 'PAGE_OWNER_MUST_TRANSFER', status: inactive ? 401 : 409,
       });
-      assert.deepEqual(f.state(), before); assert.deepEqual(f.events, ['page-advisory', 'page-lock', 'actor-lock', 'actor-read']);
+      assert.deepEqual(f.state(), before); assert.deepEqual(f.events, inactive ? ['page-advisory', 'actor-lock', 'actor-read'] : ['page-advisory', 'actor-lock', 'actor-read', 'page-read']);
     }
   } finally { prisma.$transaction = original; }
 });
@@ -194,4 +195,26 @@ test('Database revalidation denial maps to recoverable invitation conflict, not 
     await assert.rejects(respondPageInvitation('invitation','recipient','accept'),{code:'PAGE_INVITATION_REVOKED',status:409});
     assert.deepEqual(f.state(),before);
   }finally{prisma.$transaction=original;}
+});
+
+test('Transfer recipient decisions reuse signed coordination without borrowing Page UPDATE', async () => {
+  const original=prisma.$transaction;
+  try {for(const action of ['accept','reject'] as const){
+    const events:string[]=[];
+    const transfer={pageId:'draft-page',recipientId:'recipient',senderId:'sender',status:'PENDING',expiresAt:new Date(Date.now()+60000)};
+    const tx:any={pageOwnershipTransfer:{findUnique:async()=>transfer,findUniqueOrThrow:async()=>transfer},
+      $queryRaw:async(query:any,...values:any[])=>{
+        const sql=Array.isArray(query)?query.join('?'):query.strings.join('?');
+        if(sql.includes('pg_try_advisory'))return [{locked:true}];
+        if(sql.includes('pg_advisory')){events.push('coordination');return [];}
+        if(sql.includes('FROM users'))return [{status:'ACTIVE',emailVerifiedAt:new Date()}];
+        if(sql.includes('socialinsight_decide_page_transfer')){assert.deepEqual(values,['transfer',action]);events.push('decision');return [{page_id:'draft-page',decided_status:action==='accept'?'ACCEPTED':'REJECTED'}];}
+        throw new Error('Unexpected Page UPDATE requirement');
+      }};
+    (prisma as any).$transaction=async(work:any)=>work(tx);
+    assert.deepEqual(await respondPageTransfer('transfer','recipient',action),{status:action==='accept'?'ACCEPTED':'REJECTED',pageId:'draft-page'});
+    assert.deepEqual(events,['coordination','decision']);events.length=0;
+    await assert.rejects(respondPageTransfer('transfer','stranger',action),{code:'PAGE_TRANSFER_NOT_FOUND',status:404});
+    assert.deepEqual(events,[]);
+  }}finally{prisma.$transaction=original;}
 });

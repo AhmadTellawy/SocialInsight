@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { hasPageCapability, PagePolicyError } from './pagePolicy';
-import { activePageActor, lockPage, pageTransaction, requirePageCapability } from './pageService';
+import { activePageActor, lockPageForInteraction, pageTransaction, requirePageCapability } from './pageService';
 import { attachPagePublishers } from './pagePostService';
 import { POST_MEDIA_INCLUDE } from '../services/mediaService';
 import { withoutCopiedPageText } from './pageShareCopy';
@@ -13,7 +13,7 @@ export async function pageContent(pageId:string,viewerId:string,options:{postId?
   return pageTransaction(async tx=>{
   // Keep the fresh role and private content read behind the same Page lock.
   // Revocation and suspension writers cannot commit between them.
-  const page=await lockPage(tx,pageId);
+  const page=await lockPageForInteraction(tx,pageId);
   await activePageActor(tx,viewerId);
   const role=await requirePageCapability(tx,page,viewerId,'analytics');
   if(role==='ANALYST'&&options.status==='DRAFT')throw new PagePolicyError('PAGE_PERMISSION_DENIED',403);

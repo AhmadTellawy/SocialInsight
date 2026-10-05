@@ -255,6 +255,13 @@ async function main() {
 
     const draftPage = expectStatus(await actors.owner.client.request('/pages', 'POST', { requestId: crypto.randomUUID(),
       name: 'RC3 Draft Matrix', handle: `rc3draft${crypto.randomBytes(4).toString('hex')}`, category: 'company', bio: 'draft matrix', representationConfirmed: true }), [201], 'create draft page').body;
+    if (process.env.SI_PAGES_ROLE_BATCH === '1') {
+      report.kind = 'PAGES_BOUNDED_ROLE_HTTP_POSTGRES_MATRIX';
+      report.source.workingTree = cp.execFileSync('git', ['status', '--porcelain'], { cwd: checkout, encoding: 'utf8' }).trim() ? 'DIRTY' : 'CLEAN';
+      report.source.diffSha256 = crypto.createHash('sha256').update(cp.execFileSync('git', ['diff', 'HEAD'], { cwd: checkout })).digest('hex');
+      await require('./pages-role-http-matrix.cjs')({ actors, draftPage, admin, observer, signedProbe, report, save, postPayload, fixturePassword, BrowserClient, apiOrigin, clients });
+      return;
+    }
     // Live CP89 exposed a missing API/RLS boundary: direct fixture membership
     // seeding never exercises an unprivileged recipient's Draft acceptance.
     const invitationChecks = [];
@@ -273,6 +280,9 @@ async function main() {
       assert.equal((await admin.pageMembership.findUnique({ where: { pageId_userId: { pageId: draftPage.id, userId: actors[actor].id } } })).role, role);
       assert.equal(await admin.pageAuditEvent.count({ where: { pageId: draftPage.id, targetId: invitation.id, action: 'INVITATION_ACCEPTED' } }), 1);
       assert.equal(await admin.pageEvent.count({ where: { dedupeKey: `${invitation.id}:ACCEPTED` } }), 1);
+      expectStatus(await actors[actor].client.request(`/pages/manage/${draftPage.id}`),[200],`${role} actual managed Page read`);
+      expectStatus(await actors[actor].client.request(`/pages/manage/${draftPage.id}/content?status=DRAFT`),role==='ANALYST'?[403]:[200],`${role} Draft content read boundary`);
+      expectStatus(await actors[actor].client.request(`/pages/manage/${draftPage.id}/analytics`),[200],`${role} analytics read boundary`);
       const acceptedPage=await admin.page.findUniqueOrThrow({where:{id:draftPage.id}});
       assert.equal(acceptedPage.safetyHiddenAt,null);assert.equal(acceptedPage.publicationState,'DRAFT');assert.equal(acceptedPage.ownerId,actors.owner.id);assert.equal(acceptedPage.platformState,actor==='admin'?'SUSPENDED':'NONE');
       assert.equal((await observer.query('SELECT count(*)::int AS n FROM public.socialinsight_page_transition_admissions WHERE page_id=$1',[draftPage.id])).rows[0].n,0);
@@ -693,6 +703,6 @@ async function main() {
   }
 }
 
-main().then(() => { report.status = report.checks.every(check => check.pass) ? 'PASS' : 'FAIL'; })
+main().then(() => { report.status = report.checks.every(check => check.pass) ? 'PASS' : 'FAIL'; if (report.status === 'FAIL') process.exitCode = 1; })
   .catch(error => { report.status = 'FAIL'; report.failure = { ...safeError(error), detail: String(error?.detail || '').slice(0, 1000) }; process.exitCode = 1; })
   .finally(() => { report.finishedAt = new Date().toISOString(); save(); process.stdout.write(`${JSON.stringify({ status: report.status, receipt: receiptPath })}\n`); });

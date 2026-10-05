@@ -20,7 +20,7 @@ import { buildVisiblePublishedPostWhere } from '../services/postVisibilityServic
 import { hasPageCapability, mayManagePageRole, PageRole } from './pagePolicy';
 import { getPageManagedPostResults } from '../controllers/postController';
 import { pageRole } from './pageService';
-import { lockPage, requirePageCapability, PageTx } from './pageService';
+import { lockPageForInteraction, requirePageCapability, PageTx } from './pageService';
 import { pageFollowerCounts } from './pageService';
 import { PageCapability } from './pagePolicy';
 import { MediaValidationError } from '../services/mediaProcessor';
@@ -40,7 +40,9 @@ const handle = (fn: (req: Request, res: Response) => Promise<unknown>) =>
   };
 const managedRead = <T>(pageId: string, actorId: string, capability: PageCapability,
   work: (tx: PageTx, role: PageRole) => Promise<T>) => pageTransaction(async tx => {
-    const page = await lockPage(tx, pageId);
+    // Management reads need SELECT, not Page UPDATE authority. A shared
+    // canonical advisory lock still excludes lifecycle/team revocation writers.
+    const page = await lockPageForInteraction(tx, pageId);
     const role = await requirePageCapability(tx, page, actorId, capability);
     return work(tx, role);
   }, 'ReadCommitted');

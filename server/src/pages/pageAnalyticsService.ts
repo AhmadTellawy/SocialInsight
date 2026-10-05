@@ -1,15 +1,16 @@
-import prisma from '../prisma';
 import { PagePolicyError } from './pagePolicy';
 import { pageCsvCell } from './pageValidation';
-import { requirePageCapability } from './pageService';
+import { activePageActor, lockPageForInteraction, pageTransaction, requirePageCapability } from './pageService';
 
 export async function getPageAnalytics(pageId: string, userId: string, days: 7 | 30, exporting = false) {
-  return prisma.$transaction(async tx => {
-    // Team changes take the same Page row lock. Keep authorization and the
-    // aggregate snapshot before any subsequent revocation can complete.
-    await tx.$queryRaw`SELECT id FROM "Page" WHERE id = ${pageId} FOR UPDATE`;
-    const page = await tx.page.findUnique({ where: { id: pageId } });
+  // Reuse the route's signed transaction. Calling the singleton $transaction
+  // inside an active Page transaction resolves to an absent tx method.
+  return pageTransaction(async tx => {
+    // Shared canonical coordination excludes role/lifecycle writers without
+    // requiring UPDATE permission for editor/analyst read-only journeys.
+    const page = await lockPageForInteraction(tx, pageId);
     if (!page || page.purgedAt) throw new PagePolicyError('PAGE_NOT_FOUND',404);
+    await activePageActor(tx,userId);
     await requirePageCapability(tx,page,userId,exporting ? 'export' : 'analytics');
     const from = new Date(Date.now() - days * 86400000);
     const [followers, posts, participation, growth] = await Promise.all([
@@ -20,12 +21,12 @@ export async function getPageAnalytics(pageId: string, userId: string, days: 7 |
           count(DISTINCT coalesce('user:' || r."userId",'guest:' || r."guestId",'response:' || r.id))::bigint AS "uniqueParticipants"
         FROM "Response" r JOIN "Post" p ON p.id=r."postId"
         WHERE p."pageId"=${pageId} AND p."isDeleted"=false AND p.status='PUBLISHED' AND r.timestamp>=${from}`,
-      tx.$queryRaw<Array<{ delta:bigint }>>`SELECT coalesce(sum((data->>'delta')::integer),0)::bigint AS delta
-        FROM "PageAuditEvent" WHERE "pageId"=${pageId} AND action='FOLLOW_CHANGED' AND "createdAt">=${from}`,
+      // Analytics grants aggregates, never another actor's private audit rows.
+      tx.$queryRaw<Array<{ delta:bigint }>>`SELECT public.socialinsight_page_follower_change(${pageId},${days}::integer) AS delta`,
     ]);
     return { days, from:from.toISOString(), generatedAt:new Date().toISOString(), followers, followerChange:Number(growth[0].delta),
       posts, responses:Number(participation[0].responses), uniqueParticipants:Number(participation[0].uniqueParticipants) };
-  });
+  },'ReadCommitted');
 }
 
 export function pageAnalyticsCsv(stats: Awaited<ReturnType<typeof getPageAnalytics>>, language:'ar'|'en') {

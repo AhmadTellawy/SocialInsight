@@ -1,4 +1,4 @@
-import { activePageActor, lockPage, lockPagesForShare, pageAudit, pageIsBlocked, pageTransaction, requirePageCapability, withPageCoordinationAdmission } from '../pages/pageService';
+import { activePageActor, lockPage, lockPageForInteraction, lockPagesForShare, pageAudit, pageIsBlocked, pageTransaction, requirePageCapability, withPageCoordinationAdmission } from '../pages/pageService';
 import { pagePostReplay, pagePostRequestKey, recordPagePostCreation } from '../pages/pagePostReplay';
 import { assertPagesEnabled, pageDiscoveryPostWhere } from '../pages/pageFeature';
 import { notifyPagePostInteraction } from '../pages/pageNotificationService';
@@ -1415,7 +1415,7 @@ export const updatePost = async (req: Request, res: Response) => {
         try {
             transactionResult = await prisma.$transaction(async (tx) => {
                 if (existingPost.pageId) {
-                    await lockPage(tx, existingPost.pageId);
+                    await lockPageForInteraction(tx, existingPost.pageId);
                     const current = await tx.post.findUnique({where:{id},select:{pageId:true,status:true,isDeleted:true,createdAt:true,responseCount:true}});
                     if (!current || current.isDeleted || current.pageId!==existingPost.pageId) throw new PagePolicyError('PAGE_POST_UNAVAILABLE',404);
                     await authorizePagePublisher(tx,existingPost.pageId,trustedUserId,{...data,status:finalStatus,targetGroups:effectiveTargetGroups},current.status==='DRAFT');
@@ -1565,6 +1565,9 @@ export const updatePost = async (req: Request, res: Response) => {
                         include: { questions: { orderBy: { order: 'asc' }, include: { options: { orderBy: { order: 'asc' } } } } }
                     })
                     : [];
+                // Draft Page identity is not publicly selectable after commit.
+                // Hydrate while this signed transaction still holds its locks.
+                if (existingPost.pageId) await attachPagePublishers([post], trustedUserId, tx);
                 return {
                     post,
                     finalOptions,
@@ -1632,7 +1635,7 @@ export const updatePost = async (req: Request, res: Response) => {
             targetGroups: mapTargetGroups(post)
         };
 
-        await attachPagePublishers([mappedPost],trustedUserId);
+        if (!existingPost.pageId) await attachPagePublishers([mappedPost],trustedUserId);
         res.json(mappedPost);
     } catch (error) {
         if (respondPagePostError(error,res)) return;
@@ -3640,7 +3643,9 @@ export const deletePost = async (req: Request, res: Response) => {
             res.status(404).json({ error: 'Post not found' });
             return;
         }
-        if (post.pageId ? !await hasPostPageCapability(post.pageId,userId,'manageContent') : post.authorId !== userId) {
+        // Page authority is rechecked below on the signed transaction. A
+        // pooled read here has no SET LOCAL identity and loses memberships.
+        if (!post.pageId && post.authorId !== userId) {
             res.status(403).json({ error: 'Unauthorized to delete this post' });
             return;
         }
