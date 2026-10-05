@@ -1,3 +1,6 @@
+import { clearInteractions } from './utils/interactionCache';
+import { useEffect } from 'react';
+import { readResume, saveResume, clearResume, restoreScroll } from './utils/appResume';
 
 import { Analytics } from './utils/analytics';
 import React, { useState, useRef, useMemo } from 'react';
@@ -52,7 +55,7 @@ const HashtagTopicScreen = React.lazy(() => import('./components/HashtagTopicScr
 const DeferredScreenFallback = () => (
   <div className="min-h-screen bg-gray-100/50 flex items-center justify-center">
     <div className="w-full max-w-md h-[100dvh] max-h-screen bg-white flex flex-col items-center justify-center px-8">
-      <div className="w-16 h-16 rounded-full bg-gray-200 animate-pulse mb-5" />
+      <img src="/logo.png" alt="OpiniUp" className="w-16 h-16 object-contain mb-5" />
       <div className="w-40 h-4 rounded-full bg-gray-200 animate-pulse mb-3" />
       <div className="w-28 h-3 rounded-full bg-gray-100 animate-pulse" />
     </div>
@@ -165,6 +168,13 @@ const App: React.FC = () => {
   const userProfileIdRef = useRef<string | undefined>(undefined);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authBootstrapped, setAuthBootstrapped] = useState(false);
+  const [feedError, setFeedError] = useState(false);
+  const [resumeChecking, setResumeChecking] = useState(false);
+  const [resumeError, setResumeError] = useState(false);
+  const [resumeRevision, setResumeRevision] = useState(0);
+  const resumeRef = useRef<(() => Promise<void>) | null>(null);
+  const resumeInFlight = useRef(false);
+  const likePending = useRef(new Set<string>());
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalType, setAuthModalType] = useState<'flow' | 'login'>('flow');
   const [authRecoveryMessage, setAuthRecoveryMessage] = useState<string | null>(null);
@@ -223,6 +233,7 @@ const App: React.FC = () => {
   };
 
   const resetViewerState = (preservePendingAnalytics = false) => {
+    clearInteractions();
     if (!preservePendingAnalytics) Analytics.setActor(null);
     const previousUserId = userProfileIdRef.current || readMediaSafeJson<UserProfile>('si_user')?.id;
     feedRequestRef.current?.controller.abort();
@@ -265,6 +276,7 @@ const App: React.FC = () => {
   };
 
   const clearAuthenticatedState = () => {
+    clearResume();
     resetViewerState();
     clearSessionMetadata();
     setIsAuthenticated(false);
@@ -411,10 +423,23 @@ const App: React.FC = () => {
   const loadMoreAbortRef = useRef<AbortController | null>(null);
   const profileLoadMoreAbortRef = useRef<AbortController | null>(null);
 
+  const getRestoredSurveys = async (viewer: string | undefined, signal: AbortSignal, count: number, authorId?: string, authorHandle?: string) => {
+    const wanted = Math.max(10, Math.min(1000, count));
+    const options = { signal, timeoutMs: FEED_REQUEST_TIMEOUT_MS, normalize: false };
+    const result = await api.getSurveys(viewer, undefined, Math.min(30, wanted), authorId, authorHandle, options);
+    while (result.nextCursor && result.data.length < wanted && !signal.aborted) {
+      const extra = await api.getSurveys(viewer, result.nextCursor, Math.min(30, wanted - result.data.length), authorId, authorHandle, options);
+      if (!extra.data.length || extra.nextCursor === result.nextCursor) break;
+      result.data.push(...extra.data);
+      result.nextCursor = extra.nextCursor;
+    }
+    return result;
+  };
+
   const fetchData = (
     currentUserId?: string,
     currentUser?: UserProfile | null,
-    options: { force?: boolean } = {}
+    options: { force?: boolean; restoreCount?: number; requireFresh?: boolean } = {}
   ): Promise<void> => {
     const viewerKey = currentUserId ? `user:${currentUserId}` : 'guest';
     const activeRequest = feedRequestRef.current;
@@ -431,31 +456,17 @@ const App: React.FC = () => {
     const controller = new AbortController();
     const requestPromise = (async () => {
       setIsFeedLoading(true);
+      setFeedError(false);
 
       for (let attempt = 0; attempt < FEED_MAX_ATTEMPTS; attempt += 1) {
         try {
-          const res = await api.getSurveys(
-            currentUserId,
-            undefined,
-            10,
-            undefined,
-            undefined,
-            {
-              signal: controller.signal,
-              timeoutMs: FEED_REQUEST_TIMEOUT_MS,
-              normalize: false
-            }
-          );
+          const saved = readResume(currentUserId || 'guest');
+          const count = options.restoreCount || (saved?.path === '/' ? saved.feedLimit : 10);
+          const res = await getRestoredSurveys(currentUserId, controller.signal, count);
           if (controller.signal.aborted) return;
 
           const normalizedSurveys = res.data.map((survey: any) => normalizeSurvey(survey, currentUser));
           if (controller.signal.aborted) return;
-
-          try {
-            writeMediaSafeJson(getFeedCacheKey(currentUserId), normalizedSurveys.slice(0, 10));
-          } catch {
-            console.warn('Failed to cache feed to localStorage due to quota limits');
-          }
 
           if (controller.signal.aborted || feedRequestRef.current?.controller !== controller) return;
           setSurveys(normalizedSurveys);
@@ -466,7 +477,9 @@ const App: React.FC = () => {
 
           const hasAnotherAttempt = attempt + 1 < FEED_MAX_ATTEMPTS;
           if (!hasAnotherAttempt || !shouldRetryFeedRequest(error)) {
-            console.error('Failed to refresh feed; keeping cached data', error);
+            setFeedError(true);
+            console.error('Failed to refresh feed', error);
+            if (options.requireFresh) throw error;
             return;
           }
 
@@ -638,6 +651,8 @@ const App: React.FC = () => {
           Analytics.setActor(session.user.id || null);
           writeMediaSafeJson('si_user', session.user);
           setIsAuthenticated(true);
+          const resume = readResume(session.user.id);
+          if (resume && window.location.pathname === '/' && !oauthStatus && !oauthError) navigate(resume.path, { replace: true });
           setAuthRecoveryMessage(null);
           if (oauthStatus === 'linked' || oauthError) {
             setAccountAccessFeedback({
@@ -654,6 +669,8 @@ const App: React.FC = () => {
           clearSessionMetadata();
           setUserProfile(null);
           setIsAuthenticated(false);
+          const resume = readResume('guest');
+          if (resume && window.location.pathname === '/' && !oauthStatus && !oauthError) navigate(resume.path, { replace: true });
           if (oauthStatus || oauthError) {
             setAuthRecoveryMessage(oauthError
               ? t('auth.oauth.loginFailed')
@@ -933,14 +950,8 @@ const App: React.FC = () => {
         setProfileError(null);
         setSelectedProfile(null);
         setProfileSurveys([]);
-        api.getSurveys(
-          userProfile.id,
-          undefined,
-          10,
-          userProfile.id,
-          undefined,
-          { timeoutMs: FEED_REQUEST_TIMEOUT_MS, normalize: false, signal: controller.signal }
-        ).then(res => {
+        getRestoredSurveys(userProfile.id, controller.signal,
+          readResume(userProfile.id)?.path === path ? readResume(userProfile.id)!.feedLimit : 10, userProfile.id).then(res => {
           if (profileRequestRef.current !== requestId) return;
           const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
           setProfileSurveys(newSurveys);
@@ -979,14 +990,8 @@ const App: React.FC = () => {
         const currentUserId = userProfile?.id || undefined;
         Promise.all([
           api.getUserByHandle(handle, controller.signal),
-          api.getSurveys(
-            currentUserId,
-            undefined,
-            10,
-            undefined,
-            handle,
-            { timeoutMs: FEED_REQUEST_TIMEOUT_MS, normalize: false, signal: controller.signal }
-          )
+          getRestoredSurveys(currentUserId, controller.signal,
+            readResume(currentUserId || 'guest')?.path === path ? readResume(currentUserId || 'guest')!.feedLimit : 10, undefined, handle)
         ]).then(([user, res]) => {
           if (profileRequestRef.current !== requestId) return;
           const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
@@ -1018,14 +1023,8 @@ const App: React.FC = () => {
         const currentUserId = userProfile?.id || undefined;
         Promise.all([
           api.getUser(id, controller.signal),
-          api.getSurveys(
-            currentUserId,
-            undefined,
-            10,
-            id,
-            undefined,
-            { timeoutMs: FEED_REQUEST_TIMEOUT_MS, normalize: false, signal: controller.signal }
-          )
+          getRestoredSurveys(currentUserId, controller.signal,
+            readResume(currentUserId || 'guest')?.path === path ? readResume(currentUserId || 'guest')!.feedLimit : 10, id, undefined)
         ]).then(([user, res]) => {
           if (profileRequestRef.current !== requestId) return;
           const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
@@ -1093,7 +1092,7 @@ const App: React.FC = () => {
       if (activeCreationFlow && !path.startsWith('/create/')) setActiveCreationFlow(null);
       if (accountModalType && !path.startsWith('/create/')) setAccountModalType(null);
     }
-  }, [location.pathname, authBootstrapped, isAuthenticated, userProfile?.id, authModalOpen]);
+  }, [location.pathname, authBootstrapped, isAuthenticated, userProfile?.id, authModalOpen, resumeRevision]);
 
   React.useEffect(() => {
     if (!authBootstrapped) return;
@@ -1125,7 +1124,7 @@ const App: React.FC = () => {
         if (groupRequestRef.current === requestId) setIsGroupLoading(false);
       });
     return () => controller.abort();
-  }, [authBootstrapped, selectedGroupId]);
+  }, [authBootstrapped, selectedGroupId, resumeRevision]);
 
   React.useEffect(() => {
     if (!authBootstrapped) return;
@@ -1163,7 +1162,7 @@ const App: React.FC = () => {
         if (detailRequestRef.current === requestId) setIsDetailLoading(false);
       });
     return () => controller.abort();
-  }, [authBootstrapped, selectedSurveyId, userProfile?.id]);
+  }, [authBootstrapped, selectedSurveyId, userProfile?.id, resumeRevision]);
 
   const pullToRefreshRef = useRef<PullToRefreshHandle>(null);
 
@@ -1619,37 +1618,27 @@ const App: React.FC = () => {
     );
   };
 
-  const handleLikePost = (surveyId: string, isLiked: boolean) => {
-    const previousSurveys = [...surveys];
-    setSurveys(prev => prev.map(s => {
-      const isDirect = s.id === surveyId;
-      const isShared = s.sharedFrom?.id === surveyId;
-      if (!isDirect && !isShared) return s;
-
-      const applyLike = (target: any) => ({
-        ...target,
-        isLiked,
-        likes: isLiked ? (target.likes || 0) + 1 : Math.max(0, (target.likes || 1) - 1)
-      });
-
-      if (isDirect) {
-        return applyLike(s);
-      } else {
-        return {
-          ...s,
-          sharedFrom: applyLike(s.sharedFrom)
-        };
-      }
-    }));
-
-    // Server Call with Rollback
-    if (userProfile?.id) {
-      api.likeSurvey(surveyId)
-        .catch(error => {
-          console.error("Failed to like post, rolling back:", error);
-          setSurveys(previousSurveys);
-        });
-    }
+  const handleLikePost = async (surveyId: string, isLiked: boolean) => {
+    if (!userProfile?.id || likePending.current.has(surveyId)) return;
+    const viewer = userProfile.id;
+    likePending.current.add(surveyId);
+    const update = (liked: boolean, count?: number) => {
+      const apply = (post: Survey): Survey => {
+        if (post.id === surveyId) return { ...post, isLiked: liked, likes: count ?? Math.max(0, (post.likes || 0) + (post.isLiked === liked ? 0 : liked ? 1 : -1)) };
+        return post.sharedFrom?.id === surveyId ? { ...post, sharedFrom: apply(post.sharedFrom) } : post;
+      };
+      setSurveys(posts => posts.map(apply));
+      setProfileSurveys(posts => posts.map(apply));
+      setDetailSurvey(post => post ? apply(post) : post);
+    };
+    update(isLiked);
+    try {
+      const result = await api.likeSurvey(surveyId);
+      if (userProfileIdRef.current === viewer) update(result.isLiked ?? isLiked, result.likes);
+    } catch (error) {
+      if (userProfileIdRef.current === viewer) update(!isLiked);
+      throw error;
+    } finally { likePending.current.delete(surveyId); }
   };
 
   const getActiveCreationFlow = (type: string): 'survey' | 'poll' | 'quiz' | 'challenge' | null => {
@@ -1778,6 +1767,57 @@ const App: React.FC = () => {
     }
   };
 
+  // Persist navigation coordinates only. Content is fetched after session validation.
+  const savePosition = () => {
+    if (!authBootstrapped) return;
+    const container = document.querySelector<HTMLElement>('[data-app-scroll]');
+    const bounds = container?.getBoundingClientRect();
+    const anchor = bounds && Array.from(container!.querySelectorAll<HTMLElement>('[data-post-id]')).find(el => el.getBoundingClientRect().bottom > bounds.top);
+    saveResume(userProfile?.id || 'guest', window.location.pathname, container?.scrollTop || 0,
+      selectedProfile ? profileSurveys.length : surveys.length,
+      anchor ? { id: anchor.dataset.postId!, offset: anchor.getBoundingClientRect().top - bounds!.top } : undefined);
+  };
+  const savePositionRef = useRef(savePosition);
+  savePositionRef.current = savePosition;
+  resumeRef.current = async () => {
+    if (!authBootstrapped || resumeInFlight.current) return;
+    resumeInFlight.current = true;
+    const previousViewer = userProfileIdRef.current;
+    setResumeChecking(true);
+    setResumeError(false);
+    try {
+      const session = await api.getSession({ timeoutMs: 15_000, retryOnce: false });
+      if (previousViewer !== userProfileIdRef.current) return;
+      if ((session?.user?.id || null) !== (userProfile?.id || null)) {
+        clearInteractions(); clearResume();
+        if (session?.user) handleAuthSuccess(session); else clearAuthenticatedState();
+        return;
+      }
+      clearInteractions();
+      window.dispatchEvent(new Event('opiniup:resume'));
+      setResumeRevision(value => value + 1);
+      await fetchData(userProfile?.id, userProfile, { force: true, restoreCount: surveys.length, requireFresh: true });
+    } catch { setResumeError(true); }
+    finally { resumeInFlight.current = false; setResumeChecking(false); }
+  };
+  useEffect(() => {
+    let hidden = document.hidden;
+    const visibility = () => {
+      if (document.hidden) { hidden = true; savePositionRef.current(); }
+      else if (hidden) { hidden = false; void resumeRef.current?.(); }
+    };
+    const pagehide = () => savePositionRef.current();
+    const pageshow = (event: PageTransitionEvent) => { if (event.persisted) void resumeRef.current?.(); };
+    document.addEventListener('visibilitychange', visibility);
+    window.addEventListener('pagehide', pagehide);
+    window.addEventListener('pageshow', pageshow);
+    return () => { document.removeEventListener('visibilitychange', visibility); window.removeEventListener('pagehide', pagehide); window.removeEventListener('pageshow', pageshow); };
+  }, []);
+  useEffect(() => {
+    if (!authBootstrapped || isFeedLoading || isProfileLoading || isGroupLoading || isDetailLoading) return;
+    return restoreScroll(readResume(userProfile?.id || 'guest'));
+  }, [authBootstrapped, isFeedLoading, isProfileLoading, isGroupLoading, isDetailLoading, location.pathname, resumeRevision]);
+
   const unreadNotificationsCount = notifications.filter(n => !n.isRead).length;
 
   const activeGroup = externalGroup || userGroups.find(g => g.id === selectedGroupId);
@@ -1837,68 +1877,7 @@ const App: React.FC = () => {
     }
   }, [detailTab, selectedSurvey, canSeeAnalysis]);
 
-  React.useEffect(() => {
-    let startX: number | null = null;
-    let startY: number | null = null;
 
-    const handleTouchStart = (e: TouchEvent) => {
-      if (e.touches.length === 1) {
-        startX = e.touches[0].clientX;
-        startY = e.touches[0].clientY;
-      }
-    };
-
-    const handleTouchMove = (e: TouchEvent) => {
-      if (startX === null || startY === null) return;
-
-      // If swipe started from the very edge (iOS Safari / PWA back gesture zone)
-      if (startX < 40 || startX > window.innerWidth - 40) {
-        const diffX = e.touches[0].clientX - startX;
-        const diffY = e.touches[0].clientY - startY;
-
-        // If it's a primarily horizontal swipe, aggressively prevent browser traversal
-        if (Math.abs(diffX) > Math.abs(diffY)) {
-          if (e.cancelable) {
-            e.preventDefault();
-          }
-        }
-      }
-    };
-
-    const handleTouchEnd = (e: TouchEvent) => {
-      if (startX === null || startY === null) return;
-
-      if (startX < 40 || startX > window.innerWidth - 40) {
-        const endX = e.changedTouches[0].clientX;
-        const endY = e.changedTouches[0].clientY;
-        const diffX = endX - startX;
-        const diffY = endY - startY;
-
-        if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
-          if (selectedSurveyId || selectedProfile || selectedGroupId) {
-            setSelectedSurveyId(null);
-            setSelectedProfile(null);
-            setSelectedGroupId(null);
-          } else if (activeTab === 'home') {
-            if (pullToRefreshRef.current) pullToRefreshRef.current.triggerRefresh();
-          }
-        }
-      }
-      startX = null;
-      startY = null;
-    };
-
-    document.addEventListener('touchstart', handleTouchStart, { passive: true });
-    // IMPORTANT: passive: false is REQUIRED to stop iOS/Android from closing the PWA tab!
-    document.addEventListener('touchmove', handleTouchMove, { passive: false });
-    document.addEventListener('touchend', handleTouchEnd);
-
-    return () => {
-      document.removeEventListener('touchstart', handleTouchStart);
-      document.removeEventListener('touchmove', handleTouchMove);
-      document.removeEventListener('touchend', handleTouchEnd);
-    };
-  }, [selectedSurveyId, selectedProfile, selectedGroupId, activeTab]);
 
   return (
     <SocketProvider user={userProfile}>
@@ -1919,11 +1898,11 @@ const App: React.FC = () => {
       <div className="min-h-screen bg-gray-100/50 flex justify-center items-center">
         <div className="w-full max-w-md bg-white h-[100dvh] max-h-screen relative shadow-2xl overflow-hidden flex flex-col">
 
-          {!authBootstrapped ? (
+          {(resumeChecking || resumeError) && <div className="fixed inset-0 z-[200] bg-white flex flex-col items-center justify-center" role="status"><p>{resumeError ? t('appState.resumeFailed') : t('appState.resuming')}</p>{resumeError && <button onClick={() => void resumeRef.current?.()} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-xl">{t('Retry')}</button>}</div>}
+          {!authBootstrapped || (location.pathname === '/' && isFeedLoading && surveys.length === 0) ? (
             <div className="flex-1 flex flex-col items-center justify-center bg-white px-8">
-              <div className="w-16 h-16 rounded-full bg-gray-200 animate-pulse mb-5" />
-              <div className="w-40 h-4 rounded-full bg-gray-200 animate-pulse mb-3" />
-              <div className="w-28 h-3 rounded-full bg-gray-100 animate-pulse" />
+              <img src="/logo.png" alt="OpiniUp" className="w-16 h-16 object-contain mb-5" />
+              <p role="status" className="text-sm text-gray-500">{t('appState.starting')}</p>
             </div>
           ) : showUsersTable ? (
             <UsersTableScreen onBack={() => setShowUsersTable(false)} onUserClick={(u) => { setShowUsersTable(false); setSelectedProfile({ id: u.id, name: u.name, avatar: u.avatar }); }} />
@@ -2096,7 +2075,7 @@ const App: React.FC = () => {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto bg-white no-scrollbar">
+              <div data-app-scroll className="flex-1 overflow-y-auto bg-white no-scrollbar">
                 {detailTab === 'post' ? (
                   <SurveyCard
                     survey={selectedSurvey}
@@ -2153,6 +2132,7 @@ const App: React.FC = () => {
 
               {activeTab === 'home' ? (
                 <PullToRefresh ref={pullToRefreshRef} onScroll={handleScroll} onRefresh={async () => { await fetchData(userProfile?.id || undefined, userProfile, { force: true }); }} onScrollChange={dir => setIsNavVisible(dir === 'up')} className="flex-1 mt-16 pb-[75px] bg-white no-scrollbar">
+                  {feedError && <div role="alert" className="p-4 text-center"><p>{t('appState.feedFailed')}</p><button className="mt-3 px-4 py-2 bg-blue-600 text-white rounded-xl" onClick={() => void fetchData(userProfile?.id, userProfile, { force: true })}>{t('Retry')}</button></div>}
                   {isFeedLoading && surveys.length > 0 && (
                     <div className="sticky top-0 z-20 h-1 bg-gray-100 overflow-hidden">
                       <div className="h-full w-1/2 bg-blue-500 rounded-r-full animate-pulse" />
@@ -2161,7 +2141,7 @@ const App: React.FC = () => {
                   {renderContent()}
                 </PullToRefresh>
               ) : (
-                <div onScroll={handleScroll} className={`flex-1 ${activeTab !== 'search' && activeTab !== 'profile' && activeTab !== 'notifications' && activeTab !== 'messages' ? 'mt-16' : ''} ${isProfileSettingsRoute ? 'pb-0' : 'pb-[75px]'} bg-white overflow-y-auto no-scrollbar`}>
+                <div data-app-scroll onScroll={handleScroll} className={`flex-1 ${activeTab !== 'search' && activeTab !== 'profile' && activeTab !== 'notifications' && activeTab !== 'messages' ? 'mt-16' : ''} ${isProfileSettingsRoute ? 'pb-0' : 'pb-[75px]'} bg-white overflow-y-auto no-scrollbar`}>
                   {renderContent()}
                 </div>
               )}

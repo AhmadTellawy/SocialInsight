@@ -1,6 +1,7 @@
 import { normalizeSurvey, type PostAnswerPayload } from '../types.ts';
 import type { Notification } from '../types';
 import type { UserProfile } from '../types';
+import { clearInteractions, captureInteractionVersions, reconcilePostCommentCounts } from '../utils/interactionCache.ts';
 
 // Production HTTP auth is deliberately same-origin. Vercel proxies /api to the
 // Render service, so session cookies are first-party even when browsers block
@@ -37,6 +38,12 @@ export type NotificationPage = {
 export type CursorPage<T> = {
     items: T[];
     nextCursor: string | null;
+    totalCount?: number;
+};
+
+const totalCountFrom = (response: Response): number | undefined => {
+    const raw = response.headers.get('X-Total-Count');
+    return raw !== null && /^\d+$/.test(raw) ? Number(raw) : undefined;
 };
 
 const nextCursorFrom = (response: Response): string | null =>
@@ -157,6 +164,7 @@ const rememberSessionPayload = (payload: unknown): void => {
     if (record.user && typeof record.user === 'object') {
         const nestedUser = record.user as Record<string, unknown>;
         if (typeof nestedUser.id === 'string') {
+            if (getAuthSessionIdentity() !== nestedUser.id) clearInteractions();
             authIdentityInMemory = nestedUser.id;
             getSessionStorage()?.setItem(AUTH_IDENTITY_SESSION_KEY, nestedUser.id);
         }
@@ -170,6 +178,7 @@ export const getAuthSessionIdentity = (): string | null => {
 };
 
 export const clearSessionMetadata = (): void => {
+    clearInteractions();
     csrfTokenInMemory = null;
     authIdentityInMemory = null;
     const storage = getSessionStorage();
@@ -368,6 +377,7 @@ export const api = {
         authorHandle?: string,
         requestOptions: SurveyRequestOptions = {}
     ) => {
+        const counts = captureInteractionVersions();
         const guestId = !userId ? getGuestId() : undefined;
 
         let url = userId ? `${API_BASE_URL}/posts?userId=${userId}&limit=${limit}` : `${API_BASE_URL}/posts?guestId=${guestId}&limit=${limit}`;
@@ -389,6 +399,7 @@ export const api = {
         if (!json || !Array.isArray(json.data)) {
             throw new ApiError('Invalid feed response', 502, 'INVALID_FEED_RESPONSE');
         }
+        if (!requestOptions.signal?.aborted) reconcilePostCommentCounts(userId, json.data, counts);
         return {
             data: requestOptions.normalize === false ? json.data : json.data.map(normalizeSurvey),
             nextCursor: json.nextCursor
@@ -396,11 +407,13 @@ export const api = {
     },
 
     getSurveyById: async (id: string, userId?: string, signal?: AbortSignal) => {
+        const counts = captureInteractionVersions();
         const guestId = !userId ? getGuestId() : undefined;
         const url = userId ? `${API_BASE_URL}/posts/${id}?userId=${userId}` : `${API_BASE_URL}/posts/${id}?guestId=${guestId}`;
         const response = await authFetch(url, { signal, timeoutMs: 20_000 });
         if (!response.ok) throw new Error('Failed to fetch post');
         const data = await response.json();
+        if (!signal?.aborted) reconcilePostCommentCounts(userId, [data], counts);
         return normalizeSurvey(data);
     },
 
@@ -479,8 +492,8 @@ export const api = {
         const params = new URLSearchParams({ limit: String(limit) });
         if (cursor) params.set('cursor', cursor);
         const response = await authFetch(`${API_BASE_URL}/posts/${postId}/participants?${params.toString()}`, { signal, timeoutMs: 15_000 });
-        if (!response.ok) throw new Error('Failed to fetch participants');
-        return { items: await response.json(), nextCursor: nextCursorFrom(response) };
+        if (!response.ok) await throwApiError(response, 'Failed to fetch participants');
+        return { items: await response.json(), nextCursor: nextCursorFrom(response), totalCount: totalCountFrom(response) };
     },
 
     getParticipants: async (postId: string) => {
@@ -610,8 +623,8 @@ export const api = {
         if (cursor) params.set('cursor', cursor);
         if (focusId && !cursor) params.set('focusId', focusId);
         const response = await authFetch(`${API_BASE_URL}/posts/${postId}/comments?${params.toString()}`, { signal, timeoutMs: 15_000 });
-        if (!response.ok) throw new Error('Failed to fetch comments');
-        return { items: await response.json(), nextCursor: nextCursorFrom(response) };
+        if (!response.ok) await throwApiError(response, 'Failed to fetch comments');
+        return { items: await response.json(), nextCursor: nextCursorFrom(response), totalCount: totalCountFrom(response) };
     },
 
     getComments: async (postId: string, _userId?: string) => {

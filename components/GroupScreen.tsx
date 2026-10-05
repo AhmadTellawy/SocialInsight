@@ -890,7 +890,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
       </div>
 
       {/* Tab Content */}
-      <div className="flex-1 overflow-y-auto no-scrollbar bg-gray-50/50 pb-20">
+      <div data-app-scroll className="flex-1 overflow-y-auto no-scrollbar bg-gray-50/50 pb-20">
         {renderTabContent()}
       </div>
     </div>

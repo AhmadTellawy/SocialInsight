@@ -960,5 +960,24 @@
     "remove": "Remove photo",
     "retrySave": "Retry saving photo",
     "crop": "Adjust crop"
+  },
+  "commentsState": {
+    "sending": "Sending comment…",
+    "sent": "Comment sent",
+    "send": "Send comment",
+    "editFailed": "Could not update. Your text is kept; please retry.",
+    "sendFailed": "Could not confirm delivery. Your text is kept; check the comments before retrying."
+  },
+  "participantsState": {
+    "loading": "Loading participants…",
+    "failed": "Participant count unavailable",
+    "total": "Total visible participants: {{count}}",
+    "loaded": "Participants loaded: {{count}}"
+  },
+  "appState": {
+    "starting": "Preparing your page…",
+    "feedFailed": "Could not load posts. Please retry.",
+    "resuming": "Restoring your page…",
+    "resumeFailed": "Could not verify your session. Retry to restore your page."
   }
 }

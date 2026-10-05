@@ -27,6 +27,7 @@ interface RichMentionInputProps {
   className?: string;
   minRows?: number;
   autoFocus?: boolean;
+  disabled?: boolean;
   onKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   ariaLabel?: string;
 }
@@ -38,6 +39,7 @@ export const RichMentionInput: React.FC<RichMentionInputProps> = ({
   className = '',
   minRows = 3,
   autoFocus = false,
+  disabled = false,
   onKeyDown,
   ariaLabel
 }) => {
@@ -215,7 +217,7 @@ export const RichMentionInput: React.FC<RichMentionInputProps> = ({
 
   return (
     <div className="relative w-full">
-      <textarea
+      <textarea disabled={disabled}
         ref={textareaRef}
         value={value}
         onChange={handleChange}

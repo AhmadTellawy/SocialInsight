@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { User, CheckCircle2, UserCircle2, Loader2 } from 'lucide-react';
 import { Survey } from '../types';
-import { api } from '../services/api';
+import { api, ApiError } from '../services/api';
+import { useTranslation } from 'react-i18next';
 import { UserAvatar } from './UserAvatar';
 
 interface ParticipantsSheetProps {
@@ -10,6 +11,9 @@ interface ParticipantsSheetProps {
 }
 
 export const ParticipantsSheet: React.FC<ParticipantsSheetProps> = ({ survey, onAuthorClick }) => {
+  const { t } = useTranslation();
+  const [totalCount, setTotalCount] = useState<number | null>(null);
+  const requestRef = React.useRef<AbortController | null>(null);
   const [participants, setParticipants] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -17,10 +21,17 @@ export const ParticipantsSheet: React.FC<ParticipantsSheetProps> = ({ survey, on
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadPage = React.useCallback(async (cursor: string | null, append: boolean, signal?: AbortSignal) => {
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
+    const cancel = () => controller.abort();
+    signal?.addEventListener("abort", cancel, { once: true });
     append ? setIsLoadingMore(true) : setIsLoading(true);
     setLoadError(null);
     try {
-      const page = await api.getParticipantsPage(survey.id, cursor, 30, signal);
+      const page = await api.getParticipantsPage(survey.id, cursor, 30, controller.signal);
+      if (controller.signal.aborted) return;
+      setTotalCount(page.totalCount ?? (!page.nextCursor && !append ? page.items.length : null));
       setParticipants(previous => {
         const byId = new Map<string, any>();
         (append ? previous : []).forEach(participant => byId.set(participant.id, participant));
@@ -29,26 +40,39 @@ export const ParticipantsSheet: React.FC<ParticipantsSheetProps> = ({ survey, on
       });
       setNextCursor(page.nextCursor);
     } catch (error: any) {
-      if (error?.name !== 'AbortError') setLoadError('Failed to load participants.');
+      if (!controller.signal.aborted && error instanceof ApiError && [401, 403, 404].includes(error.status)) {
+        setParticipants([]);
+        setTotalCount(null);
+        setNextCursor(null);
+      }
+      if (!controller.signal.aborted) setLoadError('Failed to load participants.');
     } finally {
-      append ? setIsLoadingMore(false) : setIsLoading(false);
+      signal?.removeEventListener("abort", cancel);
+      if (requestRef.current === controller) { append ? setIsLoadingMore(false) : setIsLoading(false); }
     }
   }, [survey.id]);
 
   useEffect(() => {
     const controller = new AbortController();
     setParticipants([]);
+    setTotalCount(null);
     setNextCursor(null);
     void loadPage(null, false, controller.signal);
-    return () => controller.abort();
+    return () => { controller.abort(); requestRef.current?.abort(); };
+  }, [loadPage]);
+
+  useEffect(() => {
+    const resume = () => { setParticipants([]); setTotalCount(null); void loadPage(null, false); };
+    window.addEventListener('opiniup:resume', resume);
+    return () => window.removeEventListener('opiniup:resume', resume);
   }, [loadPage]);
 
 
 
   return (
-    <div className="flex flex-col h-full bg-white">
+    <div className="flex flex-col h-full min-h-0 bg-white">
 
-      <div className="flex-1 overflow-y-auto no-scrollbar">
+      <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar">
         {isLoading ? (
           <div className="flex flex-col items-center justify-center py-20">
             <Loader2 size={32} className="animate-spin text-blue-500 opacity-50" />
@@ -107,7 +131,7 @@ export const ParticipantsSheet: React.FC<ParticipantsSheetProps> = ({ survey, on
 
       <div className="p-4 bg-gray-50 text-center border-t border-gray-100">
         <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">
-          Total Participants: {participants.length}
+          {isLoading ? t('participantsState.loading') : loadError ? t('participantsState.failed') : totalCount !== null ? t('participantsState.total', { count: totalCount }) : t('participantsState.loaded', { count: participants.length })}
         </p>
       </div>
     </div>

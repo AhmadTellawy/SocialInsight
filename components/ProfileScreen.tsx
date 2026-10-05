@@ -1103,7 +1103,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   if (locallyBlocked) return <div className="flex min-h-80 flex-col items-center justify-center gap-5 bg-white p-8 text-center"><Shield size={36} className="text-gray-400" /><p className="text-sm text-gray-700">{t('settingsV2.block.success', { defaultValue: 'Account blocked. You can manage blocked accounts in Settings.' })}</p>{onBack && <button type="button" onClick={onBack} className="min-h-12 rounded-xl bg-blue-600 px-6 text-sm font-bold text-white">{t('common.back', { defaultValue: 'Back' })}</button>}</div>;
 
   return (
-    <div onScroll={handleScroll} className="bg-white flex-1 overflow-y-auto min-h-full flex flex-col no-scrollbar">
+    <div data-app-scroll onScroll={handleScroll} className="bg-white flex-1 overflow-y-auto min-h-full flex flex-col no-scrollbar">
       <div className={`flex items-center px-4 h-[60px] sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-gray-50 ${onBack ? 'justify-between' : 'justify-end'}`}>
         {onBack && (
           <button onClick={onBack} className="flex h-11 w-11 items-center justify-center -ms-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors" aria-label={t('common.back', { defaultValue: 'Back' })}>
