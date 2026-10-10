@@ -11,7 +11,7 @@ export async function pagePostBoundary(req: Request, res: Response, next: NextFu
     if (!parts.length || ['trends','drafts','saved'].includes(parts[0])) return next();
     // GET detail applies the full policy and source policy in one RepeatableRead
     // transaction. Do not run the same expensive query outside that snapshot.
-    if (req.method === 'GET' && parts.length === 1) {
+    if (req.method === 'GET' && (parts.length === 1 || (parts.length === 2 && ['participants', 'comments', 'likes'].includes(parts[1]) && parts[0] !== 'comments'))) {
       res.setHeader('Cache-Control', 'private, no-store');
       res.setHeader('Vary', 'Authorization');
       return next();

@@ -112,10 +112,12 @@ test('private Page analytics retain their dedicated capability route', async ({ 
   expect(state.requests[0]).toContain('/api/pages/manage/private-page/content/analysis-fixture/results?');
 });
 
-test('actual App route displays one analytics header and returns to the post', async ({ page }) => {
+test('actual App preserves analytics, cached comments, browser back and cold resume together', async ({ page }) => {
   test.setTimeout(60_000);
   const profile = { id: 'analysis-owner', name: 'Analysis owner', handle: 'analysis_owner', email: 'analysis@example.invalid', avatar: '', language: 'ar', theme: 'light', country: 'Jordan', demographics: {}, groups: [], interests: [], stats: { followers: 0, following: 0, posts: 1, responses: 0 } };
   const post = { id: 'analysis-fixture', title: 'اختبار التحليلات داخل التطبيق', description: '', type: 'Poll', status: 'PUBLISHED', author: profile, options: ['a', 'b', 'c'].map((value, index) => ({ id: `q1${value}`, text: ['سهولة الاستخدام', 'سرعة التطبيق', 'وضوح النتائج'][index], votes: 0 })), sections: [{ id: 'section', title: '', questions: [{ id: 'q1', text: 'ما العامل الأهم بالنسبة لك؟', type: 'multiple_choice', maxSelection: 1, options: ['a', 'b', 'c'].map((value, index) => ({ id: `q1${value}`, text: ['سهولة الاستخدام', 'سرعة التطبيق', 'وضوح النتائج'][index], votes: 0 })) }] }], demographics: [], pollChoiceType: 'single', resultsVisibility: 'Public', resultsWho: 'Public', resultsTiming: 'AnyTime', allowSharing: true, expiresAt: '2099-01-01T00:00:00Z', createdAt: '2026-09-01T00:00:00Z', participants: 80, likes: 0, commentsCount: 0 };
+  const comments: any[] = [];
+  let commentReads = 0;
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(user => { localStorage.setItem('si_user', JSON.stringify(user)); localStorage.setItem('i18nextLng', 'ar'); }, profile);
@@ -126,6 +128,12 @@ test('actual App route displays one analytics header and returns to the post', a
     else if (path === '/api/users/me') body = profile;
     else if (path === '/api/posts') body = { data: [post], nextCursor: null };
     else if (path === '/api/posts/analysis-fixture') body = post;
+    else if (path === '/api/posts/analysis-fixture/comments') {
+      if (route.request().method() === 'POST') {
+        const comment = { id: 'integration-comment', text: route.request().postDataJSON().text, author: profile, replies: [], likes: 0, timestamp: new Date().toISOString(), commentsCount: 1 };
+        comments.push(comment); body = comment;
+      } else { commentReads++; body = comments; }
+    }
     else if (path === '/api/posts/analysis-fixture/results') body = results(url.searchParams);
     else if (path.endsWith('/views')) body = { success: true };
     else if (path === '/api/analytics/interactions/batch') body = { acceptedIds: route.request().postDataJSON().events.map((event: any) => event.id), rejected: [], retryableIds: [] };
@@ -144,8 +152,28 @@ test('actual App route displays one analytics header and returns to the post', a
   await page.getByRole('button', { name: 'عرض المنشور', exact: true }).click();
   await expect(page).toHaveURL(/\/post\/analysis-fixture$/);
   await expect(page.getByText('Detail View', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Comment', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: /^Comments/ });
+  await dialog.getByPlaceholder('Write a comment...').fill('تعليق بعد عرض التحليلات');
+  await dialog.getByRole('button', { name: 'إرسال التعليق', exact: true }).click();
+  await expect(dialog).toHaveAccessibleName('Comments (1)');
+  await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  const reads = commentReads;
+  await page.getByRole('button', { name: 'Comment', exact: true }).click();
+  await expect(dialog.getByText('تعليق بعد عرض التحليلات', { exact: true })).toBeVisible();
+  expect(commentReads).toBe(reads);
+  await page.evaluate(() => history.back()); await expect(dialog).toHaveCount(0);
+  await expect(page).toHaveURL(/\/post\/analysis-fixture$/);
   await page.getByRole('button', { name: 'Analysis', exact: true }).filter({ hasText: 'Analysis' }).click();
   await expect(page.locator('.an-answer')).toHaveCount(3);
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide')));
+  await page.goto('/');
+  await expect(page).toHaveURL(/\/post\/analysis-fixture\?tab=analysis$/);
+  await expect(page.locator('.an-answer')).toHaveCount(3);
+  await page.getByRole('button', { name: 'تصفية', exact: true }).click();
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'إغلاق', exact: true })).toBeFocused();
+  await page.getByRole('dialog').getByRole('button', { name: 'إغلاق', exact: true }).click();
   expect(errors).toEqual([]);
 });
 

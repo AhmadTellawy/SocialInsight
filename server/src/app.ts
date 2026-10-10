@@ -67,7 +67,7 @@ const corsOptions: cors.CorsOptions = {
     credentials: true,
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'X-CSRF-Token', 'Authorization'],
-    exposedHeaders: ['X-Next-Cursor', 'X-Request-Id'],
+    exposedHeaders: ['X-Next-Cursor', 'X-Total-Count', 'X-Request-Id'],
 };
 app.use(requestContext);
 app.use(helmet());

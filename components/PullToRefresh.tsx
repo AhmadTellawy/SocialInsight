@@ -134,6 +134,7 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
 
   return (
     <div 
+      data-app-scroll
       ref={containerRef}
       className={`relative overflow-y-auto overscroll-y-contain ${className}`}
       onTouchStart={handleTouchStart}

@@ -1,3 +1,4 @@
+import { useCommentCount } from '../hooks/useCommentThread';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PostAnswerPayload, Survey, SurveyType, Option, LogicRule, UserProfile, MediaPresentation } from '../types';
@@ -325,13 +326,12 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const [isLiked, setIsLiked] = useState(interactionTarget.isLiked || false);
   const [likeCount, setLikeCount] = useState(interactionTarget.likes || 0);
   const pageLikePending = useRef(false);
-  const [commentsCount, setCommentsCount] = useState(interactionTarget.commentsCount || 0);
+  const commentsCount = useCommentCount(userProfile?.id, interactionTarget.id, interactionTarget.commentsCount || 0);
 
   useEffect(() => {
     setIsLiked(interactionTarget.isLiked || false);
     setLikeCount(interactionTarget.likes || 0);
-    setCommentsCount(interactionTarget.commentsCount || 0);
-  }, [interactionTarget.isLiked, interactionTarget.likes, interactionTarget.commentsCount]);
+  }, [interactionTarget.id, interactionTarget.isLiked, interactionTarget.likes]);
 
   useEffect(() => {
     setIsSaved(interactionTarget.isSaved || false);
@@ -1073,6 +1073,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
 
 
+  const likePendingRef = useRef(false);
   const handleLike = async (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     if (!userProfile?.id) {
@@ -1087,6 +1088,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       return;
     }
 
+    if (likePendingRef.current) return;
+    likePendingRef.current = true;
     const previousLiked = isLiked;
     const nextLiked = !previousLiked;
 
@@ -1103,7 +1106,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
     if (onLike) {
       // Delegate API call to parent
-      onLike(interactionTarget.id, nextLiked);
+      try { await onLike(interactionTarget.id, nextLiked); } catch { setIsLiked(previousLiked); setLikeCount(prev => Math.max(0, prev + (previousLiked ? 1 : -1))); } finally { likePendingRef.current = false; }
     } else {
       // Fallback for isolated cards without parents
       try {
@@ -1112,7 +1115,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         console.error("Failed to like survey", error);
         setIsLiked(previousLiked);
         setLikeCount(prev => previousLiked ? prev + 1 : prev - 1);
-      }
+      } finally { likePendingRef.current = false; }
     }
   };
 
@@ -2545,14 +2548,15 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           </button>
         </div>
       </BottomSheet>
-      <BottomSheet isOpen={isCommentsOpen} onClose={() => setIsCommentsOpen(false)} customLayout={true} title={`Comments (${commentsCount})`}>
+      <BottomSheet historyKey={`comments:${interactionTarget.id}`} isOpen={isCommentsOpen} onClose={() => setIsCommentsOpen(false)} customLayout={true} title={`Comments (${commentsCount})`}>
         <React.Suspense fallback={<SheetContentFallback />}>
           <CommentsSheet
+            pagePost={interactionTarget}
             surveyId={interactionTarget.id}
             userProfile={userProfile}
             onAuthorClick={onAuthorClick}
             sourceSurface={sourceSurface}
-            onCommentAdded={() => setCommentsCount(prev => prev + 1)}
+            initialCount={commentsCount}
             initialCommentId={initialCommentId}
             initialReplyId={initialReplyId}
           />
@@ -2602,7 +2606,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           )}
         </div>
       </BottomSheet>
-      <BottomSheet isOpen={isParticipantsOpen} onClose={() => setIsParticipantsOpen(false)} customLayout={true} title="Participants" height="90dvh">
+      <BottomSheet historyKey={`participants:${sourceSurvey.id}`} isOpen={isParticipantsOpen} onClose={() => setIsParticipantsOpen(false)} customLayout={true} title="Participants" height="90dvh">
         <React.Suspense fallback={<SheetContentFallback />}>
           <ParticipantsSheet survey={sourceSurvey} onAuthorClick={onAuthorClick} />
         </React.Suspense>

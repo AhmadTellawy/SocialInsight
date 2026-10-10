@@ -148,7 +148,7 @@ async function runCreateComment(input: CommentScenario) {
     id: 'post', authorId: 'publisher-user', pageId: isPage ? (input.pageId || 'page') : null,
     allowComments: true, targetAudience: 'Public', targetedGroups: [], status: 'PUBLISHED', isDeleted: false
   };
-  const calls = { mentions: 0, hashtags: 0, dispatch: [] as string[][], legacyNotify: 0, guards: 0, attach: 0,
+  const calls = { mentions: 0, hashtags: 0, dispatch: [] as string[][], legacyNotify: 0, notifyOptions: [] as any[], deliveryAfterResponse: false, guards: 0, attach: 0,
     attachInTransaction: false, capabilityChecks: 0, order: [] as string[] };
   let transactionActive = false;
   const activity: any[] = [];
@@ -214,8 +214,16 @@ async function runCreateComment(input: CommentScenario) {
       if (input.outboxError) throw input.outboxError;
       return isPage;
     });
-    mock.method(notifications, 'dispatchNotificationIds', async (ids: string[]) => { calls.dispatch.push(ids); });
-    mock.method(notifications, 'notify', async () => { calls.legacyNotify++; return { id: 'notification' } as any; });
+    mock.method(notifications, 'dispatchNotificationIds', async (ids: string[]) => {
+      calls.dispatch.push(ids);
+      calls.deliveryAfterResponse = Boolean(state.body?.id) && committed.comments === 1;
+    });
+    mock.method(notifications, 'notify', async (...args: any[]) => {
+      calls.legacyNotify++;
+      calls.notifyOptions.push(args[7]);
+      assert.equal(state.body, undefined, 'persist notification before the success response');
+      return { id: 'notification' } as any;
+    });
     mock.method(media, 'serializeUserMediaRecord', (record: any) => record);
     mock.method(console, 'error', () => {});
 
@@ -246,7 +254,7 @@ test('plain new Page comments and replies skip empty relation writes but retain 
   }
 });
 
-test('Page entity comments and personal plain comments retain reconciliation and delivery behavior', async () => {
+test('entity comments reconcile relations; plain personal comments skip empty writes and dispatch after success', async () => {
   const entity = await runCreateComment({
     text: 'hello @alice #Topic',
     mentionResult: { targetUserIds: ['alice'], notificationIds: ['mention-notification'], created: 1, retained: 0, removed: 0, unresolved: 0, ineligible: 0 }
@@ -257,10 +265,18 @@ test('Page entity comments and personal plain comments retain reconciliation and
   assert.deepEqual(entity.calls.dispatch, [['mention-notification']]);
 
   const personal = await runCreateComment({ pageId: null, text: 'plain text' });
-  assert.equal(personal.calls.mentions, 1);
-  assert.equal(personal.calls.hashtags, 1);
+  assert.equal(personal.calls.mentions, 0);
+  assert.equal(personal.calls.hashtags, 0);
   assert.equal(personal.calls.legacyNotify, 1);
+  assert.deepEqual(personal.calls.notifyOptions, [{ dedupe: true, deferDispatch: true }]);
+  assert.deepEqual(personal.calls.dispatch, [['notification']]);
+  assert.equal(personal.calls.deliveryAfterResponse, true);
   assert.deepEqual(personal.committed, { comments: 1, counters: 1, outbox: 0 });
+
+  const personalEntity = await runCreateComment({ pageId: null, text: 'hello @alice #Topic' });
+  assert.equal(personalEntity.calls.mentions, 1);
+  assert.equal(personalEntity.calls.hashtags, 1);
+  assert.equal(personalEntity.calls.deliveryAfterResponse, true);
 });
 
 test('official Page comments keep one shared guard and recheck reply capability before notification', async () => {

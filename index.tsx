@@ -10,6 +10,7 @@ import { registerPwa } from './utils/pwaRegistration';
 import './i18n';
 import './styles/theme.css';
 import './styles/tailwind.css';
+import { installSheetHistory } from './utils/sheetHistory';
 
 // Update the worker in the background. Never reload an active page: doing so can
 // abort an in-flight media upload/finalization. The new worker controls the next
@@ -63,6 +64,7 @@ const NavigationBoundary = () => {
 };
 
 const root = ReactDOM.createRoot(rootElement);
+installSheetHistory();
 const router = createBrowserRouter([{ path: '*', element: <NavigationBoundary /> }]);
 root.render(
   <React.StrictMode>

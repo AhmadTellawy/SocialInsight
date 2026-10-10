@@ -1,6 +1,10 @@
 
 import React, { useEffect, useId, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { dismissSheetKeyboard, registerSheetHistory } from '../utils/sheetHistory';
+let bodyLockCount = 0;
+let unlockedOverflow = '';
+const focusedSheets: HTMLElement[] = [];
 
 interface BottomSheetProps {
   isOpen: boolean;
@@ -11,12 +15,13 @@ interface BottomSheetProps {
   height?: string; // New prop to control height
   ariaLabel?: string;
   dismissDisabled?: boolean;
+  historyKey?: string;
   showCloseButton?: boolean;
   dragHandleOnly?: boolean;
   closeLabel?: string;
 }
 
-export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, children, customLayout = false, title, height, ariaLabel, dismissDisabled = false, showCloseButton = false, closeLabel = 'Close', dragHandleOnly = false }) => {
+export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, children, customLayout = false, title, height, ariaLabel, dismissDisabled = false, showCloseButton = false, closeLabel = 'Close', dragHandleOnly = true, historyKey }) => {
   const [isRendered, setIsRendered] = useState(isOpen);
   const [isDragging, setIsDragging] = useState(false);
   const [translateY, setTranslateY] = useState(0);
@@ -29,6 +34,32 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
   const dismissDisabledRef = useRef(dismissDisabled);
   dismissDisabledRef.current = dismissDisabled;
   const titleId = useId();
+  const [viewport, setViewport] = useState(() => ({ height: window.visualViewport?.height || window.innerHeight, top: window.visualViewport?.offsetTop || 0 }));
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const update = () => setViewport({ height: window.visualViewport?.height || window.innerHeight, top: window.visualViewport?.offsetTop || 0 });
+    update();
+    window.visualViewport?.addEventListener('resize', update);
+    window.visualViewport?.addEventListener('scroll', update);
+    window.addEventListener('resize', update);
+    return () => {
+      window.visualViewport?.removeEventListener('resize', update);
+      window.visualViewport?.removeEventListener('scroll', update);
+      window.removeEventListener('resize', update);
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !historyKey) return;
+    let cancelled = false;
+    let release: (() => void) | undefined;
+    // StrictMode's discarded effect never creates a browser history entry.
+    queueMicrotask(() => {
+      if (!cancelled) release = registerSheetHistory({ id: `${historyKey}:${titleId}`, close: () => onCloseRef.current(), element: () => sheetRef.current, disabled: () => dismissDisabledRef.current });
+    });
+    return () => { cancelled = true; release?.(); };
+  }, [isOpen, historyKey, titleId]);
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -61,10 +92,10 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
 
   useEffect(() => {
     if (!isOpen) return;
-    const previousOverflow = document.body.style.overflow;
+    if (bodyLockCount++ === 0) unlockedOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
-      document.body.style.overflow = previousOverflow;
+      if (--bodyLockCount === 0) document.body.style.overflow = unlockedOverflow;
     };
   }, [isOpen]);
 
@@ -72,14 +103,16 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
     if (!isOpen || !isRendered || !sheetRef.current) return;
     previouslyFocusedRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const sheet = sheetRef.current;
+    focusedSheets.push(sheet);
     const focusableSelector = 'button:not([disabled]):not([tabindex="-1"]), [href], input:not([disabled]):not([tabindex="-1"]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
-    const focusable = Array.from(sheet.querySelectorAll<HTMLElement>(focusableSelector)) as HTMLElement[];
-    (focusable[0] || sheet).focus();
+    // Opening for reading must not focus an editable control or summon a keyboard.
+    (sheet.querySelector<HTMLElement>('[data-sheet-initial-focus]') || sheet).focus({ preventScroll: true });
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (focusedSheets[focusedSheets.length - 1] !== sheet) return;
       if (event.key === 'Escape') {
         event.preventDefault();
-        if (!dismissDisabledRef.current) onCloseRef.current();
+        if (!dismissDisabledRef.current && !dismissSheetKeyboard(sheet)) onCloseRef.current();
         return;
       }
       if (event.key !== 'Tab') return;
@@ -105,7 +138,10 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
     document.addEventListener('keydown', handleKeyDown);
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
-      previouslyFocusedRef.current?.focus();
+      const index = focusedSheets.indexOf(sheet);
+      if (index !== -1) focusedSheets.splice(index, 1);
+      const previous = previouslyFocusedRef.current;
+      if (previous?.isConnected && !previous.matches('input,textarea,[contenteditable="true"]')) previous.focus({ preventScroll: true });
     };
   }, [isOpen, isRendered]);
 
@@ -144,7 +180,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
   if (!isRendered) return null;
 
   const sheetContent = (
-    <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center">
+    <div className="fixed left-0 right-0 z-[100] flex items-end justify-center sm:items-center" style={{ top: viewport.top, height: viewport.height }}>
       {/* Backdrop */}
       <div 
         className={`absolute inset-0 bg-black/60 transition-opacity duration-300 ease-out ${isOpen ? 'opacity-100' : 'opacity-0'}`}
@@ -162,9 +198,9 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
         style={{ 
           transform: isOpen ? `translateY(${translateY}px)` : 'translateY(100%)',
           transition: isDragging ? 'none' : 'transform 0.35s cubic-bezier(0.15, 0.85, 0.35, 1)',
-          maxHeight: '95dvh',
-          height: height || (customLayout ? '80vh' : 'auto'),
-          minHeight: '20vh'
+          maxHeight: `${viewport.height * 0.95}px`,
+          height: height || (customLayout ? `${viewport.height * 0.8}px` : 'auto'),
+          minHeight: Math.min(160, viewport.height * 0.3)
         }}
         role="dialog"
         aria-modal="true"
@@ -175,7 +211,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
         {/* Drag Handle Header */}
         <div className="w-full flex flex-col items-center justify-center pt-3 pb-2 shrink-0 z-10 bg-white rounded-t-3xl border-b border-gray-50 drag-handle touch-none">
            <div className="w-10 h-1 bg-gray-300 rounded-full mb-2" />
-           {showCloseButton && <button type="button" onClick={onClose} disabled={dismissDisabled} aria-label={closeLabel} className="absolute end-2 top-2 w-11 h-11 flex items-center justify-center rounded-full text-gray-600"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>}
+           {showCloseButton && <button data-sheet-initial-focus type="button" onClick={onClose} disabled={dismissDisabled} aria-label={closeLabel} className="absolute end-2 top-2 w-11 h-11 flex items-center justify-center rounded-full text-gray-600"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>}
            {title && <h3 id={titleId} className="text-sm font-bold text-gray-800 pb-1">{title}</h3>}
         </div>
         
