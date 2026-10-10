@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AnalysisResults, ANALYSIS_DIMENSIONS, parseAnalysisQuery, InvalidAnalysisQuery } from './analysisResults';
+import { analysisPageQuery } from './analysisData';
 import { AggregateResults } from './aggregateResults';
 
 function fixture() {
@@ -53,4 +54,17 @@ test('query parser bounds inputs, rejects unsupported dimensions/objects and kee
   assert.equal(parseAnalysisQuery(), undefined); assert.equal(parseAnalysisQuery({}), undefined);
   assert.deepEqual(parseAnalysisQuery({ analysis: '1', compareBy: 'marital', filters: '{"gender":["Male"]}' }), { questionId: undefined, compareBy: 'marital', filters: { gender: ['Male'] } });
   for (const query of [{ analysis: ['1'] }, { analysis: '1', compareBy: '__proto__' }, { analysis: '1', questionId: ['q'] }, { analysis: '1', filters: '[]' }, { analysis: '1', filters: '{"userId":["x"]}' }, { analysis: '1', filters: '{"gender":[5]}' }, { analysis: '1', filters: '{"gender":{}}' }, { analysis: '1', filters: ' '.repeat(5000) }]) assert.throws(() => parseAnalysisQuery(query), InvalidAnalysisQuery);
+});
+
+test('analysis keyset binds a timezone-independent timestamp and parameterizes all cursor values', () => {
+  const timestamp = new Date('2026-10-10T14:59:51.528Z');
+  const postId = "post'; SELECT private_data; --";
+  const cursorId = "cursor'; --";
+  const query = analysisPageQuery(postId, { id: cursorId, timestamp });
+  assert.deepEqual(query.values, [postId, timestamp.toISOString(), cursorId]);
+  assert.match(query.sql, /\?::timestamp/);
+  assert.equal(query.sql.includes(postId), false);
+  assert.equal(query.sql.includes(cursorId), false);
+  assert.match(query.sql, /ORDER BY timestamp DESC, id DESC LIMIT 500/);
+  assert.deepEqual(analysisPageQuery('post').values, ['post']);
 });

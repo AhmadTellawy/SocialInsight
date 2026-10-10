@@ -5,6 +5,8 @@ type Row = Cursor & { birthday: Date | null; country: string | null; demographic
   answers: Array<{ questionId: string; optionId: string | null; textValue: string | null }> };
 
 // One round trip per batch; keyset matches the existing post/timestamp/id index.
+// Bind timestamp-without-time-zone as an explicit ISO string: a JS Date binds
+// as timestamptz and otherwise shifts the cursor in non-UTC database sessions.
 // Caller supplies the authorized transaction, preserving RLS and its snapshot.
 export function analysisPageQuery(postId: string, cursor?: Cursor) {
   return Prisma.sql`
@@ -16,7 +18,7 @@ export function analysisPageQuery(postId: string, cursor?: Cursor) {
     FROM (
       SELECT id, timestamp, "userId" FROM "Response"
       WHERE "postId" = ${postId}
-      ${cursor ? Prisma.sql`AND (timestamp, id) < (${cursor.timestamp}, ${cursor.id})` : Prisma.empty}
+      ${cursor ? Prisma.sql`AND (timestamp, id) < (${cursor.timestamp.toISOString()}::timestamp, ${cursor.id})` : Prisma.empty}
       ORDER BY timestamp DESC, id DESC LIMIT 500
     ) r
     LEFT JOIN users u ON u.id = r."userId"
