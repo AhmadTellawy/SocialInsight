@@ -202,6 +202,12 @@ export async function lockPage(tx: PageTx, pageId: string): Promise<Page> {
   return readLockedPage(tx, pageId, true);
 }
 
+/** Aggregate readers exclude participation/team writers without borrowing Page UPDATE authority. */
+export async function lockPageForAnalytics(tx: PageTx, pageId: string): Promise<Page> {
+  await coordinatePageLocks(tx, [{ pageId, mode: 'exclusive' }]);
+  return readLockedPage(tx, pageId, false);
+}
+
 /** Public interactions coordinate without a row lock, so SELECT RLS remains the read boundary. */
 export async function lockPageForInteraction(tx: PageTx, pageId: string): Promise<Page> {
   await coordinatePageLocks(tx, [{ pageId, mode: 'shared' }]);

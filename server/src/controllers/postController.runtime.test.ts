@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { after, mock } from 'node:test';
+import { runWithPageTransaction } from '../pages/pageDatabaseContext';
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'post-controller-runtime-test-secret';
 
@@ -344,14 +345,14 @@ for (const [name, handler] of Object.entries({ likePost, likeComment, savePost, 
     });
 }
 
-for (const version of [2, 3]) for (const scenario of [
+for (const inRequestTransaction of [false, true]) for (const version of [2, 3]) for (const scenario of [
     { role: 'OWNER', expected: 200 }, { role: 'ADMIN', expected: 200 },
     { role: 'EDITOR', expected: 200 }, { role: 'ANALYST', expected: 200 },
     { role: null, expected: 403 }, { role: 'ANALYST', draft: true, expected: 404 },
     { role: 'ANALYST', externalSource: true, expected: 403 },
     { role: 'ANALYST', revokedWhileWaiting: true, expected: 403 }
 ]) {
-    test(`private unpublished Page results v${version}: ${scenario.role || 'revoked'}${scenario.draft ? ' draft' : ''}${scenario.externalSource ? ' external source' : ''}${scenario.revokedWhileWaiting ? ' revoked during lock wait' : ''}`, async () => {
+    test(`private unpublished Page results v${version}${inRequestTransaction ? ' inside request transaction' : ''}: ${scenario.role || 'revoked'}${scenario.draft ? ' draft' : ''}${scenario.externalSource ? ' external source' : ''}${scenario.revokedWhileWaiting ? ' revoked during lock wait' : ''}`, async () => {
         const pageId = '00000000-0000-4000-8000-000000000001';
         const postId = '00000000-0000-4000-8000-000000000002';
         const originals = { transaction: prisma.$transaction, enabled: process.env.PAGES_ENABLED };
@@ -360,6 +361,7 @@ for (const version of [2, 3]) for (const scenario of [
         const tx: any = {
             $queryRaw: async (query: any) => {
                 const sql = Array.isArray(query) ? query.join('') : query.sql;
+                assert.equal(sql.includes('FOR UPDATE'), false, 'Analytics must not require Page UPDATE permission');
                 if (scenario.revokedWhileWaiting && sql.includes('pg_advisory_xact_lock')) effectiveRole = null;
                 if (sql.includes('pg_try_advisory_xact_lock')) return [{ locked: true }];
                 if (sql.includes('FROM "Page"')) return [{ id: pageId, ownerId: scenario.role === 'OWNER' ? 'viewer' : 'owner', publicationState: 'UNPUBLISHED', purgedAt: null }];
@@ -390,7 +392,9 @@ for (const version of [2, 3]) for (const scenario of [
                 return action(tx);
             };
             const { response, state } = responseState();
-            await getPageManagedPostResults({ params: { id: pageId, postId }, query: version === 3 ? { analysis: '1', compareBy: 'country' } : {}, user: { userId: 'viewer' } } as any, response);
+            const read = () => getPageManagedPostResults({ params: { id: pageId, postId }, query: version === 3 ? { analysis: '1', compareBy: 'country' } : {}, user: { userId: 'viewer' } } as any, response);
+            if (inRequestTransaction) await runWithPageTransaction(tx, read);
+            else await read();
             assert.equal(state.statusCode, scenario.expected);
             assert.equal(reads, scenario.expected === 200 ? 1 : 0);
             if (scenario.expected === 200) {

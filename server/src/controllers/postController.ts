@@ -1,4 +1,4 @@
-import { activePageActor, lockPage, lockPageForInteraction, lockPagesForShare, pageAudit, pageIsBlocked, pageTransaction, requirePageCapability, withPageCoordinationAdmission } from '../pages/pageService';
+import { activePageActor, lockPage, lockPageForAnalytics, lockPageForInteraction, lockPagesForShare, pageAudit, pageIsBlocked, pageTransaction, requirePageCapability, withPageCoordinationAdmission } from '../pages/pageService';
 import { pagePostReplay, pagePostRequestKey, recordPagePostCreation } from '../pages/pagePostReplay';
 import { assertPagesEnabled, pageDiscoveryPostWhere } from '../pages/pageFeature';
 import { notifyPagePostInteraction } from '../pages/pageNotificationService';
@@ -2348,8 +2348,8 @@ export const getPageManagedPostResults = async (req: Request, res: Response) => 
         const pageId = req.params.id as string;
         const postId = req.params.postId as string;
         if (![pageId, postId].every(value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value))) throw new PagePolicyError('PAGE_POST_NOT_FOUND', 404);
-        const rows = await prisma.$transaction(async (tx) => {
-            const page = await lockPage(tx, pageId);
+        const rows = await pageTransaction(async (tx) => {
+            const page = await lockPageForAnalytics(tx, pageId);
             await activePageActor(tx, userId);
             await requirePageCapability(tx, page, userId, 'analytics');
             if (await pageIsBlocked(tx, pageId, userId)) throw new PagePolicyError('PAGE_POST_NOT_FOUND', 404);
@@ -2364,7 +2364,7 @@ export const getPageManagedPostResults = async (req: Request, res: Response) => 
             return loadAggregatePostResults(tx, resultPostId, parseAnalysisQuery(req.query));
         // Page coordination serializes participation and membership changes. ReadCommitted
         // is essential here: a role revoked while waiting for the lock must be read fresh.
-        }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, maxWait: 3000, timeout: 15000 });
+        }, 'ReadCommitted');
         res.setHeader('Cache-Control', 'private, no-store');
         res.setHeader('Vary', 'Authorization');
         res.json(rows);
