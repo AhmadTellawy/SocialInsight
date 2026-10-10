@@ -344,20 +344,23 @@ for (const [name, handler] of Object.entries({ likePost, likeComment, savePost, 
     });
 }
 
-for (const scenario of [
+for (const version of [2, 3]) for (const scenario of [
     { role: 'OWNER', expected: 200 }, { role: 'ADMIN', expected: 200 },
     { role: 'EDITOR', expected: 200 }, { role: 'ANALYST', expected: 200 },
     { role: null, expected: 403 }, { role: 'ANALYST', draft: true, expected: 404 },
-    { role: 'ANALYST', externalSource: true, expected: 403 }
+    { role: 'ANALYST', externalSource: true, expected: 403 },
+    { role: 'ANALYST', revokedWhileWaiting: true, expected: 403 }
 ]) {
-    test(`private unpublished Page results: ${scenario.role || 'revoked'}${scenario.draft ? ' draft' : ''}${scenario.externalSource ? ' external source' : ''}`, async () => {
+    test(`private unpublished Page results v${version}: ${scenario.role || 'revoked'}${scenario.draft ? ' draft' : ''}${scenario.externalSource ? ' external source' : ''}${scenario.revokedWhileWaiting ? ' revoked during lock wait' : ''}`, async () => {
         const pageId = '00000000-0000-4000-8000-000000000001';
         const postId = '00000000-0000-4000-8000-000000000002';
         const originals = { transaction: prisma.$transaction, enabled: process.env.PAGES_ENABLED };
         let reads = 0;
+        let effectiveRole = scenario.role;
         const tx: any = {
             $queryRaw: async (query: any) => {
                 const sql = Array.isArray(query) ? query.join('') : query.sql;
+                if (scenario.revokedWhileWaiting && sql.includes('pg_advisory_xact_lock')) effectiveRole = null;
                 if (sql.includes('pg_try_advisory_xact_lock')) return [{ locked: true }];
                 if (sql.includes('FROM "Page"')) return [{ id: pageId, ownerId: scenario.role === 'OWNER' ? 'viewer' : 'owner', publicationState: 'UNPUBLISHED', purgedAt: null }];
               if (sql.includes('FROM users')) return [{ id: 'viewer', status: 'ACTIVE', emailVerifiedAt: null }];
@@ -365,7 +368,7 @@ for (const scenario of [
             },
             page: { findUnique: async () => ({ id: pageId, ownerId: scenario.role === 'OWNER' ? 'viewer' : 'owner', publicationState: 'UNPUBLISHED', purgedAt: null }) },
             user: { findUnique: async () => ({ id: 'viewer', status: 'ACTIVE' }) },
-            pageMembership: { findUnique: async () => scenario.role ? { role: scenario.role } : null },
+            pageMembership: { findUnique: async () => effectiveRole ? { role: effectiveRole } : null },
             pageBlock: { findFirst: async () => null },
             post: { findFirst: async (args: any) => {
                 assert.equal(args.where.pageId, pageId);
@@ -382,18 +385,23 @@ for (const scenario of [
         };
         try {
             process.env.PAGES_ENABLED = 'true';
-            (prisma as any).$transaction = async (action: any) => action(tx);
+            (prisma as any).$transaction = async (action: any, options: any) => {
+                assert.equal(options.isolationLevel, 'ReadCommitted', 'Page roles must be read after the coordination lock wait');
+                return action(tx);
+            };
             const { response, state } = responseState();
-            await getPageManagedPostResults({ params: { id: pageId, postId }, user: { userId: 'viewer' } } as any, response);
+            await getPageManagedPostResults({ params: { id: pageId, postId }, query: version === 3 ? { analysis: '1', compareBy: 'country' } : {}, user: { userId: 'viewer' } } as any, response);
             assert.equal(state.statusCode, scenario.expected);
             assert.equal(reads, scenario.expected === 200 ? 1 : 0);
             if (scenario.expected === 200) {
                 assert.equal(state.headers['Cache-Control'], 'private, no-store');
-                assert.equal(state.body.version, 2);
+                assert.equal(state.body.version, version);
                 assert.equal(state.body.sampleSize, 1);
                 assert.equal(state.body.minimumCellSize, 5);
-                assert.deepEqual(state.body.demographicBreakdowns.country.counts, {});
-                assert.equal(state.body.demographicBreakdowns.country.suppressionReason, 'SMALL_SAMPLE');
+                if (version === 2) assert.deepEqual(state.body.demographicBreakdowns.country.counts, {});
+                else assert.deepEqual(state.body.comparison.groups, []);
+                if (version === 2) assert.equal(state.body.demographicBreakdowns.country.suppressionReason, 'SMALL_SAMPLE');
+                else assert.equal(state.body.comparison.suppressionReason, 'SMALL_CELLS');
                 const json = JSON.stringify(state.body);
                 for (const hidden of ['private-person', 'Hidden person', '1990-01-01', 'userId', 'birthday', 'isAnonymous', 'textValue']) assert.equal(json.includes(hidden), false);
             }

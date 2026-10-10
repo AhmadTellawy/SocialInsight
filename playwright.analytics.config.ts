@@ -1,0 +1,2 @@
+import { defineConfig } from '@playwright/test';
+export default defineConfig({ testDir: './tests/analytics-e2e', workers: 1, fullyParallel: false, retries: 0, reporter: [['list']], outputDir: 'test-results/analytics', use: { baseURL: 'http://127.0.0.1:4178', serviceWorkers: 'block', screenshot: 'only-on-failure', trace: 'retain-on-failure', actionTimeout: 10000 }, webServer: { command: 'npm run dev -- --host 127.0.0.1 --port 4178 --strictPort', url: 'http://127.0.0.1:4178', reuseExistingServer: false, timeout: 120000 } });

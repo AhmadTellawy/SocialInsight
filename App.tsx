@@ -2130,7 +2130,7 @@ const App: React.FC = () => {
           ) : selectedSurveyId ? (
             selectedSurvey ? (
               <>
-              <div className="bg-white z-10 sticky top-0 border-b border-gray-100">
+              <div className="bg-white z-10 sticky top-0 border-b border-gray-100" hidden={detailTab === 'analysis'}>
                 <div className="flex items-center px-4 py-3">
                   <button onClick={() => { const parentQuery = new URLSearchParams(location.search); parentQuery.delete('tab'); back(detailTab === 'analysis' ? location.pathname + (parentQuery.size ? '?' + parentQuery.toString() : '') : '/'); }} aria-label={t('common.back', { defaultValue: 'Back' })} className="p-2 -ml-2 hover:bg-gray-50 rounded-full text-gray-600 transition-colors"><ArrowLeft size={24} /></button>
                   <span className="font-bold text-lg ml-2">Detail View</span>
@@ -2176,7 +2176,7 @@ const App: React.FC = () => {
                     onEditDraft={handleEditPost}
                   />
                 ) : (
-                  <PostAnalysis survey={selectedSurvey} isAccessDenied={!canSeeAnalysis} />
+                  <PostAnalysis survey={selectedSurvey} isAccessDenied={!canSeeAnalysis} onBack={() => setDetailTab('post')} />
                 )}
               </div>
             </>

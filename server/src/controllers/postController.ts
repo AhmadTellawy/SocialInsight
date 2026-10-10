@@ -5,6 +5,7 @@ import { notifyPagePostInteraction } from '../pages/pageNotificationService';
 import { recordConfirmedVote } from '../services/confirmedAnalyticsService';
 import { prepareGuestParticipationProof, readGuestParticipationHash, guestProofMatches, writeGuestParticipationCookie } from '../services/guestParticipationService';
 import { AggregateResults } from '../services/aggregateResults';
+import { AnalysisResults, AnalysisQuery, InvalidAnalysisQuery, parseAnalysisQuery } from '../services/analysisResults';
 import { Request, Response } from 'express';
 import { createHash } from 'node:crypto';
 import { lockAccountSecurity, tryLockAccountSecurity, AccountSecurityError } from '../services/mfaService';
@@ -2308,7 +2309,7 @@ const evaluatePublisherPostResultsAccess = async (
 };
 
 // Public and Page-management result surfaces share the same aggregate-only DTO.
-const loadAggregatePostResults = async (client: any, postId: string) => {
+const loadAggregatePostResults = async (client: any, postId: string, query?: AnalysisQuery) => {
     const questions = await client.question.findMany({
         where: { OR: [{ postId }, { section: { postId } }] },
         select: { id: true, options: { where: { isCorrect: true }, select: { id: true } } }
@@ -2317,6 +2318,7 @@ const loadAggregatePostResults = async (client: any, postId: string) => {
         .filter((question: any) => question.options.length > 0)
         .map((question: any) => [question.id, new Set<string>(question.options.map((option: any) => option.id))]));
     const aggregate = new AggregateResults(correct);
+    const analysis = query ? new AnalysisResults() : null;
     let cursor: string | undefined;
     do {
         const page = await client.response.findMany({
@@ -2330,10 +2332,11 @@ const loadAggregatePostResults = async (client: any, postId: string) => {
                 user: { select: { birthday: true, country: true, demographics: true } }
             }
         });
-        page.forEach((response: any) => aggregate.add(response));
+        page.forEach((response: any) => { aggregate.add(response); analysis?.add(response); });
         cursor = page.length === 500 ? page[page.length - 1].id : undefined;
     } while (cursor);
-    return aggregate.toJSON();
+    const overall = aggregate.toJSON();
+    return analysis && query ? analysis.toJSON(query, overall) : overall;
 };
 
 /** Called only by the private Page route; query/body flags cannot activate this authority. */
@@ -2358,12 +2361,15 @@ export const getPageManagedPostResults = async (req: Request, res: Response) => 
                 if (!source) throw new PagePolicyError('PAGE_SOURCE_RESULTS_REQUIRE_OWN_ACCESS', 403);
                 resultPostId = source.id;
             }
-            return loadAggregatePostResults(tx, resultPostId);
-        });
+            return loadAggregatePostResults(tx, resultPostId, parseAnalysisQuery(req.query));
+        // Page coordination serializes participation and membership changes. ReadCommitted
+        // is essential here: a role revoked while waiting for the lock must be read fresh.
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, maxWait: 3000, timeout: 15000 });
         res.setHeader('Cache-Control', 'private, no-store');
         res.setHeader('Vary', 'Authorization');
         res.json(rows);
     } catch (error) {
+        if (error instanceof InvalidAnalysisQuery) { res.status(400).json({ error: error.message }); return; }
         if (respondPagePostError(error, res)) return;
         logPostRequestFailure(req, 'page_managed_post_results_failed', error);
         res.status(500).json({ error: 'Failed to fetch post results' });
@@ -2373,6 +2379,26 @@ export const getPageManagedPostResults = async (req: Request, res: Response) => 
 export const getPostResults = async (req: Request, res: Response) => {
     const rawId = req.params.id as string;
     try {
+        const analysisQuery = parseAnalysisQuery(req.query);
+        if (analysisQuery) {
+            // Permission and every aggregation page use one consistent snapshot.
+            const result = await prisma.$transaction(async tx => {
+                const currentUserId = req.user?.userId;
+                const visible = buildVisiblePublishedPostWhere(currentUserId);
+                const wrapper = await tx.post.findFirst({ where: { id: rawId, ...visible }, select: { id: true, sharedFromId: true } });
+                if (!wrapper) return { status: 404, body: { error: 'Post not found' } };
+                const id = wrapper.sharedFromId || wrapper.id;
+                const post = await tx.post.findFirst({ where: { id, ...visible }, select: { id: true, authorId: true, pageId: true, resultsWho: true, resultsTiming: true, expiresAt: true } });
+                if (!post) return { status: 404, body: { error: 'Post not found' } };
+                const access = await evaluatePublisherPostResultsAccess(tx, post, currentUserId, readGuestParticipationHash(req));
+                if (!access.allowed) return { status: 403, body: { error: 'Results are not available' } };
+                return { status: 200, body: await loadAggregatePostResults(tx, id, analysisQuery) };
+            }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, maxWait: 3000, timeout: 15000 });
+            res.setHeader('Cache-Control', 'private, no-store');
+            res.setHeader('Vary', 'Authorization, Cookie');
+            res.status(result.status).json(result.body);
+            return;
+        }
         const id = await resolveInteractionTarget(rawId, 'vote');
         const currentUserId = req.user?.userId;
         const guestProofHash = readGuestParticipationHash(req);
@@ -2403,8 +2429,9 @@ export const getPostResults = async (req: Request, res: Response) => {
 
         res.setHeader('Cache-Control', 'private, no-store');
         res.setHeader('Vary', 'Authorization, Cookie');
-        res.json(await loadAggregatePostResults(prisma, id));
+        res.json(await loadAggregatePostResults(prisma, id, parseAnalysisQuery(req.query)));
     } catch (error) {
+        if (error instanceof InvalidAnalysisQuery) { res.status(400).json({ error: error.message }); return; }
         console.error(error);
         res.status(500).json({ error: 'Failed to fetch post results' });
     }

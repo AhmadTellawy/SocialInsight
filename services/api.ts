@@ -488,9 +488,9 @@ export const api = {
         return page.items;
     },
 
-    getPostResults: async (postId: string, signal?: AbortSignal) => {
-        const response = await authFetch(`${API_BASE_URL}/posts/${postId}/results`, { signal, timeoutMs: 20_000 });
-        if (!response.ok) throw new Error('Failed to fetch post results');
+    getPostResults: async (postId: string, signal?: AbortSignal, query = '') => {
+        const response = await authFetch(`${API_BASE_URL}/posts/${encodeURIComponent(postId)}/results${query ? '?' + query : ''}`, { signal, timeoutMs: 20_000, cache: 'no-store' });
+        if (!response.ok) throw new ApiError('Failed to fetch post results', response.status);
         return response.json();
     },
 

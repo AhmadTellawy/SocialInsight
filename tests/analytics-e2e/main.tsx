@@ -1,0 +1,11 @@
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom';
+import '../../i18n';
+import '../../styles/theme.css';
+import '../../styles/tailwind.css';
+import { PostAnalysis } from '../../components/PostAnalysis';
+import { SurveyType, type Survey } from '../../types';
+const question = (id: string, text: string, multi: boolean) => ({ id, text, type: 'multiple_choice' as const, maxSelection: multi ? 3 : 1, options: ['a', 'b', 'c'].map((suffix, index) => ({ id: id + suffix, text: ['سهولة الاستخدام', 'سرعة التطبيق', 'وضوح النتائج'][index], votes: 0 })) });
+const survey = { id: 'analysis-fixture', pageId: new URLSearchParams(location.search).has('private') ? 'private-page' : undefined, title: 'استبيان تجربة التطبيق', description: '', type: SurveyType.SURVEY, status: 'PUBLISHED', participants: 80, likes: 0, commentsCount: 0, timeLeft: '', isTrending: false, author: { id: 'owner', name: 'Fixture', handle: 'fixture' }, sections: [{ id: 'section', title: '', questions: [question('q1', 'عندما تستخدم تطبيقًا للاستطلاعات ومشاركة الآراء، ما العامل الأهم بالنسبة لك لتعود وتستخدمه بشكل مستمر؟', false), question('q2', 'أي ميزات ترغب أن نطوّرها؟ يمكنك اختيار أكثر من إجابة.', true)] }] } as Survey;
+createRoot(document.getElementById('root')!).render(<BrowserRouter><PostAnalysis survey={survey} privatePageId={survey.pageId || undefined} onBack={() => { document.body.dataset.back = 'true'; }} /></BrowserRouter>);
