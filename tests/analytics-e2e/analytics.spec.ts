@@ -24,7 +24,7 @@ async function setup(page: Page, ar = true, options: { rare?: boolean; status?: 
     const status = options.status || 200;
     await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(status === 200 ? results(url.searchParams, options.rare) : { error: 'Synthetic failure' }) });
   });
-  await page.goto(`/tests/analytics-e2e/index.html${options.private ? '?private=1' : ''}`);
+  await page.goto(`/tests/analytics-e2e/index.html${options.private ? '?private=1' : ''}`, { waitUntil: 'domcontentloaded' });
   return { errors, requests, options };
 }
 for (const ar of [true, false]) for (const width of [384, 320]) test(`results, filtering, comparison and details ${ar ? 'RTL' : 'LTR'} ${width}`, async ({ page }) => {
@@ -49,7 +49,10 @@ for (const ar of [true, false]) for (const width of [384, 320]) test(`results, f
   await select.selectOption(''); await expect(root.locator('.an-answer')).toHaveCount(3);
   await root.getByRole('button', { name: ar ? 'تصفية' : 'Filter', exact: true }).click();
   const dialog = page.getByRole('dialog');
+  await dialog.locator('.an-filter-heading').nth(0).click();
+  await dialog.getByRole('searchbox').fill(ar ? 'الأردن' : 'Jordan');
   await dialog.locator('.an-filter-group').nth(0).getByLabel(ar ? 'الأردن' : 'Jordan', { exact: true }).check();
+  await dialog.locator('.an-filter-heading').nth(1).click();
   await dialog.locator('.an-filter-group').nth(1).getByLabel(ar ? 'ذكر' : 'Male', { exact: true }).check();
   await dialog.getByRole('button', { name: ar ? 'تطبيق الفلاتر' : 'Apply filters' }).click();
   await expect(root.locator('.an-sample')).toContainText('30');
@@ -58,6 +61,8 @@ for (const ar of [true, false]) for (const width of [384, 320]) test(`results, f
   await expect(root.locator('.an-sample')).toContainText('80');
   await root.getByRole('button', { name: ar ? 'السؤال 1' : 'Question 1', exact: true }).click();
   await expect(root.locator('.an-answer')).toHaveCount(3);
+  await expect(root.locator('h1')).toContainText('عندما تستخدم تطبيقًا');
+  await expect(root.getByRole('button', { name: ar ? 'مشاركة التحليل' : 'Share analysis', exact: true })).toBeEnabled();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: `test-results/analytics/results-${ar ? 'ar' : 'en'}-${width}.png`, fullPage: true });
   expect(state.errors).toEqual([]); expect(state.requests.some(url => url.includes('filters='))).toBe(true);
@@ -77,11 +82,23 @@ test('image export and result-post preview work without publishing', async ({ pa
   await expect(page.getByText('هذه معاينة فقط، ولم يُنشر شيء.')).toBeVisible();
   expect(state.errors).toEqual([]); expect(state.requests.every(url => url.includes('/results?'))).toBe(true);
 });
-test('suppression retains overall reference without exposing comparison or filter categories', async ({ page }) => {
+test('suppression retains overall reference and public filter options open without leaking participant categories', async ({ page }) => {
   await setup(page, true, { rare: true }); await expect(page.locator('.an-answer')).toHaveCount(3);
   await page.locator('.an-content select').selectOption('gender'); await expect(page.locator('.an-reference')).toContainText('80');
   await expect(page.locator('.an-group')).toHaveCount(0); await expect(page.getByText(/لا تتوفر هذه التفاصيل/)).toBeVisible();
-  await page.getByRole('button', { name: 'تصفية', exact: true }).click(); await expect(page.getByRole('dialog').getByRole('checkbox')).toHaveCount(0);
+  await page.getByRole('button', { name: 'تصفية', exact: true }).click(); const dialog = page.getByRole('dialog');
+  for (let index = 0; index < 9; index++) {
+    await dialog.locator('.an-filter-heading').nth(index).click();
+    await expect(dialog.getByRole('checkbox').first()).toBeVisible();
+    expect(await dialog.getByRole('checkbox').count()).toBeGreaterThan(1);
+  }
+  await expect(dialog.getByLabel('Rare', { exact: true })).toHaveCount(0);
+  await dialog.locator('.an-filter-heading').nth(1).click();
+  await dialog.getByLabel('ذكر', { exact: true }).check();
+  await dialog.getByRole('button', { name: 'تطبيق الفلاتر' }).click();
+  await expect(page.locator('.an-content').getByText(/لا تتوفر هذه التفاصيل/)).toBeVisible();
+  await page.getByRole('button', { name: 'عرض الإجمالي', exact: true }).click();
+  await expect(page.locator('.an-answer')).toHaveCount(3);
 });
 test('loading is distinct from zero; failed request can retry and denied results cannot be shared', async ({ page }) => {
   const state = await setup(page, true, { delay: 500, status: 500 });
@@ -130,4 +147,60 @@ test('actual App route displays one analytics header and returns to the post', a
   await page.getByRole('button', { name: 'Analysis', exact: true }).filter({ hasText: 'Analysis' }).click();
   await expect(page.locator('.an-answer')).toHaveCount(3);
   expect(errors).toEqual([]);
+});
+
+test('transient failures preserve clearly labelled results and filters can recover without retry', async ({ page }) => {
+  const state = await setup(page);
+  await expect(page.locator('.an-answer')).toHaveCount(3);
+  state.options.status = 500; state.options.delay = 700;
+  await page.locator('.an-content select').selectOption('gender');
+  await expect(page.getByRole('status')).toContainText('جارٍ التحديث');
+  await expect(page.locator('.an-answer')).toHaveCount(3);
+  await expect(page.getByRole('alert')).toContainText('آخر نتائج ناجحة');
+  await expect(page.getByRole('button', { name: 'تصفية', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'مشاركة التحليل', exact: true })).toBeDisabled();
+  state.options.status = 200; state.options.delay = 0;
+  await page.locator('.an-content select').selectOption('');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'مشاركة التحليل', exact: true })).toBeEnabled();
+});
+
+test('rapid comparison changes are coalesced and stale replies cannot overwrite the latest selection', async ({ page }) => {
+  const state = await setup(page);
+  await expect(page.locator('.an-answer')).toHaveCount(3);
+  const before = state.requests.length;
+  state.options.delay = 700;
+  const select = page.locator('.an-content select');
+  await select.selectOption('gender');
+  await page.waitForTimeout(250);
+  await select.selectOption('country');
+  await select.selectOption('age');
+  await select.selectOption('marital');
+  await expect(page.locator('.an-group').first()).toBeVisible();
+  await expect(select).toHaveValue('marital');
+  await expect(page.locator('.an-group').first()).toContainText('متزوج');
+  expect(state.requests.length - before).toBeLessThanOrEqual(2);
+  expect(state.requests.at(-1)).toContain('compareBy=marital');
+});
+
+test.describe('Android touch filters', () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 384, height: 832 } });
+  test('all nine sections expand, selecting and clearing remain reachable', async ({ page }) => {
+    await setup(page, true, { rare: true });
+    await expect(page.locator('.an-answer')).toHaveCount(3);
+    await page.getByRole('button', { name: 'تصفية', exact: true }).tap();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('button', { name: 'إغلاق', exact: true })).toBeFocused();
+    await dialog.locator('.an-filter-heading').nth(1).tap();
+    await dialog.getByLabel('أنثى', { exact: true }).tap();
+    await expect(dialog.getByLabel('أنثى', { exact: true })).toBeChecked();
+    const apply = dialog.getByRole('button', { name: 'تطبيق الفلاتر', exact: true });
+    const box = await apply.boundingBox();
+    expect(box!.y + box!.height).toBeLessThanOrEqual(832);
+    await page.screenshot({ path: 'test-results/analytics/filters-touch-ar.png' });
+    await dialog.getByRole('button', { name: 'مسح الاختيارات', exact: true }).tap();
+    await expect(dialog.getByLabel('أنثى', { exact: true })).not.toBeChecked();
+    await dialog.getByRole('button', { name: 'إغلاق', exact: true }).tap();
+    await expect(dialog).not.toBeVisible();
+  });
 });

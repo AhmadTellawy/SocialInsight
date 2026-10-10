@@ -362,6 +362,7 @@ for (const inRequestTransaction of [false, true]) for (const version of [2, 3]) 
             $queryRaw: async (query: any) => {
                 const sql = Array.isArray(query) ? query.join('') : query.sql;
                 assert.equal(sql.includes('FOR UPDATE'), false, 'Analytics must not require Page UPDATE permission');
+                if (sql.includes('FROM "Response"')) { reads++; return [{ id: 'response', timestamp: new Date(), answers: [{ questionId: 'q', optionId: 'o', textValue: null }], birthday: new Date('1990-01-01'), country: 'JO', demographics: { gender: 'female' } }]; }
                 if (scenario.revokedWhileWaiting && sql.includes('pg_advisory_xact_lock')) effectiveRole = null;
                 if (sql.includes('pg_try_advisory_xact_lock')) return [{ locked: true }];
                 if (sql.includes('FROM "Page"')) return [{ id: pageId, ownerId: scenario.role === 'OWNER' ? 'viewer' : 'owner', publicationState: 'UNPUBLISHED', purgedAt: null }];

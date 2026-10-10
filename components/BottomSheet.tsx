@@ -11,9 +11,12 @@ interface BottomSheetProps {
   height?: string; // New prop to control height
   ariaLabel?: string;
   dismissDisabled?: boolean;
+  showCloseButton?: boolean;
+  dragHandleOnly?: boolean;
+  closeLabel?: string;
 }
 
-export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, children, customLayout = false, title, height, ariaLabel, dismissDisabled = false }) => {
+export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, children, customLayout = false, title, height, ariaLabel, dismissDisabled = false, showCloseButton = false, closeLabel = 'Close', dragHandleOnly = false }) => {
   const [isRendered, setIsRendered] = useState(isOpen);
   const [isDragging, setIsDragging] = useState(false);
   const [translateY, setTranslateY] = useState(0);
@@ -113,7 +116,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
     
     const isAtTop = scrollContainerRef.current ? scrollContainerRef.current.scrollTop <= 0 : true;
 
-    if (isHandle || isAtTop) {
+    if (isHandle || (!dragHandleOnly && isAtTop)) {
       setIsDragging(true);
       startY.current = e.touches[0].clientY;
     }
@@ -172,13 +175,14 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
         {/* Drag Handle Header */}
         <div className="w-full flex flex-col items-center justify-center pt-3 pb-2 shrink-0 z-10 bg-white rounded-t-3xl border-b border-gray-50 drag-handle touch-none">
            <div className="w-10 h-1 bg-gray-300 rounded-full mb-2" />
+           {showCloseButton && <button type="button" onClick={onClose} disabled={dismissDisabled} aria-label={closeLabel} className="absolute end-2 top-2 w-11 h-11 flex items-center justify-center rounded-full text-gray-600"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>}
            {title && <h3 id={titleId} className="text-sm font-bold text-gray-800 pb-1">{title}</h3>}
         </div>
         
         {/* Content Container */}
         <div 
           ref={scrollContainerRef}
-          className={`flex-1 ${customLayout ? 'overflow-hidden flex flex-col' : 'px-4 pb-[max(2rem,env(safe-area-inset-bottom))] sm:p-6 overflow-y-auto overscroll-contain no-scrollbar'}`}
+          className={`min-h-0 flex-1 ${customLayout ? 'overflow-hidden flex flex-col' : 'px-4 pb-[max(2rem,env(safe-area-inset-bottom))] sm:p-6 overflow-y-auto overscroll-contain no-scrollbar'}`}
         >
           {children}
         </div>

@@ -150,3 +150,13 @@ test('Page boundary denies invisible Page/source mutations while preserving mana
     (prisma.page as any).findUnique=original.page;(prisma.user as any).findUnique=original.user;
   }
 }));
+
+test('v3 analytics defers authorization to its controller snapshot without a duplicate boundary transaction', async () => {
+  const original = prisma.$transaction;
+  let nextCalls = 0;
+  try {
+    (prisma as any).$transaction = async () => { throw new Error('duplicate transaction'); };
+    await pagePostBoundary({ path: '/post-id/results', method: 'GET', query: { analysis: '1' } } as any, {} as any, (error?: any) => { assert.equal(error, undefined); nextCalls++; });
+    assert.equal(nextCalls, 1);
+  } finally { (prisma as any).$transaction = original; }
+});

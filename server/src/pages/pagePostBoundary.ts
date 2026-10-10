@@ -16,6 +16,10 @@ export async function pagePostBoundary(req: Request, res: Response, next: NextFu
       res.setHeader('Vary', 'Authorization');
       return next();
     }
+    // v3 analytics validates wrapper, shared source and results access together
+    // in its RepeatableRead transaction. Avoid a second pool acquisition and
+    // duplicate RLS setup before that authoritative snapshot.
+    if (req.method === 'GET' && parts.length === 2 && parts[1] === 'results' && req.query?.analysis === '1') return next();
     // These mutations perform their own canonical visibility check and then
     // revalidate under coordinated Page/Post locks. A separate boundary
     // transaction both consumes a pool slot and can observe stale state before

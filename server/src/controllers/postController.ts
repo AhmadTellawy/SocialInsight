@@ -5,6 +5,7 @@ import { notifyPagePostInteraction } from '../pages/pageNotificationService';
 import { recordConfirmedVote } from '../services/confirmedAnalyticsService';
 import { prepareGuestParticipationProof, readGuestParticipationHash, guestProofMatches, writeGuestParticipationCookie } from '../services/guestParticipationService';
 import { AggregateResults } from '../services/aggregateResults';
+import { readAnalysisPage } from '../services/analysisData';
 import { AnalysisResults, AnalysisQuery, InvalidAnalysisQuery, parseAnalysisQuery } from '../services/analysisResults';
 import { Request, Response } from 'express';
 import { createHash } from 'node:crypto';
@@ -2320,8 +2321,9 @@ const loadAggregatePostResults = async (client: any, postId: string, query?: Ana
     const aggregate = new AggregateResults(correct);
     const analysis = query ? new AnalysisResults() : null;
     let cursor: string | undefined;
+    let analysisCursor: { id: string; timestamp: Date } | undefined;
     do {
-        const page = await client.response.findMany({
+        const page = query ? await readAnalysisPage(client, postId, analysisCursor) : await client.response.findMany({
             where: { postId },
             take: 500,
             orderBy: { id: 'asc' },
@@ -2334,6 +2336,7 @@ const loadAggregatePostResults = async (client: any, postId: string, query?: Ana
         });
         page.forEach((response: any) => { aggregate.add(response); analysis?.add(response); });
         cursor = page.length === 500 ? page[page.length - 1].id : undefined;
+        analysisCursor = cursor ? page[page.length - 1] : undefined;
     } while (cursor);
     const overall = aggregate.toJSON();
     return analysis && query ? analysis.toJSON(query, overall) : overall;
@@ -2385,10 +2388,10 @@ export const getPostResults = async (req: Request, res: Response) => {
             const result = await prisma.$transaction(async tx => {
                 const currentUserId = req.user?.userId;
                 const visible = buildVisiblePublishedPostWhere(currentUserId);
-                const wrapper = await tx.post.findFirst({ where: { id: rawId, ...visible }, select: { id: true, sharedFromId: true } });
+                const wrapper = await tx.post.findFirst({ where: { id: rawId, ...visible }, select: { id: true, sharedFromId: true, authorId: true, pageId: true, resultsWho: true, resultsTiming: true, expiresAt: true } });
                 if (!wrapper) return { status: 404, body: { error: 'Post not found' } };
                 const id = wrapper.sharedFromId || wrapper.id;
-                const post = await tx.post.findFirst({ where: { id, ...visible }, select: { id: true, authorId: true, pageId: true, resultsWho: true, resultsTiming: true, expiresAt: true } });
+                const post = wrapper.sharedFromId ? await tx.post.findFirst({ where: { id, ...visible }, select: { id: true, authorId: true, pageId: true, resultsWho: true, resultsTiming: true, expiresAt: true } }) : wrapper;
                 if (!post) return { status: 404, body: { error: 'Post not found' } };
                 const access = await evaluatePublisherPostResultsAccess(tx, post, currentUserId, readGuestParticipationHash(req));
                 if (!access.allowed) return { status: 403, body: { error: 'Results are not available' } };
