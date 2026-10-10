@@ -204,3 +204,15 @@ test.describe('Android touch filters', () => {
     await expect(dialog).not.toBeVisible();
   });
 });
+
+test('question summaries switch immediately without re-fetching unchanged data', async ({ page }) => {
+  const state = await setup(page);
+  await expect(page.locator('.an-answer').first()).toContainText('56.3%');
+  const before = state.requests.length;
+  await page.getByRole('button', { name: 'السؤال 2', exact: true }).click();
+  await expect(page.locator('.an-answer').first()).toContainText('75%');
+  await expect(page.getByRole('status')).toHaveCount(0);
+  await page.getByRole('button', { name: 'السؤال 1', exact: true }).click();
+  await expect(page.locator('.an-answer').first()).toContainText('56.3%');
+  expect(state.requests.length).toBe(before);
+});

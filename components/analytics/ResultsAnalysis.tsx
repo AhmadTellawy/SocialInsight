@@ -55,7 +55,8 @@ const AnalysisContent: React.FC<Props> = ({ survey: source, isAccessDenied, priv
   const [filters, setFilters] = useState<AnalysisFilters>({}), [draft, setDraft] = useState<AnalysisFilters>({});
   const [sheet, setSheet] = useState<'filters' | 'share' | 'cohort' | null>(null), [cohort, setCohort] = useState<AnalysisGroup | null>(null);
   const definitions = source.sections?.flatMap(section => section.questions) || [];
-  const query = analysisQueryString(filters, questionId || definitions[0]?.id || undefined, compareBy);
+  // Every response includes all question summaries; only comparisons need a question-specific request.
+  const query = analysisQueryString(filters, compareBy ? questionId || definitions[0]?.id || undefined : undefined, compareBy);
   const restoreComparisonFocus = useRef(false);
   useEffect(() => {
     if (status !== 'ready' || !restoreComparisonFocus.current) return;
@@ -98,7 +99,8 @@ const AnalysisContent: React.FC<Props> = ({ survey: source, isAccessDenied, priv
     return () => { current = false; window.clearTimeout(debounce); if (timer !== undefined) window.clearInterval(timer); };
   }, [source.id, source.pageId, privatePageId, isAccessDenied, query, attempt]);
   const questions: AnalysisQuestion[] = definitions.length ? definitions : [{ id: results?.questionSummaries[0]?.questionId || '', text: source.question || source.title, options: source.options, type: 'multiple_choice' }];
-  const active = questions.find(question => question.id === (loaded ? loaded.questionId : questionId)) || questions[0];
+  const shownQuestionId = !compareBy && !loaded?.compareBy ? questionId : loaded ? loaded.questionId : questionId;
+  const active = questions.find(question => question.id === shownQuestionId) || questions[0];
   const summary = results?.questionSummaries.find(value => value.questionId === active?.id) || (!loaded?.questionId ? results?.questionSummaries[0] : undefined);
   const multiple = Number(active?.maxSelection) > 1 || !!(summary && (Object.values(summary.optionCounts) as number[]).reduce((a, b) => a + b, 0) > summary.responseCount);
   const countries = useMemo(() => Object.fromEntries(demographicCountries(locale).map(country => [country.value, country.label])), [locale]);
