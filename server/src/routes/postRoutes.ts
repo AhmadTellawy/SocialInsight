@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import {
-    getPosts,
+    getPosts, getPostAccess,
     getPostById,
     createPost,
     updatePost,
@@ -42,6 +42,7 @@ router.use(optionalAuth, pagePostBoundary);
 // Optional Auth (Guests can view, Users get personalized views)
 router.get('/', getPosts);
 router.get('/trends', getTrends);
+router.get('/access', getPostAccess);
 router.get('/drafts', requireAuth, getDrafts);
 router.get('/saved', requireAuth, getSavedPosts);
 router.get('/comments/:id/likes', getCommentLikers);

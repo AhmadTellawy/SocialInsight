@@ -389,7 +389,6 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
   const pageVoteContext = !!survey.pageId || !!sourceSurvey.pageId;
   const submitVote: NonNullable<SurveyCardProps['onVote']> = (...args) => {
-    if (!pageVoteContext) return onVote?.(...args);
     return settlePageVote(() => onVote?.(...args), () => {
       // Restore completion state while retaining entered answers and the current step.
       setHasVoted(hasVoted);
@@ -414,7 +413,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   }, [pageVoteContext, sourceSurvey.type, sourceSurvey.options, sourceSurvey.hasParticipated, sourceSurvey.pollChoiceType, isRatingSubmitting]);
 
   const authorType = sourceSurvey.author?.type || 'User'; // Adjust based on your schema if needed
-  const { status: followStatus, loading: isInteractLoading, toggle: toggleFollow } = usePostFollowState(userProfile?.id, sourceSurvey.author?.id, sourceSurvey.author?.isFollowing || false, isMenuOpen, sourceSurvey.author?.kind === 'PAGE');
+  const { status: followStatus, loading: isInteractLoading, toggle: toggleFollow } = usePostFollowState(userProfile?.id, sourceSurvey.author?.id, sourceSurvey.author?.isFollowing || false, isMenuOpen, !!sourceSurvey.pageId || sourceSurvey.author?.kind === 'PAGE');
   const isInteracted = followStatus === 'ACTIVE';
   const isFollowPending = followStatus === 'PENDING';
 
@@ -2190,11 +2189,11 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 <div className="flex items-center gap-3 group-hover:opacity-80 transition-opacity flex-1 overflow-hidden" onClick={(e) => {
                   e.stopPropagation();
                   if (onAuthorClick && sourceSurvey.author) {
-                    onAuthorClick({ id: sourceSurvey.author.id, name: sourceSurvey.author.name, avatar: sourceSurvey.author.avatar, handle: sourceSurvey.author.handle });
+                    onAuthorClick({ id: sourceSurvey.author.id, name: sourceSurvey.author.name, avatar: sourceSurvey.author.avatar, handle: sourceSurvey.author.handle, kind: sourceSurvey.pageId ? 'PAGE' : sourceSurvey.author.kind });
                   }
                 }}>
                   <div className="relative shrink-0">
-                    <div className="relative w-10 h-10 md:w-12 md:h-12 rounded-full overflow-hidden border border-gray-100 shrink-0 cursor-pointer bg-white">
+                    <div className="relative w-12 h-12 shrink-0 rounded-full overflow-hidden border border-gray-100 cursor-pointer bg-white">
                       <UserAvatar
                         src={authorAvatar}
                         mediaId={isMySource ? userProfile?.avatarMediaId : sourceSurvey.author?.avatarMediaId}
@@ -2608,7 +2607,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       </BottomSheet>
       <BottomSheet historyKey={`participants:${sourceSurvey.id}`} isOpen={isParticipantsOpen} onClose={() => setIsParticipantsOpen(false)} customLayout={true} title="Participants" height="90dvh">
         <React.Suspense fallback={<SheetContentFallback />}>
-          <ParticipantsSheet survey={sourceSurvey} onAuthorClick={onAuthorClick} />
+          <ParticipantsSheet viewerId={userProfile?.id} survey={sourceSurvey} onAuthorClick={onAuthorClick} />
         </React.Suspense>
       </BottomSheet>
       <BottomSheet isOpen={isPeopleTagsOpen} onClose={() => setIsPeopleTagsOpen(false)} title={t('peopleTags.taggedPeople')}>

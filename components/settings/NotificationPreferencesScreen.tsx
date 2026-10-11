@@ -108,7 +108,7 @@ export const NotificationPreferencesScreen: React.FC<{ userId?: string; onBack: 
         <h1 className="min-w-0 flex-1 text-base font-bold text-gray-900">{t('settingsV2.notifications.title')}</h1>
         <button type="button" onClick={() => void save()} disabled={disabled || !dirty || !quietValid} className="flex min-h-11 min-w-20 items-center justify-center gap-2 rounded-full bg-blue-600 px-4 text-sm font-bold text-white disabled:bg-gray-100 disabled:text-gray-500 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2">{saving && <Loader2 size={16} className="animate-spin" />}{t(saving ? 'profile.edit.saving' : 'profile.edit.save')}</button>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-24 pt-5"><div className="mx-auto max-w-lg space-y-5">
+      <div data-settings-scroll className="min-h-0 flex-1 overflow-y-auto px-4 pb-24 pt-5"><div className="mx-auto max-w-lg space-y-5">
         <p className="text-sm leading-relaxed text-gray-600">{t('settingsV2.notifications.intro')}</p>
         {loading && <p role="status" className="flex items-center gap-2 text-sm text-gray-600"><Loader2 size={18} className="animate-spin" />{t('settingsV2.loading')}</p>}
         {loadError && <div role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-800"><p>{t('settingsV2.loadFailed')}</p><button type="button" onClick={() => setRetry((value) => value + 1)} className="mt-2 flex min-h-11 items-center gap-2 font-bold"><RefreshCw size={18} />{t('common.retry', { defaultValue: 'Retry' })}</button></div>}

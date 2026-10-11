@@ -10,6 +10,7 @@ interface UserAvatarProps {
     alt?: string;
     size?: number;
     className?: string;
+    eager?: boolean;
     name?: string; // New prop for beautiful initials fallback
 }
 
@@ -20,7 +21,8 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
     alt = 'User',
     size = 40,
     className = '',
-    name
+    name,
+    eager = false
 }) => {
     const [imgError, setImgError] = useState(false);
     const usableSrc = src && !/(?:ui-avatars\.com|api\.dicebear\.com|picsum\.photos|randomuser\.me)/i.test(src) ? src : null;
@@ -51,13 +53,14 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
         return (
             <MediaImage
                 media={media}
+                eager={eager}
                 mediaId={mediaId}
                 fallbackSrc={usableSrc}
                 fallback={fallback}
                 alt={alt}
                 sizes={`${size}px`}
-                className={`rounded-full object-cover ${className}`}
-                style={{ width: size, height: size }}
+                className={`rounded-full object-cover shrink-0 ${className}`}
+                style={{ width: size, height: size, minWidth:size, minHeight:size, aspectRatio:'1', flexShrink:0 }}
             />
         );
     }
@@ -66,10 +69,11 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
         return (
             <img
                 src={usableSrc}
+                width={size} height={size} loading={eager ? 'eager' : 'lazy'} decoding="async"
                 alt={alt}
                 onError={() => setImgError(true)}
-                className={`rounded-full object-cover ${className}`}
-                style={{ width: size, height: size }}
+                className={`rounded-full object-cover shrink-0 ${className}`}
+                style={{ width: size, height: size, minWidth:size, minHeight:size, aspectRatio:'1', flexShrink:0 }}
             />
         );
     }

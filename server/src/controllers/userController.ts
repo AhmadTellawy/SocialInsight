@@ -756,7 +756,9 @@ export const getNotifications = async (req: Request, res: Response) => {
         return res.status(403).json({ error: 'Forbidden' });
     }
     try {
-        const limit = boundedPositiveInteger(req.query.limit, NOTIFICATION_PAGE_DEFAULT, NOTIFICATION_PAGE_MAX);
+        const summary = req.query.summary === '1';
+        const limit = summary ? 1 : boundedPositiveInteger(req.query.limit, NOTIFICATION_PAGE_DEFAULT, NOTIFICATION_PAGE_MAX);
+        res.setHeader('Cache-Control', 'private, no-store');
         const cursor = firstQueryValue(req.query.cursor)?.trim() || undefined;
         const visibleNotifications: any[] = [];
         let scanCursor = cursor;
@@ -764,7 +766,7 @@ export const getNotifications = async (req: Request, res: Response) => {
         let scans = 0;
         while (visibleNotifications.length <= limit && !exhausted && scans < 5) {
             const notifications = await prisma.notification.findMany({
-                where: { userId: id as string },
+                where: { userId: id as string, ...(summary ? {isRead:false} : {}) },
                 orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
                 take: limit + 1,
                 ...(scanCursor ? { cursor: { id: scanCursor }, skip: 1 } : {}),
@@ -808,6 +810,7 @@ export const getNotifications = async (req: Request, res: Response) => {
             visibleNotifications.push(...decisions.filter(item => item.decision.allowed));
         }
 
+        if (summary) return res.json({hasUnread:visibleNotifications.length > 0,nextCursor:!visibleNotifications.length&&!exhausted?scanCursor:null});
         const hasMore = visibleNotifications.length > limit || !exhausted;
         const page = visibleNotifications.slice(0, limit);
         const nextCursor = page.length > 0

@@ -1,5 +1,6 @@
 import { useLocation } from 'react-router-dom';
 import { useAppNavigation } from '../hooks/useAppNavigation';
+import {useTranslation} from 'react-i18next';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   ArrowLeft, Users, Settings, Plus, Globe, Share2, Info, Lock,
@@ -62,6 +63,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
   const activeTab = requestedTab === 'about' || requestedTab === 'members' ? requestedTab : 'posts';
   const setActiveTab = (tab: 'posts' | 'about' | 'members') => setQuery('tab', tab === 'posts' ? null : tab);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const {i18n}=useTranslation();
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Membership status UI state
@@ -88,7 +90,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
 
   const {
     posts, isLoading: isPostsLoading, isFetchingNextPage: isPostsFetchingNextPage,
-    error: postsError, hasMore, fetchNextPage, updatePostLikeStatus, removePosts
+    error: postsError, hasMore, fetchNextPage, updatePostLikeStatus, isCheckingAccess, refreshPost, hasEarlier, loadLatest, removePosts
   } = useGroupPosts(group.id, userProfile?.id);
 
   const { stats, isLoading: isStatsLoading } = useGroupStats(group.id, group.stats);
@@ -473,6 +475,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
               <div className="py-10 text-center text-red-500 text-sm">Error: {postsError}</div>
             ) : posts.length > 0 ? (
               <>
+                {hasEarlier&&<button type="button" className="min-h-11 w-full text-blue-600 text-sm" onClick={loadLatest}>{i18n.language.startsWith('ar')?'عرض المنشورات الأحدث':'Show latest posts'}</button>}
                 {posts.map(post => (
                   <SurveyCard
                     key={post.clientKey || post.id}
@@ -481,9 +484,9 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
                     contextGroups={[group]}
                     onContentClick={() => onPostClick(post.id, 'GROUP')}
                     onAnalysisClick={() => onPostClick(post.id, 'GROUP', 'analysis')}
-                    onVote={onVote}
+                    onVote={async(...args)=>{const result=await onVote?.(...args);await refreshPost(args[0]);return result;}}
                     onSurveyProgress={onSurveyProgress}
-                    onShareToFeed={onShareToFeed}
+                    onShareToFeed={onShareToFeed?async(...args)=>{try{return await onShareToFeed(...args);}finally{await refreshPost(args[0].id);}}:undefined}
                     onUpdateDemographics={onUpdateDemographics}
                     onLike={handleLike}
                     onEditDraft={onEditDraft}
@@ -777,6 +780,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
       <div className="relative h-48 shrink-0">
         <div className="absolute inset-0 bg-gradient-to-br from-blue-600 to-indigo-700">
           <MediaImage
+              sizes="(max-width:448px) 100vw, 448px" eager
             media={group.imageMedia}
             mediaId={group.imageMediaId}
             fallbackSrc={group.image?.includes('ui-avatars') ? undefined : group.image}
@@ -832,6 +836,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
           <div className="flex items-center gap-4">
             <div className="w-20 h-20 rounded-3xl bg-white p-1 shadow-xl border border-white/20">
               <MediaImage
+                  sizes="72px" eager
                 media={group.imageMedia}
                 mediaId={group.imageMediaId}
                 fallbackSrc={group.image?.includes('ui-avatars') ? undefined : group.image}
@@ -897,7 +902,7 @@ export const GroupScreen: React.FC<GroupScreenProps> = ({
 
       {/* Tab Content */}
       <div data-app-scroll className="flex-1 overflow-y-auto no-scrollbar bg-gray-50/50 pb-20">
-        {renderTabContent()}
+        <div aria-busy={isCheckingAccess} style={isCheckingAccess?{visibility:'hidden'}:undefined}>{renderTabContent()}</div>
       </div>
     </div>
   );

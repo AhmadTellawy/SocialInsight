@@ -1,3 +1,5 @@
+import { cachedRead, invalidateReads, setReadScope, seedRead, cancelReadRequests } from '../utils/readCache.ts';
+import { subscribeInteractions, interactionGeneration } from '../utils/interactionCache.ts';
 import { normalizeSurvey, type PostAnswerPayload } from '../types.ts';
 import type { Notification } from '../types';
 import type { UserProfile } from '../types';
@@ -27,6 +29,7 @@ export type ApiRequestOptions = {
 };
 
 export type SurveyRequestOptions = ApiRequestOptions & {
+    anchorId?:string;
     normalize?: boolean;
 };
 
@@ -128,6 +131,7 @@ const resolveAssets = (obj: any): any => {
 };
 
 type AuthFetchInit = RequestInit & {
+    memoryTTL?: number;
     timeoutMs?: number;
     suppressAuthExpired?: boolean;
 };
@@ -189,7 +193,13 @@ export const clearSessionMetadata = (): void => {
 const isUnsafeMethod = (method?: string): boolean =>
     !['GET', 'HEAD', 'OPTIONS'].includes((method || 'GET').toUpperCase());
 
+let readGeneration = interactionGeneration();
+subscribeInteractions(() => { const next=interactionGeneration(); if(next!==readGeneration){readGeneration=next;invalidateReads();} });
 export const authFetch = async (input: RequestInfo | URL, init?: AuthFetchInit): Promise<Response> => {
+    if (init?.memoryTTL && !isUnsafeMethod(init.method)) {
+        setReadScope(getAuthSessionIdentity() || 'guest');
+        return cachedRead(String(input), init.memoryTTL, signal => authFetch(input,{...init,memoryTTL:undefined,signal}),init.signal);
+    }
     let fetchUrl = input;
     if (typeof input === 'string') {
         if (input.startsWith('/api')) {
@@ -210,7 +220,7 @@ export const authFetch = async (input: RequestInfo | URL, init?: AuthFetchInit):
         headers.set('Content-Type', 'application/json');
     }
 
-    const { timeoutMs, suppressAuthExpired, signal: upstreamSignal, ...requestInit } = init || {};
+    const { timeoutMs, memoryTTL: _memoryTTL, suppressAuthExpired, signal: upstreamSignal, ...requestInit } = init || {};
     const effectiveTimeoutMs = timeoutMs ?? AUTH_REQUEST_TIMEOUT_MS;
     const requestController = effectiveTimeoutMs > 0 ? new AbortController() : null;
     let didTimeout = false;
@@ -248,6 +258,10 @@ export const authFetch = async (input: RequestInfo | URL, init?: AuthFetchInit):
         signal: requestController?.signal || upstreamSignal
     };
 
+    if(isUnsafeMethod(init?.method) && !/\/(views|participation-session)(?:\?|$)/.test(String(input))){
+      const postId=String(input).match(/\/posts\/([^/?]+)/)?.[1];
+      if(postId && !['comments','drafts'].includes(postId))cancelReadRequests(key=>key.includes('/posts/'+postId)||/\/posts\?/.test(key));
+    }
     let response: Response;
     try {
         response = await fetch(fetchUrl, modifiedInit);
@@ -265,6 +279,12 @@ export const authFetch = async (input: RequestInfo | URL, init?: AuthFetchInit):
         throw error;
     }
     
+    if (response.ok && isUnsafeMethod(init?.method) && !/\/(views|participation-session)(?:\?|$)/.test(String(input))) {
+        const path = String(input).split('?')[0];
+        const post = path.match(/\/posts\/([^/]+)/)?.[1];
+        if (post && !['comments','drafts'].includes(post)) invalidateReads(key => /\/posts(?:\?|$)/.test(key) || key.includes('/posts/' + post) || key.includes('/groups/'));
+        else if (!/\/analytics\/|\/pages\/content-access$|\/notifications(?:\/|$)/.test(path)) invalidateReads();
+    }
     const responseCsrfToken = response.headers.get('X-CSRF-Token');
     if (responseCsrfToken) rememberCsrfToken(responseCsrfToken);
 
@@ -390,8 +410,9 @@ export const api = {
         if (authorHandle) {
             url += `&authorHandle=${authorHandle}`;
         }
+        if(requestOptions.anchorId)url+='&anchorId='+encodeURIComponent(requestOptions.anchorId);
         const response = await authFetch(url, {
-            signal: requestOptions.signal,
+            memoryTTL:20_000, signal: requestOptions.signal,
             timeoutMs: requestOptions.timeoutMs
         });
         if (!response.ok) await throwApiError(response, 'Failed to fetch posts');
@@ -402,7 +423,7 @@ export const api = {
         if (!requestOptions.signal?.aborted) reconcilePostCommentCounts(userId, json.data, counts);
         return {
             data: requestOptions.normalize === false ? json.data : json.data.map(normalizeSurvey),
-            nextCursor: json.nextCursor
+            nextCursor: json.nextCursor, anchorId:json.anchorId as string|null|undefined
         };
     },
 
@@ -410,7 +431,7 @@ export const api = {
         const counts = captureInteractionVersions();
         const guestId = !userId ? getGuestId() : undefined;
         const url = userId ? `${API_BASE_URL}/posts/${id}?userId=${userId}` : `${API_BASE_URL}/posts/${id}?guestId=${guestId}`;
-        const response = await authFetch(url, { signal, timeoutMs: 20_000 });
+        const response = await authFetch(url, { memoryTTL:20_000, signal, timeoutMs: 20_000 });
         if (!response.ok) throw new Error('Failed to fetch post');
         const data = await response.json();
         if (!signal?.aborted) reconcilePostCommentCounts(userId, [data], counts);
@@ -502,7 +523,7 @@ export const api = {
     },
 
     getPostResults: async (postId: string, signal?: AbortSignal, query = '') => {
-        const response = await authFetch(`${API_BASE_URL}/posts/${encodeURIComponent(postId)}/results${query ? '?' + query : ''}`, { signal, timeoutMs: 20_000, cache: 'no-store' });
+        const response = await authFetch(`${API_BASE_URL}/posts/${encodeURIComponent(postId)}/results${query ? '?' + query : ''}`, { memoryTTL:20_000, signal, timeoutMs: 20_000, cache: 'no-store' });
         if (!response.ok) throw new ApiError('Failed to fetch post results', response.status);
         return response.json();
     },
@@ -514,7 +535,7 @@ export const api = {
     },
 
     getSuggestedUsers: async (userId: string, signal?: AbortSignal) => {
-        const response = await authFetch(`${API_BASE_URL}/users/${userId}/suggested`, { signal, timeoutMs: 15_000 });
+        const response = await authFetch(`${API_BASE_URL}/users/${userId}/suggested`, { memoryTTL:20_000, signal, timeoutMs: 15_000 });
         if (!response.ok) throw new Error('Failed to fetch suggested users');
         return response.json();
     },
@@ -627,7 +648,7 @@ export const api = {
         const params = new URLSearchParams({ limit: String(limit) });
         if (cursor) params.set('cursor', cursor);
         if (focusId && !cursor) params.set('focusId', focusId);
-        const response = await authFetch(`${API_BASE_URL}/posts/${postId}/comments?${params.toString()}`, { signal, timeoutMs: 15_000 });
+        const response = await authFetch(`${API_BASE_URL}/posts/${postId}/comments?${params.toString()}`, { memoryTTL:1, signal, timeoutMs: 15_000 });
         if (!response.ok) await throwApiError(response, 'Failed to fetch comments');
         return { items: await response.json(), nextCursor: nextCursorFrom(response), totalCount: totalCountFrom(response) };
     },
@@ -637,14 +658,21 @@ export const api = {
         return page.items;
     },
 
-    createComment: async (postId: string, text: string, parentId?: string, pageId?: string) => {
+    createComment: async (postId: string, text: string, parentId?: string, pageId?: string, mutationId?: string) => {
         const response = await authFetch(`${API_BASE_URL}/posts/${postId}/comments`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text, parentId, pageId })
+            body: JSON.stringify({ text, parentId, pageId, mutationId })
         });
         if (!response.ok) await throwApiError(response, 'Failed to create comment');
         return response.json();
+    },
+
+    getCommentReplies: async (postId:string,parentId:string,cursor?:string|null,signal?:AbortSignal):Promise<CursorPage<any>> => {
+        const params=new URLSearchParams({parentId,limit:'25'});if(cursor)params.set('cursor',cursor);
+        const response=await authFetch(API_BASE_URL+'/posts/'+encodeURIComponent(postId)+'/comments?'+params,{signal,timeoutMs:15000});
+        if(!response.ok)await throwApiError(response,'Failed to load replies');
+        return {items:await response.json(),nextCursor:nextCursorFrom(response),totalCount:totalCountFrom(response)};
     },
 
     updateComment: async (commentId: string, text: string) => {
@@ -676,7 +704,7 @@ export const api = {
     },
 
     getMe: async (requestOptions: ApiRequestOptions = {}): Promise<CurrentUserProfile> => {
-        const response = await authFetch(`${API_BASE_URL}/users/me`, requestOptions);
+        const response = await authFetch(`${API_BASE_URL}/users/me`, { ...requestOptions, memoryTTL:20_000 });
         if (!response.ok) await throwApiError(response, 'Failed to fetch your profile');
         return response.json();
     },
@@ -720,16 +748,28 @@ export const api = {
     },
 
     getUser: async (userId: string, signal?: AbortSignal) => {
-        const response = await authFetch(`${API_BASE_URL}/users/${userId}`, { signal, timeoutMs: 15_000 });
+        const viewer=getAuthSessionIdentity(),epoch=interactionGeneration();
+        const response = await authFetch(`${API_BASE_URL}/users/${userId}`, { memoryTTL:20_000, signal, timeoutMs: 15_000 });
         if (!response.ok) await throwApiError(response, 'Failed to fetch user');
-        return response.json();
+        const user=await response.json();
+        if(!signal?.aborted && viewer===getAuthSessionIdentity() && epoch===interactionGeneration()){
+            if(user.id)seedRead(API_BASE_URL+'/users/'+user.id,user);
+            if(user.handle)seedRead(API_BASE_URL+'/users/handle/'+user.handle,user);
+        }
+        return user;
     },
 
     getUserByHandle: async (handle: string, signal?: AbortSignal) => {
+        const viewer=getAuthSessionIdentity(),epoch=interactionGeneration();
         let cleanHandle = handle.startsWith('@') ? handle.substring(1) : handle;
-        const response = await authFetch(`${API_BASE_URL}/users/handle/${cleanHandle}`, { signal, timeoutMs: 15_000 });
+        const response = await authFetch(`${API_BASE_URL}/users/handle/${cleanHandle}`, { memoryTTL:20_000, signal, timeoutMs: 15_000 });
         if (!response.ok) throw new Error('Failed to fetch user by handle');
-        return response.json();
+        const user=await response.json();
+        if(!signal?.aborted && viewer===getAuthSessionIdentity() && epoch===interactionGeneration()){
+            if(user.id)seedRead(API_BASE_URL+'/users/'+user.id,user);
+            if(user.handle)seedRead(API_BASE_URL+'/users/handle/'+user.handle,user);
+        }
+        return user;
     },
 
     getUserAnalytics: async (userId: string, signal?: AbortSignal) => {
@@ -751,8 +791,8 @@ export const api = {
         const params = new URLSearchParams({ limit: String(limit) });
         if (cursor) params.set('cursor', cursor);
         const response = await authFetch(`${API_BASE_URL}/posts/${postId}/likes?${params.toString()}`, { signal, timeoutMs: 15_000 });
-        if (!response.ok) throw new Error('Failed to fetch post likers');
-        return { items: await response.json(), nextCursor: nextCursorFrom(response) };
+        if (!response.ok) await throwApiError(response, 'Failed to fetch post likers');
+        return { items: await response.json(), nextCursor: nextCursorFrom(response), totalCount: totalCountFrom(response) };
     },
 
     getPostLikers: async (postId: string) => {
@@ -764,7 +804,7 @@ export const api = {
         const response = await authFetch(`${API_BASE_URL}/posts/comments/${commentId}/like`, {
             method: 'POST'
         });
-        if (!response.ok) throw new Error('Failed to like comment');
+        if (!response.ok) await throwApiError(response, 'Failed to like comment');
         return response.json();
     },
 
@@ -772,8 +812,8 @@ export const api = {
         const params = new URLSearchParams({ limit: String(limit) });
         if (cursor) params.set('cursor', cursor);
         const response = await authFetch(`${API_BASE_URL}/posts/comments/${commentId}/likes?${params.toString()}`, { signal, timeoutMs: 15_000 });
-        if (!response.ok) throw new Error('Failed to fetch comment likers');
-        return { items: await response.json(), nextCursor: nextCursorFrom(response) };
+        if (!response.ok) await throwApiError(response, 'Failed to fetch comment likers');
+        return { items: await response.json(), nextCursor: nextCursorFrom(response), totalCount: totalCountFrom(response) };
     },
 
     getCommentLikers: async (commentId: string) => {
@@ -1107,7 +1147,7 @@ export const api = {
         if (cursor) params.set('cursor', cursor);
         const response = await authFetch(`${API_BASE_URL}/users/${userId}/followers?${params.toString()}`, { signal, timeoutMs: 15_000 });
         if (!response.ok) throw new Error('Failed to fetch followers');
-        return { items: await response.json(), nextCursor: nextCursorFrom(response) };
+        return { items: await response.json(), nextCursor: nextCursorFrom(response), totalCount: totalCountFrom(response) };
     },
 
     getUserFollowers: async (userId: string, _currentUserId?: string) => {
@@ -1120,7 +1160,7 @@ export const api = {
         if (cursor) params.set('cursor', cursor);
         const response = await authFetch(`${API_BASE_URL}/users/${userId}/following?${params.toString()}`, { signal, timeoutMs: 15_000 });
         if (!response.ok) throw new Error('Failed to fetch following');
-        return { items: await response.json(), nextCursor: nextCursorFrom(response) };
+        return { items: await response.json(), nextCursor: nextCursorFrom(response), totalCount: totalCountFrom(response) };
     },
 
     getUserFollowing: async (userId: string, _currentUserId?: string) => {
@@ -1177,6 +1217,27 @@ export const api = {
         return response.json();
     },
 
+    getPostAccess: async (ids:string[],signal?:AbortSignal):Promise<string[]> => {
+        const unique=Array.from(new Set(ids)),result:string[]=[];
+        for(let start=0;start<unique.length;start+=100){
+            const response=await authFetch(API_BASE_URL+'/posts/access?ids='+encodeURIComponent(unique.slice(start,start+100).join(',')),{signal,cache:'no-store',timeoutMs:15000});
+            if(!response.ok)await throwApiError(response,'Access could not be verified');
+            result.push(...(await response.json()).ids);
+        }
+        return result;
+    },
+
+    getNotificationSummary: async (userId: string, signal?: AbortSignal): Promise<{hasUnread:boolean}> => {
+        let cursor:string|null=null;const seen=new Set<string>();
+        do{
+            const response = await authFetch(API_BASE_URL + '/users/' + encodeURIComponent(userId) + '/notifications?summary=1'+(cursor?'&cursor='+encodeURIComponent(cursor):''), {signal,memoryTTL:20000, timeoutMs:10000});
+            if (!response.ok) await throwApiError(response, 'Failed to fetch notification summary');
+            const summary=await response.json();if(summary.hasUnread || !summary.nextCursor)return {hasUnread:!!summary.hasUnread};
+            cursor=summary.nextCursor;if(seen.has(cursor!))throw Error('Invalid notification cursor');seen.add(cursor!);
+        }while(cursor && !signal?.aborted);
+        throw new DOMException('Cancelled','AbortError');
+    },
+
     getNotificationsPage: async (
         userId: string,
         cursor?: string,
@@ -1228,7 +1289,7 @@ export const api = {
     },
 
     getGroupById: async (groupId: string, signal?: AbortSignal) => {
-        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}`, { signal, timeoutMs: 15_000 });
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}`, { memoryTTL:20_000, signal, timeoutMs: 15_000 });
         if (!response.ok) throw new Error('Failed to fetch group');
         return response.json();
     },
@@ -1276,7 +1337,7 @@ export const api = {
     },
 
     getGroupPosts: async (groupId: string, page = 1, limit = 10) => {
-        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/posts?page=${page}&limit=${limit}`);
+        const response = await authFetch(`${API_BASE_URL}/groups/${groupId}/posts?page=${page}&limit=${limit}`, { memoryTTL:20_000 });
         if (!response.ok) throw new Error('Failed to fetch group posts');
         return response.json();
     },
@@ -1295,7 +1356,7 @@ export const api = {
     },
 
     getUserGroups: async (userId: string, requestOptions: ApiRequestOptions = {}) => {
-        const response = await authFetch(`${API_BASE_URL}/users/${userId}/groups`, requestOptions);
+        const response = await authFetch(`${API_BASE_URL}/users/${userId}/groups`, { ...requestOptions, memoryTTL:20_000 });
         if (!response.ok) await throwApiError(response, 'Failed to fetch user groups');
         return response.json();
     },

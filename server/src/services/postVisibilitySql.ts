@@ -72,6 +72,7 @@ export type VisiblePostSqlOptions = {
   type?: string;
   discovery?: boolean;
   cursor?: FeedCursor | null;
+  anchor?: FeedCursor | null;
   limit: number;
 };
 
@@ -86,7 +87,8 @@ export function buildVisiblePostSql(options: VisiblePostSqlOptions): Prisma.Sql 
   if (options.type) conditions.push(Prisma.sql`p.type = ${options.type}`);
   if (options.discovery) conditions.push(Prisma.sql`(p."pageId" IS NULL OR EXISTS (SELECT 1 FROM "Page" d WHERE d.id = p."pageId" AND d."isTestFixture" = FALSE))
     AND (p."sharedFromId" IS NULL OR EXISTS (SELECT 1 FROM "Post" ds WHERE ds.id = p."sharedFromId" AND (ds."pageId" IS NULL OR EXISTS (SELECT 1 FROM "Page" dp WHERE dp.id = ds."pageId" AND dp."isTestFixture" = FALSE))))`);
-  if (options.cursor) conditions.push(Prisma.sql`(p."createdAt" < ${options.cursor.createdAt} OR (p."createdAt" = ${options.cursor.createdAt} AND p.id < ${options.cursor.id}))`);
+  if(options.anchor)conditions.push(Prisma.sql`(p."createdAt" < ${options.anchor.createdAt.toISOString()}::timestamp OR (p."createdAt" = ${options.anchor.createdAt.toISOString()}::timestamp AND p.id <= ${options.anchor.id}))`);
+  if (options.cursor) conditions.push(Prisma.sql`(p."createdAt" < ${options.cursor.createdAt.toISOString()}::timestamp OR (p."createdAt" = ${options.cursor.createdAt.toISOString()}::timestamp AND p.id < ${options.cursor.id}))`);
   return Prisma.sql`SELECT ${scalarProjection} FROM "Post" p WHERE ${Prisma.join(conditions.map(condition => Prisma.sql`(${condition})`), ' AND ')} ORDER BY p."createdAt" DESC, p.id DESC LIMIT ${options.limit}`;
 }
 

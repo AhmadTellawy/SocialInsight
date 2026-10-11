@@ -1,9 +1,13 @@
+import {WindowedPeopleList} from './WindowedPeopleList';
+import {useListPosition} from '../hooks/useListPosition';
 import React, { useEffect, useState } from 'react';
 import { UserProfile } from '../types';
 import { BottomSheet } from './BottomSheet';
 import { Loader2, ThumbsUp, X } from 'lucide-react';
 import { api } from '../services/api';
 import { UserAvatar } from './UserAvatar';
+import { useInteractionList } from '../hooks/useInteractionList';
+import { useTranslation } from 'react-i18next';
 
 interface LikersSheetProps {
     isOpen: boolean;
@@ -16,57 +20,12 @@ interface LikersSheetProps {
 }
 
 export const LikersSheet: React.FC<LikersSheetProps> = ({ isOpen, onClose, targetId, type, onAuthorClick, currentUser, isLikedLocally }) => {
-    const [likers, setLikers] = useState<UserProfile[]>([]);
-    const [isLoading, setIsLoading] = useState(false);
-    const [isLoadingMore, setIsLoadingMore] = useState(false);
-    const [nextCursor, setNextCursor] = useState<string | null>(null);
-    const [loadError, setLoadError] = useState<string | null>(null);
-
-    const loadPage = React.useCallback(async (cursor: string | null, append: boolean, signal?: AbortSignal) => {
-        append ? setIsLoadingMore(true) : setIsLoading(true);
-        setLoadError(null);
-        try {
-            const page = type === 'post'
-                ? await api.getPostLikersPage(targetId, cursor, 30, signal)
-                : await api.getCommentLikersPage(targetId, cursor, 30, signal);
-            let incoming = [...page.items];
-            if (!append && currentUser && isLikedLocally !== undefined) {
-                const existsIndex = incoming.findIndex(user => user.id === currentUser.id);
-                if (isLikedLocally && existsIndex === -1) incoming.unshift(currentUser);
-                if (!isLikedLocally && existsIndex !== -1) incoming.splice(existsIndex, 1);
-            }
-            setLikers(previous => {
-                const byId = new Map<string, UserProfile>();
-                (append ? previous : []).forEach(user => byId.set(user.id, user));
-                incoming.forEach(user => byId.set(user.id, user));
-                return Array.from(byId.values());
-            });
-            setNextCursor(page.nextCursor);
-        } catch (error: any) {
-            if (error?.name !== 'AbortError') setLoadError('Failed to load likes.');
-        } finally {
-            append ? setIsLoadingMore(false) : setIsLoading(false);
-        }
-    }, [currentUser, isLikedLocally, targetId, type]);
-
-    useEffect(() => {
-        if (isOpen && targetId) {
-            const controller = new AbortController();
-            setLikers([]);
-            setNextCursor(null);
-            void loadPage(null, false, controller.signal);
-            return () => controller.abort();
-        } else {
-            setLikers([]);
-            setNextCursor(null);
-        }
-    }, [isOpen, loadPage, targetId]);
-
-    useEffect(() => {
-        const resume = () => { setLikers([]); if (isOpen) void loadPage(null, false); };
-        window.addEventListener('opiniup:resume', resume);
-        return () => window.removeEventListener('opiniup:resume', resume);
-    }, [isOpen, loadPage]);
+    const { t } = useTranslation();
+  const listRef=useListPosition(JSON.stringify([currentUser?.id,type,targetId]),isOpen);
+    const { items: likers, totalCount, isLoading, isLoadingMore, nextCursor, loadError, loadPage } =
+      useInteractionList<UserProfile & {id:string}>(currentUser?.id, type + '-likers', targetId, isOpen && !!targetId,
+        (cursor, signal) => (type === 'post' ? api.getPostLikersPage(targetId,cursor,30,signal)
+          : api.getCommentLikersPage(targetId,cursor,30,signal)) as Promise<any>);
 
     return (
         <BottomSheet historyKey={`likes:${type}:${targetId}`} ariaLabel="Likes" isOpen={isOpen} onClose={onClose} customLayout>
@@ -77,14 +36,14 @@ export const LikersSheet: React.FC<LikersSheetProps> = ({ isOpen, onClose, targe
                             <ThumbsUp size={16} />
                         </div>
                         <h2 className="text-lg font-black text-gray-900 tracking-tight">Likes</h2>
-                        {!isLoading && <span className="text-sm font-bold text-gray-400 tabular-nums">({likers.length})</span>}
+                        {!isLoading && <span className="text-sm font-bold text-gray-400 tabular-nums">({totalCount ?? likers.length})</span>}
                     </div>
                     <button onClick={onClose} className="p-2 text-gray-400 hover:bg-gray-50 rounded-full transition-colors active:scale-90">
                         <X size={20} />
                     </button>
                 </div>
 
-                <div className="flex-1 min-h-0 overflow-y-auto p-4 no-scrollbar">
+                <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto p-4 no-scrollbar">
                     {isLoading ? (
                         <div className="space-y-4">
                             {[1, 2, 3].map(i => (
@@ -104,10 +63,10 @@ export const LikersSheet: React.FC<LikersSheetProps> = ({ isOpen, onClose, targe
                         </div>
                     ) : likers.length > 0 ? (
                         <div className="space-y-4">
-                            {likers.map(user => (
-                                <div
-                                    key={user.id}
-                                    className="flex items-center gap-3 cursor-pointer group hover:bg-gray-50 p-2 -mx-2 rounded-xl transition-colors"
+                            <WindowedPeopleList<UserProfile & {id:string}> items={likers} itemKey={user=>user.id}>{user => (
+                                <button
+                                    type="button"
+                                    className="flex w-full text-start items-center gap-3 cursor-pointer group hover:bg-gray-50 p-2 rounded-xl transition-colors"
                                     onClick={() => {
                                         onClose();
                                         onAuthorClick?.({ id: user.id || '', name: user.name || '', avatar: user.avatar || '' });
@@ -118,8 +77,8 @@ export const LikersSheet: React.FC<LikersSheetProps> = ({ isOpen, onClose, targe
                                         <h3 className="text-sm font-bold text-gray-900 truncate group-hover:text-blue-600 transition-colors">{user.name}</h3>
                                         {user.handle && <p className="text-[10px] text-gray-400 truncate uppercase font-bold tracking-widest">@{user.handle}</p>}
                                     </div>
-                                </div>
-                            ))}
+                                </button>
+                            )}</WindowedPeopleList>
                             {nextCursor && (
                                 <button
                                     onClick={() => void loadPage(nextCursor, true)}

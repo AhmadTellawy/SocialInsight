@@ -20,7 +20,7 @@ export const WelcomeStep: React.FC<StepProps> = ({ onNext, onBack }) => {
                 <div className="absolute bottom-10 -left-20 w-64 h-64 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
 
                 <div className="w-28 h-28 mb-8 relative z-10 flex items-center justify-center bg-white rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-gray-100">
-                    <img src="logo.png" alt="Logo" className="w-16 h-16 object-contain drop-shadow-sm" />
+                    <img src="/pwa-192x192.png" alt="Logo" className="w-16 h-16 object-contain drop-shadow-sm" />
                 </div>
                 <h1 className="text-3xl sm:text-4xl font-black text-gray-900 mb-4 tracking-tight relative z-10">
                     Discover More.

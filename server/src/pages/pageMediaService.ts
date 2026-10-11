@@ -75,9 +75,10 @@ export async function pageMediaPresentation(assetId:string,viewerId?:string) {
     altText:asset.altText,width:meta.width,height:meta.height,src:'/api/media/'+encodeURIComponent(asset.id)+'/content',requiresAuth:true};
 }
 
-export async function pageMediaBytes(assetId:string,viewerId?:string) {
+export async function pageMediaBytes(assetId:string,viewerId?:string,width?:number) {
   const asset=await permittedPageMedia(assetId,viewerId);
-  const variant=asset.variants.filter(value=>!value.isPublic&&value.kind!=='MASTER').sort((a,b)=>b.width-a.width)[0];
+  const variants=asset.variants.filter(value=>!value.isPublic&&value.kind!=='MASTER').sort((a,b)=>a.width-b.width);
+  const variant=width ? variants.find(value=>value.width>=width) || variants[variants.length-1] : variants[variants.length-1];
   if(!variant)throw new PagePolicyError('PAGE_MEDIA_UNAVAILABLE',404);
   const bytes=await getMediaStorage().download(variant.storageBucket,variant.storageKey);
   // Recheck after storage I/O so a suspension during a slow download cannot release new bytes.

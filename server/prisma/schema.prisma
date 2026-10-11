@@ -9,6 +9,7 @@ datasource db {
 }
 
 model User {
+  commentSubmissions CommentSubmission[]
   id                  String              @id @default(uuid())
   name                String
   handle              String              @unique
@@ -250,6 +251,7 @@ model GroupMember {
 }
 
 model Post {
+  commentSubmissions CommentSubmission[]
   id                 String      @id @default(uuid())
   title              String
   description        String
@@ -585,6 +587,7 @@ model Answer {
 }
 
 model Comment {
+  submission CommentSubmission?
   id        String           @id @default(uuid())
   text      String
   userId    String
@@ -1302,4 +1305,23 @@ model PageEvent {
   lastError   String?
   page        Page @relation(fields: [pageId], references: [id], onDelete: Restrict)
   @@index([deliveredAt, availableAt, id])
+}
+
+model CommentSubmission {
+  userId String
+  mutationId String
+  requestHash String
+  postId String
+  commentId String? @unique
+  createdAt DateTime @default(now())
+  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+  post Post @relation(fields:[postId],references:[id],onDelete:Cascade)
+  comment Comment? @relation(fields:[commentId],references:[id],onDelete:SetNull)
+  @@id([userId, mutationId])
+  @@index([postId])
+}
+
+model AnalysisRevision {
+  key String @id
+  revision BigInt @default(0)
 }

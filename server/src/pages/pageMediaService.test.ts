@@ -23,7 +23,7 @@ test('Page media uses current roles, post relations and feature gate, rechecking
   let asset:any={id:'asset',pageId:'page',page,status:'ATTACHED',accessScope:'RESTRICTED',aspectRatio:1,
     variants:[variant],postAttachment:{postId:'post'}};
   let role:string|null='EDITOR', active=true, blocked=false, visible=false, postStatus='PUBLISHED', deleted=false, postPage='page';
-  let reads=0, afterDownload:()=>void=()=>{};
+  let reads=0, downloadedKey='', afterDownload:()=>void=()=>{};
   stub(t,prisma.mediaAsset,'findUnique',async()=>asset);
   stub(t,prisma,'$transaction',async(action:any)=>action(prisma));
   stub(t,prisma.pageBlock,'findFirst',async()=>blocked?{userId:'viewer'}:null);
@@ -32,13 +32,17 @@ test('Page media uses current roles, post relations and feature gate, rechecking
   stub(t,prisma.post,'findUnique',async()=>({pageId:postPage,isDeleted:deleted,status:postStatus}));
   stub(t,prisma.post,'count',async()=>visible?1:0);
   stub(t,prisma.page,'count',async()=>visible?1:0);
-  setMediaStorageForTests({download:async()=>{reads++;afterDownload();return Buffer.from('image');},
+  setMediaStorageForTests({download:async(_bucket:string,key:string)=>{reads++;downloadedKey=key;afterDownload();return Buffer.from('image');},
     getPublicUrl:()=>{throw new Error('No public media allowed');}} as unknown as MediaStorage);
   const denied=async()=>assert.rejects(()=>pageMediaBytes('asset','viewer'));
   try {
     const meta=await pageMediaPresentation('asset','viewer');
     assert.equal(meta.src,'/api/media/asset/content'); assert.equal(meta.requiresAuth,true); assert.equal(reads,0);
     assert.equal((await pageMediaBytes('asset','viewer')).bytes.toString(),'image');
+    asset.variants=[64,128,512].map(width=>({...variant,width,storageKey:'image-'+width}));
+    asset.variants.push({...variant,kind:'MASTER',width:4096,storageKey:'master'},{...variant,isPublic:true,width:1500,storageKey:'public'});
+    for(const [width,key] of [[64,'image-64'],[128,'image-128'],[256,'image-512'],[1500,'image-512']] as const){await pageMediaBytes('asset','viewer',width);assert.equal(downloadedKey,key);}
+    await pageMediaBytes('asset','viewer');assert.equal(downloadedKey,'image-512');asset.variants=[variant];
     page.isTestFixture=true; await denied();
     process.env.PAGES_TEST_USERS='viewer'; await pageMediaBytes('asset','viewer');
     delete process.env.PAGES_TEST_USERS; page.isTestFixture=false;

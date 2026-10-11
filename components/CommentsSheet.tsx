@@ -1,10 +1,14 @@
+import {useListPosition} from '../hooks/useListPosition';
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Send, ThumbsUp, Reply, Edit2, Trash2, X, Loader2 } from 'lucide-react';
 import { Analytics } from '../utils/analytics';
 import { Comment, Survey, UserProfile } from '../types';
 import { useCommentThread } from '../hooks/useCommentThread';
-import { interactionGeneration } from '../utils/interactionCache';
+import { updateComment } from '../utils/interactionMutation';
+import { startJourney } from '../utils/journeyPerformance';
+import { readCommentDraft, saveCommentDraft } from '../utils/commentDrafts';
+import { interactionKey, evictInteraction, interactionGeneration } from '../utils/interactionCache';
 import { LikersSheet } from './LikersSheet';
 import { RichMentionInput } from './RichMentionInput';
 import { RichTextRenderer } from './RichTextRenderer';
@@ -52,13 +56,18 @@ interface CommentItemProps {
   onAuthorClick?: (author: { name: string; avatar: string }) => void;
   onLongPress?: (comment: Comment, isReply: boolean, parentId?: string) => void;
   highlightedCommentId?: string | null;
+  onLoadReplies?: (id:string)=>void;
+  onRetry?: (comment:Comment)=>void;
+  loadingReplies?: ReadonlySet<string>;
 }
 
-const CommentItem: React.FC<CommentItemProps> = ({ comment, isReply = false, parentId, onLike, onLikersClick, onReply, onAuthorClick, onLongPress, highlightedCommentId }) => {
+const CommentItem: React.FC<CommentItemProps> = ({ comment, isReply = false, parentId, onLike, onLikersClick, onReply, onAuthorClick, onLongPress, highlightedCommentId, onLoadReplies, onRetry, loadingReplies }) => {
+  const { t, i18n } = useTranslation();
+  const ar = i18n.language.startsWith('ar');
   const timerRef = React.useRef<NodeJS.Timeout | null>(null);
 
   const handlePressStart = () => {
-    if (!onLongPress) return;
+    if (!onLongPress || comment.submissionState) return;
     timerRef.current = setTimeout(() => {
       onLongPress(comment, isReply, parentId);
     }, 500); // 500ms long press
@@ -72,7 +81,8 @@ const CommentItem: React.FC<CommentItemProps> = ({ comment, isReply = false, par
   <div
     id={`comment-${comment.id}`}
     data-comment-id={comment.id}
-    className={`flex gap-3 mb-4 rounded-xl transition-colors duration-500 ${isReply ? 'ml-11 mt-2' : ''} ${highlightedCommentId === comment.id ? 'bg-blue-50 ring-2 ring-blue-200' : ''}`}
+    data-submission-state={comment.submissionState || 'confirmed'}
+    className={`flex gap-3 mb-4 rounded-xl transition-colors duration-500 ${isReply ? 'ms-3 mt-2' : ''} ${highlightedCommentId === comment.id ? 'bg-blue-50 ring-2 ring-blue-200' : ''}`}
   >
     <button type="button" onClick={() => onAuthorClick && onAuthorClick(comment.author)} className="shrink-0 cursor-pointer hover:opacity-80" aria-label={comment.author.name}>
       <UserAvatar src={comment.author.avatar} mediaId={comment.author.avatarMediaId} media={comment.author.avatarMedia} name={comment.author.name} alt={comment.author.name} size={32} className="select-none" />
@@ -86,7 +96,7 @@ const CommentItem: React.FC<CommentItemProps> = ({ comment, isReply = false, par
         onTouchStart={handlePressStart}
         onTouchEnd={handlePressEnd}
         onTouchMove={handlePressEnd}
-        onContextMenu={(e) => { e.preventDefault(); if (onLongPress) onLongPress(comment, isReply, parentId); }}
+        onContextMenu={(e) => { e.preventDefault(); if (onLongPress && !comment.submissionState) onLongPress(comment, isReply, parentId); }}
       >
         <div className="flex items-center gap-2 mb-0.5 pointer-events-none">
           <span
@@ -102,14 +112,19 @@ const CommentItem: React.FC<CommentItemProps> = ({ comment, isReply = false, par
         </p>
       </div>
 
+      {comment.submissionState && <div role="status" className="text-xs py-1 text-gray-500">
+        {comment.submissionState === 'pending' ? t('commentsState.sending') : <><span>{ar ? 'لم يتأكد الإرسال' : 'Sending not confirmed'}</span><button type="button" className="min-h-11 px-3 text-blue-600" onClick={()=>onRetry?.(comment)}>{ar ? 'إعادة المحاولة' : 'Retry'}</button></>}
+      </div>}
       {/* Actions */}
       <div className="flex items-center gap-4 mt-1 ml-2">
         <div className="flex items-center">
           <button
+            disabled={!!comment.submissionState}
+            aria-label={ar ? 'إعجاب' : 'Like'} aria-pressed={!!comment.isLiked}
             onClick={() => onLike(comment.id, isReply, parentId)}
             className={`text-xs font-semibold flex items-center gap-1 transition-colors ${comment.isLiked ? 'text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
           >
-            {comment.isLiked ? <ThumbsUp size={12} fill="currentColor" /> : 'Like'}
+            {comment.isLiked ? <ThumbsUp size={12} fill="currentColor" /> : (ar ? 'إعجاب' : 'Like')}
           </button>
           {comment.likes > 0 && (
             <button
@@ -121,12 +136,12 @@ const CommentItem: React.FC<CommentItemProps> = ({ comment, isReply = false, par
           )}
         </div>
 
-        {!isReply && (
+        {!isReply && !comment.submissionState && (
           <button
             onClick={() => onReply(comment.id)}
             className="text-xs font-semibold text-gray-500 hover:text-blue-600 flex items-center gap-1 transition-colors"
           >
-            Reply
+            {ar ? 'رد' : 'Reply'}
           </button>
         )}
       </div>
@@ -144,8 +159,12 @@ const CommentItem: React.FC<CommentItemProps> = ({ comment, isReply = false, par
           onAuthorClick={onAuthorClick}
           onLongPress={onLongPress}
           highlightedCommentId={highlightedCommentId}
+          onRetry={onRetry}
         />
       ))}
+      {!!comment.repliesNextCursor && <button type="button" className="min-h-11 px-2 text-xs font-bold text-blue-600" disabled={loadingReplies?.has(comment.id)} onClick={()=>onLoadReplies?.(comment.id)}>
+        {loadingReplies?.has(comment.id) ? (ar ? 'جارٍ التحميل…' : 'Loading…') : (ar ? 'عرض المزيد من الردود' : 'Load more replies')} ({comment.replyCount})
+      </button>}
     </div>
 
   </div>
@@ -158,14 +177,17 @@ import { api, ApiError } from '../services/api';
 
 export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProfile, onAuthorClick, sourceSurface = 'FEED', initialCount = 0, initialCommentId, initialReplyId, pagePost }) => {
   const { t, i18n } = useTranslation();
-  const [officialReply, setOfficialReply] = useState(false);
+  const listRef=useListPosition(JSON.stringify([userProfile?.id,'comments',surveyId]));
+  const draftKey=interactionKey(userProfile?.id,'comment-draft',surveyId);
+  const draft=readCommentDraft(draftKey);
+  const [officialReply, setOfficialReply] = useState(draft?.official || false);
   const { comments, setComments, isLoading, isLoadingMore, nextCursor, loadError, loadCommentsPage } = useCommentThread(userProfile?.id, surveyId, initialCount, initialReplyId || initialCommentId);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sendSuccess, setSendSuccess] = useState(false);
   const composerRef = React.useRef<HTMLDivElement>(null);
   const focusComposer = () => composerRef.current?.querySelector('textarea')?.focus({ preventScroll: true });
-  const [newComment, setNewComment] = useState('');
-  const [replyingTo, setReplyingTo] = useState<string | null>(null);
+  const [newComment, setNewComment] = useState(draft?.text || '');
+  const [replyingTo, setReplyingTo] = useState<string | null>(draft?.parentId || null);
   const [isLikersSheetOpen, setIsLikersSheetOpen] = useState(false);
   const [likersTargetId, setLikersTargetId] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -174,7 +196,7 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
 
   // Comment Actions State
   const [actionSheetComment, setActionSheetComment] = useState<{ comment: Comment, isReply: boolean, parentId?: string } | null>(null);
-  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(draft?.editingId || null);
   const composerAuthor = commentComposerIdentity(comments, editingCommentId, officialReply, pagePost, userProfile);
   const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
 
@@ -196,34 +218,73 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
     };
   }, [isLoading, initialCommentId, initialReplyId, comments]);
 
-  const handleLike = async (commentId: string, isReply = false, parentId?: string) => {
-    if (!userProfile?.id) return;
+  const likeOperations = React.useRef(new Map<string, symbol>());
+  const handleLike = async (commentId: string) => {
+    if (!userProfile?.id || likeOperations.current.has(commentId)) return;
+    const previous = comments.flatMap(c => [c, ...(c.replies || [])]).find(c => c.id === commentId);
+    if (!previous) return;
+    const operation = Symbol(commentId);
+    const epoch = interactionGeneration();
+    const finish = startJourney('comment-like-confirm');
+    likeOperations.current.set(commentId, operation);
+    const stillCurrent = () => epoch === interactionGeneration() && likeOperations.current.get(commentId) === operation;
+    const apply = (liked: boolean, count?: number) => setComments(rows => updateComment(rows, commentId,
+      c => ({ ...c, isLiked: liked, likes: count ?? Math.max(0, c.likes + (c.isLiked === liked ? 0 : liked ? 1 : -1)) })));
+    apply(!previous.isLiked);
     try {
-      // Optimistic update
-      if (isReply && parentId) {
-        setComments(prev => prev.map(c => {
-          if (c.id === parentId && c.replies) {
-            return {
-              ...c,
-              replies: c.replies.map(r => r.id === commentId ? { ...r, likes: r.isLiked ? r.likes - 1 : r.likes + 1, isLiked: !r.isLiked } : r)
-            };
-          }
-          return c;
-        }));
-      } else {
-        setComments(prev => prev.map(c => c.id === commentId ? { ...c, likes: c.isLiked ? c.likes - 1 : c.likes + 1, isLiked: !c.isLiked } : c));
-      }
-
-      await api.likeComment(commentId);
-    } catch (e) {
-      console.error("Failed to like comment", e);
-      // Revert optimistic update on failure could be added here
+      const confirmed = await api.likeComment(commentId);
+      if (stillCurrent()) apply(confirmed.isLiked, confirmed.likes);
+      if(stillCurrent())evictInteraction(interactionKey(userProfile.id,'comment-likers',commentId));
+      finish('ready');
+    } catch {
+      if (stillCurrent()) { apply(!!previous.isLiked); setSendError(t('postOptions.actionFailed')); }
+      finish('failed');
+    } finally {
+      if (likeOperations.current.get(commentId) === operation) likeOperations.current.delete(commentId);
     }
   };
 
 
-  const handleSend = async () => {
-    if (isSubmittingRef.current || !newComment.trim()) return;
+  const [loadingReplies,setLoadingReplies]=useState<Set<string>>(new Set());
+  const replyRequests=React.useRef(new Map<string,AbortController>());
+  React.useEffect(()=>()=>replyRequests.current.forEach(controller=>controller.abort()),[]);
+  React.useEffect(()=>{
+    const previous=readCommentDraft(draftKey);
+    saveCommentDraft(draftKey,{...previous,text:newComment,parentId:replyingTo,official:officialReply,editingId:editingCommentId});
+  },[draftKey,newComment,replyingTo,officialReply,editingCommentId]);
+  const loadReplies=async (parentId:string)=>{
+    if(replyRequests.current.has(parentId))return;
+    const parent=comments.find(c=>c.id===parentId);if(!parent?.repliesNextCursor)return;
+    const controller=new AbortController();replyRequests.current.set(parentId,controller);
+    const epoch=interactionGeneration();setLoadingReplies(new Set(replyRequests.current.keys()));
+    try{
+      const page=await api.getCommentReplies(surveyId,parentId,parent.repliesNextCursor,controller.signal);
+      if(controller.signal.aborted||epoch!==interactionGeneration())return;
+      setComments(rows=>updateComment(rows,parentId,c=>({...c,replies:Array.from(new Map([...(c.replies||[]),...page.items].map(r=>[r.id,r])).values()).sort((a,b)=>a.timestamp.localeCompare(b.timestamp)||a.id.localeCompare(b.id)),replyCount:page.totalCount,repliesNextCursor:page.nextCursor})));
+    }catch(error){if(!controller.signal.aborted)setSendError(t('postOptions.actionFailed'));}
+    finally{replyRequests.current.delete(parentId);setLoadingReplies(new Set(replyRequests.current.keys()));}
+  };
+  const handleSend = async (retry?:Comment) => {
+    const editId=retry?null:editingCommentId;
+    const submittedText=retry?.text || newComment;
+    const submittedParent=retry ? retry.parentId : replyingTo;
+    const submittedPage=retry ? retry.pageId : officialReply ? pagePost?.pageId : undefined;
+    if (isSubmittingRef.current || !submittedText.trim() || !userProfile?.id) return;
+    const fingerprint=JSON.stringify([submittedText,submittedParent||null,submittedPage||null]);
+    const preserveDraft=!!retry && (newComment!==submittedText || (replyingTo||null)!==(submittedParent||null) || !!officialReply!==!!submittedPage);
+    const previousDraft=readCommentDraft(draftKey);
+    const mutationId=retry?.mutationId || (previousDraft?.fingerprint===fingerprint ? previousDraft.mutationId : undefined) || crypto.randomUUID();
+    const temporaryId='pending:'+mutationId;
+    const finish=startJourney('comment-confirm');
+    if(!editId){
+      if(!preserveDraft)saveCommentDraft(draftKey,{text:submittedText,parentId:submittedParent||null,official:!!submittedPage,editingId:null,mutationId,fingerprint});
+      const optimistic:Comment={id:temporaryId,mutationId,parentId:submittedParent,pageId:submittedPage,
+        author:submittedPage ? {id:pagePost!.author.id,name:pagePost!.author.name,avatar:pagePost!.author.avatar,kind:'PAGE',avatarMedia:pagePost!.author.avatarMedia,avatarMediaId:pagePost!.author.avatarMediaId}
+          : {id:userProfile.id,name:userProfile.name||'',avatar:userProfile.avatar||'',avatarMedia:userProfile.avatarMedia,avatarMediaId:userProfile.avatarMediaId},
+        text:submittedText,timestamp:new Date().toISOString(),likes:0,replies:[],submissionState:'pending'};
+      setComments(rows=>submittedParent ? updateComment(rows,submittedParent,c=>({...c,replies:[...(c.replies||[]).filter(r=>r.id!==temporaryId),optimistic]}))
+        : [optimistic,...rows.filter(c=>c.id!==temporaryId)]);
+    }
 
     isSubmittingRef.current = true;
     setIsSubmitting(true);
@@ -232,21 +293,21 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
     const epoch = interactionGeneration();
 
     try {
-      if (editingCommentId) {
+      if (editId) {
         // Handle Edit Update
-        const updatedRaw = await api.updateComment(editingCommentId, newComment);
+        const updatedRaw = await api.updateComment(editId, submittedText);
         if (epoch !== interactionGeneration()) return;
         setComments(prev => {
           // It could be a reply or a top level comment
           // To safely update, we recursively map or just check both levels
           return prev.map(c => {
-            if (c.id === editingCommentId) {
+            if (c.id === editId) {
               return { ...c, ...updatedRaw };
             }
             if (c.replies) {
               return {
                 ...c,
-                replies: c.replies.map(r => r.id === editingCommentId ? { ...r, ...updatedRaw } : r)
+                replies: c.replies.map(r => r.id === editId ? { ...r, ...updatedRaw } : r)
               };
             }
             return c;
@@ -256,21 +317,21 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
         setEditingCommentId(null);
       } else {
         // Handle New Comment
-        const createdComment = await api.createComment(surveyId, newComment, replyingTo || undefined, officialReply ? pagePost?.pageId || undefined : undefined);
+        const createdComment = await api.createComment(surveyId, submittedText, submittedParent || undefined, submittedPage || undefined, mutationId);
 
         if (epoch !== interactionGeneration()) return;
-        if (replyingTo) {
+        if (submittedParent) {
           setComments(prev => prev.map(c => {
-            if (c.id === replyingTo) {
-              return { ...c, replies: [...(c.replies || []), createdComment] };
+            if (c.id === submittedParent) {
+              return { ...c, replyCount:createdComment.parentReplyCount ?? (c.replyCount || 0)+(c.replies?.some(r=>r.id===createdComment.id)?0:1), replies: [...(c.replies || []).filter(r=>r.id!==temporaryId && r.id!==createdComment.id), createdComment] };
             }
             return c;
           }), 1, createdComment.commentsCount);
-          setReplyingTo(null);
+          if(!preserveDraft)setReplyingTo(null);
         } else {
-          setComments(prev => [createdComment, ...prev], 1, createdComment.commentsCount);
+          setComments(prev => [createdComment, ...prev.filter(c=>c.id!==temporaryId && c.id!==createdComment.id)], 1, createdComment.commentsCount);
         }
-        setNewComment('');
+        if(!preserveDraft)setNewComment('');
 
         Analytics.track({
           event_type: 'COMMENT_CREATE',
@@ -280,13 +341,17 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
           source_surface: sourceSurface
         });
       }
+      finish();
+      if(!preserveDraft)saveCommentDraft(draftKey,{text:'',parentId:null,official:officialReply,editingId:null});
       setSendSuccess(true);
     } catch (error) {
+      finish('failed');
       if (epoch !== interactionGeneration()) return;
+      if(!editId)setComments(rows=>updateComment(rows,temporaryId,c=>({...c,submissionState:'failed'})));
       if (error instanceof ApiError && error.code === 'MENTION_LIMIT_EXCEEDED') {
         setSendError(t('mentions.limitExceeded', { limit: error.details?.limit }));
       } else {
-        setSendError(editingCommentId ? t("commentsState.editFailed") : t("commentsState.sendFailed"));
+        setSendError(editId ? t("commentsState.editFailed") : t("commentsState.sendFailed"));
       }
     } finally {
       isSubmittingRef.current = false;
@@ -297,7 +362,7 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
   return (
     <div className="flex flex-col h-full min-h-0 bg-white">
       {/* Scrollable Comments List */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-4 pb-4 overscroll-contain no-scrollbar">
+      <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto px-4 pt-4 pb-4 overscroll-contain no-scrollbar">
         {isLoading ? (
           <div className="space-y-6">
             {[1, 2, 3].map((i) => (
@@ -329,6 +394,9 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
                 key={comment.id}
                 comment={comment}
                 onLike={handleLike}
+                onRetry={comment=>void handleSend(comment)}
+                onLoadReplies={id=>void loadReplies(id)}
+                loadingReplies={loadingReplies}
                 onLikersClick={(id) => {
                   setLikersTargetId(id);
                   setIsLikersSheetOpen(true);
@@ -393,7 +461,7 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
             />
             <button
               aria-label={t("commentsState.send")}
-              onClick={handleSend}
+              onClick={()=>void handleSend()}
               disabled={!newComment.trim() || isSubmitting}
               className={`ml-2 p-1.5 rounded-full transition-all ${newComment.trim() && !isSubmitting ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400'}`}
             >
@@ -455,7 +523,7 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
                     if (epoch !== interactionGeneration()) return;
                     setComments(prev => {
                       if (actionSheetComment.isReply && actionSheetComment.parentId) {
-                        return prev.map(c => c.id === actionSheetComment.parentId ? { ...c, replies: c.replies?.filter(r => r.id !== actionSheetComment.comment.id) } : c);
+                        return prev.map(c => c.id === actionSheetComment.parentId ? { ...c, replyCount:Math.max(0,(c.replyCount ?? c.replies?.length ?? 1)-1), replies: c.replies?.filter(r => r.id !== actionSheetComment.comment.id) } : c);
                       }
                       return prev.filter(c => c.id !== actionSheetComment.comment.id);
                     }, -(1 + (actionSheetComment.comment.replies?.length || 0)), deleted.commentsCount);

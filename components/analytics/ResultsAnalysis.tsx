@@ -2,14 +2,17 @@ import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, ArrowRight, Share2, ShieldCheck, SlidersHorizontal, X } from 'lucide-react';
 import type { Survey } from '../../types';
-import { api } from '../../services/api';
+import { readScreenState,saveScreenState } from '../../utils/screenState';
+import { interactionGeneration,subscribeInteractions } from '../../utils/interactionCache';
+import { startJourney } from '../../utils/journeyPerformance';
+import { api,getAuthSessionIdentity } from '../../services/api';
 import { pageRequest } from '../../services/pagesApi';
 import { demographicCountries } from '../../utils/demographicSettings';
 import { analysisColors, analysisDimensions, analysisQueryString, answerPercentage, percentagePointDifference, type AnalysisDimension, type AnalysisFilters, type AnalysisGroup, type AnalysisResults, type QuestionSummary } from '../../utils/analysis';
 import { BottomSheet } from '../BottomSheet';
 import { PageError } from '../pages/PageUi';
 import { AnalysisFilters as AnalysisFilterSheet } from './AnalysisFilters';
-import { AnalysisShare } from './AnalysisShare';
+const AnalysisShare=React.lazy(()=>import('./AnalysisShare').then(m=>({default:m.AnalysisShare})));
 import './analytics.css';
 
 export type AnalysisQuestion = { id: string; text: string; type: string; options?: Array<{ id: string; text: string }>; maxSelection?: number };
@@ -36,14 +39,17 @@ function ComparisonBars({ summary, question, multiple }: { summary: QuestionSumm
 
 type Props = { survey: Survey; isAccessDenied?: boolean; privatePageId?: string; onBack?: () => void };
 export function ResultsAnalysis(props: Props) {
+  const epoch=React.useSyncExternalStore(subscribeInteractions,interactionGeneration);
   const source = props.survey.sharedFrom || props.survey;
   // A new source gets a fresh filter/question/request state, including during in-app navigation.
-  return <AnalysisContent key={`${source.id}:${props.privatePageId || ''}`} {...props} survey={source} />;
+  return <AnalysisContent key={`${epoch}:${source.id}:${props.privatePageId || ''}`} {...props} survey={source} />;
 }
 const AnalysisContent: React.FC<Props> = ({ survey: source, isAccessDenied, privatePageId, onBack }) => {
   const { i18n, t } = useTranslation(), ar = i18n.language.startsWith('ar'), locale = ar ? 'ar' : 'en', id = useId();
   const copy = (arabic: string, english: string) => ar ? arabic : english;
   const num = formatAnalysisNumber;
+  const stateKey=JSON.stringify([getAuthSessionIdentity(),'analysis',source.id,privatePageId||'']);
+  const previous=readScreenState<{questionId:string;compareBy:AnalysisDimension|'';filters:AnalysisFilters}>(stateKey);
   const [results, setResults] = useState<AnalysisResults | null>(null);
   const [loaded, setLoaded] = useState<{ filters: AnalysisFilters; compareBy: AnalysisDimension | ''; questionId: string } | null>(null);
   const inFlight = useRef<Promise<void> | null>(null);
@@ -51,12 +57,13 @@ const AnalysisContent: React.FC<Props> = ({ survey: source, isAccessDenied, priv
   useEffect(() => () => requestController.current?.abort(), []);
   const [status, setStatus] = useState<'loading' | 'ready' | 'denied' | 'error'>('loading');
   const [error, setError] = useState<unknown>(null), [attempt, setAttempt] = useState(0);
-  const [questionId, setQuestionId] = useState(''), [compareBy, setCompareBy] = useState<AnalysisDimension | ''>('');
-  const [filters, setFilters] = useState<AnalysisFilters>({}), [draft, setDraft] = useState<AnalysisFilters>({});
+  const [questionId, setQuestionId] = useState(previous?.questionId || ''), [compareBy, setCompareBy] = useState<AnalysisDimension | ''>(previous?.compareBy || '');
+  const [filters, setFilters] = useState<AnalysisFilters>(previous?.filters || {}), [draft, setDraft] = useState<AnalysisFilters>({});
   const [sheet, setSheet] = useState<'filters' | 'share' | 'cohort' | null>(null), [cohort, setCohort] = useState<AnalysisGroup | null>(null);
   const definitions = source.sections?.flatMap(section => section.questions) || [];
   // Every response includes all question summaries; only comparisons need a question-specific request.
   const query = analysisQueryString(filters, compareBy ? questionId || definitions[0]?.id || undefined : undefined, compareBy);
+  useEffect(()=>saveScreenState(stateKey,{questionId,compareBy,filters}),[stateKey,questionId,compareBy,filters]);
   const restoreComparisonFocus = useRef(false);
   useEffect(() => {
     if (status !== 'ready' || !restoreComparisonFocus.current) return;
@@ -74,6 +81,7 @@ const AnalysisContent: React.FC<Props> = ({ survey: source, isAccessDenied, priv
       const controller = new AbortController();
       requestController.current = controller;
       setStatus('loading');
+      const finish=startJourney('analytics-content');
       const request = (async () => {
         try {
           const data = privatePageId && source.pageId === privatePageId
@@ -81,9 +89,10 @@ const AnalysisContent: React.FC<Props> = ({ survey: source, isAccessDenied, priv
             : await api.getPostResults(source.id, controller.signal, query) as AnalysisResults;
           if (data?.version !== 3) throw new Error('Unsupported analysis contract');
           if (current && !controller.signal.aborted) {
-            setResults(data); setLoaded({ filters, compareBy, questionId: questionId || definitions[0]?.id || '' }); setStatus('ready'); setError(null);
+            setResults(data); setLoaded({ filters, compareBy, questionId: questionId || definitions[0]?.id || '' }); setStatus('ready'); setError(null); finish();
           }
         } catch (failure: any) {
+          finish('failed');
           if (!current || controller.signal.aborted) return;
           const denied = [401, 403, 404].includes(failure?.status);
           if (denied) { setResults(null); setLoaded(null); setSheet(null); }
@@ -95,7 +104,7 @@ const AnalysisContent: React.FC<Props> = ({ survey: source, isAccessDenied, priv
       if (inFlight.current === request) inFlight.current = null;
     };
     const debounce = window.setTimeout(() => void load(), results ? 180 : 0);
-    const timer = privatePageId ? window.setInterval(() => void load(), 30_000) : undefined;
+    const timer = privatePageId ? window.setInterval(() => { if(!document.hidden)void load(); }, 30_000) : undefined;
     return () => { current = false; window.clearTimeout(debounce); if (timer !== undefined) window.clearInterval(timer); };
   }, [source.id, source.pageId, privatePageId, isAccessDenied, query, attempt]);
   const questions: AnalysisQuestion[] = definitions.length ? definitions : [{ id: results?.questionSummaries[0]?.questionId || '', text: source.question || source.title, options: source.options, type: 'multiple_choice' }];
@@ -146,6 +155,6 @@ const AnalysisContent: React.FC<Props> = ({ survey: source, isAccessDenied, priv
         {sheet === 'cohort' && cohort && summary && <><p className="an-hint">{active?.text}</p><p className="an-cohort-context">{label(cohort.label)} · <bdi>{num(cohort.responseCount)}</bdi> {copy('مجيبًا', 'respondents')}<br />{copy('الإجمالي المرجعي', 'Overall reference')}: <bdi>{num(summary.responseCount)}</bdi> · {scope}</p>{analysisOptions(cohort, active).map(option => { const overall = summary.optionCounts[option.id] || 0, delta = percentagePointDifference(option.count, cohort.responseCount, overall, summary.responseCount); return <div className="an-cohort-detail" key={option.id}><h3><i className="an-dot" style={{ background: option.color }} />{option.label}</h3><div className="an-cohort-numbers"><strong><bdi>{analysisPercent(option.count, cohort.responseCount)}</bdi></strong><span><bdi>{num(option.count)}</bdi> {copy('من', 'of')} <bdi>{num(cohort.responseCount)}</bdi></span></div><p>{Math.abs(delta) < .05 ? copy('مماثلة للإجمالي', 'Same as overall') : <>{delta > 0 ? copy('أعلى من الإجمالي بـ ', 'Above overall by ') : copy('أقل من الإجمالي بـ ', 'Below overall by ')}<bdi>{num(Math.abs(delta))}</bdi> {copy('نقطة مئوية', 'percentage points')}</>}</p><p className="an-hint">{copy('نسبة الإجمالي', 'Overall percentage')}: <bdi>{analysisPercent(overall, summary.responseCount)}</bdi></p></div>; })}</>}
       </div>
     </BottomSheet>
-    {results && <AnalysisShare open={sheet === 'share'} onClose={() => setSheet(null)} results={results} questions={questions} activeQuestionId={summary?.questionId || ''} scope={scope} sourceTitle={source.title} ar={ar} />}
+    {results && sheet === 'share' && <React.Suspense fallback={null}><AnalysisShare open={true} onClose={() => setSheet(null)} results={results} questions={questions} activeQuestionId={summary?.questionId || ''} scope={scope} sourceTitle={source.title} ar={ar} /></React.Suspense>}
   </section>;
 }

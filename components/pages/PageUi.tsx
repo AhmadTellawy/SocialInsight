@@ -27,7 +27,7 @@ export function PageIdentityImage({ mediaId, media, ...props }: Omit<React.Compo
 }
 export function PageAvatar({ page, small = false, eager = false }: { page: Pick<BusinessPage,'name'|'avatarMediaId'|'avatarMedia'>; small?:boolean; eager?:boolean }) {
   return <div className={`pages-avatar ${small ? 'small' : ''}`}>
-    {page.avatarMediaId ? <PageIdentityImage mediaId={page.avatarMediaId} media={page.avatarMedia} alt={page.name} eager={eager} /> : <span aria-hidden="true">{Array.from(page.name.trim()).slice(0,2).join('')}</span>}
+    {page.avatarMediaId ? <PageIdentityImage mediaId={page.avatarMediaId} media={page.avatarMedia} alt={page.name} sizes={small ? '64px' : '92px'} eager={eager} /> : <span aria-hidden="true">{Array.from(page.name.trim()).slice(0,2).join('')}</span>}
   </div>;
 }
 export function PageLoading() { const {text}=usePageText(); return <div className="pages-loading" role="status"><LoaderCircle className="animate-spin" size={22}/>{text('Loading…','جارٍ التحميل…')}</div>; }

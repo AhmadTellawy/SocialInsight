@@ -167,7 +167,7 @@ export const DemographicSettingsScreen: React.FC<{
         <h1 className="min-w-0 flex-1 text-base font-bold text-gray-900">{t('settingsV2.demographics.title', { defaultValue: 'Demographic information' })}</h1>
         <button type="button" onClick={() => void save()} disabled={!dirty || loading || loadError || needsReload || saving} className="flex min-h-11 min-w-20 items-center justify-center gap-2 rounded-full bg-blue-600 px-4 text-sm font-bold text-white disabled:bg-gray-100 disabled:text-gray-500 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2">{saving && <Loader2 size={16} className="animate-spin" />}{t(saving ? 'profile.edit.saving' : 'profile.edit.save', { defaultValue: saving ? 'Saving...' : 'Save' })}</button>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-24 pt-5">
+      <div data-settings-scroll className="min-h-0 flex-1 overflow-y-auto px-4 pb-24 pt-5">
         <div className="mx-auto max-w-lg space-y-5">
           <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm leading-relaxed text-blue-950">
             <p className="mb-2 flex items-center gap-2 font-bold"><Info size={18} />{t('settingsV2.demographics.optionalTitle', { defaultValue: 'Optional information, useful insights' })}</p>

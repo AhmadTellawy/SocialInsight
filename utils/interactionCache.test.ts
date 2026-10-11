@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { captureInteractionVersions, reconcilePostCommentCounts, clearInteractions, evictInteraction, freshInteraction, interactionGeneration, interactionKey, readInteraction, writeInteraction } from './interactionCache.ts';
+import { loadInteraction, captureInteractionVersions, reconcilePostCommentCounts, clearInteractions, evictInteraction, freshInteraction, interactionGeneration, interactionKey, readInteraction, writeInteraction } from './interactionCache.ts';
 
 test('comments are isolated by account and post, and session reset invalidates in-flight generations', () => {
   clearInteractions();
@@ -41,4 +41,19 @@ test('fresh post counts reconcile without letting late reads erase confirmed mut
   clearInteractions(); writeInteraction(key, { items: [], totalCount: 5, nextCursor: null });
   reconcilePostCommentCounts('a', [{ id: 'p', commentsCount: 3 }], freshRead);
   assert.equal(readInteraction(key)?.totalCount, 5);
+});
+
+test('late list read cannot replace a confirmed write and two consumers share one request',async()=>{
+ clearInteractions();const key=interactionKey('viewer','likes','post');let resolve!:(value:any)=>void,calls=0;
+ const loader=async()=>{calls++;return new Promise<any>(done=>{resolve=done;});};
+ const a=loadInteraction(key,null,loader),b=loadInteraction(key,null,loader);
+ writeInteraction(key,{items:[{id:'confirmed'}],nextCursor:null,totalCount:1});resolve({items:[{id:'old'}],nextCursor:null,totalCount:1});await Promise.all([a,b]);
+ assert.equal(calls,1);assert.equal(readInteraction<any>(key)?.items[0].id,'confirmed');
+});
+test('leaving one consumer preserves the other, account reset cancels all reads',async()=>{
+ clearInteractions();const key=interactionKey('viewer','likes','post');let resolve!:(value:any)=>void,shared!:AbortSignal;
+ const loader=async(signal:AbortSignal)=>{shared=signal;return new Promise<any>(done=>{resolve=done;});};
+ const c=new AbortController(),a=loadInteraction(key,null,loader,c.signal),b=loadInteraction(key,null,loader);
+ c.abort();await assert.rejects(a,{name:'AbortError'});assert.equal(shared.aborted,false);clearInteractions();assert.equal(shared.aborted,true);
+ resolve({items:[{id:'old-account'}],nextCursor:null});await b;assert.equal(readInteraction(key),undefined);
 });

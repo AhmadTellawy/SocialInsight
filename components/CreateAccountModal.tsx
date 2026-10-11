@@ -122,7 +122,7 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({ isOpen, 
   const renderStep1 = () => (
     <div className="space-y-6 pt-2 pb-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
       <div className="flex justify-center mb-2">
-        <img src="logo.png" alt="" className="w-16 h-16 object-contain" />
+        <img src="/pwa-192x192.png" alt="" className="w-16 h-16 object-contain" />
       </div>
       <div className="text-center px-4">
         <h2 className="text-xl font-black text-gray-900 mb-2">Grow your Presence</h2>

@@ -1,3 +1,6 @@
+import { analysisCacheKey, sharedAnalysisSnapshot } from '../services/analysisCache';
+import { currentPageDatabaseContext } from '../pages/pageDatabaseContext';
+import { replyCursor, replyCursorWhere } from '../services/commentPagination';
 import { loadVisibleInteractionTarget } from '../services/interactionReadService';
 import { activePageActor, lockPage, lockPageForAnalytics, lockPageForInteraction, lockPagesForShare, pageAudit, pageIsBlocked, pageTransaction, requirePageCapability, withPageCoordinationAdmission } from '../pages/pageService';
 import { pagePostReplay, pagePostRequestKey, recordPagePostCreation } from '../pages/pagePostReplay';
@@ -64,7 +67,7 @@ import {
     serializePeopleTags
 } from '../services/peopleTagService';
 import { buildVisiblePublishedPostWhere, evaluatePostResultsAccess } from '../services/postVisibilityService';
-import { loadVisiblePostScalars } from '../services/postVisibilitySql';
+import { loadVisiblePostScalars, visiblePublishedPostSql } from '../services/postVisibilitySql';
 import { attachPageCommentPublishers, attachPagePublishers, authorizePagePublisher, guardPagePostInteractions, guardPagePostPersistence, hasPostPageCapability, isPageFollower, respondPagePostError } from '../pages/pagePostService';
 import { assertPageDestination, PagePolicyError } from '../pages/pagePolicy';
 import { canonicalShareSourceId, copiedPageRootId, withoutCopiedPageText } from '../pages/pageShareCopy';
@@ -401,6 +404,17 @@ const resolveInteractionTarget = async (postId: string, type: 'like' | 'comment'
 };
 
 
+/** Permission-only refresh for previously loaded cards. No content or existence of denied IDs is returned. */
+export const getPostAccess = async (req:Request,res:Response) => {
+  const ids=typeof req.query.ids==='string'?Array.from(new Set(req.query.ids.split(','))):[];
+  if(!ids.length||ids.length>100||ids.some(id=>!id||id.length>100)){res.status(400).json({code:'INVALID_POST_IDS'});return;}
+  try {
+    const rows=await prisma.$transaction(tx=>tx.$queryRaw<Array<{id:string}>>(Prisma.sql`SELECT p.id FROM "Post" p WHERE p.id IN (${Prisma.join(ids)}) AND ${visiblePublishedPostSql(req.user?.userId)}`));
+    res.setHeader('Cache-Control','private, no-store');res.setHeader('Vary','Authorization, Cookie');
+    res.json({ids:rows.map(row=>row.id)});
+  }catch(error){if(!respondPagePostError(error,res))res.status(503).json({code:'POST_ACCESS_UNAVAILABLE'});}
+};
+
 export const getPosts = async (req: Request, res: Response) => {
     const userId = req.user?.userId;
     const guestId = typeof req.query.guestId === 'string' ? req.query.guestId : undefined;
@@ -410,6 +424,7 @@ export const getPosts = async (req: Request, res: Response) => {
     const groupId = typeof req.query.groupId === 'string' ? req.query.groupId : undefined;
     const publisherPageId = typeof req.query.pageId === 'string' ? req.query.pageId : undefined;
     const pagePostType = publisherPageId && typeof req.query.type === 'string' ? normalizePostType(req.query.type) : undefined;
+    const anchorId=typeof req.query.anchorId==='string'&&req.query.anchorId.length<=100?req.query.anchorId:undefined;
     const cursorValue = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
     const limit = parseFeedLimit(req.query.limit);
     
@@ -436,10 +451,11 @@ export const getPosts = async (req: Request, res: Response) => {
         const feedPage = await prisma.$transaction(async (tx) => {
             // This relation-free scalar page also supplies the stable cursor
             // keys. Only one extra scalar row is read to determine hasMore.
+            const [anchor]=anchorId&&!cursor?await loadVisiblePostScalars(tx,{viewerId:userId,ids:[anchorId],authorId,authorHandle,groupId,pageId:publisherPageId,type:pagePostType,discovery:!publisherPageId,limit:1}):[];
             const pageRows = await loadVisiblePostScalars(tx, {
                 viewerId: userId, authorId, authorHandle, groupId,
                 pageId: publisherPageId, type: pagePostType,
-                discovery: !publisherPageId, cursor, limit: limit + 1
+                discovery: !publisherPageId, cursor, anchor, limit: limit + 1
             });
             const hasMore = pageRows.length > limit;
             const visiblePageRefs = hasMore ? pageRows.slice(0, limit) : pageRows;
@@ -476,7 +492,7 @@ export const getPosts = async (req: Request, res: Response) => {
                     : null;
             }
 
-            return { hasMore, visiblePageRefs, posts, relationBundle };
+            return { hasMore, visiblePageRefs, posts, relationBundle, anchorId:anchor?.id || null };
         }, {
             isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
             maxWait: 3_000,
@@ -509,7 +525,7 @@ export const getPosts = async (req: Request, res: Response) => {
             ? encodeFeedCursor(lastPageRef)
             : null;
 
-        res.json({ data: mappedPosts, nextCursor });
+        res.json({ data: mappedPosts, nextCursor, ...(anchorId?{anchorId:feedPage.anchorId||null}:{}) });
     } catch (error) {
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2028') {
             console.warn('Feed transaction timed out', { code: error.code });
@@ -2309,7 +2325,10 @@ const evaluatePublisherPostResultsAccess = async (
 };
 
 // Public and Page-management result surfaces share the same aggregate-only DTO.
-const loadAggregatePostResults = async (client: any, postId: string, query?: AnalysisQuery) => {
+const loadAggregatePostResults = async (client: any, postId: string, query?: AnalysisQuery, authority = 'public') => {
+    const scope=String(currentPageDatabaseContext()?.actorId || 'guest')+':'+authority;
+    const cacheKey=await analysisCacheKey(client,postId,scope);
+    const snapshot=await sharedAnalysisSnapshot(cacheKey,async()=>{
     const questions = await client.question.findMany({
         where: { OR: [{ postId }, { section: { postId } }] },
         select: { id: true, options: { where: { isCorrect: true }, select: { id: true } } }
@@ -2318,11 +2337,11 @@ const loadAggregatePostResults = async (client: any, postId: string, query?: Ana
         .filter((question: any) => question.options.length > 0)
         .map((question: any) => [question.id, new Set<string>(question.options.map((option: any) => option.id))]));
     const aggregate = new AggregateResults(correct);
-    const analysis = query ? new AnalysisResults() : null;
+    const analysis = query || cacheKey ? new AnalysisResults() : null;
     let cursor: string | undefined;
     let analysisCursor: { id: string; timestamp: Date } | undefined;
     do {
-        const page = query ? await readAnalysisPage(client, postId, analysisCursor) : await client.response.findMany({
+        const page = analysis ? await readAnalysisPage(client, postId, analysisCursor) : await client.response.findMany({
             where: { postId },
             take: 500,
             orderBy: { id: 'asc' },
@@ -2338,7 +2357,9 @@ const loadAggregatePostResults = async (client: any, postId: string, query?: Ana
         analysisCursor = cursor ? page[page.length - 1] : undefined;
     } while (cursor);
     const overall = aggregate.toJSON();
-    return analysis && query ? analysis.toJSON(query, overall) : overall;
+    return {analysis,overall,bytes:(analysis?.estimatedBytes()||0)+JSON.stringify(overall).length*2};
+    });
+    return snapshot.analysis && query ? snapshot.analysis.toJSON(query,snapshot.overall) : snapshot.overall;
 };
 
 /** Called only by the private Page route; query/body flags cannot activate this authority. */
@@ -2363,7 +2384,7 @@ export const getPageManagedPostResults = async (req: Request, res: Response) => 
                 if (!source) throw new PagePolicyError('PAGE_SOURCE_RESULTS_REQUIRE_OWN_ACCESS', 403);
                 resultPostId = source.id;
             }
-            return loadAggregatePostResults(tx, resultPostId, parseAnalysisQuery(req.query));
+            return loadAggregatePostResults(tx, resultPostId, parseAnalysisQuery(req.query), 'page-managed:'+pageId);
         // Page coordination serializes participation and membership changes. ReadCommitted
         // is essential here: a role revoked while waiting for the lock must be read fresh.
         }, 'ReadCommitted');
@@ -2459,6 +2480,8 @@ const mapComment = (c: any, currentUserId?: string) => {
         likes: c.likes || 0,
         mentions: serializeMentionReferences(c.mentions),
         isLiked: currentUserId && c.likesList ? c.likesList.some((l: any) => l.userId === currentUserId) : false,
+        replyCount: c._count?.replies ?? c.replies?.length ?? 0,
+        repliesNextCursor: c.repliesNextCursor ?? null,
         replies: c.replies ? c.replies.map((r: any) => mapComment(r, currentUserId)) : []
     };
 };
@@ -2469,6 +2492,7 @@ export const getComments = async (req: Request, res: Response) => {
     const limit = parseReadLimit(req.query.limit, 30, 50);
     const cursor = firstQueryString(req.query.cursor)?.trim() || undefined;
     const focusId = firstQueryString(req.query.focusId)?.trim() || undefined;
+    const parentId = firstQueryString(req.query.parentId)?.trim() || undefined;
     try {
         const result = await prisma.$transaction(async (tx) => {
             const commentTarget = await loadVisibleInteractionTarget(tx, rawId, 'comment', userId);
@@ -2480,12 +2504,31 @@ export const getComments = async (req: Request, res: Response) => {
             res.setHeader('Cache-Control', 'private, no-store');
             res.setHeader('Vary', 'Authorization, Cookie');
 
+            const replyInclude = {
+                user: {select:SAFE_USER_SELECT}, mentions:ACTIVE_MENTION_REFERENCE_INCLUDE,
+                likesList:userId?{where:{userId},take:1,select:{userId:true}}:false
+            } satisfies Prisma.CommentInclude;
+            if(parentId){
+                const parent=await tx.comment.findFirst({where:{id:parentId,postId:id,parentId:null,isDeleted:false},select:{id:true}});
+                if(!parent){res.status(404);return {error:'Comment unavailable'};}
+                const after=replyCursorWhere(cursor);
+                const [replies,total]=await Promise.all([
+                    tx.comment.findMany({where:{postId:id,parentId,isDeleted:false,...after},include:replyInclude,orderBy:[{createdAt:'asc'},{id:'asc'}],take:limit+1}),
+                    tx.comment.count({where:{postId:id,parentId,isDeleted:false}})
+                ]);
+                const more=replies.length>limit;if(more)replies.pop();
+                if(more&&replies.length)res.setHeader('X-Next-Cursor',replyCursor(replies[replies.length-1]));
+                res.setHeader('X-Total-Count',String(total));await attachPageCommentPublishers(replies,userId,tx);
+                return replies.map(c=>mapComment(c,userId));
+            }
             const commentInclude = {
                 user: { select: SAFE_USER_SELECT },
                 mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
                 likesList: userId ? { where: { userId }, take: 1, select: { userId: true } } : false,
+                _count:{select:{replies:{where:{isDeleted:false}}}},
                 replies: {
-                    orderBy: { createdAt: 'asc' as const },
+                    where:{isDeleted:false}, take:3,
+                    orderBy: [{ createdAt: 'asc' as const }, {id:'asc' as const}],
                     include: {
                         user: { select: SAFE_USER_SELECT },
                         mentions: ACTIVE_MENTION_REFERENCE_INCLUDE,
@@ -2494,11 +2537,13 @@ export const getComments = async (req: Request, res: Response) => {
                 }
             } satisfies Prisma.CommentInclude;
 
+            const legacyCursor=cursor && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(cursor);
+            const rootBoundary=cursor&&!legacyCursor?replyCursorWhere(cursor,'desc'):{};
             const [commentPage, focusedComment, totalCount] = await Promise.all([
                 tx.comment.findMany({
-                    where: { postId: id, parentId: null },
+                    where: { postId: id, parentId: null, isDeleted:false, ...rootBoundary },
                     take: limit + 1,
-                    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+                    ...(legacyCursor ? { cursor: { id: cursor }, skip: 1 } : {}),
                     include: commentInclude,
                     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }]
                 }),
@@ -2506,27 +2551,37 @@ export const getComments = async (req: Request, res: Response) => {
                     ? tx.comment.findFirst({
                         where: {
                             postId: id,
-                            parentId: null,
+                            parentId: null, isDeleted:false,
                             OR: [{ id: focusId }, { replies: { some: { id: focusId } } }]
                         },
                         include: commentInclude
                     })
                     : Promise.resolve(null),
-                tx.comment.count({ where: { postId: id } })
+                tx.comment.count({ where: { postId: id, isDeleted:false } })
             ]);
             res.setHeader('X-Total-Count', String(totalCount));
             const hasMore = commentPage.length > limit;
             if (hasMore) commentPage.pop();
-            applyNextCursorHeader(res, commentPage, hasMore);
+            if(hasMore&&commentPage.length)res.setHeader('X-Next-Cursor',replyCursor(commentPage[commentPage.length-1]));
 
             if (focusedComment && !commentPage.some(comment => comment.id === focusedComment.id)) {
                 commentPage.push(focusedComment);
+            }
+            for(const root of commentPage){
+                (root as any).repliesNextCursor=root._count.replies>root.replies.length && root.replies.length ? replyCursor(root.replies[root.replies.length-1]) : null;
+            }
+            // A notification target is included separately without expanding the complete reply thread.
+            if(focusId && !commentPage.some(c=>c.id===focusId||c.replies.some(r=>r.id===focusId))){
+                const focusedReply=await tx.comment.findFirst({where:{id:focusId,postId:id,isDeleted:false},include:replyInclude});
+                const parent=focusedReply && commentPage.find(c=>c.id===focusedReply.parentId);
+                if(parent && focusedReply)parent.replies.push(focusedReply);
             }
             await attachPageCommentPublishers(commentPage,userId,tx);
             return commentPage.map(c => mapComment(c, userId));
         }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
         return res.json(result);
     } catch (error) {
+        if(error instanceof Error && error.message==='INVALID_REPLY_CURSOR'){res.status(400).json({code:'INVALID_REPLY_CURSOR'});return;}
         logPostRequestFailure(req, 'getComments_failed', error);
         res.status(500).json({ error: 'Failed to fetch comments' });
     }
@@ -2534,7 +2589,10 @@ export const getComments = async (req: Request, res: Response) => {
 
 export const createComment = async (req: Request, res: Response) => {
     const rawId = req.params.id as string;
-    const { text, content, parentId } = req.body;
+    const { text, content, parentId, mutationId } = req.body;
+    if(mutationId !== undefined && (typeof mutationId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(mutationId))) {
+        res.status(400).json({code:'INVALID_MUTATION_ID'});return;
+    }
     try {
         const id = await resolveInteractionTarget(rawId, 'comment');
         const userId = req.user!.userId;
@@ -2640,9 +2698,24 @@ export const createComment = async (req: Request, res: Response) => {
             }
             if(commentTarget.pageId && !currentTarget?.allowComments) throw new PagePolicyError('PAGE_COMMENTS_DISABLED',403);
             if (commentTarget.pageId && parentId && !await tx.comment.count({ where: { id: parentId, postId: id } })) throw new PagePolicyError('COMMENT_NOT_FOUND',404);
+            if(mutationId){
+                await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${userId+':comment:'+mutationId},0))`;
+                const receipt=await tx.commentSubmission.findUnique({where:{userId_mutationId:{userId,mutationId}}});
+                if(receipt){
+                    const requestHash=createHash('sha256').update(JSON.stringify([id,parentId||null,officialPageId,cleanText])).digest('hex');
+                    if(receipt.requestHash!==requestHash)throw new PagePolicyError('COMMENT_SUBMISSION_CONFLICT',409);
+                    if(!receipt.commentId)throw new PagePolicyError('COMMENT_SUBMISSION_DELETED',409);
+                    const comment=await tx.comment.findUniqueOrThrow({where:{id:receipt.commentId},include:{user:{select:SAFE_USER_SELECT},mentions:ACTIVE_MENTION_REFERENCE_INCLUDE,likesList:{where:{userId},select:{userId:true}}}});
+                    await attachPageCommentPublishers([comment],userId,tx);
+                    const targetPost=await tx.post.findUniqueOrThrow({where:{id}});
+                    return {comment,targetPost,parentReplyCount:parentId?await tx.comment.count({where:{parentId,isDeleted:false}}):undefined,mentionResult:{targetUserIds:[] as string[],notificationIds:[] as string[]},pageNotificationHandled:true,replayed:true};
+                }
+            }
             const createdComment = await tx.comment.create({
                 data: { text: cleanText, userId, postId: id, parentId, pageId:officialPageId }
             });
+            if(mutationId)await tx.commentSubmission.create({data:{userId,mutationId,postId:id,commentId:createdComment.id,
+                requestHash:createHash('sha256').update(JSON.stringify([id,parentId||null,officialPageId,cleanText])).digest('hex')}});
             const targetPost = await tx.post.update({
                 where: { id },
                 data: { commentsCount: { increment: 1 } }
@@ -2671,18 +2744,12 @@ export const createComment = async (req: Request, res: Response) => {
                 }
             });
             await attachPageCommentPublishers([comment],userId,tx);
-            return { comment, targetPost, mentionResult, pageNotificationHandled };
-        }));
-        const { comment, targetPost, mentionResult } = transactionResult;
-
-        const dispatchIds = [...mentionResult.notificationIds];
-
         const commentNavigation = parentId
             ? { postId: id, commentId: parentId, replyId: comment.id, sourceType: 'reply' }
             : { postId: id, commentId: comment.id, sourceType: 'comment' };
 
         const conversationalRecipientId = parentComment?.userId || targetPost.authorId;
-        if (!transactionResult.pageNotificationHandled && conversationalRecipientId && !mentionResult.targetUserIds.includes(conversationalRecipientId)) {
+        if (!pageNotificationHandled && conversationalRecipientId && !mentionResult.targetUserIds.includes(conversationalRecipientId)) {
             const notification = await notify(
                 userId,
                 conversationalRecipientId,
@@ -2693,10 +2760,17 @@ export const createComment = async (req: Request, res: Response) => {
                 commentNavigation,
                 { dedupe: true, deferDispatch: true }
             );
-            if (notification?.id) dispatchIds.push(notification.id);
+            if (notification?.id) mentionResult.notificationIds.push(notification.id);
         }
 
-        res.json({ ...mapComment(comment, userId), commentsCount: targetPost.commentsCount });
+            return { comment, targetPost, parentReplyCount:parentId?await tx.comment.count({where:{parentId,isDeleted:false}}):undefined, mentionResult, pageNotificationHandled, replayed:false };
+        }));
+        const { comment, targetPost, mentionResult } = transactionResult;
+
+        const dispatchIds = [...mentionResult.notificationIds];
+
+
+        res.json({ ...mapComment(comment, userId), commentsCount: targetPost.commentsCount, mutationId:mutationId || null, replayed:transactionResult.replayed, parentReplyCount:transactionResult.parentReplyCount });
         // All notification rows are durable before success. Delivery is secondary.
         void dispatchNotificationIds(dispatchIds).catch(() => logPostRequestFailure(req, 'comment_notification_dispatch_failed', { code: 'DELIVERY_FAILED' }));
     } catch (error) {
@@ -2741,7 +2815,7 @@ export const likePost = async (req: Request, res: Response) => {
         if (result.isLiked && result.targetPost.authorId && !result.pageNotificationHandled) {
             await notify(userId, result.targetPost.authorId, 'like', 'liked your post', 'survey', id);
         }
-        res.json({ isLiked: result.isLiked });
+        res.json({ isLiked: result.isLiked, likes: result.targetPost.likesCount });
     } catch (error) {
         if (respondPagePostError(error, res)) return;
         res.status(500).json({ error: 'Failed to like post' });
@@ -2773,7 +2847,7 @@ export const likeComment = async (req: Request, res: Response) => {
                 await notify(userId, targetComment.userId, 'like', 'liked your comment', 'post', targetComment.postId, commentNavigation);
             }
         }
-        res.json({ isLiked: result.isLiked });
+        res.json({ isLiked: result.isLiked, likes: result.targetComment.likes });
     } catch (error) {
         if (respondPagePostError(error, res)) return;
         res.status(500).json({ error: 'Failed to like comment' });
@@ -2795,6 +2869,8 @@ export const getPostLikers = async (req: Request, res: Response) => {
             const id = targetPost.id;
             res.setHeader('Cache-Control', 'private, no-store');
             res.setHeader('Vary', 'Authorization, Cookie');
+            const totalCount = await tx.userLike.count({ where: { postId: id } });
+            res.setHeader('X-Total-Count', String(totalCount));
             const likes = await tx.userLike.findMany({
                 where: { postId: id },
                 include: { user: { select: SAFE_USER_SELECT } },
@@ -2820,10 +2896,14 @@ export const getCommentLikers = async (req: Request, res: Response) => {
     const limit = parseReadLimit(req.query.limit, 30, 50);
     const cursor = firstQueryString(req.query.cursor)?.trim() || undefined;
     try {
+        const totalCount = await prisma.commentLike.count({ where: { commentId: id, comment: { isDeleted: false, post: buildVisiblePublishedPostWhere(currentUserId) } } });
+        res.setHeader('X-Total-Count', String(totalCount));
+        res.setHeader('Cache-Control', 'private, no-store');
+        res.setHeader('Vary', 'Authorization, Cookie');
         const likes = await prisma.commentLike.findMany({
             where: {
                 commentId: id,
-                comment: { post: buildVisiblePublishedPostWhere(currentUserId) }
+                comment: { isDeleted: false, post: buildVisiblePublishedPostWhere(currentUserId) }
             },
             include: { user: { select: SAFE_USER_SELECT } },
             orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],

@@ -1,6 +1,9 @@
+import {readResume} from '../utils/appResume';
+import {peekRead,seedRead} from '../utils/readCache';
+import {interactionGeneration} from '../utils/interactionCache';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { MembershipStatus, Survey, normalizeSurvey } from '../types';
-import { authFetch } from '../services/api';
+import { authFetch, api } from '../services/api';
 
 export interface GroupStats {
     postsCount: number;
@@ -170,38 +173,47 @@ export function useGroupMembership(
 // 2. Posts Hook (Pagination / Infinite Scroll)
 // ------------------------------------------------------------------
 export function useGroupPosts(groupId: string, userId?: string) {
-    const [posts, setPosts] = useState<Survey[]>([]);
+    const cacheKey='/api/posts?collection=group:'+groupId+':'+(userId||'guest');
+    const snapshot=peekRead<{posts:Survey[];nextCursor:string|null;anchorId?:string}>(cacheKey);
+    const saved=readResume(userId||'guest');
+    const anchor=useRef({key:cacheKey,id:saved?.path==='/group/'+groupId?saved.anchor?.id:undefined});
+    if(anchor.current.key!==cacheKey)anchor.current={key:cacheKey,id:undefined};
+    const [hasEarlier,setHasEarlier]=useState(!!snapshot?.anchorId);
+    const [posts, setPosts] = useState<Survey[]>(snapshot?.posts||[]);
     const [isLoading, setIsLoading] = useState(false);
     const [isFetchingNextPage, setIsFetchingNextPage] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [nextCursor, setNextCursor] = useState<string | null>(null);
+    const [nextCursor, setNextCursor] = useState<string | null>(snapshot?.nextCursor||null);
     const [hasMore, setHasMore] = useState(true);
     const activeRequestRef = useRef<AbortController | null>(null);
 
-    const fetchPosts = useCallback(async (cursor: string | null, isInitial = false) => {
+    const fetchPosts = useCallback(async (cursor: string | null, isInitial = false, latest=false) => {
         if (!groupId) {
             setIsLoading(false);
             setIsFetchingNextPage(false);
             return;
         }
 
+        const controller = new AbortController(),epoch=interactionGeneration();
+        if(activeRequestRef.current && !isInitial)return;
+        if(isInitial)activeRequestRef.current?.abort();
+        activeRequestRef.current=controller;
         try {
             if (isInitial) setIsLoading(true);
             else setIsFetchingNextPage(true);
             setError(null);
 
-            const controller = new AbortController();
-            if (isInitial) activeRequestRef.current?.abort();
-            activeRequestRef.current = controller;
             const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
-            const url = `/api/posts?groupId=${encodeURIComponent(groupId)}&limit=10${cursorParam}`;
-            const res = await authFetch(url, { signal: controller.signal, timeoutMs: 15_000 });
+            if(latest)anchor.current.id=undefined;
+            const requestedAnchor=isInitial&&!latest?anchor.current.id:undefined;
+            const url = `/api/posts?groupId=${encodeURIComponent(groupId)}&limit=10${cursorParam}`+(requestedAnchor?'&anchorId='+encodeURIComponent(requestedAnchor):'');
+            const res = await authFetch(url, { memoryTTL:20000, signal: controller.signal, timeoutMs: 15_000 });
             if (!res.ok) {
                 if (res.status === 403) throw new Error('Private group posts are hidden.');
                 const errData = await res.json().catch(() => ({}));
                 throw new Error(errData.error || 'Failed to fetch posts');
             }
-            const data: { data: any[]; nextCursor: string | null } = await res.json();
+            const data: { data: any[]; nextCursor: string | null;anchorId?:string } = await res.json();
             
             if (!data || !Array.isArray(data.data)) {
                 console.error('[useGroupPosts] Unexpected group posts response:', data);
@@ -219,17 +231,37 @@ export function useGroupPosts(groupId: string, userId?: string) {
                 }
             }).filter(Boolean) as Survey[];
 
-            setPosts((prev) => (isInitial ? normalizedPosts : [...prev, ...normalizedPosts]));
+            if(controller.signal.aborted||epoch!==interactionGeneration())return;
+            setPosts(prev=>{const rows=isInitial?normalizedPosts:Array.from(new Map([...prev,...normalizedPosts].map(p=>[p.id,p])).values());seedRead(cacheKey,{posts:rows,nextCursor:data.nextCursor||null,anchorId:data.anchorId||(hasEarlier?anchor.current.id:undefined)});return rows;});
+            if(isInitial){setHasEarlier(!!data.anchorId);if(requestedAnchor&&!data.anchorId)window.dispatchEvent(new Event('opiniup:anchor-unavailable'));}
             setNextCursor(data.nextCursor || null);
             setHasMore(Boolean(data.nextCursor));
         } catch (err: any) {
-            if (err?.name !== 'AbortError') setError(err.message);
+            if (!controller.signal.aborted && epoch===interactionGeneration() && err?.name !== 'AbortError') {setError(err.message);setPosts([]);}
         } finally {
-            if (isInitial) setIsLoading(false);
-            else setIsFetchingNextPage(false);
+            if(activeRequestRef.current===controller){activeRequestRef.current=null;setIsLoading(false);setIsFetchingNextPage(false);}
         }
-    }, [groupId]);
+    }, [groupId,userId]);
 
+    const [isCheckingAccess,setIsCheckingAccess]=useState(false);
+    const live=useRef(posts);live.current=posts;
+    const refreshPost=async(id:string)=>{
+      const epoch=interactionGeneration();
+      const targets=live.current.filter(post=>post.id===id||post.sharedFrom?.id===id);
+      for(const target of targets){
+        try{const raw=await api.getSurveyById(target.id);if(epoch!==interactionGeneration())return;const fresh=raw;setPosts(rows=>rows.map(post=>post.id===fresh.id?fresh:post));}
+        catch(error){if(epoch===interactionGeneration())setPosts(rows=>rows.filter(post=>post.id!==target.id));}
+      }
+    };
+    useEffect(()=>{
+      const controller=new AbortController();
+      const resume=async(event:Event)=>{if(!(event as CustomEvent).detail?.stale)return;const current=live.current;if(!current.length)return;const epoch=interactionGeneration();setIsCheckingAccess(true);
+        try{const allowed=new Set(await api.getPostAccess(current.map(post=>post.id),controller.signal));if(!controller.signal.aborted&&epoch===interactionGeneration())setPosts(rows=>rows.filter(post=>allowed.has(post.id)));}
+        catch{if(!controller.signal.aborted){setPosts([]);setError('Could not verify access. Please reopen the group.');}}
+        finally{if(!controller.signal.aborted)setIsCheckingAccess(false);}
+      };
+      window.addEventListener('opiniup:resume',resume);return()=>{controller.abort();window.removeEventListener('opiniup:resume',resume);};
+    },[groupId,userId]);
     const updatePostLikeStatus = useCallback((postId: string, isLiked: boolean) => {
         setPosts(prev => prev.map(p => {
             if (p.id !== postId) return p;
@@ -247,8 +279,9 @@ export function useGroupPosts(groupId: string, userId?: string) {
     }, []);
 
     useEffect(() => {
-        setNextCursor(null);
-        fetchPosts(null, true);
+        const cached=peekRead<{posts:Survey[];nextCursor:string|null;anchorId?:string}>(cacheKey);
+        if(cached){setPosts(cached.posts);setNextCursor(cached.nextCursor);setHasMore(!!cached.nextCursor);setHasEarlier(!!cached.anchorId);anchor.current.id=cached.anchorId;}
+        else {setPosts([]);setNextCursor(null);void fetchPosts(null,true);}
         return () => activeRequestRef.current?.abort();
     }, [fetchPosts]);
 
@@ -265,7 +298,7 @@ export function useGroupPosts(groupId: string, userId?: string) {
         error,
         hasMore,
         fetchNextPage,
-        updatePostLikeStatus,
+        updatePostLikeStatus, isCheckingAccess, refreshPost, hasEarlier, loadLatest:()=>void fetchPosts(null,true,true),
         removePosts,
     };
 }

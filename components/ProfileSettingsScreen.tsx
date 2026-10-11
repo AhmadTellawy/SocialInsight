@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { BottomSheet } from './BottomSheet';
 import { MediaDraft, UserProfile } from '../types';
-import { NotificationSettingsScreen } from './NotificationSettingsScreen';
+const NotificationSettingsScreen = React.lazy(() => import('./NotificationSettingsScreen').then(m => ({default:m.NotificationSettingsScreen})));
 import { api } from '../services/api';
 import { useProtectedAccountAction, securityErrorText } from './ReauthenticationDialog';
 import { useTranslation } from 'react-i18next';
@@ -19,17 +19,17 @@ import { MediaPicker, MediaPickerControls, MediaPickerHandle } from './media/Med
 import { createPersistedMediaDraftFromId, mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds, cancelTemporaryMediaDrafts } from '../utils/mediaDrafts';
 import { RichMentionInput } from './RichMentionInput';
 import { MediaImage } from './media/MediaImage';
-import { ProfileLinksManager } from './ProfileLinksManager';
+const ProfileLinksManager = React.lazy(() => import('./ProfileLinksManager').then(m => ({default:m.ProfileLinksManager})));
 import { PROFILE_MAX_AGE, PROFILE_MIN_AGE, calculateAgeGroupFromDateOnly, serializeDateOnly, todayAsDateOnly, validateDateOfBirth } from '../utils/profileValidation';
 import { OAuthFeedback } from '../utils/authUi';
-import { AccountAccessScreen } from './AccountAccessScreen';
-import { DemographicSettingsScreen } from './settings/DemographicSettingsScreen';
-import { AccountPreferencesScreen } from './settings/AccountPreferencesScreen';
-import { SettingsHelpScreen } from './settings/SettingsHelpScreen';
-import { PublicProfilePreviewScreen } from './settings/PublicProfilePreviewScreen';
-import { AccountSecurityScreen } from './AccountSecurityScreen';
-import { AccountDataScreen } from './AccountDataScreen';
-import { BlockedAccountsScreen } from './BlockedAccountsScreen';
+const AccountAccessScreen = React.lazy(() => import('./AccountAccessScreen').then(m => ({default:m.AccountAccessScreen})));
+const DemographicSettingsScreen = React.lazy(() => import('./settings/DemographicSettingsScreen').then(m => ({default:m.DemographicSettingsScreen})));
+const AccountPreferencesScreen = React.lazy(() => import('./settings/AccountPreferencesScreen').then(m => ({default:m.AccountPreferencesScreen})));
+const SettingsHelpScreen = React.lazy(() => import('./settings/SettingsHelpScreen').then(m => ({default:m.SettingsHelpScreen})));
+const PublicProfilePreviewScreen = React.lazy(() => import('./settings/PublicProfilePreviewScreen').then(m => ({default:m.PublicProfilePreviewScreen})));
+const AccountSecurityScreen = React.lazy(() => import('./AccountSecurityScreen').then(m => ({default:m.AccountSecurityScreen})));
+const AccountDataScreen = React.lazy(() => import('./AccountDataScreen').then(m => ({default:m.AccountDataScreen})));
+const BlockedAccountsScreen = React.lazy(() => import('./BlockedAccountsScreen').then(m => ({default:m.BlockedAccountsScreen})));
 import { profileEditHasChanges, profileMediaDraftHasChanged } from '../utils/profileEditState';
 import { useAppNavigation } from '../hooks/useAppNavigation';
 
@@ -517,7 +517,7 @@ const ProfileSettingsContent: React.FC<ProfileSettingsScreenProps> = ({
       <div className="flex flex-col h-full bg-gray-50 animate-in slide-in-from-right duration-300">
         {reauthenticationDialog}
         <PageHeader title={t('profile.edit.title', { defaultValue: 'Edit Profile' })} />
-        <div className="flex-1 overflow-y-auto pb-10 no-scrollbar">
+        <div data-settings-scroll className="flex-1 overflow-y-auto pb-10 no-scrollbar">
           <div className="relative">
             <MediaPicker
               ref={coverPickerRef}
@@ -830,7 +830,7 @@ const ProfileSettingsContent: React.FC<ProfileSettingsScreenProps> = ({
         <button type="button" onClick={onBack} aria-label={t('common.back', { defaultValue: 'Back' })} className="flex h-11 w-11 items-center justify-center rounded-full text-gray-700 focus-visible:ring-2 focus-visible:ring-blue-600"><ArrowLeft size={23} className="rtl:rotate-180" /></button>
         <h1 className="text-lg font-bold text-gray-900">{t('Settings')}</h1>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto pb-24">
+      <div data-settings-scroll className="min-h-0 flex-1 overflow-y-auto pb-24">
         <SectionHeader title={t('settingsV2.sections.profile')} />
         <div className="border-y border-gray-100 bg-white">
           <SettingItem icon={User} label={t('Edit Profile')} value={t('settingsV2.profile.summary')} onClick={() => setCurrentSubPage('edit-profile')} />
@@ -875,7 +875,7 @@ const ProfileSettingsContent: React.FC<ProfileSettingsScreenProps> = ({
   );
 };
 
-export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = (props) => {
+const SettingsRoute: React.FC<ProfileSettingsScreenProps> = (props) => {
   const location = useLocation();
   const { back } = useAppNavigation();
   const page = location.pathname.split('/settings/profile/')[1];
@@ -890,3 +890,5 @@ export const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = (prop
   if (page === 'view-as' && props.userProfile.id) return <PublicProfilePreviewScreen userId={props.userProfile.id} onBack={onBack} />;
   return <ProfileSettingsContent {...props} />;
 };
+
+export const ProfileSettingsScreen:React.FC<ProfileSettingsScreenProps>=(props)=><React.Suspense fallback={<section className="flex-1 bg-white p-6" aria-busy="true"><div className="h-8 w-40 rounded bg-gray-100 animate-pulse"/></section>}><SettingsRoute {...props}/></React.Suspense>;

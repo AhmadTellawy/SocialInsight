@@ -14,7 +14,7 @@ import { useFollowState } from '../hooks/useFollowState';
 import { usePagesAvailability } from '../hooks/usePagesAvailability';
 import { UserAvatar } from './UserAvatar';
 import { MediaImage } from './media/MediaImage';
-import { ProfileMediaEditor } from './ProfileMediaEditor';
+const ProfileMediaEditor=React.lazy(()=>import('./ProfileMediaEditor').then(m=>({default:m.ProfileMediaEditor})));
 import { RichTextRenderer } from './RichTextRenderer';
 import { useAppNavigation } from '../hooks/useAppNavigation';
 
@@ -43,6 +43,7 @@ interface ProfileScreenProps {
   isLoadingMore?: boolean;
   hasNextPage?: boolean;
   onLoadMore?: () => void;
+  onLoadLatest?:()=>void;
 }
 
 type ProfileTab = 'content' | 'reposts' | 'groups' | 'drafts' | 'saved';
@@ -91,9 +92,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   isLoading,
   isLoadingMore,
   hasNextPage,
-  onLoadMore
+  onLoadMore, onLoadLatest
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const location = useLocation();
   const { back, setQuery } = useAppNavigation();
   const { available: pagesAvailable } = usePagesAvailability(userProfile?.id);
@@ -286,7 +287,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         try {
           const userId = (user as any).id;
           if (userId) {
-            const fullUser = await api.getUser(userId, controller.signal);
+            const fullUser = suppliedUser?.id === userId && suppliedUser.followStatus !== undefined
+              ? suppliedUser : await api.getUser(userId, controller.signal);
             if (controller.signal.aborted) return;
             setTargetUser(fullUser);
             const nextFollowStatus = fullUser?.followStatus || 'NONE';
@@ -1122,7 +1124,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   if (locallyBlocked) return <div className="flex min-h-80 flex-col items-center justify-center gap-5 bg-white p-8 text-center"><Shield size={36} className="text-gray-400" /><p className="text-sm text-gray-700">{t('settingsV2.block.success', { defaultValue: 'Account blocked. You can manage blocked accounts in Settings.' })}</p>{onBack && <button type="button" onClick={onBack} className="min-h-12 rounded-xl bg-blue-600 px-6 text-sm font-bold text-white">{t('common.back', { defaultValue: 'Back' })}</button>}</div>;
 
   return (
-    <div data-app-scroll onScroll={handleScroll} className="bg-white flex-1 overflow-y-auto min-h-full flex flex-col no-scrollbar">
+    <div data-app-scroll data-profile-scroll onScroll={handleScroll} className="bg-white flex-1 overflow-y-auto min-h-full flex flex-col no-scrollbar">
       <div className={`flex items-center px-4 h-[60px] sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-gray-50 ${onBack ? 'justify-between' : 'justify-end'}`}>
         {onBack && (
           <button onClick={onBack} className="flex h-11 w-11 items-center justify-center -ms-2 text-gray-600 hover:bg-gray-50 rounded-full transition-colors" aria-label={t('common.back', { defaultValue: 'Back' })}>
@@ -1150,7 +1152,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 </span>
               )}
               alt=""
-              sizes="(max-width: 768px) 100vw, 768px"
+              sizes="(max-width: 448px) 100vw, 448px"
               eager
               useFocalPoint
               className="h-full w-full object-cover"
@@ -1181,10 +1183,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             <div className="w-28 h-28 rounded-[22%] p-1 bg-white shadow-xl border border-gray-100 ring-4 ring-white/80">
               <MediaImage
                 mediaId={profileUser.avatarMediaId}
+                media={profileUser.avatarMedia}
                 fallbackSrc={profileUser.avatar?.includes('ui-avatars') ? undefined : profileUser.avatar}
                 fallback={<span role="img" aria-label={profileUser.name || 'Profile'} className="flex h-full w-full items-center justify-center rounded-[20%] bg-gray-100 text-3xl font-black text-gray-500">{(profileUser.name || 'U').trim().charAt(0).toUpperCase()}</span>}
                 alt={profileUser.name || 'Profile'}
-                sizes="112px"
+                sizes="104px"
+                eager
                 className="w-full h-full rounded-[20%] object-cover"
               />
             </div>
@@ -1364,6 +1368,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         </div>
 
         <div className="pb-20">
+          {onLoadLatest&&activeTab==='content'&&<button type="button" className="min-h-11 w-full px-4 text-sm text-blue-600" onClick={onLoadLatest}>{i18n.language.startsWith('ar')?'عرض المنشورات الأحدث':'Show latest posts'}</button>}
           {renderTabContent()}
           {canViewPrivateProfileContent && (activeTab === 'content' || activeTab === 'reposts') && (
             <div className="py-8 flex flex-col items-center justify-center min-h-[120px] transition-all">

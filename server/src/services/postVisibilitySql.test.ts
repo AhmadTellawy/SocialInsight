@@ -77,3 +77,14 @@ test('existence helper fails closed for absent or invalid results and rechecks e
   }
   assert.equal(calls, 5, 'No reuse of earlier authorization');
 });
+
+test('resume anchor is inclusive, parameterized, and retains author/group visibility predicates',()=>{
+ const anchor={id:"anchor'--",createdAt:new Date('2026-10-11T00:00:00Z')};
+ const query=buildVisiblePostSql({viewerId:'viewer',groupId:'group',authorHandle:'author',anchor,limit:10});
+ assert.match(query.text,/p.id <=/);assert.ok(query.values.includes(anchor.id));assert.ok(!query.text.includes(anchor.id));assert.match(query.text,/isDeleted/);assert.ok(query.values.includes('group'));assert.ok(query.values.includes('author'));
+});
+
+test('feed boundaries are UTC timestamp values independent of database session timezone',()=>{
+ const cursor={id:'cursor',createdAt:new Date('2026-10-11T19:20:21.123Z')};
+ for(const bound of [{cursor},{anchor:cursor}]){const q=buildVisiblePostSql({...bound,limit:10});assert.match(q.text,/::timestamp/);assert.ok(q.values.includes(cursor.createdAt.toISOString()));assert.ok(!q.values.some(v=>v instanceof Date));}
+});

@@ -15,7 +15,11 @@ import { installSheetHistory } from './utils/sheetHistory';
 // Update the worker in the background. Never reload an active page: doing so can
 // abort an in-flight media upload/finalization. The new worker controls the next
 // navigation without interrupting the current user action.
-registerPwa(registerSW);
+// Begin precaching after meaningful content, with a bounded fallback for error/offline screens.
+let pwaStarted = false;
+const startPwa = () => { if (pwaStarted) return; pwaStarted=true; registerPwa(registerSW); };
+window.addEventListener('opiniup:content-ready', startPwa, {once:true});
+window.addEventListener('load', () => window.setTimeout(startPwa, 8000), {once:true});
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

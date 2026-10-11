@@ -39,6 +39,8 @@ export function parseAnalysisQuery(query: Record<string, unknown> = {}): Analysi
 export class AnalysisResults {
   private cells = new Map<string, Cell>();
   private capacityExceeded = false;
+  private bytes = 0;
+  estimatedBytes() { return this.bytes; }
   add(response: ResponseRow): void {
     if (this.capacityExceeded) return;
     const user = response.user, demo = user?.demographics;
@@ -59,8 +61,8 @@ export class AnalysisResults {
     const key = JSON.stringify([dimensions, answers]);
     const existing = this.cells.get(key);
     if (existing) existing.count++;
-    else if (this.cells.size >= 20_000) { this.cells.clear(); this.capacityExceeded = true; }
-    else this.cells.set(key, { dimensions, answers, count: 1 });
+    else if (this.cells.size >= 20_000) { this.cells.clear(); this.bytes=0; this.capacityExceeded = true; }
+    else { this.cells.set(key, { dimensions, answers, count: 1 }); this.bytes += key.length * 4 + 256; }
   }
   private summarize(cells: Cell[]): Summary[] {
     const questions = new Map<string, Summary>();

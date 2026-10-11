@@ -8,6 +8,7 @@ export interface BusinessPage {
   links: Array<{ title: string; url: string }>; cta: 'WEBSITE' | 'EMAIL' | 'PHONE' | null;
   avatarMediaId: string | null; coverMediaId: string | null; avatarMedia?: MediaPresentation; coverMedia?: MediaPresentation;
   createdAt: string; followersCount?: number; following?: boolean; muted?: boolean; managesPage?: boolean;
+  publicMetadata?: import('../utils/pageMetadata').PublicPageMetadata | null;
   canonicalHandle?: string; redirected?: boolean; role?: PageRole; capabilities?: string[];
   publicationState?: 'DRAFT' | 'PUBLISHED' | 'UNPUBLISHED'; platformState?: 'NONE' | 'RESTRICTED' | 'SUSPENDED';
   safetyHidden?: boolean; deletionRequestedAt?: string | null; deletionDueAt?: string | null; lastHandleChangedAt?: string | null;
@@ -17,7 +18,7 @@ export type BlockedPage = Pick<BusinessPage, 'id' | 'name' | 'handle'>;
 export type PageInfo = Pick<BusinessPage, 'name' | 'category' | 'bio' | 'description' | 'country' | 'city' | 'website' | 'links' | 'publicEmail' | 'publicPhone' | 'cta'>;
 
 export async function pageRequest<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
-  const response = await authFetch('/api/pages' + path, { method, cache: 'no-store', signal, timeoutMs: 20000,
+  const response = await authFetch('/api/pages' + path, { method, memoryTTL:method === 'GET' && (/^(?:\?|\/[^/?]+(?:\?|$))/.test(path) && !/^\/(?:mine|invitations|transfers|blocks|staff)(?:\?|$)/.test(path) || /^\/manage\/[^/]+\/content\/[^/]+\/results(?:\?|$)/.test(path)) ? 20_000 : undefined, cache: 'no-store', signal, timeoutMs: 20000,
     ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const result = await response.json();
   if (!response.ok) throw new ApiError(result.error || 'Unable to complete the request', response.status, result.code, result);
@@ -27,7 +28,11 @@ export async function pageRequest<T>(path: string, method = 'GET', body?: unknow
 export const pagesApi = {
   explore: (query: URLSearchParams, signal?: AbortSignal) => pageRequest<CursorPage<BusinessPage>>('?' + query.toString(), 'GET', undefined, signal),
   mine: (cursor = '', signal?: AbortSignal) => pageRequest<CursorPage<BusinessPage>>('/mine' + (cursor ? '?cursor=' + encodeURIComponent(cursor) : ''), 'GET', undefined, signal),
-  get: (handle: string, signal?: AbortSignal) => pageRequest<BusinessPage>('/' + encodeURIComponent(handle), 'GET', undefined, signal),
+  get: async (handle: string, signal?: AbortSignal) => {
+    const page=await pageRequest<BusinessPage>('/'+encodeURIComponent(handle),'GET',undefined,signal);
+    if(!signal?.aborted)window.dispatchEvent(new CustomEvent('opiniup:page-metadata',{detail:{handle,metadata:page.publicMetadata}}));
+    return page;
+  },
   manage: (id: string, signal?: AbortSignal) => pageRequest<BusinessPage>('/manage/' + encodeURIComponent(id), 'GET', undefined, signal),
   create: (input: PageInfo & { handle: string; representationConfirmed: boolean; requestId: string }) => pageRequest<BusinessPage>('', 'POST', input),
   update: (id: string, input: Partial<PageInfo>) => pageRequest<BusinessPage>('/manage/' + id, 'PATCH', input),

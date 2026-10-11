@@ -94,6 +94,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     return { trendingSurveys: trending, regularSurveys: regular };
   }, [surveys]);
 
+  useEffect(()=>{
+    if(isLoading || !surveys.length)return;
+    const frame=requestAnimationFrame(()=>{if(!performance.getEntriesByName('opiniup:first-home-content:ready').length)performance.measure('opiniup:first-home-content:ready',{start:0,end:performance.now()});window.dispatchEvent(new Event('opiniup:content-ready'));});
+    return()=>cancelAnimationFrame(frame);
+  },[isLoading,surveys.length>0]);
   const suggestionsCacheKey = userProfile?.id ? `si_suggestions_v1:${userProfile.id}` : '';
   const [suggestedUsers, setSuggestedUsers] = useState<any[]>(() => {
     if (!suggestionsCacheKey) return [];

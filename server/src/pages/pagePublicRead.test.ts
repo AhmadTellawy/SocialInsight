@@ -14,7 +14,7 @@ async function withFixture(run:(state:{queries:any[];setRows:(rows:any[])=>void}
 test('Public Page uses one parameterized read and only existing public fields',async()=>withFixture(async f=>{
   const value=await getPublicPage("OLD' OR 1=1 --",'viewer');assert.equal(f.queries.length,1);
   assert.ok(f.queries[0].values.includes("old' or 1=1 --"));assert.ok(!f.queries[0].sql.includes("old' or 1=1 --"));
-  assert.deepEqual(value,{...pagePublicDto(row),followersCount:3,following:true,muted:true,managesPage:true,canonicalHandle:'current',redirected:true});
+  assert.deepEqual(value,{...pagePublicDto(row),publicMetadata:{title:'Page | Opiniup',description:'Bio',canonicalUrl:'https://opiniup.com/pages/current',imageUrl:'https://opiniup.com/logo.png'},followersCount:3,following:true,muted:true,managesPage:true,canonicalHandle:'current',redirected:true});
   assert.equal(value.createdAt,row.createdAt);assert.equal(JSON.parse(JSON.stringify(value)).createdAt,'2026-09-01T01:02:03.004Z');
   for(const key of ['ownerId','publicationState','platformState','_visible','_aliasHandle','_followersCount'])assert.equal(key in value,false);
 }));
@@ -48,4 +48,9 @@ test('Shared public guard uses one current existence query for visibility and ei
 test('Shared public guard rejects feature-off or locally hidden state before any query',async()=>withFixture(async f=>{
   process.env.PAGES_ENABLED='false';await assert.rejects(assertPagePublic(prisma,row,'viewer'),{code:'PAGES_UNAVAILABLE'});assert.equal(f.queries.length,0);
   process.env.PAGES_ENABLED='true';await assert.rejects(assertPagePublic(prisma,{...row,purgedAt:new Date()},'viewer'),{code:'PAGE_NOT_FOUND'});assert.equal(f.queries.length,0);
+}));
+
+test('Test fixtures and feature allowlist Pages never project public SEO metadata',async()=>withFixture(async f=>{
+ f.setRows([{...row,isTestFixture:true}]);assert.equal((await getPublicPage('old','viewer')).publicMetadata,null);
+ f.setRows([row]);process.env.PAGES_ENABLED='false';process.env.PAGES_TEST_USERS='viewer';assert.equal((await getPublicPage('old','viewer')).publicMetadata,null);
 }));

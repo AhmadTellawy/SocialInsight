@@ -24,7 +24,10 @@ export const Header: React.FC<HeaderProps> = ({ onPagesClick, onProfileClick, us
         {/* Custom Logo with Fallback */}
         <div className="relative w-9 h-9 sm:w-12 sm:h-12 shrink-0 transform active:scale-90 transition-transform cursor-pointer">
           <img
-            src="/logo.png"
+            src="/pwa-192x192.png"
+            srcSet="/pwa-64x64.png 64w, /pwa-192x192.png 192w"
+            sizes="(min-width:640px) 48px, 36px"
+            width={48} height={48} decoding="async"
             alt="Opiniup Logo"
             className="w-full h-full object-contain"
           />
@@ -55,7 +58,7 @@ export const Header: React.FC<HeaderProps> = ({ onPagesClick, onProfileClick, us
             onClick={onProfileClick}
             className="relative ml-1 active:scale-95 transition-transform"
           >
-            <UserAvatar src={userProfile.avatar} mediaId={userProfile.avatarMediaId} media={userProfile.avatarMedia} name={userProfile.name} size={32} className="border border-gray-100 shadow-sm" />
+            <UserAvatar eager src={userProfile.avatar} mediaId={userProfile.avatarMediaId} media={userProfile.avatarMedia} name={userProfile.name} size={32} className="border border-gray-100 shadow-sm" />
           </button>
         ) : (
           <div className="flex items-center gap-1 sm:gap-3">

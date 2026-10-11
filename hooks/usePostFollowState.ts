@@ -1,3 +1,4 @@
+import {interactionGeneration} from '../utils/interactionCache';
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { api } from '../services/api';
 import { syncFollowState } from './useFollowState';
@@ -9,7 +10,7 @@ const entries = new Map<string, { snapshot: Snapshot; listeners: Set<() => void>
 
 // Scope both cached state and asynchronous completion to the signed-in viewer.
 export function usePostFollowState(viewerId: string | undefined, targetId: string | undefined, initialFollowing: boolean, menuOpen = false, isPage = false) {
-  const key = JSON.stringify([viewerId, targetId, isPage]);
+  const key = JSON.stringify([viewerId, interactionGeneration(), targetId, isPage]);
   const readStatus = () => isPage
     ? pageRequest<{followStatus:string;isFollowing:boolean}>('/' + targetId + '/follow')
     : api.getFollowStatus(targetId!, viewerId!);
@@ -24,7 +25,8 @@ export function usePostFollowState(viewerId: string | undefined, targetId: strin
     return () => { scope.active = false; };
   }, [scope]);
 
-  if (!entries.has(key)) entries.set(key, { snapshot: { status: initialFollowing ? 'ACTIVE' : 'NONE', loading: false, ready: false }, listeners: new Set(), revision: 0, refreshQueued: false });
+  if (!entries.has(key)) entries.set(key, { snapshot: { status: initialFollowing ? 'ACTIVE' : 'NONE', loading: false, ready: true }, listeners: new Set(), revision: 0, refreshQueued: false });
+  if(entries.size>200)for(const [oldKey,oldEntry] of entries){if(oldKey!==key && !oldEntry.listeners.size && !oldEntry.snapshot.loading){entries.delete(oldKey);if(entries.size<=160)break;}}
   const entry = entries.get(key)!;
   const publish = (patch: Partial<Snapshot>) => {
     entry.snapshot = { ...entry.snapshot, ...patch };
@@ -73,7 +75,7 @@ export function usePostFollowState(viewerId: string | undefined, targetId: strin
       }
     };
     window.addEventListener('onFollowStateChange', listener);
-    if (!entry.snapshot.ready || menuOpen) refresh();
+    if (menuOpen) refresh();
     return () => window.removeEventListener('onFollowStateChange', listener);
   }, [key, menuOpen, scope]);
 

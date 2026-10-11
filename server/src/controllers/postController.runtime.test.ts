@@ -234,7 +234,7 @@ const commentRecord = (id: string, replies: any[] = []) => ({
     },
     mentions: [],
     likesList: [],
-    replies
+    replies, _count:{replies:replies.length}
 });
 
 test('comments use a bounded cursor page and append a requested deep-link target once', async () => {
@@ -274,7 +274,7 @@ test('comments use a bounded cursor page and append a requested deep-link target
         assert.equal(pageQuery.take, 3);
         assert.deepEqual(pageQuery.orderBy, [{ createdAt: 'desc' }, { id: 'desc' }]);
         assert.deepEqual(focusQuery.where.OR, [{ id: 'reply-9' }, { replies: { some: { id: 'reply-9' } } }]);
-        assert.equal(state.headers['X-Next-Cursor'], 'comment-2');
+        assert.deepEqual(JSON.parse(Buffer.from(state.headers['X-Next-Cursor'], 'base64url').toString()), ['2026-08-31T12:00:02.000Z', 'comment-2']);
         assert.equal(state.headers['X-Total-Count'], '4');
         assert.deepEqual(state.body.map((comment: any) => comment.id), ['comment-3', 'comment-2', 'comment-0']);
         assert.equal(state.body[2].replies[0].id, 'reply-9');
@@ -315,7 +315,7 @@ test('post likes use the authenticated user and ignore a client-supplied userId'
             deleteWhere = args.where.userId_postId;
             return {};
         };
-        (prisma.post as any).update = async () => ({ authorId: null });
+        (prisma.post as any).update = async () => ({ authorId: null, likesCount:0 });
         (prisma as any).$transaction = async (operations: any) => typeof operations === 'function' ? operations(prisma) : Promise.all(operations);
 
         const { response, state } = responseState();
@@ -328,7 +328,7 @@ test('post likes use the authenticated user and ignore a client-supplied userId'
         assert.equal(state.statusCode, 200);
         assert.deepEqual(findWhere, { userId: 'trusted-user', postId: 'post-1' });
         assert.deepEqual(deleteWhere, { userId: 'trusted-user', postId: 'post-1' });
-        assert.deepEqual(state.body, { isLiked: false });
+        assert.deepEqual(state.body, { isLiked: false, likes:0 });
     } finally {
         (prisma.post as any).findUnique = originals.postFindUnique;
         (prisma.post as any).update = originals.postUpdate;
@@ -469,7 +469,7 @@ for (const inRequestTransaction of [false, true]) for (const version of [2, 3]) 
 test('Page likes enqueue notification work in the same transaction as the like and count', async () => {
     const originals = { postFindUnique: prisma.post.findUnique, transaction: prisma.$transaction, enabled: process.env.PAGES_ENABLED };
     const sequence: string[] = [];
-    const post = { id: 'page-post', pageId: 'page', authorId: 'historical-staff', sharedFromId: null, sharedCaption: null, isDeleted: false, status: 'PUBLISHED' };
+    const post = { id: 'page-post', pageId: 'page', authorId: 'historical-staff', sharedFromId: null, sharedCaption: null, isDeleted: false, status: 'PUBLISHED', likesCount: 1 };
     const page = { id: 'page', ownerId: 'owner', publicationState: 'PUBLISHED', platformState: 'NONE', safetyHiddenAt: null, deletionRequestedAt: null, purgedAt: null };
     const tx: any = {
         $queryRaw: async (query: any) => {
@@ -495,7 +495,7 @@ test('Page likes enqueue notification work in the same transaction as the like a
         const { response, state } = responseState();
         await likePost({ params: { id: post.id }, user: { userId: 'viewer' }, body: {} } as any, response);
         assert.equal(state.statusCode, 200);
-        assert.deepEqual(state.body, { isLiked: true });
+        assert.deepEqual(state.body, { isLiked: true, likes:1 });
         assert.deepEqual(sequence, ['like', 'counter', 'outbox', 'commit']);
     } finally {
         (prisma.post as any).findUnique = originals.postFindUnique;

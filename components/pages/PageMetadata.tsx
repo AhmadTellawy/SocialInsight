@@ -1,3 +1,4 @@
+import {pagesApi} from '../../services/pagesApi';
 import { useLayoutEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { API_BASE_URL } from '../../services/api';
@@ -17,6 +18,8 @@ export function PageMetadata() {
       request = controller;
       const timeout = setTimeout(() => controller.abort(), 8000);
       try {
+        const page=await pagesApi.get(handle!,controller.signal);
+        if(page.publicMetadata!==undefined){if(!stopped&&request===controller)writePageMetadata(document,parsePublicPageMetadata(page.publicMetadata));return;}
         const response = await fetch(`${API_BASE_URL.replace(/\/$/, '')}/pages-seo/${encodeURIComponent(handle!)}`, {
           credentials: 'omit', cache: 'no-store', signal: controller.signal,
         });
@@ -39,13 +42,12 @@ export function PageMetadata() {
       window.addEventListener('focus', refresh);
       document.addEventListener('visibilitychange', refresh);
     }
-    const timer = handle && !isReport ? setInterval(() => {
-      if (document.visibilityState === 'visible') void load();
-    }, 30000) : null;
+    const received=(event:Event)=>{const detail=(event as CustomEvent).detail;if(!stopped&&!isReport&&detail?.handle===handle&&detail.metadata!==undefined)writePageMetadata(document,parsePublicPageMetadata(detail.metadata));};
+    window.addEventListener('opiniup:page-metadata',received);
     return () => {
       stopped = true;
       request?.abort();
-      if (timer) clearInterval(timer);
+      window.removeEventListener('opiniup:page-metadata',received);
       window.removeEventListener('focus', refresh);
       document.removeEventListener('visibilitychange', refresh);
       writePageMetadata(document, null, false);

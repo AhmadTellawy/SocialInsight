@@ -3,7 +3,7 @@ import { API_BASE_URL, authFetch } from '../services/api';
 
 /** Navigation hint only; Page requests remain server-authorized. */
 export function usePagesAvailability(viewerId?: string, enabled = true) {
-  const sessionKey = `${viewerId || 'guest'}:${localStorage.getItem('si_token') || ''}`;
+  const sessionKey = viewerId || 'guest';
   const [result, setResult] = useState({ sessionKey: '', available: false, loading: true, error: false });
   const [revision, setRevision] = useState(0);
   const retry = useCallback(() => setRevision(value => value + 1), []);
@@ -16,7 +16,7 @@ export function usePagesAvailability(viewerId?: string, enabled = true) {
       const request = controller = new AbortController();
       try {
         const response = await authFetch(`${API_BASE_URL}/pages/availability`, {
-          signal: request.signal, timeoutMs: 10_000, cache: 'no-store'
+          memoryTTL:25_000, signal: request.signal, timeoutMs: 10_000, cache: 'no-store'
         });
         if (!response.ok) throw new Error('Pages availability could not be checked');
         const body = await response.json();
@@ -34,7 +34,7 @@ export function usePagesAvailability(viewerId?: string, enabled = true) {
     const onVisible = () => { if (document.visibilityState === 'visible') onFocus(); };
     const onSession = (event: StorageEvent) => { if (!event.key || event.key === 'si_token' || event.key === 'si_user') retry(); };
     void refresh();
-    const interval = window.setInterval(() => void refresh(), 30_000);
+    const interval = window.setInterval(() => { if (document.visibilityState === 'visible') void refresh(); }, 30_000);
     window.addEventListener('focus', onFocus);
     window.addEventListener('storage', onSession);
     window.addEventListener('auth_expired', retry);

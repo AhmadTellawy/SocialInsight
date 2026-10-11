@@ -235,6 +235,11 @@ export interface DraftOption extends Omit<Option, 'votes'> {
 }
 
 export interface Comment {
+  replyCount?: number;
+  repliesNextCursor?: string | null;
+  submissionState?: 'pending' | 'failed';
+  mutationId?: string;
+  parentId?: string | null;
   pageId?: string | null;
   pageCapabilities?: string[];
   id: string;

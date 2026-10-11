@@ -3,6 +3,12 @@ import { useEffect } from 'react';
 import { readResume, saveResume, clearResume, restoreScroll, resumeLocation } from './utils/appResume';
 
 import { Analytics } from './utils/analytics';
+import { evictInteraction, interactionKey } from './utils/interactionCache';
+import { restoreVote, updatePost } from './utils/interactionMutation';
+import {invalidateReads} from './utils/readCache';
+import {readScreenState,saveScreenState} from './utils/screenState';
+import { useJourneyNavigation } from './hooks/useJourneyNavigation';
+import { startJourney } from './utils/journeyPerformance';
 import React, { useState, useRef, useMemo } from 'react';
 import { clearSessionMetadata } from './services/api';
 import { demographicSnapshot } from './utils/demographicSettings';
@@ -58,7 +64,7 @@ const HashtagTopicScreen = React.lazy(() => import('./components/HashtagTopicScr
 const DeferredScreenFallback = () => (
   <div className="min-h-screen bg-gray-100/50 flex items-center justify-center">
     <div className="w-full max-w-md h-[100dvh] max-h-screen bg-white flex flex-col items-center justify-center px-8">
-      <img src="/logo.png" alt="OpiniUp" className="w-16 h-16 object-contain mb-5" />
+      <img src="/pwa-192x192.png" width={64} height={64} decoding="async" alt="OpiniUp" className="w-16 h-16 object-contain mb-5" />
       <div className="w-40 h-4 rounded-full bg-gray-200 animate-pulse mb-3" />
       <div className="w-28 h-3 rounded-full bg-gray-100 animate-pulse" />
     </div>
@@ -176,14 +182,18 @@ const App: React.FC = () => {
   const userProfileIdRef = useRef<string | undefined>(undefined);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authBootstrapped, setAuthBootstrapped] = useState(false);
+  useJourneyNavigation(userProfile?.id || 'guest', authBootstrapped);
+  const isHomeRoute = location.pathname === '/';
   const { available: pagesAvailable } = usePagesAvailability(userProfile?.id, authBootstrapped);
   const [feedError, setFeedError] = useState(false);
   const [resumeChecking, setResumeChecking] = useState(false);
   const [resumeError, setResumeError] = useState(false);
   const [resumeRevision, setResumeRevision] = useState(0);
+  const hiddenAtRef=useRef(0);
   const resumeRef = useRef<(() => Promise<void>) | null>(null);
   const resumeInFlight = useRef(false);
   const likePending = useRef(new Set<string>());
+  const voteOperations = useRef(new Map<string, symbol>());
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalType, setAuthModalType] = useState<'flow' | 'login'>('flow');
   const [authRecoveryMessage, setAuthRecoveryMessage] = useState<string | null>(null);
@@ -444,15 +454,23 @@ const App: React.FC = () => {
   };
 
   const feedRequestRef = useRef<ActiveFeedRequest | null>(null);
+  const feedLoadedViewer=useRef<string|null>(null);
+  const feedReadAt=useRef(0);
+  const [feedStartAnchor,setFeedStartAnchor]=useState<string|null>(null);
+  const [profileStartAnchor,setProfileStartAnchor]=useState<string|null>(null);
   const loadMoreAbortRef = useRef<AbortController | null>(null);
   const profileLoadMoreAbortRef = useRef<AbortController | null>(null);
 
-  const getRestoredSurveys = async (viewer: string | undefined, signal: AbortSignal, count: number, authorId?: string, authorHandle?: string) => {
+  const getRestoredSurveys = async (viewer: string | undefined, signal: AbortSignal, count: number, authorId?: string, authorHandle?: string, anchorId?:string) => {
     const wanted = Math.max(10, Math.min(1000, count));
-    const options = { signal, timeoutMs: FEED_REQUEST_TIMEOUT_MS, normalize: false };
-    const result = await api.getSurveys(viewer, undefined, Math.min(30, wanted), authorId, authorHandle, options);
+    const options = { signal, timeoutMs: FEED_REQUEST_TIMEOUT_MS, normalize: false, anchorId };
+    const result = await api.getSurveys(viewer, undefined, 10, authorId, authorHandle, options);
+    if(anchorId){
+      if(!result.anchorId&&!signal.aborted){clearResume();window.dispatchEvent(new Event('opiniup:anchor-unavailable'));}
+      return result;
+    }
     while (result.nextCursor && result.data.length < wanted && !signal.aborted) {
-      const extra = await api.getSurveys(viewer, result.nextCursor, Math.min(30, wanted - result.data.length), authorId, authorHandle, options);
+      const extra = await api.getSurveys(viewer, result.nextCursor, 10, authorId, authorHandle, options);
       if (!extra.data.length || extra.nextCursor === result.nextCursor) break;
       result.data.push(...extra.data);
       result.nextCursor = extra.nextCursor;
@@ -463,7 +481,7 @@ const App: React.FC = () => {
   const fetchData = (
     currentUserId?: string,
     currentUser?: UserProfile | null,
-    options: { force?: boolean; restoreCount?: number; requireFresh?: boolean } = {}
+    options: { force?: boolean; restoreCount?: number; requireFresh?: boolean; preserveLoaded?: boolean } = {}
   ): Promise<void> => {
     const viewerKey = currentUserId ? `user:${currentUserId}` : 'guest';
     const activeRequest = feedRequestRef.current;
@@ -485,16 +503,22 @@ const App: React.FC = () => {
       for (let attempt = 0; attempt < FEED_MAX_ATTEMPTS; attempt += 1) {
         try {
           const saved = readResume(currentUserId || 'guest');
-          const count = options.restoreCount || (saved?.path === '/' ? saved.feedLimit : 10);
-          const res = await getRestoredSurveys(currentUserId, controller.signal, count);
+          const count = options.restoreCount || (options.force ? 10 : saved?.path === '/' ? saved.feedLimit : 10);
+          const anchor=!options.force&&!feedLoadedViewer.current&&saved?.path==='/'&&count>30?saved.anchor?.id:undefined;
+          const res = await getRestoredSurveys(currentUserId, controller.signal, count,undefined,undefined,anchor);
           if (controller.signal.aborted) return;
 
           const normalizedSurveys = res.data.map((survey: any) => normalizeSurvey(survey, currentUser));
           if (controller.signal.aborted) return;
 
           if (controller.signal.aborted || feedRequestRef.current?.controller !== controller) return;
-          setSurveys(normalizedSurveys);
-          setNextCursor(res.nextCursor);
+          if(options.preserveLoaded){
+            const allowed=new Set(await api.getPostAccess(surveys.map(post=>post.id),controller.signal));
+            if(controller.signal.aborted)return;
+            setSurveys(previous=>{const fresh=new Map<string,Survey>(normalizedSurveys.map((post:Survey)=>[post.id,post]));return [...normalizedSurveys.filter((post:Survey)=>!previous.some(old=>old.id===post.id)),...previous.filter(post=>allowed.has(post.id)).map(post=>fresh.get(post.id)||post)];});
+          }else {setSurveys(normalizedSurveys);setFeedStartAnchor(res.anchorId||null);}
+          feedLoadedViewer.current=currentUserId||'guest';feedReadAt.current=Date.now();
+          if(!options.preserveLoaded)setNextCursor(res.nextCursor);
           return;
         } catch (error) {
           if (controller.signal.aborted || isAbortError(error)) return;
@@ -546,8 +570,8 @@ const App: React.FC = () => {
           currentUserId,
           profileNextCursor,
           10,
-          selectedProfile.id,
-          undefined,
+          selectedProfile.handle ? undefined : selectedProfile.id,
+          selectedProfile.handle,
           { signal: controller.signal, timeoutMs: FEED_REQUEST_TIMEOUT_MS, normalize: false }
         );
         if (controller.signal.aborted) return;
@@ -556,7 +580,9 @@ const App: React.FC = () => {
         setProfileSurveys(prev => {
           const existingIds = new Set(prev.map(s => s.id));
           const uniqueNew = newSurveys.filter((s: Survey) => !existingIds.has(s.id));
-          return [...prev, ...uniqueNew];
+          const rows=[...prev, ...uniqueNew];
+          saveScreenState('profile-count:'+currentUserId+':'+selectedProfile.handle,rows.length);
+          return rows;
         });
         setProfileNextCursor(res.nextCursor);
       } catch (error) {
@@ -676,7 +702,7 @@ const App: React.FC = () => {
           writeMediaSafeJson('si_user', session.user);
           setIsAuthenticated(true);
           const resume = readResume(session.user.id);
-          if (resume && window.location.pathname === '/' && !oauthStatus && !oauthError) navigate(resumeLocation(resume), { replace: true });
+          if (resume && window.location.pathname === '/' && window.location.pathname+window.location.search !== resumeLocation(resume) && !oauthStatus && !oauthError) navigate(resumeLocation(resume), { replace: true });
           setAuthRecoveryMessage(null);
           if (oauthStatus === 'linked' || oauthError) {
             setAccountAccessFeedback({
@@ -694,7 +720,7 @@ const App: React.FC = () => {
           setUserProfile(null);
           setIsAuthenticated(false);
           const resume = readResume('guest');
-          if (resume && window.location.pathname === '/' && !oauthStatus && !oauthError) navigate(resumeLocation(resume), { replace: true });
+          if (resume && window.location.pathname === '/' && window.location.pathname+window.location.search !== resumeLocation(resume) && !oauthStatus && !oauthError) navigate(resumeLocation(resume), { replace: true });
           if (oauthStatus || oauthError) {
             setAuthRecoveryMessage(oauthError
               ? t('auth.oauth.loginFailed')
@@ -747,12 +773,18 @@ const App: React.FC = () => {
   React.useEffect(() => {
     if (!authBootstrapped) return;
 
-    if (isPagesRoute) {
+    if (!isHomeRoute) {
       feedRequestRef.current?.controller.abort();
       loadMoreAbortRef.current?.abort();
       return;
     }
 
+    const viewer=userProfile?.id||'guest';
+    if (surveys.length && feedLoadedViewer.current===viewer) {
+      setIsFeedLoading(false);
+      if(Date.now()-feedReadAt.current>=20000)void fetchData(userProfile?.id,userProfile,{restoreCount:10,preserveLoaded:true});
+      return;
+    }
     if (isAuthenticated && userProfile?.id) {
       void fetchData(userProfile.id, userProfile);
       return;
@@ -761,7 +793,7 @@ const App: React.FC = () => {
     if (!isAuthenticated) {
       void fetchData();
     }
-  }, [authBootstrapped, isAuthenticated, isPagesRoute, userProfile?.id]);
+  }, [authBootstrapped, isAuthenticated, isHomeRoute, userProfile?.id]);
 
   React.useEffect(() => {
     if (!authBootstrapped) return;
@@ -770,6 +802,7 @@ const App: React.FC = () => {
       return;
     }
 
+    if (!location.pathname.startsWith('/create/')) return;
     const controller = new AbortController();
     api.getUserGroups(userProfile.id, {
       signal: controller.signal,
@@ -783,7 +816,7 @@ const App: React.FC = () => {
     });
 
     return () => controller.abort();
-  }, [authBootstrapped, isAuthenticated, userProfile?.id]);
+  }, [authBootstrapped, isAuthenticated, userProfile?.id, location.pathname]);
 
   React.useEffect(() => () => {
     feedRequestRef.current?.controller.abort();
@@ -795,6 +828,18 @@ const App: React.FC = () => {
 
   const [isNavVisible, setIsNavVisible] = useState(true);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [hasUnreadNotification, setHasUnreadNotification] = useState(false);
+  useEffect(() => {
+    setHasUnreadNotification(false);
+    if (!authBootstrapped || !userProfile?.id) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void api.getNotificationSummary(userProfile.id!, controller.signal).then(summary => {
+        if (!controller.signal.aborted) setHasUnreadNotification(summary.hasUnread);
+      }).catch(() => {});
+    }, 1000);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  },[authBootstrapped,userProfile?.id,location.pathname]);
   const [notificationNextCursor, setNotificationNextCursor] = useState<string | null>(null);
   const [isNotificationsLoading, setIsNotificationsLoading] = useState(false);
   const [isNotificationsLoadingMore, setIsNotificationsLoadingMore] = useState(false);
@@ -863,9 +908,10 @@ const App: React.FC = () => {
       return;
     }
 
+    if (location.pathname !== '/notifications') return;
     void fetchNotificationPage(userProfile.id, null, 'replace');
     return () => notificationRequestRef.current?.abort();
-  }, [fetchNotificationPage, isAuthenticated, userProfile?.id]);
+  }, [fetchNotificationPage, isAuthenticated, userProfile?.id, location.pathname]);
 
   const loadMoreNotifications = React.useCallback(() => {
     if (!userProfile?.id || !notificationNextCursor) return;
@@ -1001,14 +1047,18 @@ const App: React.FC = () => {
         setProfileSurveys([]);
         const currentUserId = userProfile?.id || undefined;
         Promise.all([
-          api.getUserByHandle(handle, controller.signal),
+          api.getUserByHandle(handle, controller.signal).then(user => {
+            if (profileRequestRef.current === requestId) setSelectedProfile(user);
+            return user;
+          }),
           getRestoredSurveys(currentUserId, controller.signal,
-            readResume(currentUserId || 'guest')?.path === path ? readResume(currentUserId || 'guest')!.feedLimit : 10, undefined, handle)
+            readScreenState<number>('profile-count:'+currentUserId+':'+handle) || (readResume(currentUserId || 'guest')?.path === path ? readResume(currentUserId || 'guest')!.feedLimit : 10), undefined, handle,
+            !readScreenState('profile-count:'+currentUserId+':'+handle)&&readResume(currentUserId||'guest')?.path===path&&readResume(currentUserId||'guest')!.feedLimit>30?readResume(currentUserId||'guest')?.anchor?.id:undefined)
         ]).then(([user, res]) => {
           if (profileRequestRef.current !== requestId) return;
           const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
           setProfileSurveys(newSurveys);
-          setProfileNextCursor(res.nextCursor);
+          setProfileNextCursor(res.nextCursor);setProfileStartAnchor(res.anchorId||null);
           setSelectedProfile(user);
         }).catch(err => {
           if (profileRequestRef.current !== requestId) return;
@@ -1033,23 +1083,17 @@ const App: React.FC = () => {
         setSelectedProfile(null);
         setProfileSurveys([]);
         const currentUserId = userProfile?.id || undefined;
-        Promise.all([
-          api.getUser(id, controller.signal),
-          getRestoredSurveys(currentUserId, controller.signal,
-            readResume(currentUserId || 'guest')?.path === path ? readResume(currentUserId || 'guest')!.feedLimit : 10, id, undefined)
-        ]).then(([user, res]) => {
+        api.getUser(id,controller.signal).then(async user => {
           if (profileRequestRef.current !== requestId) return;
-          const newSurveys = res.data.map((s: any) => normalizeSurvey(s, userProfile));
-          setProfileSurveys(newSurveys);
-          setProfileNextCursor(res.nextCursor);
           setSelectedProfile(user);
           if (user.handle) {
-            navigate({
-              pathname: `/@${encodeURIComponent(user.handle)}`,
-              search: location.search,
-              hash: location.hash,
-            }, { replace: true });
+            navigate({pathname:'/@'+encodeURIComponent(user.handle),search:location.search,hash:location.hash},{replace:true});
+            return;
           }
+          const res=await getRestoredSurveys(currentUserId,controller.signal,10,id,undefined);
+          if (profileRequestRef.current !== requestId) return;
+          setProfileSurveys(res.data.map((s:any)=>normalizeSurvey(s,userProfile)));
+          setProfileNextCursor(res.nextCursor);
         }).catch(err => {
           if (profileRequestRef.current !== requestId) return;
           if (err?.name === 'AbortError') return;
@@ -1175,12 +1219,9 @@ const App: React.FC = () => {
     api.getSurveyById(selectedSurveyId, userProfile?.id || undefined, controller.signal)
       .then(post => {
         if (detailRequestRef.current !== requestId) return;
-        const normalized = normalizeSurvey(post, userProfile);
+        const normalized = post;
         setDetailSurvey(normalized);
-        setSurveys(prev => {
-          const exists = prev.some(s => s.id === normalized.id);
-          return exists ? prev.map(s => s.id === normalized.id ? normalized : s) : [normalized, ...prev];
-        });
+        setSurveys(prev => prev.map(s => s.id === normalized.id ? normalized : s));
       })
       .catch(err => {
         if (detailRequestRef.current !== requestId) return;
@@ -1316,52 +1357,20 @@ const App: React.FC = () => {
   ): Promise<'shared' | 'unshared'> => {
     if (!userProfile) throw new Error(t('postOptions.loginRequired'));
 
+    const viewer = userProfile.id;
     try {
-      // 1. Save to DB
-      const resultSurvey = await api.sharePost(originalSurvey.id, userProfile.id, caption, publisher);
-
-      if (resultSurvey.action === 'unshared') {
-        // Remove the repost from the feed if it's there
-        setSurveys(prev => prev.filter(s => !(
-          s.sharedFrom?.id === originalSurvey.id
-          && s.author?.id === (publisher?.pageId || userProfile.id)
-          && !s.sharedCaption
-        )));
-        // Decrement original count in state
-        setSurveys(prev => prev.map(s => {
-          if (s.id === originalSurvey.id) {
-            return { ...s, repostCount: Math.max(0, (s.repostCount || 0) - 1), hasReposted: false };
-          }
-          return s;
-        }));
-        return 'unshared';
-      }
-
-      // 2. Normalize with current user perspective
-      const normalizedResult = normalizeSurvey(resultSurvey, userProfile);
-
-      // 3. Update UI Feed
-      setSurveys(prev => {
-        // If it was a clean repost, also update the original post's stats locally
-        const updatedFeed = prev.map(s => {
-          if (s.id === originalSurvey.id) {
-            return { ...s, repostCount: (s.repostCount || 0) + 1, hasReposted: true };
-          }
-          return s;
-        });
-        return [normalizedResult, ...updatedFeed];
-      });
-
-      setActiveTab('home');
-      setSelectedSurveyId(null);
-      setSelectedProfile(null);
-      setSelectedGroupId(null);
-      setIsGroupSettingsOpen(false);
-
-      setTimeout(() => {
-        pullToRefreshRef.current?.scrollToTop();
-      }, 100);
-      return 'shared';
+      const resultSurvey = await api.sharePost(originalSurvey.id, viewer, caption, publisher);
+      if (userProfileIdRef.current !== viewer) throw new Error('Session changed');
+      const removed = resultSurvey.action === 'unshared';
+      const change = (post: Survey): Survey => ({ ...post,
+        repostCount: Math.max(0, (post.repostCount || 0) + (removed ? -1 : 1)), hasReposted: !removed });
+      const reconcile = (rows: Survey[]) => rows.filter(s => !(removed && s.sharedFrom?.id === originalSurvey.id
+        && s.author?.id === (publisher?.pageId || viewer) && !s.sharedCaption))
+        .map(s => updatePost(s, originalSurvey.id, change));
+      setSurveys(rows => removed ? reconcile(rows) : [normalizeSurvey(resultSurvey, userProfile), ...reconcile(rows).filter(s => s.id !== resultSurvey.id)]);
+      setProfileSurveys(reconcile);
+      setDetailSurvey(s => s ? updatePost(s, originalSurvey.id, change) : s);
+      return removed ? 'unshared' : 'shared';
     } catch (error) {
       console.error("Failed to share post:", error);
       throw error;
@@ -1498,131 +1507,127 @@ const App: React.FC = () => {
     followUpAnswers?: Record<string, string>,
     answers?: PostAnswerPayload[]
   ): Promise<boolean> => {
-    const previousSurveys = [...surveys];
+    const viewer = userProfileIdRef.current;
+    const key = String(viewer || 'guest') + ':' + surveyId;
+    if (voteOperations.current.has(key)) return false;
+    const operation = Symbol(key);
+    voteOperations.current.set(key, operation);
+    const before = [...surveys, ...profileSurveys, ...(detailSurvey ? [detailSurvey] : [])]
+      .flatMap(s => [s, ...(s.sharedFrom ? [s.sharedFrom] : [])]).find(s => s.id === surveyId);
     const submittedProgress = buildProgressFromAnswerPayload(answers);
-    setSurveys(prev =>
-      prev.map(s => {
-        const isDirect = s.id === surveyId;
-        const isShared = s.sharedFrom?.id === surveyId;
+    const finish = startJourney('vote-confirm');
+    const update = (change: (post: Survey) => Survey) => {
+      setSurveys(rows => rows.map(s => updatePost(s, surveyId, change)));
+      setProfileSurveys(rows => rows.map(s => updatePost(s, surveyId, change)));
+      setDetailSurvey(s => s ? updatePost(s, surveyId, change) : s);
+    };
+    const applyVote = (target: Survey): Survey => {
+      const nextProgressAnswers = submittedProgress?.answers || target.userProgress?.answers || {};
+      const nextFollowUpAnswers = {
+        ...(target.userProgress?.followUpAnswers || {}),
+        ...(followUpAnswers || {}),
+        ...(submittedProgress?.followUpAnswers || {})
+      };
 
-        if (!isDirect && !isShared) return s;
-
-        const applyVote = (target: Survey): Survey => {
-          const nextProgressAnswers = submittedProgress?.answers || target.userProgress?.answers || {};
-          const nextFollowUpAnswers = {
-            ...(target.userProgress?.followUpAnswers || {}),
-            ...(followUpAnswers || {}),
-            ...(submittedProgress?.followUpAnswers || {})
-          };
-
-          // 1) Completion path (Survey without questions/options) => no option votes, only mark participated + store anon
-          if (optionIds.length === 0) {
-            return {
-              ...target,
-              hasParticipated: true,
-              participants: target.hasParticipated ? target.participants : target.participants + 1,
-              userProgress: {
-                currentQuestionIndex: target.userProgress?.currentQuestionIndex || 0,
-                answers: nextProgressAnswers,
-                followUpAnswers: nextFollowUpAnswers,
-                historyStack: target.userProgress?.historyStack || [],
-                isAnonymous: !!isAnonymous
-              }
-            };
+      // 1) Completion path (Survey without questions/options) => no option votes, only mark participated + store anon
+      if (optionIds.length === 0) {
+        return {
+          ...target,
+          hasParticipated: true,
+          participants: target.hasParticipated ? target.participants : target.participants + 1,
+          userProgress: {
+            currentQuestionIndex: target.userProgress?.currentQuestionIndex || 0,
+            answers: nextProgressAnswers,
+            followUpAnswers: nextFollowUpAnswers,
+            historyStack: target.userProgress?.historyStack || [],
+            isAnonymous: !!isAnonymous
           }
+        };
+      }
 
-          // 2) Quiz vote path (update options within questions)
-          if (target.type === 'Quiz' || target.type === 'Survey') {
-            const updatedQuestions = target.questions?.map(q => ({
-              ...q,
-              options: q.options?.map(opt =>
-                optionIds.includes(opt.id)
-                  ? { ...opt, votes: (opt.votes || 0) + 1 }
-                  : opt
-              )
-            }));
-            const updatedSections = target.sections?.map(section => ({
-              ...section,
-              questions: section.questions.map(q => ({
-                ...q,
-                options: q.options?.map(opt =>
-                  optionIds.includes(opt.id)
-                    ? { ...opt, votes: (opt.votes || 0) + 1 }
-                    : opt
-                )
-              }))
-            }));
-
-            return {
-              ...target,
-              questions: updatedQuestions,
-              sections: updatedSections,
-              hasParticipated: true,
-              userSelectedOptions: optionIds,
-              participants: target.hasParticipated ? target.participants : target.participants + 1,
-              userProgress: {
-                currentQuestionIndex: target.userProgress?.currentQuestionIndex || 0,
-                answers: nextProgressAnswers,
-                followUpAnswers: nextFollowUpAnswers,
-                historyStack: target.userProgress?.historyStack || [],
-                isAnonymous: !!isAnonymous
-              }
-            };
-          }
-
-          // 3) Poll/Challenge vote path
-          let updatedOptions = [...(target.options || [])];
-
-          if (newOption && !updatedOptions.some(o => o.id === newOption.id)) {
-            updatedOptions.push({ ...newOption, votes: 0 });
-          }
-
-          const newOptions = updatedOptions.map(opt =>
+      // 2) Quiz vote path (update options within questions)
+      if (target.type === 'Quiz' || target.type === 'Survey') {
+        const updatedQuestions = target.questions?.map(q => ({
+          ...q,
+          options: q.options?.map(opt =>
             optionIds.includes(opt.id)
               ? { ...opt, votes: (opt.votes || 0) + 1 }
               : opt
-          );
+          )
+        }));
+        const updatedSections = target.sections?.map(section => ({
+          ...section,
+          questions: section.questions.map(q => ({
+            ...q,
+            options: q.options?.map(opt =>
+              optionIds.includes(opt.id)
+                ? { ...opt, votes: (opt.votes || 0) + 1 }
+                : opt
+            )
+          }))
+        }));
 
-          return {
-            ...target,
-            options: newOptions,
-            hasParticipated: true,
-            userSelectedOptions: optionIds,
-            participants: target.hasParticipated ? target.participants : target.participants + 1,
-            userProgress: {
-              currentQuestionIndex: target.userProgress?.currentQuestionIndex || 0,
-              answers: nextProgressAnswers,
-              followUpAnswers: nextFollowUpAnswers,
-              historyStack: target.userProgress?.historyStack || [],
-              isAnonymous: !!isAnonymous
-            }
-          };
+        return {
+          ...target,
+          questions: updatedQuestions,
+          sections: updatedSections,
+          hasParticipated: true,
+          userSelectedOptions: optionIds,
+          participants: target.hasParticipated ? target.participants : target.participants + 1,
+          userProgress: {
+            currentQuestionIndex: target.userProgress?.currentQuestionIndex || 0,
+            answers: nextProgressAnswers,
+            followUpAnswers: nextFollowUpAnswers,
+            historyStack: target.userProgress?.historyStack || [],
+            isAnonymous: !!isAnonymous
+          }
         };
-
-        if (isDirect) {
-          return applyVote(s);
-        } else {
-          return {
-            ...s,
-            sharedFrom: applyVote(s.sharedFrom!)
-          };
-        }
-      })
-    );
-
-
-    // Server Call with Rollback
-    if (optionIds.length > 0 || (answers && answers.length > 0)) {
-      try {
-        await api.vote(surveyId, optionIds, userProfile?.id, isAnonymous, newOption, followUpAnswers, answers);
-      } catch (error) {
-        console.error("Failed to submit votes to server, rolling back:", error);
-        setSurveys(previousSurveys);
-        return false;
       }
-    }
 
-    return true;
+      // 3) Poll/Challenge vote path
+      let updatedOptions = [...(target.options || [])];
+
+      if (newOption && !updatedOptions.some(o => o.id === newOption.id)) {
+        updatedOptions.push({ ...newOption, votes: 0 });
+      }
+
+      const newOptions = updatedOptions.map(opt =>
+        optionIds.includes(opt.id)
+          ? { ...opt, votes: (opt.votes || 0) + 1 }
+          : opt
+      );
+
+      return {
+        ...target,
+        options: newOptions,
+        hasParticipated: true,
+        userSelectedOptions: optionIds,
+        participants: target.hasParticipated ? target.participants : target.participants + 1,
+        userProgress: {
+          currentQuestionIndex: target.userProgress?.currentQuestionIndex || 0,
+          answers: nextProgressAnswers,
+          followUpAnswers: nextFollowUpAnswers,
+          historyStack: target.userProgress?.historyStack || [],
+          isAnonymous: !!isAnonymous
+        }
+      };
+    };
+    update(applyVote);
+    try {
+      if (optionIds.length > 0 || answers?.length) await api.vote(surveyId, optionIds, viewer, isAnonymous, newOption, followUpAnswers, answers);
+      if (userProfileIdRef.current !== viewer) { finish('cancelled'); return false; }
+      evictInteraction(interactionKey(viewer, 'participants', surveyId));
+      finish();
+      return true;
+    } catch {
+      if (before && userProfileIdRef.current === viewer && voteOperations.current.get(key) === operation) {
+        update(current => restoreVote(current, before));
+      }
+      finish('failed');
+      return false;
+    } finally {
+      if (voteOperations.current.get(key) === operation) voteOperations.current.delete(key);
+    }
   };
 
   type SurveyProgressPayload = {
@@ -1679,7 +1684,7 @@ const App: React.FC = () => {
     update(isLiked);
     try {
       const result = await api.likeSurvey(surveyId);
-      if (userProfileIdRef.current === viewer) update(result.isLiked ?? isLiked, result.likes);
+      if (userProfileIdRef.current === viewer) { update(result.isLiked ?? isLiked, result.likes); evictInteraction(interactionKey(viewer, 'post-likers', surveyId)); }
     } catch (error) {
       if (userProfileIdRef.current === viewer) update(!isLiked);
       throw error;
@@ -1778,6 +1783,7 @@ const App: React.FC = () => {
             }
           }
           setNotifications(newNotifs);
+          setHasUnreadNotification(newNotifs.some(n => !n.isRead));
         }} onBack={() => back('/')} onItemClick={(notification) => {
           const deepLink = getNotificationDeepLink(notification);
           if (deepLink) navigate(deepLink);
@@ -1815,7 +1821,7 @@ const App: React.FC = () => {
   // Persist navigation coordinates only. Content is fetched after session validation.
   const savePosition = () => {
     if (!authBootstrapped) return;
-    const container = document.querySelector<HTMLElement>('[data-app-scroll]');
+    const container = document.querySelector<HTMLElement>('[data-settings-scroll]') || document.querySelector<HTMLElement>('[data-app-scroll]');
     const bounds = container?.getBoundingClientRect();
     const anchor = bounds && Array.from(container!.querySelectorAll<HTMLElement>('[data-post-id]')).find(el => el.getBoundingClientRect().bottom > bounds.top);
     saveResume(userProfile?.id || 'guest', window.location.pathname, container?.scrollTop || 0,
@@ -1828,7 +1834,6 @@ const App: React.FC = () => {
     if (!authBootstrapped || resumeInFlight.current) return;
     resumeInFlight.current = true;
     const previousViewer = userProfileIdRef.current;
-    setResumeChecking(true);
     setResumeError(false);
     try {
       const session = await api.getSession({ timeoutMs: 15_000, retryOnce: false });
@@ -1838,18 +1843,27 @@ const App: React.FC = () => {
         if (session?.user) handleAuthSuccess(session); else clearAuthenticatedState();
         return;
       }
-      clearInteractions();
-      window.dispatchEvent(new Event('opiniup:resume'));
-      setResumeRevision(value => value + 1);
-      await fetchData(userProfile?.id, userProfile, { force: true, restoreCount: surveys.length, requireFresh: true });
+      if(Date.now()-hiddenAtRef.current>=20000){
+        invalidateReads();
+        const loaded=[...surveys,...profileSurveys,...(detailSurvey?[detailSurvey]:[])];
+        if(loaded.length){
+          const allowed=new Set(await api.getPostAccess(loaded.map(post=>post.id)));
+          if(previousViewer!==userProfileIdRef.current)return;
+          setSurveys(rows=>rows.filter(post=>allowed.has(post.id)));
+          setProfileSurveys(rows=>rows.filter(post=>allowed.has(post.id)));
+          setDetailSurvey(post=>post&&allowed.has(post.id)?post:null);
+        }
+        setResumeRevision(value=>value+1);
+      }
+      window.dispatchEvent(new CustomEvent('opiniup:resume',{detail:{stale:Date.now()-hiddenAtRef.current>=20000}}));
     } catch { setResumeError(true); }
     finally { resumeInFlight.current = false; setResumeChecking(false); }
   };
   useEffect(() => {
     let hidden = document.hidden;
     const visibility = () => {
-      if (document.hidden) { hidden = true; savePositionRef.current(); }
-      else if (hidden) { hidden = false; void resumeRef.current?.(); }
+      if (document.hidden) { hidden = true; hiddenAtRef.current=Date.now(); savePositionRef.current(); }
+      else if (hidden) { hidden = false; if(Date.now()-hiddenAtRef.current>=20000)setResumeChecking(true); void resumeRef.current?.(); }
     };
     const pagehide = () => savePositionRef.current();
     const pageshow = (event: PageTransitionEvent) => { if (event.persisted) void resumeRef.current?.(); };
@@ -1858,12 +1872,9 @@ const App: React.FC = () => {
     window.addEventListener('pageshow', pageshow);
     return () => { document.removeEventListener('visibilitychange', visibility); window.removeEventListener('pagehide', pagehide); window.removeEventListener('pageshow', pageshow); };
   }, []);
-  useEffect(() => {
-    if (!authBootstrapped || isFeedLoading || isProfileLoading || isGroupLoading || isDetailLoading) return;
-    return restoreScroll(readResume(userProfile?.id || 'guest'));
-  }, [authBootstrapped, isFeedLoading, isProfileLoading, isGroupLoading, isDetailLoading, location.pathname, resumeRevision]);
 
-  const unreadNotificationsCount = notifications.filter(n => !n.isRead).length;
+
+  const unreadNotificationsCount = Math.max(notifications.filter(n => !n.isRead).length, hasUnreadNotification ? 1 : 0);
 
   const activeGroup = externalGroup || userGroups.find(g => g.id === selectedGroupId);
   const selectedSurveyFromFeed = useMemo(
@@ -1946,7 +1957,7 @@ const App: React.FC = () => {
           {(resumeChecking || resumeError) && <div className="fixed inset-0 z-[200] bg-white flex flex-col items-center justify-center" role="status"><p>{resumeError ? t('appState.resumeFailed') : t('appState.resuming')}</p>{resumeError && <button onClick={() => void resumeRef.current?.()} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-xl">{t('Retry')}</button>}</div>}
           {!authBootstrapped || (location.pathname === '/' && isFeedLoading && surveys.length === 0) ? (
             <div className="flex-1 flex flex-col items-center justify-center bg-white px-8">
-              <img src="/logo.png" alt="OpiniUp" className="w-16 h-16 object-contain mb-5" />
+              <img src="/pwa-192x192.png" width={64} height={64} decoding="async" alt="OpiniUp" className="w-16 h-16 object-contain mb-5" />
               <p role="status" className="text-sm text-gray-500">{t('appState.starting')}</p>
             </div>
           ) : showUsersTable ? (
@@ -2067,7 +2078,7 @@ const App: React.FC = () => {
               <p className="text-sm text-gray-500 mb-6">{profileError}</p>
               <button onClick={() => navigate('/')} className="px-5 py-2 rounded-full bg-gray-900 text-white text-sm font-bold">Back home</button>
             </div>
-          ) : isProfileLoading ? (
+          ) : isProfileLoading && !selectedProfile ? (
             <div className="flex-1 flex flex-col items-center justify-center pt-20">
               <div className="w-24 h-24 bg-gray-200 rounded-full animate-pulse mb-6 shadow-md border-4 border-white"></div>
               <div className="w-40 h-6 bg-gray-200 rounded-full animate-pulse mb-3"></div>
@@ -2086,7 +2097,8 @@ const App: React.FC = () => {
             </div>
           ) : selectedProfile ? (
             <ProfileScreen 
-              surveys={profileSurveys} 
+              onLoadLatest={profileStartAnchor?()=>{clearResume();saveScreenState('profile-count:'+userProfile?.id+':'+selectedProfile.handle,10);setProfileStartAnchor(null);setResumeRevision(n=>n+1);}:undefined}
+              surveys={profileSurveys} isLoading={isProfileLoading}
               userGroups={userGroups} 
               userProfile={viewerProfile}
               onSurveyClick={handleSurveyClick} 
@@ -2195,6 +2207,7 @@ const App: React.FC = () => {
 
               {activeTab === 'home' ? (
                 <PullToRefresh ref={pullToRefreshRef} onScroll={handleScroll} onRefresh={async () => { await fetchData(userProfile?.id || undefined, userProfile, { force: true }); }} onScrollChange={dir => setIsNavVisible(dir === 'up')} className="flex-1 mt-16 pb-[75px] bg-white no-scrollbar">
+                  {feedStartAnchor && <button type="button" className="min-h-11 w-full px-4 text-sm text-blue-600" onClick={()=>void fetchData(userProfile?.id,userProfile,{force:true,restoreCount:10})}>{i18n.language.startsWith('ar')?'عرض المنشورات الأحدث':'Show latest posts'}</button>}
                   {feedError && <div role="alert" className="p-4 text-center"><p>{t('appState.feedFailed')}</p><button className="mt-3 px-4 py-2 bg-blue-600 text-white rounded-xl" onClick={() => void fetchData(userProfile?.id, userProfile, { force: true })}>{t('Retry')}</button></div>}
                   {isFeedLoading && surveys.length > 0 && (
                     <div className="sticky top-0 z-20 h-1 bg-gray-100 overflow-hidden">

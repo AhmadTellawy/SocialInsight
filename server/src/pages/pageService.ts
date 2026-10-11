@@ -468,6 +468,8 @@ export async function getPublicPage(handle: string, viewerId?: string | null) {
   const followersCount = Number(page._followersCount);
   if (!Number.isSafeInteger(followersCount) || followersCount < 0) throw new PagePolicyError('PAGE_FOLLOWER_COUNT_INVALID', 500);
   return { ...pagePublicDto(page), followersCount, following: page._following, muted: page._muted,
+    publicMetadata: pagesEnabled() && !page.isTestFixture ? {title:page.name+' | Opiniup',description:page.bio,canonicalUrl:'https://opiniup.com/pages/'+page.handle,
+      imageUrl:page.coverMediaId||page.avatarMediaId?'https://socialinsight-api.onrender.com/api/media/'+(page.coverMediaId||page.avatarMediaId)+'/content':'https://opiniup.com/logo.png'} : null,
     managesPage: page._managesPage, canonicalHandle: page.handle, redirected: page._aliasHandle !== page.handle };
 }
 

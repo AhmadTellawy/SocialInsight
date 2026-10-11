@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { Comment } from '../types';
 import { api, ApiError } from '../services/api';
-import { freshInteraction, interactionGeneration, interactionKey, readInteraction, subscribeInteractions, writeInteraction, evictInteraction } from '../utils/interactionCache';
+import { interactionVersion, freshInteraction, interactionGeneration, interactionKey, readInteraction, subscribeInteractions, writeInteraction, evictInteraction } from '../utils/interactionCache';
 
 export function useCommentCount(viewer: string | undefined, postId: string, fallback: number) {
   const key = interactionKey(viewer, 'comments', postId);
@@ -23,16 +23,21 @@ export function useCommentThread(viewer: string | undefined, postId: string, ini
     const controller = new AbortController();
     abort.current = controller;
     const epoch = interactionGeneration();
-    const version = readInteraction(key)?.version;
+    const version = interactionVersion(key);
     append ? setIsLoadingMore(true) : setIsLoading(!freshInteraction(key));
     setLoadError(null);
     try {
       const page = await api.getCommentsPage(postId, cursor, 30, controller.signal, append ? undefined : focusId);
       if (controller.signal.aborted || activeKey.current !== key || epoch !== interactionGeneration()) return;
       // A read started before an edit/create/delete must never undo that write.
-      if (readInteraction(key)?.version !== version) return;
+      if (interactionVersion(key) !== version) return;
       const previous = readInteraction<Comment>(key);
-      const items = Array.from(new Map([...(append ? previous?.items || [] : []), ...page.items].map(c => [c.id, c])).values());
+      const pending=(previous?.items||[]).filter(c=>c.submissionState);
+      const items = Array.from(new Map([...(append ? previous?.items || [] : pending), ...page.items].map(c => [c.id, c])).values()).map(c=>{
+        const local=previous?.items.find(old=>old.id===c.id);
+        const pendingReplies=local?.replies?.filter(reply=>reply.submissionState)||[];
+        return pendingReplies.length?{...c,replies:[...(c.replies||[]),...pendingReplies]}:c;
+      });
       writeInteraction(key, { items, nextCursor: page.nextCursor, totalCount: page.totalCount ?? Math.max(initialCount, items.reduce((n, c) => n + 1 + (c.replies?.length || 0), 0)) });
       setLocalComments(items);
       setNextCursor(page.nextCursor);
@@ -54,21 +59,23 @@ export function useCommentThread(viewer: string | undefined, postId: string, ini
     setLocalComments(cached?.items || []);
     setNextCursor(cached?.nextCursor || null);
     setIsLoading(!cached);
-    // Reopening within five seconds needs no network roundtrip.
+    // A fresh authorized snapshot needs no duplicate request during the thirty-second window.
     let cancelled = false;
     queueMicrotask(() => {
-      if (!cancelled && (!cached || focusId || Date.now() - cached.updatedAt >= 5_000)) void loadCommentsPage(null, false);
+      if (!cancelled && (!cached || (focusId && !cached.items.some(c => c.id === focusId || c.replies?.some(r => r.id === focusId))))) void loadCommentsPage(null, false);
     });
     return () => { cancelled = true; abort.current?.abort(); };
   }, [key, focusId, loadCommentsPage]);
 
   useEffect(() => subscribeInteractions(() => {
     // Revocation/session changes discard mounted data too, not just the cache.
-    if (!readInteraction(key)) { abort.current?.abort(); setLocalComments([]); setNextCursor(null); }
+    const entry=readInteraction<Comment>(key);
+    if (!entry) { abort.current?.abort(); setLocalComments([]); setNextCursor(null); }
+    else {setLocalComments(entry.items);setNextCursor(entry.nextCursor);}
   }), [key]);
 
   useEffect(() => {
-    const resume = () => { void loadCommentsPage(null, false); };
+    const resume = () => { if (!freshInteraction(key)) void loadCommentsPage(null, false); };
     window.addEventListener('opiniup:resume', resume);
     return () => window.removeEventListener('opiniup:resume', resume);
   }, [loadCommentsPage]);
