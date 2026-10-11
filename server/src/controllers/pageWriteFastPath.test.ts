@@ -132,6 +132,9 @@ test('restricted Page audiences and official replies keep capability preflight b
 });
 
 type CommentScenario = {
+  bearer?: string;
+  bearerAccount?: Record<string, any>;
+  replayReceipt?: boolean;
   sessionActive?: boolean;
   accountLocked?: boolean;
   mutationId?: string;
@@ -151,7 +154,7 @@ async function runCreateComment(input: CommentScenario) {
     id: 'post', authorId: 'publisher-user', pageId: isPage ? (input.pageId || 'page') : null,
     allowComments: true, targetAudience: 'Public', targetedGroups: [], status: 'PUBLISHED', isDeleted: false
   };
-  const calls = { mentions: 0, hashtags: 0, dispatch: [] as string[][], legacyNotify: 0, notifyOptions: [] as any[], deliveryAfterResponse: false, guards: 0, attach: 0,
+  const calls = { receiptReads: 0, receiptWrites: 0, bearerChecks: 0, mentions: 0, hashtags: 0, dispatch: [] as string[][], legacyNotify: 0, notifyOptions: [] as any[], deliveryAfterResponse: false, guards: 0, attach: 0,
     attachInTransaction: false, capabilityChecks: 0, order: [] as string[] };
   let transactionActive = false;
   const activity: any[] = [];
@@ -174,10 +177,16 @@ async function runCreateComment(input: CommentScenario) {
       const activityCountBefore = activity.length;
       const tx: any = {
         $executeRaw: async () => 1,
+        user: {findUnique: async ({where}: any) => {calls.bearerChecks++;assert.equal(where.id,'actor');return input.bearerAccount || {status:'ACTIVE'};}},
+        commentSubmission: {
+          findUnique: async () => {calls.receiptReads++;return input.replayReceipt ? {commentId:created.id,requestHash:require('node:crypto').createHash('sha256').update(JSON.stringify(['post',input.parentId||null,input.official?post.pageId:null,input.text.trim()])).digest('hex')} : null;},
+          create: async () => {calls.receiptWrites++;return {};}
+        },
         $queryRaw: async () => [{locked: input.accountLocked !== false}],
         authSession: {findFirst: async ({where}: any) => { assert.equal(where.user.status,'ACTIVE');assert.equal(where.revokedAt,null);return input.sessionActive === false ? null : {id:'session'}; }},
         post: {
           findUnique: async () => ({ allowComments: true, pageId: post.pageId }),
+          findUniqueOrThrow: async () => post,
           update: async () => { pending.counters++; return { authorId: 'publisher-user' }; }
         },
         comment: {
@@ -235,7 +244,8 @@ async function runCreateComment(input: CommentScenario) {
 
     const { state, response } = responseFixture();
     await createComment({
-      params: { id: 'post' }, user: { userId: 'actor', authMode:'session' }, authSession:{id:'session',userId:'actor'},
+      params: { id: 'post' }, user: { userId: 'actor', authMode:input.bearer ? 'legacy_bearer' : 'session' }, authSession:{id:'session',userId:'actor'},
+      headers: input.bearer ? {authorization:'Bearer '+input.bearer} : {},
       body: { text: input.text, ...(input.mutationId ? {mutationId:input.mutationId} : {}), ...(input.parentId ? { parentId: input.parentId } : {}), ...(input.official ? { pageId: post.pageId } : {}) }
     } as any, response);
     return { ...state, calls, activity, committed };
@@ -363,4 +373,38 @@ test('late comment after session revocation cannot recreate content or a receipt
 });
 test('Page comment declines a busy account lock without waiting or writing',async()=>{
  const result=await runCreateComment({text:'Page erasure overlap',accountLocked:false});assert.equal(result.status,409);assert.equal(result.body.code,'COMMENT_SUBMISSION_CONFLICT');assert.deepEqual(result.committed,{comments:0,counters:0,outbox:0});
+});
+
+
+test('enabled legacy bearer comments and retry receipts preserve compatibility under the account lock',async()=>{
+ const previous=process.env.AUTH_LEGACY_BEARER_COMPAT;process.env.AUTH_LEGACY_BEARER_COMPAT='true';
+ try {
+  const bearer=require('jsonwebtoken').sign({userId:'actor'},process.env.JWT_SECRET,{expiresIn:3600});
+  for(const pageId of [null,'page'])for(const replayReceipt of [false,true]){
+   const result=await runCreateComment({text:'Compatible bearer comment',pageId,bearer,sessionActive:false,replayReceipt,mutationId:'00000000-0000-4000-8000-000000000123'});
+   assert.equal(result.status,200,JSON.stringify(result.body));assert.equal(result.body.replayed,replayReceipt);assert.equal(result.calls.bearerChecks,1);assert.equal(result.calls.receiptReads,1);assert.equal(result.calls.receiptWrites,replayReceipt?0:1);assert.equal(result.committed.comments,replayReceipt?0:1);
+  }
+ } finally {if(previous===undefined)delete process.env.AUTH_LEGACY_BEARER_COMPAT;else process.env.AUTH_LEGACY_BEARER_COMPAT=previous;}
+});
+
+test('bearer invalidation while waiting for the account lock denies both writes and receipt replay',async()=>{
+ const previous=process.env.AUTH_LEGACY_BEARER_COMPAT;process.env.AUTH_LEGACY_BEARER_COMPAT='true';
+ try {
+  const jwt=require('jsonwebtoken'),iat=Math.floor(Date.now()/1000)-10;
+  const valid=jwt.sign({userId:'actor',iat},process.env.JWT_SECRET,{expiresIn:3600});
+  const revokedAt=new Date((iat+1)*1000);
+  const scenarios=[
+   {bearer:valid,bearerAccount:{status:'DELETED'}},
+   {bearer:valid,bearerAccount:{status:'ACTIVE',authInvalidatedAt:revokedAt}},
+   {bearer:valid,bearerAccount:{status:'ACTIVE',passwordUpdatedAt:revokedAt}},
+   {bearer:jwt.sign({userId:'actor',iat,exp:iat+1},process.env.JWT_SECRET)},
+   {bearer:jwt.sign({userId:'actor',iat},'different-test-only-key')},
+  ];
+  for(const pageId of [null,'page'])for(const scenario of scenarios){
+   const result=await runCreateComment({text:'Late bearer',pageId,...scenario,replayReceipt:true,mutationId:'00000000-0000-4000-8000-000000000123'});
+   assert.equal(result.status,401);assert.equal(result.body.code,'AUTH_REQUIRED');assert.equal(result.calls.receiptReads,0);assert.equal(result.calls.receiptWrites,0);assert.deepEqual(result.committed,{comments:0,counters:0,outbox:0});
+  }
+  process.env.AUTH_LEGACY_BEARER_COMPAT='false';
+  const disabled=await runCreateComment({text:'Disabled bearer',bearer:valid});assert.equal(disabled.status,401);assert.equal(disabled.calls.bearerChecks,0);
+ } finally {if(previous===undefined)delete process.env.AUTH_LEGACY_BEARER_COMPAT;else process.env.AUTH_LEGACY_BEARER_COMPAT=previous;}
 });

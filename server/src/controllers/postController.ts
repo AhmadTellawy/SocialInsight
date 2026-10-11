@@ -15,6 +15,7 @@ import { Request, Response } from 'express';
 import { createHash } from 'node:crypto';
 import { lockAccountSecurity, tryLockAccountSecurity, AccountSecurityError } from '../services/mfaService';
 import { assertActiveAccountSession } from '../services/accountSecurityPolicy';
+import { resolveLegacyBearer } from '../middleware/authMiddleware';
 import { MentionState, MentionSurface, PeopleTagStatus, Prisma } from '@prisma/client';
 import prisma from '../prisma';
 import { dispatchNotificationIds, notify } from '../services/notificationService';
@@ -2666,7 +2667,9 @@ export const createComment = async (req: Request, res: Response) => {
             if(pageInteraction) {
                 if(!await tryLockAccountSecurity(tx,userId))throw new PagePolicyError('COMMENT_SUBMISSION_CONFLICT',409);
             } else await lockAccountSecurity(tx,userId);
-            await assertActiveAccountSession(tx,req,false);
+            if (req.user?.authMode === 'legacy_bearer') {
+                if (await resolveLegacyBearer(req, tx) !== userId) throw new AccountSecurityError('AUTH_REQUIRED', 401);
+            } else await assertActiveAccountSession(tx, req, false);
             const currentTarget = commentTarget.pageId
                 ? await tx.post.findUnique({where:{id},select:{allowComments:true,pageId:true}})
                 : null;

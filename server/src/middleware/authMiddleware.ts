@@ -25,7 +25,8 @@ export const createLegacyBearerToken = (userId: string): string | null => {
     return jwt.sign({ userId }, JWT_SECRET, { expiresIn: legacyTtlSeconds() });
 };
 
-const resolveLegacyBearer = async (req: Request): Promise<string | null> => {
+// A write can revalidate the same credential under its account lock and transaction.
+export const resolveLegacyBearer = async (req: Request, client: Pick<typeof prisma, 'user'> = prisma): Promise<string | null> => {
     if (!legacyCompatEnabled()) return null;
     const header = req.headers.authorization;
     if (!header?.startsWith('Bearer ')) return null;
@@ -33,7 +34,7 @@ const resolveLegacyBearer = async (req: Request): Promise<string | null> => {
         const decoded = jwt.verify(header.slice(7), JWT_SECRET);
         if (typeof decoded !== 'object' || typeof decoded.userId !== 'string' || typeof decoded.iat !== 'number') return null;
         if (decoded.iat * 1000 < Date.now() - legacyTtlSeconds() * 1000) return null;
-        const user = await prisma.user.findUnique({ where: { id: decoded.userId }, select: { status: true, passwordUpdatedAt: true, authInvalidatedAt: true } });
+        const user = await client.user.findUnique({ where: { id: decoded.userId }, select: { status: true, passwordUpdatedAt: true, authInvalidatedAt: true } });
         if (user?.status !== 'ACTIVE') return null;
         if (user.passwordUpdatedAt && decoded.iat * 1000 < user.passwordUpdatedAt.getTime()) return null;
         if (user.authInvalidatedAt && decoded.iat * 1000 < user.authInvalidatedAt.getTime()) return null;
