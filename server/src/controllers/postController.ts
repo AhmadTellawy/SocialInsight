@@ -2660,7 +2660,13 @@ export const createComment = async (req: Request, res: Response) => {
             // shared interaction guard and never upgrade it to an exclusive Page
             // lock in this transaction. Fresh capability is rechecked under that
             // guard; the guard context remains available to the notification path.
-            await guardPagePostInteractions(tx,[rawId,id],userId);
+            const pageInteraction=await guardPagePostInteractions(tx,[rawId,id],userId);
+            // Account erasure and receipt writes must serialize. Page-first
+            // transactions cannot wait on the user-first erasure workflow.
+            if(pageInteraction) {
+                if(!await tryLockAccountSecurity(tx,userId))throw new PagePolicyError('COMMENT_SUBMISSION_CONFLICT',409);
+            } else await lockAccountSecurity(tx,userId);
+            await assertActiveAccountSession(tx,req,false);
             const currentTarget = commentTarget.pageId
                 ? await tx.post.findUnique({where:{id},select:{allowComments:true,pageId:true}})
                 : null;
@@ -2746,6 +2752,7 @@ export const createComment = async (req: Request, res: Response) => {
         // All notification rows are durable before success. Delivery is secondary.
         void dispatchNotificationIds(dispatchIds).catch(() => logPostRequestFailure(req, 'comment_notification_dispatch_failed', { code: 'DELIVERY_FAILED' }));
     } catch (error) {
+        if(error instanceof AccountSecurityError)return void res.status(error.status).json({code:error.code,error:'Sign in again to comment.'});
         if(respondPagePostError(error,res))return;
         if (error instanceof MentionLimitError || error instanceof HashtagLimitError) {
             res.status(400).json({ error: error.message, code: 'SOCIAL_TEXT_LIMIT_EXCEEDED', limit: error.limit });

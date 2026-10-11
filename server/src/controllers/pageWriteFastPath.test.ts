@@ -132,6 +132,9 @@ test('restricted Page audiences and official replies keep capability preflight b
 });
 
 type CommentScenario = {
+  sessionActive?: boolean;
+  accountLocked?: boolean;
+  mutationId?: string;
   pageId?: string | null;
   official?: boolean;
   text: string;
@@ -170,6 +173,9 @@ async function runCreateComment(input: CommentScenario) {
       const pending = { ...committed };
       const activityCountBefore = activity.length;
       const tx: any = {
+        $executeRaw: async () => 1,
+        $queryRaw: async () => [{locked: input.accountLocked !== false}],
+        authSession: {findFirst: async ({where}: any) => { assert.equal(where.user.status,'ACTIVE');assert.equal(where.revokedAt,null);return input.sessionActive === false ? null : {id:'session'}; }},
         post: {
           findUnique: async () => ({ allowComments: true, pageId: post.pageId }),
           update: async () => { pending.counters++; return { authorId: 'publisher-user' }; }
@@ -229,8 +235,8 @@ async function runCreateComment(input: CommentScenario) {
 
     const { state, response } = responseFixture();
     await createComment({
-      params: { id: 'post' }, user: { userId: 'actor' },
-      body: { text: input.text, ...(input.parentId ? { parentId: input.parentId } : {}), ...(input.official ? { pageId: post.pageId } : {}) }
+      params: { id: 'post' }, user: { userId: 'actor', authMode:'session' }, authSession:{id:'session',userId:'actor'},
+      body: { text: input.text, ...(input.mutationId ? {mutationId:input.mutationId} : {}), ...(input.parentId ? { parentId: input.parentId } : {}), ...(input.official ? { pageId: post.pageId } : {}) }
     } as any, response);
     return { ...state, calls, activity, committed };
   } finally {
@@ -347,4 +353,14 @@ test('editing a Page comment to plain text still reconciles removals for mention
     mock.restoreAll();
     restores.reverse().forEach(restore => restore());
   }
+});
+
+test('late comment after session revocation cannot recreate content or a receipt',async()=>{
+ for(const pageId of [null,'page'])for(const mutationId of [undefined,'00000000-0000-4000-8000-000000000123']){
+  const result=await runCreateComment({text:'Late authenticated comment',pageId,mutationId,sessionActive:false});
+  assert.equal(result.status,401);assert.equal(result.body.code,'AUTH_REQUIRED');assert.deepEqual(result.committed,{comments:0,counters:0,outbox:0});
+ }
+});
+test('Page comment declines a busy account lock without waiting or writing',async()=>{
+ const result=await runCreateComment({text:'Page erasure overlap',accountLocked:false});assert.equal(result.status,409);assert.equal(result.body.code,'COMMENT_SUBMISSION_CONFLICT');assert.deepEqual(result.committed,{comments:0,counters:0,outbox:0});
 });
