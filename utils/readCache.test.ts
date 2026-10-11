@@ -12,3 +12,10 @@ test('same resource coalesces; one cancelled reader leaves another alive; scope 
 test('invalidation rejects a late read instead of repopulating stale data',async()=>{
  let resolve!:(r:Response)=>void;const pending=cachedRead('late',20000,()=>new Promise(r=>resolve=r));invalidateReads();resolve(new Response('{}'));await assert.rejects(pending,{name:'AbortError'});
 });
+
+test('cache preserves JSON body transformations on the first read and cache hits',async()=>{
+ invalidateReads();let reads=0;
+ const loader=async()=>{reads++;const response=Response.json({avatar:'/uploads/avatar.png'});const json=response.json.bind(response);response.json=async()=>{const value=await json();return {...value,avatar:'https://api.example.invalid'+value.avatar};};return response;};
+ for(let i=0;i<2;i++)assert.equal((await (await cachedRead('assets',20000,loader)).json()).avatar,'https://api.example.invalid/uploads/avatar.png');
+ assert.equal(reads,1);invalidateReads();
+});

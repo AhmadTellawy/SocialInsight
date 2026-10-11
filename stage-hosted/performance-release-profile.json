@@ -1,0 +1,19 @@
+{
+  "profile": "performance-ux-20261011",
+  "backendEnvironment": {
+    "ANALYSIS_CACHE_ENABLED": "true"
+  },
+  "instances": 1,
+  "limits": {
+    "cacheScope": "per-process, per-actor and authority, database revision and UTC day",
+    "ttlSeconds": 30,
+    "maxEntries": 12,
+    "maxBytes": 33554432,
+    "maxSnapshotBytes": 16777216,
+    "pendingKeys": 24
+  },
+  "status": "F26_PARTIAL",
+  "coldOrActivePost": "Full aggregation can still take several seconds; do not describe cache hits as first-load performance.",
+  "frontend": "Analytics responses require live authorization; only filters and navigation state persist.",
+  "rollback": "Keep the compatible backend and additive schema while old/new tabs coexist. Code rollback alone is not the data recovery plan."
+}

@@ -523,7 +523,7 @@ export const api = {
     },
 
     getPostResults: async (postId: string, signal?: AbortSignal, query = '') => {
-        const response = await authFetch(`${API_BASE_URL}/posts/${encodeURIComponent(postId)}/results${query ? '?' + query : ''}`, { memoryTTL:20_000, signal, timeoutMs: 20_000, cache: 'no-store' });
+        const response = await authFetch(`${API_BASE_URL}/posts/${encodeURIComponent(postId)}/results${query ? '?' + query : ''}`, { signal, timeoutMs: 20_000, cache: 'no-store' });
         if (!response.ok) throw new ApiError('Failed to fetch post results', response.status);
         return response.json();
     },
@@ -645,7 +645,7 @@ export const api = {
     },
 
     getCommentsPage: async (postId: string, cursor?: string | null, limit = 30, signal?: AbortSignal, focusId?: string | null): Promise<CursorPage<any>> => {
-        const params = new URLSearchParams({ limit: String(limit) });
+        const params = new URLSearchParams({ limit: String(limit), replyPreview: '3' });
         if (cursor) params.set('cursor', cursor);
         if (focusId && !cursor) params.set('focusId', focusId);
         const response = await authFetch(`${API_BASE_URL}/posts/${postId}/comments?${params.toString()}`, { memoryTTL:1, signal, timeoutMs: 15_000 });

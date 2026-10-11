@@ -18,7 +18,7 @@ export type BlockedPage = Pick<BusinessPage, 'id' | 'name' | 'handle'>;
 export type PageInfo = Pick<BusinessPage, 'name' | 'category' | 'bio' | 'description' | 'country' | 'city' | 'website' | 'links' | 'publicEmail' | 'publicPhone' | 'cta'>;
 
 export async function pageRequest<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
-  const response = await authFetch('/api/pages' + path, { method, memoryTTL:method === 'GET' && (/^(?:\?|\/[^/?]+(?:\?|$))/.test(path) && !/^\/(?:mine|invitations|transfers|blocks|staff)(?:\?|$)/.test(path) || /^\/manage\/[^/]+\/content\/[^/]+\/results(?:\?|$)/.test(path)) ? 20_000 : undefined, cache: 'no-store', signal, timeoutMs: 20000,
+  const response = await authFetch('/api/pages' + path, { method, memoryTTL:method === 'GET' && (/^(?:\?|\/[^/?]+(?:\?|$))/.test(path) && !/^\/(?:mine|invitations|transfers|blocks|staff)(?:\?|$)/.test(path)) ? 20_000 : undefined, cache: 'no-store', signal, timeoutMs: 20000,
     ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const result = await response.json();
   if (!response.ok) throw new ApiError(result.error || 'Unable to complete the request', response.status, result.code, result);

@@ -71,13 +71,14 @@ const AnalysisContent: React.FC<Props> = ({ survey: source, isAccessDenied, priv
     if (document.activeElement === document.body) document.getElementById(`${id}-compare`)?.focus({ preventScroll: true });
   }, [status, id]);
   useEffect(() => {
-    let current = true;
+    let current = true, authorizationEpoch=0;
     setError(null); setStatus('loading'); setCohort(null);
     if (isAccessDenied) { setResults(null); setLoaded(null); setSheet(null); setStatus('denied'); return; }
     const load = async () => {
       // Coalesce rapid changes; aborting fetch alone does not cancel work already in PostgreSQL.
+      const epoch=authorizationEpoch;
       await inFlight.current;
-      if (!current) return;
+      if (!current || epoch!==authorizationEpoch) return;
       const controller = new AbortController();
       requestController.current = controller;
       setStatus('loading');
@@ -88,12 +89,12 @@ const AnalysisContent: React.FC<Props> = ({ survey: source, isAccessDenied, priv
             ? await pageRequest<AnalysisResults>('/manage/' + encodeURIComponent(privatePageId) + '/content/' + encodeURIComponent(source.id) + '/results?' + query, 'GET', undefined, controller.signal)
             : await api.getPostResults(source.id, controller.signal, query) as AnalysisResults;
           if (data?.version !== 3) throw new Error('Unsupported analysis contract');
-          if (current && !controller.signal.aborted) {
+          if (current && !controller.signal.aborted && epoch===authorizationEpoch && !document.hidden) {
             setResults(data); setLoaded({ filters, compareBy, questionId: questionId || definitions[0]?.id || '' }); setStatus('ready'); setError(null); finish();
           }
         } catch (failure: any) {
           finish('failed');
-          if (!current || controller.signal.aborted) return;
+          if (!current || controller.signal.aborted || epoch!==authorizationEpoch) return;
           const denied = [401, 403, 404].includes(failure?.status);
           if (denied) { setResults(null); setLoaded(null); setSheet(null); }
           setError(failure); setStatus(denied ? 'denied' : 'error');
@@ -104,8 +105,13 @@ const AnalysisContent: React.FC<Props> = ({ survey: source, isAccessDenied, priv
       if (inFlight.current === request) inFlight.current = null;
     };
     const debounce = window.setTimeout(() => void load(), results ? 180 : 0);
-    const timer = privatePageId ? window.setInterval(() => { if(!document.hidden)void load(); }, 30_000) : undefined;
-    return () => { current = false; window.clearTimeout(debounce); if (timer !== undefined) window.clearInterval(timer); };
+    // Cached aggregates stay on the server behind a fresh permission check.
+    // Hide expired/resumed data until that check succeeds, including exports.
+    const revalidate=()=>{authorizationEpoch++;setResults(null);setLoaded(null);setSheet(null);setCohort(null);setStatus('loading');if(!document.hidden)void load();};
+    const timer=window.setInterval(revalidate,30_000);
+    window.addEventListener('focus',revalidate);
+    document.addEventListener('visibilitychange',revalidate);
+    return () => { current = false; window.clearTimeout(debounce); window.clearInterval(timer); window.removeEventListener('focus',revalidate); document.removeEventListener('visibilitychange',revalidate); };
   }, [source.id, source.pageId, privatePageId, isAccessDenied, query, attempt]);
   const questions: AnalysisQuestion[] = definitions.length ? definitions : [{ id: results?.questionSummaries[0]?.questionId || '', text: source.question || source.title, options: source.options, type: 'multiple_choice' }];
   const shownQuestionId = !compareBy && !loaded?.compareBy ? questionId : loaded ? loaded.questionId : questionId;

@@ -5,7 +5,7 @@ const prisma = require('../prisma').default as typeof import('../prisma').defaul
 const { getPostResults } = require('./postController') as typeof import('./postController');
 after(async () => { await prisma.$disconnect(); });
 
-for (const scenario of [
+for (const analysis of [false,true]) for (const scenario of [
   { name: 'public', who: 'Public', timing: 'AnyTime', expected: 200 },
   { name: 'only author', who: 'OnlyMe', timing: 'AnyTime', expected: 403 },
   { name: 'author bypass', who: 'OnlyMe', timing: 'AfterEnd', owner: true, expected: 200 },
@@ -17,7 +17,7 @@ for (const scenario of [
   { name: 'future expiry', who: 'Public', timing: 'AfterEnd', expected: 403 },
   { name: 'invisible wrapper', who: 'Public', timing: 'AnyTime', hidden: true, expected: 404 },
   { name: 'invisible shared source', who: 'Public', timing: 'AnyTime', hiddenSource: true, expected: 404 },
-]) test(`analysis v3 authorization: ${scenario.name}`, async () => {
+]) test(`analysis ${analysis ? "v3" : "v2"} authorization: ${scenario.name}`, async () => {
   const original = prisma.$transaction;
   let reads = 0, status = 200, body: any, queries = 0;
   const headers: Record<string, string> = {};
@@ -36,9 +36,9 @@ for (const scenario of [
   const res: any = { status(value: number) { status = value; return res; }, setHeader(key: string, value: string) { headers[key] = value; }, json(value: any) { body = value; return res; } };
   try {
     (prisma as any).$transaction = async (work: any, options: any) => { assert.equal(options.isolationLevel, 'RepeatableRead'); return work(tx); };
-    await getPostResults({ params: { id: 'post' }, query: { analysis: '1', compareBy: 'gender' }, headers: {}, user: { userId: scenario.owner ? 'owner' : 'viewer' } } as any, res);
+    await getPostResults({ params: { id: 'post' }, query: analysis ? { analysis: '1', compareBy: 'gender' } : {}, headers: {}, user: { userId: scenario.owner ? 'owner' : 'viewer' } } as any, res);
     assert.equal(status, scenario.expected); assert.equal(reads, status === 200 ? 1 : 0);
     assert.equal(headers['Cache-Control'], 'private, no-store');
-    if (status === 200) { assert.equal(body.version, 3); assert.equal(body.comparison.groups[0].responseCount, 5); assert.equal(JSON.stringify(body).includes('private-'), false); }
+    if (status === 200) { assert.equal(body.version, analysis ? 3 : 2); if(analysis)assert.equal(body.comparison.groups[0].responseCount, 5); assert.equal(JSON.stringify(body).includes('private-'), false); }
   } finally { (prisma as any).$transaction = original; }
 });

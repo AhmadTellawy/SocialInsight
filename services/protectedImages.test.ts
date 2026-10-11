@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+test('reacquiring a protected image never postpones server reauthorization',async(t)=>{
+ const values=new Map<string,string>();const storage={getItem:(key:string)=>values.get(key)||null,setItem:(key:string,value:string)=>values.set(key,value),removeItem:(key:string)=>values.delete(key)};
+ Object.defineProperty(globalThis,'localStorage',{configurable:true,value:storage});Object.defineProperty(globalThis,'sessionStorage',{configurable:true,value:storage});
+ const documentEvents=new EventTarget(),windowEvents=new EventTarget();let interval:()=>void=()=>{};
+ Object.defineProperty(globalThis,'document',{configurable:true,value:Object.assign(documentEvents,{hidden:false})});
+ Object.defineProperty(globalThis,'window',{configurable:true,value:Object.assign(windowEvents,{location:{origin:'http://localhost:3000'},setInterval:(cb:()=>void)=>{interval=cb;return 1;}})});
+ let calls=0,deny=false,now=100000;const originalNow=Date.now;Date.now=()=>now;t.after(()=>{Date.now=originalNow;});
+ const source='/api/media/protected-image/content';
+ Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>{calls++;return deny?Response.json({error:'Forbidden'},{status:403}):new Response(new Blob(['synthetic bytes'],{type:'image/png'}),{headers:{'content-type':'image/png'}});}});
+ const {acquireProtectedImage}=await import('./protectedImages.ts');
+ const views:Array<{url:string|null;failed:boolean}>=[];
+ const settle=()=>new Promise(resolve=>setTimeout(resolve,15));
+ let release=acquireProtectedImage('protected-image',source,64,view=>views.push(view));for(let i=0;i<100&&!views.at(-1)?.url;i++)await settle();assert.equal(calls,1);assert.ok(views.at(-1)?.url);
+ release();now+=20000;release=acquireProtectedImage('protected-image',source,64,view=>views.push(view));await settle();assert.equal(calls,1);
+ release();now+=20000;deny=true;release=acquireProtectedImage('protected-image',source,64,view=>views.push(view));for(let i=0;i<100&&!views.at(-1)?.failed;i++)await settle();
+ assert.equal(calls,2,'40 seconds since the real authorization requires a server check');assert.equal(views.at(-1)?.url,null);assert.equal(views.at(-1)?.failed,true);
+ release();Date.now=originalNow;
+});

@@ -8,7 +8,7 @@ import { useCommentThread } from '../hooks/useCommentThread';
 import { updateComment } from '../utils/interactionMutation';
 import { startJourney } from '../utils/journeyPerformance';
 import { readCommentDraft, saveCommentDraft } from '../utils/commentDrafts';
-import { interactionKey, evictInteraction, interactionGeneration } from '../utils/interactionCache';
+import { interactionKey, evictInteraction, interactionGeneration, interactionVersion } from '../utils/interactionCache';
 import { LikersSheet } from './LikersSheet';
 import { RichMentionInput } from './RichMentionInput';
 import { RichTextRenderer } from './RichTextRenderer';
@@ -256,10 +256,10 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ surveyId, userProf
     if(replyRequests.current.has(parentId))return;
     const parent=comments.find(c=>c.id===parentId);if(!parent?.repliesNextCursor)return;
     const controller=new AbortController();replyRequests.current.set(parentId,controller);
-    const epoch=interactionGeneration();setLoadingReplies(new Set(replyRequests.current.keys()));
+    const epoch=interactionGeneration(),threadKey=interactionKey(userProfile?.id,'comments',surveyId),version=interactionVersion(threadKey);setLoadingReplies(new Set(replyRequests.current.keys()));
     try{
       const page=await api.getCommentReplies(surveyId,parentId,parent.repliesNextCursor,controller.signal);
-      if(controller.signal.aborted||epoch!==interactionGeneration())return;
+      if(controller.signal.aborted||epoch!==interactionGeneration()||interactionVersion(threadKey)!==version)return;
       setComments(rows=>updateComment(rows,parentId,c=>({...c,replies:Array.from(new Map([...(c.replies||[]),...page.items].map(r=>[r.id,r])).values()).sort((a,b)=>a.timestamp.localeCompare(b.timestamp)||a.id.localeCompare(b.id)),replyCount:page.totalCount,repliesNextCursor:page.nextCursor})));
     }catch(error){if(!controller.signal.aborted)setSendError(t('postOptions.actionFailed'));}
     finally{replyRequests.current.delete(parentId);setLoadingReplies(new Set(replyRequests.current.keys()));}

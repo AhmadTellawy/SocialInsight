@@ -16,3 +16,11 @@ test('failed analysis construction is retriable and bounded LRU evicts old snaps
  for(let i=0;i<16;i++)writeAnalysisSnapshot('bounded-'+i,{...snapshot(),bytes:3*1024*1024});
  assert.equal(readAnalysisSnapshot('bounded-0'),undefined);assert.ok(readAnalysisSnapshot('bounded-15'));
 });
+
+test('an identical in-flight build remains shared at pending capacity',async()=>{
+ let release!:()=>void,builds=0;const hold=new Promise<void>(resolve=>release=resolve);
+ const build=async()=>{builds++;await hold;return snapshot();};
+ const pending=Array.from({length:24},(_,i)=>sharedAnalysisSnapshot('saturation-'+i,build));
+ const duplicate=sharedAnalysisSnapshot('saturation-0',build);
+ assert.equal(builds,24);release();const values=await Promise.all([...pending,duplicate]);assert.equal(values[0],values[24]);
+});

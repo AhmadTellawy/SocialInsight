@@ -31,7 +31,8 @@ export async function cachedRead(key:string,ttl:number,load:(signal:AbortSignal)
   if (!pending) {
     const controller=new AbortController();
     const promise=load(controller.signal).then(async res => {
-      const value:Snapshot={body:await res.text(),status:res.status,headers:Array.from(res.headers.entries()),at:Date.now()};
+      const body=res.headers.get('content-type')?.includes('application/json') ? JSON.stringify(await res.json()) : await res.text();
+      const value:Snapshot={body,status:res.status,headers:Array.from(res.headers.entries()),at:Date.now()};
       if (controller.signal.aborted) throw aborted();
       if (res.ok && value.body.length*2 < MAX_BYTES/2) {
         bytes -= (entries.get(key)?.body.length || 0)*2;

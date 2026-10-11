@@ -53,7 +53,7 @@ BEGIN
     IF TG_TABLE_NAME='users' THEN
       SELECT EXISTS(SELECT 1 FROM new_rows n JOIN old_rows o USING(id) WHERE n.birthday IS DISTINCT FROM o.birthday OR n.country IS DISTINCT FROM o.country) INTO changed;
     ELSE
-      SELECT EXISTS(SELECT 1 FROM new_rows n JOIN old_rows o USING(id) WHERE (to_jsonb(n)-'updated_at') IS DISTINCT FROM (to_jsonb(o)-'updated_at')) INTO changed;
+      SELECT EXISTS(SELECT 1 FROM new_rows n JOIN old_rows o USING(user_id) WHERE (to_jsonb(n)-'updated_at') IS DISTINCT FROM (to_jsonb(o)-'updated_at')) INTO changed;
     END IF;
   ELSIF TG_OP='INSERT' THEN SELECT EXISTS(SELECT 1 FROM new_rows) INTO changed;
   ELSE SELECT EXISTS(SELECT 1 FROM old_rows) INTO changed;

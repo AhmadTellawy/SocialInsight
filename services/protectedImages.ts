@@ -1,5 +1,5 @@
-import {API_BASE_URL,authFetch,getAuthSessionIdentity} from './api';
-import {interactionGeneration,subscribeInteractions} from '../utils/interactionCache';
+import {API_BASE_URL,authFetch,getAuthSessionIdentity} from './api.ts';
+import {interactionGeneration,subscribeInteractions} from '../utils/interactionCache.ts';
 type View={url:string|null;failed:boolean};
 type Entry={key:string;id:string;source:string;width:number;actor:string|null;generation:number;url:string|null;bytes:number;checked:number;view:View;listeners:Set<(view:View)=>void>;controller?:AbortController;releaseAt:number};
 const entries=new Map<string,Entry>();
@@ -17,24 +17,25 @@ async function load(entry:Entry,reauthorize=false) {
   const controller=new AbortController();entry.controller=controller;
   const valid=()=>!controller.signal.aborted && entry.actor===getAuthSessionIdentity() && entry.generation===interactionGeneration();
   try {
+    let authorized=false;
     if(!validSource(entry.source))throw Error('Invalid media source');
     if(entry.url && (reauthorize || Date.now()-entry.checked>=30000)) {
       const key=JSON.stringify([entry.actor,entry.generation,entry.id]);
       if(!checks.has(key))checks.set(key,authFetch('/api/media/'+encodeURIComponent(entry.id),{cache:'no-store',timeoutMs:15000}).then(async response=>{
-        if(!response.ok)throw Error('Media unavailable');const dto=await response.json();
+        if(!response.ok){await response.text();throw Error('Media unavailable');}const dto=await response.json();
         if(!dto.requiresAuth || dto.src!==entry.source)throw Error('Media changed');
       }).finally(()=>checks.delete(key)));
-      await checks.get(key);
+      await checks.get(key);authorized=true;
     }
     if(!entry.url){
       const url=entry.source+(entry.source.includes('?')?'&':'?')+'width='+entry.width;
       const response=await authFetch(url,{signal:controller.signal,cache:'no-store',timeoutMs:20000});
-      if(!response.ok || !response.headers.get('content-type')?.startsWith('image/'))throw Error('Media unavailable');
+      if(!response.ok || !response.headers.get('content-type')?.startsWith('image/')){await response.text();throw Error('Media unavailable');}
       const blob=await response.blob();if(!valid())return;
-      entry.url=URL.createObjectURL(blob);entry.bytes=blob.size;
+      entry.url=URL.createObjectURL(blob);entry.bytes=blob.size;authorized=true;
     }
     if(!valid())return;
-    entry.checked=Date.now();publish(entry,{url:document.hidden?null:entry.url,failed:false});
+    if(authorized)entry.checked=Date.now();publish(entry,{url:document.hidden?null:entry.url,failed:false});
   }catch{if(valid()){if(entry.url)URL.revokeObjectURL(entry.url);entry.url=null;entry.bytes=0;publish(entry,{url:null,failed:true});}}
   finally{if(entry.controller===controller)entry.controller=undefined;}
 }

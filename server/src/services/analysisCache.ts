@@ -27,8 +27,9 @@ const pending=new Map<string,Promise<AnalysisSnapshot>>();
 /** Shared aggregate construction is scoped by actor, authority and database revision. */
 export async function sharedAnalysisSnapshot(key:string|null,build:()=>Promise<AnalysisSnapshot>):Promise<AnalysisSnapshot>{
   const cached=readAnalysisSnapshot(key);if(cached)return cached;
-  if(!key || pending.size>=24)return build();
+  if(!key)return build();
   const existing=pending.get(key);if(existing)return existing;
+  if(pending.size>=24)return build();
   const promise=build().then(value=>{writeAnalysisSnapshot(key,value);return value;}).finally(()=>{if(pending.get(key)===promise)pending.delete(key);});
   pending.set(key,promise);return promise;
 }

@@ -95,6 +95,7 @@ async function purgeAccountInPageSystemContext(tx: Prisma.TransactionClient, id:
   if (identifiers.length) await tx.oTPCode.deleteMany({ where: { identifier: { in: identifiers } } });
   if (user.email) await tx.pendingRegistration.deleteMany({ where: { email: user.email } });
   await tx.pushSubscription.deleteMany({ where: { userId: id } });
+  await tx.commentSubmission.deleteMany({ where: { userId: id } });
   await tx.userDemographics.deleteMany({ where: { userId: id } });
   await tx.profileLink.deleteMany({ where: { userId: id } });
   const follows = await tx.follow.findMany({ where: { OR: [{ followerId: id }, { followingId: id }] } });

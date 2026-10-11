@@ -2357,6 +2357,11 @@ const loadAggregatePostResults = async (client: any, postId: string, query?: Ana
         analysisCursor = cursor ? page[page.length - 1] : undefined;
     } while (cursor);
     const overall = aggregate.toJSON();
+    // Page authorization must read fresh after its coordination lock. Concurrent
+    // demographics writes do not take that lock: never cache a mixed revision.
+    if(cacheKey && authority.startsWith('page-managed:') && cacheKey!==await analysisCacheKey(client,postId,scope)) {
+        throw new PagePolicyError('ANALYSIS_CHANGED_RETRY',409);
+    }
     return {analysis,overall,bytes:(analysis?.estimatedBytes()||0)+JSON.stringify(overall).length*2};
     });
     return snapshot.analysis && query ? snapshot.analysis.toJSON(query,snapshot.overall) : snapshot.overall;
@@ -2403,56 +2408,23 @@ export const getPostResults = async (req: Request, res: Response) => {
     const rawId = req.params.id as string;
     try {
         const analysisQuery = parseAnalysisQuery(req.query);
-        if (analysisQuery) {
-            // Permission and every aggregation page use one consistent snapshot.
-            const result = await prisma.$transaction(async tx => {
-                const currentUserId = req.user?.userId;
-                const visible = buildVisiblePublishedPostWhere(currentUserId);
-                const wrapper = await tx.post.findFirst({ where: { id: rawId, ...visible }, select: { id: true, sharedFromId: true, authorId: true, pageId: true, resultsWho: true, resultsTiming: true, expiresAt: true } });
-                if (!wrapper) return { status: 404, body: { error: 'Post not found' } };
-                const id = wrapper.sharedFromId || wrapper.id;
-                const post = wrapper.sharedFromId ? await tx.post.findFirst({ where: { id, ...visible }, select: { id: true, authorId: true, pageId: true, resultsWho: true, resultsTiming: true, expiresAt: true } }) : wrapper;
-                if (!post) return { status: 404, body: { error: 'Post not found' } };
-                const access = await evaluatePublisherPostResultsAccess(tx, post, currentUserId, readGuestParticipationHash(req));
-                if (!access.allowed) return { status: 403, body: { error: 'Results are not available' } };
-                return { status: 200, body: await loadAggregatePostResults(tx, id, analysisQuery) };
-            }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, maxWait: 3000, timeout: 15000 });
-            res.setHeader('Cache-Control', 'private, no-store');
-            res.setHeader('Vary', 'Authorization, Cookie');
-            res.status(result.status).json(result.body);
-            return;
-        }
-        const id = await resolveInteractionTarget(rawId, 'vote');
-        const currentUserId = req.user?.userId;
-        const guestProofHash = readGuestParticipationHash(req);
-        const post = await prisma.post.findFirst({
-            where: { id, ...buildVisiblePublishedPostWhere(currentUserId) },
-            select: {
-                authorId: true, pageId: true,
-                resultsWho: true,
-                resultsTiming: true,
-                expiresAt: true,
-            }
-        });
-
-        if (!post) {
-            res.status(404).json({ error: 'Post not found' });
-            return;
-        }
-
-        const resultAccess = await evaluatePublisherPostResultsAccess(prisma, { id, ...post }, currentUserId, guestProofHash);
-        if (!resultAccess.allowed && resultAccess.reason === 'audience') {
-            res.status(403).json({ error: 'You do not have access to these results' });
-            return;
-        }
-        if (!resultAccess.allowed) {
-            res.status(403).json({ error: 'Results are not available yet' });
-            return;
-        }
-
+        // Permission and every aggregation page use one consistent snapshot.
+        const result = await prisma.$transaction(async tx => {
+            const currentUserId = req.user?.userId;
+            const visible = buildVisiblePublishedPostWhere(currentUserId);
+            const wrapper = await tx.post.findFirst({ where: { id: rawId, ...visible }, select: { id: true, sharedFromId: true, authorId: true, pageId: true, resultsWho: true, resultsTiming: true, expiresAt: true } });
+            if (!wrapper) return { status: 404, body: { error: 'Post not found' } };
+            const id = wrapper.sharedFromId || wrapper.id;
+            const post = wrapper.sharedFromId ? await tx.post.findFirst({ where: { id, ...visible }, select: { id: true, authorId: true, pageId: true, resultsWho: true, resultsTiming: true, expiresAt: true } }) : wrapper;
+            if (!post) return { status: 404, body: { error: 'Post not found' } };
+            const access = await evaluatePublisherPostResultsAccess(tx, post, currentUserId, readGuestParticipationHash(req));
+            if (!access.allowed) return { status: 403, body: { error: 'Results are not available' } };
+            return { status: 200, body: await loadAggregatePostResults(tx, id, analysisQuery || undefined) };
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, maxWait: 3000, timeout: 15000 });
         res.setHeader('Cache-Control', 'private, no-store');
         res.setHeader('Vary', 'Authorization, Cookie');
-        res.json(await loadAggregatePostResults(prisma, id, parseAnalysisQuery(req.query)));
+        res.status(result.status).json(result.body);
+        return;
     } catch (error) {
         if (error instanceof InvalidAnalysisQuery) { res.status(400).json({ error: error.message }); return; }
         console.error(error);
@@ -2527,7 +2499,7 @@ export const getComments = async (req: Request, res: Response) => {
                 likesList: userId ? { where: { userId }, take: 1, select: { userId: true } } : false,
                 _count:{select:{replies:{where:{isDeleted:false}}}},
                 replies: {
-                    where:{isDeleted:false}, take:3,
+                    where:{isDeleted:false}, ...(req.query.replyPreview === '3' ? {take:3} : {}),
                     orderBy: [{ createdAt: 'asc' as const }, {id:'asc' as const}],
                     include: {
                         user: { select: SAFE_USER_SELECT },
