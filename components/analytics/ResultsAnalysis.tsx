@@ -54,6 +54,15 @@ const AnalysisContent: React.FC<Props> = ({ survey: source, isAccessDenied, priv
   const [loaded, setLoaded] = useState<{ filters: AnalysisFilters; compareBy: AnalysisDimension | ''; questionId: string } | null>(null);
   const inFlight = useRef<Promise<void> | null>(null);
   const requestController = useRef<AbortController | null>(null);
+  const revalidateCurrent = useRef<() => void>(() => {});
+  const [authorizedUntil, setAuthorizedUntil] = useState(0);
+  // Only a successful server response extends the authorization lifetime.
+  // Query edits and failed retries must not restart this deadline.
+  useEffect(() => {
+    if (!authorizedUntil) return;
+    const timer = window.setTimeout(() => revalidateCurrent.current(), Math.max(0, authorizedUntil - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [authorizedUntil]);
   useEffect(() => () => requestController.current?.abort(), []);
   const [status, setStatus] = useState<'loading' | 'ready' | 'denied' | 'error'>('loading');
   const [error, setError] = useState<unknown>(null), [attempt, setAttempt] = useState(0);
@@ -90,6 +99,7 @@ const AnalysisContent: React.FC<Props> = ({ survey: source, isAccessDenied, priv
             : await api.getPostResults(source.id, controller.signal, query) as AnalysisResults;
           if (data?.version !== 3) throw new Error('Unsupported analysis contract');
           if (current && !controller.signal.aborted && epoch===authorizationEpoch && !document.hidden) {
+            setAuthorizedUntil(Date.now() + 30_000);
             setResults(data); setLoaded({ filters, compareBy, questionId: questionId || definitions[0]?.id || '' }); setStatus('ready'); setError(null); finish();
           }
         } catch (failure: any) {
@@ -107,11 +117,11 @@ const AnalysisContent: React.FC<Props> = ({ survey: source, isAccessDenied, priv
     const debounce = window.setTimeout(() => void load(), results ? 180 : 0);
     // Cached aggregates stay on the server behind a fresh permission check.
     // Hide expired/resumed data until that check succeeds, including exports.
-    const revalidate=()=>{authorizationEpoch++;setResults(null);setLoaded(null);setSheet(null);setCohort(null);setStatus('loading');if(!document.hidden)void load();};
-    const timer=window.setInterval(revalidate,30_000);
+    const revalidate=()=>{authorizationEpoch++;setAuthorizedUntil(0);setResults(null);setLoaded(null);setSheet(null);setCohort(null);setStatus('loading');if(!document.hidden)void load();};
+    revalidateCurrent.current=revalidate;
     window.addEventListener('focus',revalidate);
     document.addEventListener('visibilitychange',revalidate);
-    return () => { current = false; window.clearTimeout(debounce); window.clearInterval(timer); window.removeEventListener('focus',revalidate); document.removeEventListener('visibilitychange',revalidate); };
+    return () => { current = false; window.clearTimeout(debounce); if(revalidateCurrent.current===revalidate)revalidateCurrent.current=()=>{}; window.removeEventListener('focus',revalidate); document.removeEventListener('visibilitychange',revalidate); };
   }, [source.id, source.pageId, privatePageId, isAccessDenied, query, attempt]);
   const questions: AnalysisQuestion[] = definitions.length ? definitions : [{ id: results?.questionSummaries[0]?.questionId || '', text: source.question || source.title, options: source.options, type: 'multiple_choice' }];
   const shownQuestionId = !compareBy && !loaded?.compareBy ? questionId : loaded ? loaded.questionId : questionId;
