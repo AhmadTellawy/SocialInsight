@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AnalysisResults, ANALYSIS_DIMENSIONS, parseAnalysisQuery, InvalidAnalysisQuery } from './analysisResults';
-import { analysisPageQuery } from './analysisData';
+import { analysisProfilesQuery, readAnalysisBatches } from './analysisData';
 import { AggregateResults } from './aggregateResults';
 
 function fixture() {
@@ -56,17 +56,21 @@ test('query parser bounds inputs, rejects unsupported dimensions/objects and kee
   for (const query of [{ analysis: ['1'] }, { analysis: '1', compareBy: '__proto__' }, { analysis: '1', questionId: ['q'] }, { analysis: '1', filters: '[]' }, { analysis: '1', filters: '{"userId":["x"]}' }, { analysis: '1', filters: '{"gender":[5]}' }, { analysis: '1', filters: '{"gender":{}}' }, { analysis: '1', filters: ' '.repeat(5000) }]) assert.throws(() => parseAnalysisQuery(query), InvalidAnalysisQuery);
 });
 
-test('analysis keyset binds a timezone-independent timestamp and parameterizes all cursor values', () => {
-  const timestamp = new Date('2026-10-10T14:59:51.528Z');
+test('analysis SQL binds untrusted post IDs and cursor closes on early consumer exit', async () => {
   const postId = "post'; SELECT private_data; --";
-  const cursorId = "cursor'; --";
-  const query = analysisPageQuery(postId, { id: cursorId, timestamp });
-  assert.deepEqual(query.values, [postId, timestamp.toISOString(), cursorId, 10_000]);
-  assert.match(query.sql, /\?::timestamp/);
-  assert.equal(query.sql.includes(postId), false);
-  assert.equal(query.sql.includes(cursorId), false);
-  assert.match(query.sql, /ORDER BY timestamp DESC,id DESC LIMIT \?/);
-  assert.deepEqual(analysisPageQuery('post').values, ['post', 10_000]);
+  const query = analysisProfilesQuery(postId);
+  assert.deepEqual(query.values, [postId]); assert.equal(query.sql.includes(postId), false);
+  const commands: string[] = [];
+  const client: any = {
+    $executeRaw: async (q: any) => { commands.push(q.sql); if(q.sql.startsWith('DECLARE')) assert.deepEqual(q.values,[postId]); return 0; },
+    $queryRaw: async () => [{weight:5,birthday:null,country:'Jordan',demographics:null,answers:[['q','a',null]]}]
+  };
+  for await (const rows of readAnalysisBatches(client,postId)) { assert.equal(rows[0].weight,5); break; }
+  assert.match(commands[0],/^DECLARE analysis_profiles NO SCROLL CURSOR FOR/);
+  assert.equal(commands.at(-1),'CLOSE analysis_profiles');
+  const original = new Error('Original query failure');
+  client.$queryRaw = async () => { throw original; };
+  await assert.rejects(async () => { for await(const rows of readAnalysisBatches(client,postId)) void rows; }, error => error === original);
 });
 
 test('weighted profiles exactly match individual responses across scores, filters and all comparisons', () => {
@@ -109,5 +113,24 @@ test('weighted raw birthday groups merge into complete age cells and invalid wei
   for (const weight of [0, -1, 1.1, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
     assert.throws(() => analysis.add({ answers: [] }, weight), RangeError);
     assert.throws(() => aggregate.add({ answers: [] }, weight), RangeError);
+  }
+});
+
+test('default comparison follows post question order across answer permutations and filters', () => {
+  for (const answers of [
+    [{questionId:'qZ',optionId:'yes'},{questionId:'qA',optionId:'no'}],
+    [{questionId:'qA',optionId:'no'},{questionId:'qZ',optionId:'yes'}]
+  ]) {
+    const aggregate = new AggregateResults(), analysis = new AnalysisResults(['qZ','qA']);
+    const response = {answers,user:{country:'Jordan'}};
+    aggregate.add(response,5); analysis.add(response,5);
+    for (const filters of [{},{country:['Jordan']}]) {
+      const result=analysis.toJSON({compareBy:'country',filters},aggregate.toJSON());
+      assert.equal(result.comparison!.questionId,'qZ');
+      assert.equal(result.comparison!.groups[0].optionCounts.yes,5);
+      assert.equal(analysis.toJSON({compareBy:'country',questionId:'qA',filters},aggregate.toJSON()).comparison!.questionId,'qA');
+    }
+    const fallback=new AnalysisResults(); fallback.add(response,5);
+    assert.equal(fallback.toJSON({compareBy:'country',filters:{}},aggregate.toJSON()).comparison!.questionId,'qA');
   }
 });

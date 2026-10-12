@@ -9,7 +9,7 @@ import { notifyPagePostInteraction } from '../pages/pageNotificationService';
 import { recordConfirmedVote } from '../services/confirmedAnalyticsService';
 import { prepareGuestParticipationProof, readGuestParticipationHash, guestProofMatches, writeGuestParticipationCookie } from '../services/guestParticipationService';
 import { AggregateResults } from '../services/aggregateResults';
-import { ANALYSIS_BATCH_SIZE, readAnalysisPage } from '../services/analysisData';
+import { readAnalysisBatches } from '../services/analysisData';
 import { AnalysisResults, AnalysisQuery, InvalidAnalysisQuery, parseAnalysisQuery } from '../services/analysisResults';
 import { Request, Response } from 'express';
 import { createHash } from 'node:crypto';
@@ -2332,31 +2332,33 @@ const loadAggregatePostResults = async (client: any, postId: string, query?: Ana
     const snapshot=await sharedAnalysisSnapshot(cacheKey,async()=>{
     const questions = await client.question.findMany({
         where: { OR: [{ postId }, { section: { postId } }] },
-        select: { id: true, options: { where: { isCorrect: true }, select: { id: true } } }
+        select: { id: true, order: true, section: { select: { order: true } }, options: { where: { isCorrect: true }, select: { id: true } } }
     });
     const correct = new Map<string, Set<string>>(questions
         .filter((question: any) => question.options.length > 0)
         .map((question: any) => [question.id, new Set<string>(question.options.map((option: any) => option.id))]));
     const aggregate = new AggregateResults(correct);
-    const analysis = query || cacheKey ? new AnalysisResults() : null;
-    let cursor: string | undefined;
-    let analysisCursor: { id: string; timestamp: Date } | undefined;
-    do {
-        const page = analysis ? await readAnalysisPage(client, postId, analysisCursor) : await client.response.findMany({
-            where: { postId },
-            take: 500,
-            orderBy: { id: 'asc' },
-            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-            select: {
-                id: true,
-                answers: { select: { questionId: true, optionId: true, textValue: true } },
-                user: { select: { birthday: true, country: true, demographics: true } }
-            }
-        });
-        page.forEach((response: any) => { aggregate.add(response, response.weight ?? 1); analysis?.add(response, response.weight ?? 1); });
-        cursor = (analysis ? page[0]?.pageSize === ANALYSIS_BATCH_SIZE : page.length === 500) ? page[page.length - 1].id : undefined;
-        analysisCursor = cursor ? page[page.length - 1] : undefined;
-    } while (cursor);
+    const questionOrder = [...questions].sort((a: any, b: any) =>
+        (a.section?.order ?? -1) - (b.section?.order ?? -1) || (a.order ?? 0) - (b.order ?? 0) || a.id.localeCompare(b.id)
+    ).map((question: any) => question.id);
+    const analysis = query || cacheKey ? new AnalysisResults(questionOrder) : null;
+    if (analysis) {
+        for await (const page of readAnalysisBatches(client, postId)) {
+            page.forEach(response => { aggregate.add(response, response.weight); analysis.add(response, response.weight); });
+        }
+    } else {
+        let cursor: string | undefined;
+        do {
+            const page = await client.response.findMany({
+                where: { postId }, take: 500, orderBy: { id: 'asc' },
+                ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+                select: { id: true, answers: { select: { questionId: true, optionId: true, textValue: true } },
+                    user: { select: { birthday: true, country: true, demographics: true } } }
+            });
+            page.forEach((response: any) => aggregate.add(response));
+            cursor = page.length === 500 ? page[page.length - 1].id : undefined;
+        } while (cursor);
+    }
     const overall = aggregate.toJSON();
     // Page authorization must read fresh after its coordination lock. Concurrent
     // demographics writes do not take that lock: never cache a mixed revision.

@@ -37,6 +37,8 @@ export function parseAnalysisQuery(query: Record<string, unknown> = {}): Analysi
  * This is a conservative snapshot guard, not a differential-privacy/time-series guarantee.
  */
 export class AnalysisResults {
+  // Post question order determines the default, independently of response/SQL order.
+  constructor(private readonly questionOrder: readonly string[] = []) {}
   private cells = new Map<string, Cell>();
   private capacityExceeded = false;
   private bytes = 0;
@@ -84,7 +86,9 @@ export class AnalysisResults {
     const suppressionReason = unsafe && filtered ? 'SMALL_CELLS' as const : null;
     const comparisonSuppression = unsafe ? 'SMALL_CELLS' as const : null;
     const summaries = suppressionReason ? [] : filtered ? this.summarize(selected) : overall.questionSummaries;
-    const questionId = query.questionId || summaries[0]?.questionId;
+    const questionId = query.questionId
+      || this.questionOrder.find(id => summaries.some(summary => summary.questionId === id))
+      || summaries.map(summary => summary.questionId).sort()[0];
     const summary = summaries.find(item => item.questionId === questionId);
     const categories = !unsafe ? Object.fromEntries(ANALYSIS_DIMENSIONS.map(key => [key, [...new Set(cells.map(cell => cell.dimensions[key]))].sort()])) : {};
     const groups = new Map<string, Cell[]>();
