@@ -4,8 +4,14 @@ const stack: SheetEntry[] = [];
 const retired = new Set<string>();
 let installed = false;
 let pendingBack = false;
-let lastRouteIndex = 0;
-const routeIndex = (state: any): number => Number.isInteger(state?.idx) ? state.idx : 0;
+type HistoryPosition = { index: number; key: unknown; depth: number };
+const sheetDepths = new Map<string, number>();
+const position = (state: any): HistoryPosition => ({
+  index: Number.isInteger(state?.idx) ? state.idx : 0,
+  key: state?.key,
+  depth: sheetDepths.get(state?.[marker]) || 0,
+});
+let lastPosition: HistoryPosition = { index: 0, key: undefined, depth: 0 };
 
 export const dismissSheetKeyboard = (element: HTMLElement | null) => {
   const active = document.activeElement;
@@ -19,21 +25,25 @@ export const dismissSheetKeyboard = (element: HTMLElement | null) => {
 export function installSheetHistory() {
   if (installed || typeof window === 'undefined') return;
   installed = true;
-  lastRouteIndex = routeIndex(history.state);
+  lastPosition = position(history.state);
   window.addEventListener('popstate', event => {
     const top = stack[stack.length - 1];
     // Several nested sheets can unmount together on logout/navigation. Drain
     // only their own entries, never the route entry underneath them.
     if (retired.has(event.state?.[marker])) {
       event.stopImmediatePropagation();
-      // Router indexes exclude our sheet entries. Equal indexes mean Forward
-      // from the underlying route; a lower index means Back from a later route.
-      // In-place dismissal always drains backward and keeps its silent pop.
-      if (pendingBack || routeIndex(event.state) < lastRouteIndex) history.back();
-      else history.forward();
+      // Sheet entries share the router index and key of their underlying route.
+      // Depth tracks direction inside that run, including a closed forward tail.
+      // A changed key at the same index is a replacement of the later entry.
+      const next = position(event.state);
+      const backward = pendingBack || (next.index !== lastPosition.index
+        ? next.index < lastPosition.index
+        : next.key !== lastPosition.key || next.depth < lastPosition.depth);
+      lastPosition = next;
+      if (backward) history.back(); else history.forward();
       return;
     }
-    lastRouteIndex = routeIndex(event.state);
+    lastPosition = position(event.state);
     if (pendingBack) {
       pendingBack = false;
       event.stopImmediatePropagation();
@@ -60,12 +70,14 @@ export function installSheetHistory() {
 export function registerSheetHistory(entry: Omit<SheetEntry, 'consumed'>) {
   installSheetHistory();
   const item: SheetEntry = { ...entry, consumed: false };
-  lastRouteIndex = routeIndex(history.state);
+  lastPosition = position(history.state);
+  sheetDepths.set(item.id, lastPosition.depth + 1);
   retired.delete(item.id);
   stack.push(item);
   history.pushState({ ...history.state, [marker]: item.id }, '');
+  lastPosition = position(history.state);
   return () => {
-    lastRouteIndex = routeIndex(history.state);
+    lastPosition = position(history.state);
     const index = stack.indexOf(item);
     if (index !== -1) stack.splice(index, 1);
     retired.add(item.id);

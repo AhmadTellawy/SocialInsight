@@ -119,3 +119,23 @@ for (const nested of [false, true]) test('Forward crosses retired sheets after B
     assert.deepEqual(f.routePops, ['/post/test', '/@author', '/post/test']);
   } finally { f.restore(); }
 });
+
+test('Back can escape a closed nested tail after Forward reaches the end', async () => {
+ const f=await fixture();try {
+  f.history.replaceState({idx:0,key:'home'},'', '/');f.history.pushState({idx:1,key:'post'},'', '/post/test');
+  const a=f.module.registerSheetHistory({id:'parent',close(){},element:()=>null,disabled:()=>false});
+  const b=f.module.registerSheetHistory({id:'child',close(){},element:()=>null,disabled:()=>false});
+  b();a();f.flush();f.history.forward();f.flush();f.history.back();f.flush();f.history.back();f.flush();
+  assert.equal(f.url(),'/');assert.equal(f.routePops.at(-1),'/');
+ }finally{f.restore();}
+});
+test('Back crosses retired sheets after route replacement keeps the same router index',async()=>{
+ const f=await fixture();try{
+  f.history.replaceState({idx:0,key:'home'},'', '/');f.history.pushState({idx:1,key:'post'},'', '/post/test');
+  const a=f.module.registerSheetHistory({id:'parent',close(){},element:()=>null,disabled:()=>false});
+  const b=f.module.registerSheetHistory({id:'child',close(){},element:()=>null,disabled:()=>false});
+  f.history.replaceState({idx:1,key:'author'},'','/@author');b();a();f.flush();
+  f.history.back();f.flush();assert.equal(f.url(),'/post/test');assert.equal(f.routePops.at(-1),'/post/test');
+  f.history.forward();f.flush();assert.equal(f.url(),'/@author');
+ }finally{f.restore();}
+});
