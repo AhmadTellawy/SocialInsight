@@ -24,7 +24,7 @@ export function writeAnalysisSnapshot(key:string|null,value:AnalysisSnapshot){
 }
 
 const pending=new Map<string,Promise<AnalysisSnapshot>>();
-/** Shared aggregate construction is scoped by actor, authority and database revision. */
+/** Aggregate construction is shared only within an authorized result scope and database revision. */
 export async function sharedAnalysisSnapshot(key:string|null,build:()=>Promise<AnalysisSnapshot>):Promise<AnalysisSnapshot>{
   const cached=readAnalysisSnapshot(key);if(cached)return cached;
   if(!key)return build();
@@ -66,4 +66,6 @@ export function createAnalysisAdmission(limit = 2, maxQueued = 32, waitMs = 30_0
   };
 }
 
-export const withAnalysisAdmission = createAnalysisAdmission();
+// One aggregate request at a time avoids competing full scans on the shared DB.
+// Waiting requests authorize after admission, with a fresh transaction snapshot.
+export const withAnalysisAdmission = createAnalysisAdmission(1);

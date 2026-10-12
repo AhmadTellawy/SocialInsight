@@ -4,6 +4,8 @@ const stack: SheetEntry[] = [];
 const retired = new Set<string>();
 let installed = false;
 let pendingBack = false;
+let lastRouteIndex = 0;
+const routeIndex = (state: any): number => Number.isInteger(state?.idx) ? state.idx : 0;
 
 export const dismissSheetKeyboard = (element: HTMLElement | null) => {
   const active = document.activeElement;
@@ -17,17 +19,21 @@ export const dismissSheetKeyboard = (element: HTMLElement | null) => {
 export function installSheetHistory() {
   if (installed || typeof window === 'undefined') return;
   installed = true;
+  lastRouteIndex = routeIndex(history.state);
   window.addEventListener('popstate', event => {
     const top = stack[stack.length - 1];
     // Several nested sheets can unmount together on logout/navigation. Drain
     // only their own entries, never the route entry underneath them.
     if (retired.has(event.state?.[marker])) {
       event.stopImmediatePropagation();
-      // Preserve whether this traversal began as an in-place sheet dismissal.
-      // Returning from another route must deliver the final pop to the router.
-      history.back();
+      // Router indexes exclude our sheet entries. Equal indexes mean Forward
+      // from the underlying route; a lower index means Back from a later route.
+      // In-place dismissal always drains backward and keeps its silent pop.
+      if (pendingBack || routeIndex(event.state) < lastRouteIndex) history.back();
+      else history.forward();
       return;
     }
+    lastRouteIndex = routeIndex(event.state);
     if (pendingBack) {
       pendingBack = false;
       event.stopImmediatePropagation();
@@ -54,10 +60,12 @@ export function installSheetHistory() {
 export function registerSheetHistory(entry: Omit<SheetEntry, 'consumed'>) {
   installSheetHistory();
   const item: SheetEntry = { ...entry, consumed: false };
+  lastRouteIndex = routeIndex(history.state);
   retired.delete(item.id);
   stack.push(item);
   history.pushState({ ...history.state, [marker]: item.id }, '');
   return () => {
+    lastRouteIndex = routeIndex(history.state);
     const index = stack.indexOf(item);
     if (index !== -1) stack.splice(index, 1);
     retired.add(item.id);

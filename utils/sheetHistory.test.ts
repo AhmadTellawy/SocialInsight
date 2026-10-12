@@ -15,6 +15,15 @@ async function fixture() {
     replaceState(state: Record<string, unknown>, _title: string, url?: string) {
       entries[index] = { state, url: url || entries[index].url };
     },
+    forward() {
+      pending.push(() => {
+        if (index >= entries.length - 1) return;
+        index++;
+        const event = new Event('popstate');
+        Object.defineProperty(event, 'state', { value: history.state });
+        target.dispatchEvent(event);
+      });
+    },
     back() {
       pending.push(() => {
         if (!index) return;
@@ -91,5 +100,22 @@ test('a disabled sheet restores its consumed entry and remains open', async () =
     assert.deepEqual(f.routePops, []);
     release(); f.flush();
     assert.deepEqual(f.routePops, []);
+  } finally { f.restore(); }
+});
+
+for (const nested of [false, true]) test('Forward crosses retired sheets after Back, nested=' + nested, async () => {
+  const f = await fixture();
+  try {
+    const parent = f.module.registerSheetHistory({ id: 'participants', close() {}, element: () => null, disabled: () => false });
+    const child = nested ? f.module.registerSheetHistory({ id: 'participant-options', close() {}, element: () => null, disabled: () => false }) : undefined;
+    f.history.pushState({ idx: 1, key: 'author' }, '', '/@author');
+    child?.(); parent();
+    f.history.back(); f.flush();
+    assert.equal(f.url(), '/post/test');
+    f.history.forward(); f.flush();
+    assert.equal(f.url(), '/@author');
+    f.history.back(); f.flush();
+    assert.equal(f.url(), '/post/test');
+    assert.deepEqual(f.routePops, ['/post/test', '/@author', '/post/test']);
   } finally { f.restore(); }
 });

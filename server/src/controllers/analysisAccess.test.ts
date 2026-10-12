@@ -66,13 +66,52 @@ test('managed analysis route queues before its transaction and rechecks a queued
   (service as any).pageIsBlocked=async()=>false;
   requests=Array.from({length:3},(_,i)=>handler({params:{id:'00000000-0000-4000-8000-000000000001',postId:'00000000-0000-4000-8000-000000000002'},query:{},user:{userId:'viewer'}},{setHeader(){},status(v:number){statuses[i]=v;return this;},json(){}},(error:unknown)=>errors.push(error)));
   await new Promise<void>(resolve=>setImmediate(resolve));
-  assert.equal(open,2);assert.equal(reads,2);allowed=false;
+  assert.equal(open,1);assert.equal(reads,1);allowed=false;
   releases.forEach(release=>release());await Promise.all(requests);
-  assert.equal(peak,2);assert.equal(open,0);assert.equal(reads,2);assert.deepEqual(statuses,[200,200,403]);assert.deepEqual(errors,[]);
+  assert.equal(peak,1);assert.equal(open,0);assert.equal(reads,1);assert.deepEqual(statuses,[200,403,403]);assert.deepEqual(errors,[]);
  }finally{
   releases.forEach(release=>release());await Promise.all(requests);
   for(const [name,value]of saved)(service as any)[name]=value;
   if(enabled===undefined)delete process.env.PAGES_ENABLED;else process.env.PAGES_ENABLED=enabled;
   if(cache===undefined)delete process.env.ANALYSIS_CACHE_ENABLED;else process.env.ANALYSIS_CACHE_ENABLED=cache;
  }
+});
+
+
+test('authorized viewers share aggregates but cached results never bypass fresh visibility or result permissions', async () => {
+  const original = prisma.$transaction, cache = process.env.ANALYSIS_CACHE_ENABLED;
+  let hidden = false, who = 'Public', follows = false, revision = '1:1', reads = 0, questions = 0;
+  const postId = 'shared-authorized-aggregate-' + Date.now();
+  const tx: any = {
+    $executeRaw: async () => 0,
+    $queryRaw: async (query: any) => {
+      if (Array.isArray(query)) { assert.match(query.join(''), /AnalysisRevision/); return [{revision}]; }
+      if (query.text.startsWith('SELECT "p"."id"')) return hidden ? [] : [{ id: postId, authorId: 'owner', pageId: null, sharedFromId: null, resultsWho: who, resultsTiming: 'AnyTime', expiresAt: new Date('2099-01-01') }];
+      assert.match(query.text, /^FETCH FORWARD/); reads++;
+      return [{ weight: revision === '1:1' ? 5 : 6, answers: [['q','a',null]], birthday: null, country: 'JO', demographics: null }];
+    },
+    question: { findMany: async () => { questions++; return [{id:'q',order:0,section:null,options:[]}]; } },
+    follow: { findUnique: async () => follows ? {status:'ACTIVE'} : null },
+    response: { findFirst: async () => null }
+  };
+  const invoke = async (viewer: string, analysis = true) => {
+    const result: any = {status:200,headers:{}};
+    const res: any = {status(v:number){result.status=v;return res;},setHeader(k:string,v:string){result.headers[k]=v;},json(v:any){result.body=v;return res;}};
+    await getPostResults({params:{id:postId},query:analysis?{analysis:'1'}:{},user:{userId:viewer},headers:{}} as any,res);
+    return result;
+  };
+  try {
+    process.env.ANALYSIS_CACHE_ENABLED='true';
+    (prisma as any).$transaction=async(work:any)=>work(tx);
+    const owner=await invoke('owner'),other=await invoke('other');
+    assert.equal(owner.status,200);assert.deepEqual(other.body,owner.body);assert.equal(reads,1);assert.equal(questions,1);
+    hidden=true;for(const v3 of [false,true])assert.equal((await invoke('other',v3)).status,404);
+    hidden=false;who='OnlyMe';assert.equal((await invoke('other')).status,403);
+    who='Followers';assert.equal((await invoke('other')).status,403);
+    follows=true;assert.equal((await invoke('other')).status,200);assert.equal(reads,1);
+    follows=false;assert.equal((await invoke('other')).status,403);assert.equal(reads,1);
+    who='Public';revision='2:1';const changed=await invoke('third');assert.equal(changed.status,200);assert.equal(changed.body.sampleSize,6);assert.equal(reads,2);
+    assert.equal(changed.headers['Cache-Control'],'private, no-store');
+    assert.equal(JSON.stringify(changed.body).includes('owner'),false);
+  } finally { (prisma as any).$transaction=original;if(cache===undefined)delete process.env.ANALYSIS_CACHE_ENABLED;else process.env.ANALYSIS_CACHE_ENABLED=cache; }
 });

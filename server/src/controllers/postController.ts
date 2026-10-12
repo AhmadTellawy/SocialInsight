@@ -2328,7 +2328,10 @@ const evaluatePublisherPostResultsAccess = async (
 
 // Public and Page-management result surfaces share the same aggregate-only DTO.
 const loadAggregatePostResults = async (client: any, postId: string, query?: AnalysisQuery, authority = 'public') => {
-    const scope=String(currentPageDatabaseContext()?.actorId || 'guest')+':'+authority;
+    // Authorization has already run in this request's transaction. The cached
+    // value contains only viewer-independent aggregates, never access decisions.
+    // Keep public and private Page-management authorities in separate namespaces.
+    const scope='aggregate:'+authority;
     const cacheKey=await analysisCacheKey(client,postId,scope);
     const snapshot=await sharedAnalysisSnapshot(cacheKey,async()=>{
     const questions = await client.question.findMany({
