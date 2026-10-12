@@ -139,3 +139,27 @@ test('Back crosses retired sheets after route replacement keeps the same router 
   f.history.forward();f.flush();assert.equal(f.url(),'/@author');
  }finally{f.restore();}
 });
+
+for (const parentFirst of [false, true]) test('Forward passes a replacement beneath retired sheets, parentFirst=' + parentFirst, async () => {
+  const f = await fixture();
+  try {
+    f.history.replaceState({ idx: 0, key: 'home' }, '', '/');
+    f.history.pushState({ idx: 1, key: 'post' }, '', '/post/test');
+    const parent = f.module.registerSheetHistory({ id: 'parent', close() {}, element: () => null, disabled: () => false });
+    const child = f.module.registerSheetHistory({ id: 'child', close() {}, element: () => null, disabled: () => false });
+    f.history.pushState({ idx: 2, key: 'author' }, '', '/@author');
+    if (parentFirst) { parent(); child(); } else { child(); parent(); }
+    f.history.back(); f.flush();
+    f.history.replaceState({ idx: 1, key: 'canonical' }, '', '/post/canonical');
+    f.history.back(); f.flush();
+    assert.equal(f.url(), '/');
+    f.history.forward(); f.flush();
+    assert.equal(f.url(), '/post/canonical');
+    f.history.forward(); f.flush();
+    assert.equal(f.url(), '/@author');
+    f.history.back(); f.flush();
+    assert.equal(f.url(), '/post/canonical');
+    assert.equal(f.history.state.idx, 1);
+    assert.equal(f.history.state.key, 'canonical');
+  } finally { f.restore(); }
+});
