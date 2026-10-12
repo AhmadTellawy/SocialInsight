@@ -403,14 +403,22 @@ for (const inRequestTransaction of [false, true]) for (const version of [2, 3]) 
     test(`private unpublished Page results v${version}${inRequestTransaction ? ' inside request transaction' : ''}: ${scenario.role || 'revoked'}${scenario.draft ? ' draft' : ''}${scenario.externalSource ? ' external source' : ''}${scenario.revokedWhileWaiting ? ' revoked during lock wait' : ''}`, async () => {
         const pageId = '00000000-0000-4000-8000-000000000001';
         const postId = '00000000-0000-4000-8000-000000000002';
-        const originals = { transaction: prisma.$transaction, enabled: process.env.PAGES_ENABLED };
+        const originals = { transaction: prisma.$transaction, enabled: process.env.PAGES_ENABLED, keyId: process.env.PAGES_RLS_CONTEXT_KEY_ID, signingKey: process.env.PAGES_RLS_CONTEXT_SIGNING_KEY };
         let reads = 0;
         let effectiveRole = scenario.role;
+        const cursorCommands: string[] = [];
         const tx: any = {
+            $executeRaw: async (query: any) => {
+                const sql = Array.isArray(query) ? query.join('') : query.sql;
+                if (sql.startsWith('DECLARE ') || sql.startsWith('CLOSE ')) cursorCommands.push(sql);
+                else await tx.$queryRaw(query); // Preserve coordination-lock/revocation effects.
+                return 0;
+            },
             $queryRaw: async (query: any) => {
                 const sql = Array.isArray(query) ? query.join('') : query.sql;
                 assert.equal(sql.includes('FOR UPDATE'), false, 'Analytics must not require Page UPDATE permission');
-                if (sql.includes('FROM "Response"')) { reads++; return [{ id: 'response', timestamp: new Date(), answers: [{ questionId: 'q', optionId: 'o', textValue: null }], birthday: new Date('1990-01-01'), country: 'JO', demographics: { gender: 'female' } }]; }
+                if (sql.includes('pg_backend_pid()')) return [{ backendPid: '123', transactionId: '456' }];
+                if (sql.startsWith('FETCH FORWARD')) { reads++; return [{ weight: 1, answers: [['q', 'o', null]], birthday: new Date('1990-01-01'), country: 'JO', demographics: { gender: 'female' } }]; }
                 if (scenario.revokedWhileWaiting && sql.includes('pg_advisory_xact_lock')) effectiveRole = null;
                 if (sql.includes('pg_try_advisory_xact_lock')) return [{ locked: true }];
                 if (sql.includes('FROM "Page"')) return [{ id: pageId, ownerId: scenario.role === 'OWNER' ? 'viewer' : 'owner', publicationState: 'UNPUBLISHED', purgedAt: null }];
@@ -436,6 +444,8 @@ for (const inRequestTransaction of [false, true]) for (const version of [2, 3]) 
         };
         try {
             process.env.PAGES_ENABLED = 'true';
+            process.env.PAGES_RLS_CONTEXT_KEY_ID = 'unit-test';
+            process.env.PAGES_RLS_CONTEXT_SIGNING_KEY = 'ab'.repeat(32);
             (prisma as any).$transaction = async (action: any, options: any) => {
                 assert.equal(options.isolationLevel, 'ReadCommitted', 'Page roles must be read after the coordination lock wait');
                 return action(tx);
@@ -446,6 +456,10 @@ for (const inRequestTransaction of [false, true]) for (const version of [2, 3]) 
             else await read();
             assert.equal(state.statusCode, scenario.expected);
             assert.equal(reads, scenario.expected === 200 ? 1 : 0);
+            if (scenario.expected === 200 && version === 3) {
+                assert.match(cursorCommands[0], /^DECLARE analysis_profiles NO SCROLL CURSOR FOR/);
+                assert.equal(cursorCommands.at(-1), 'CLOSE analysis_profiles');
+            } else assert.deepEqual(cursorCommands, [], 'Denied/v2 requests must not open an analysis cursor');
             if (scenario.expected === 200) {
                 assert.equal(state.headers['Cache-Control'], 'private, no-store');
                 assert.equal(state.body.version, version);
@@ -462,6 +476,10 @@ for (const inRequestTransaction of [false, true]) for (const version of [2, 3]) 
             (prisma as any).$transaction = originals.transaction;
             if (originals.enabled === undefined) delete process.env.PAGES_ENABLED;
             else process.env.PAGES_ENABLED = originals.enabled;
+            if (originals.keyId === undefined) delete process.env.PAGES_RLS_CONTEXT_KEY_ID;
+            else process.env.PAGES_RLS_CONTEXT_KEY_ID = originals.keyId;
+            if (originals.signingKey === undefined) delete process.env.PAGES_RLS_CONTEXT_SIGNING_KEY;
+            else process.env.PAGES_RLS_CONTEXT_SIGNING_KEY = originals.signingKey;
         }
     });
 }
