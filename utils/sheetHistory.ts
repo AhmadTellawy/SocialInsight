@@ -23,7 +23,8 @@ export function installSheetHistory() {
     // only their own entries, never the route entry underneath them.
     if (retired.has(event.state?.[marker])) {
       event.stopImmediatePropagation();
-      pendingBack = true;
+      // Preserve whether this traversal began as an in-place sheet dismissal.
+      // Returning from another route must deliver the final pop to the router.
       history.back();
       return;
     }
