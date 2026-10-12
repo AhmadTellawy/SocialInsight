@@ -88,3 +88,13 @@ test('feed boundaries are UTC timestamp values independent of database session t
  const cursor={id:'cursor',createdAt:new Date('2026-10-11T19:20:21.123Z')};
  for(const bound of [{cursor},{anchor:cursor}]){const q=buildVisiblePostSql({...bound,limit:10});assert.match(q.text,/::timestamp/);assert.ok(q.values.includes(cursor.createdAt.toISOString()));assert.ok(!q.values.some(v=>v instanceof Date));}
 });
+
+test('SQL public privacy permits false or unset transitions on each source level',()=>{
+ for(const viewerId of [undefined,'outsider']){
+  const q=buildVisiblePostSql({viewerId,ids:['post'],limit:1});
+  assert.equal((q.text.match(/media_privacy_target IS NOT TRUE/g)||[]).length,6);
+  assert.equal(q.text.includes('media_privacy_target = FALSE'),false);
+  assert.equal((q.text.match(/u.is_private = FALSE/g)||[]).length,6);
+  assert.equal((q.text.match(/author_user.status = 'ACTIVE'/g)||[]).length,3);
+ }
+});

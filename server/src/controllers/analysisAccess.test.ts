@@ -46,3 +46,33 @@ for (const analysis of [false,true]) for (const scenario of [
     if (status === 200) { assert.equal(body.version, analysis ? 3 : 2); if(analysis)assert.equal(body.comparison.groups[0].responseCount, 5); assert.equal(JSON.stringify(body).includes('private-'), false); }
   } finally { (prisma as any).$transaction = original; }
 });
+
+test('managed analysis route queues before its transaction and rechecks a queued role',async()=>{
+ const service=require('../pages/pageService') as typeof import('../pages/pageService');
+ const router=require('../pages/pageRoutes').default;
+ const handler=router.stack.find((layer:any)=>layer.route?.path==='/manage/:id/content/:postId/results').route.stack.at(-1).handle;
+ const {PagePolicyError}=require('../pages/pagePolicy') as typeof import('../pages/pagePolicy');
+ const names=['pageTransaction','lockPageForAnalytics','activePageActor','requirePageCapability','pageIsBlocked'] as const;
+ const saved=names.map(name=>[name,service[name]] as const),enabled=process.env.PAGES_ENABLED,cache=process.env.ANALYSIS_CACHE_ENABLED;
+ let open=0,peak=0,reads=0,allowed=true;const releases:Array<()=>void>=[],statuses=[200,200,200],errors:unknown[]=[];
+ const tx:any={post:{findFirst:async()=>({id:'00000000-0000-4000-8000-000000000002'})},question:{findMany:async()=>[]},response:{findMany:async()=>{reads++;await new Promise<void>(resolve=>releases.push(resolve));return [];}}};
+ let requests:Promise<void>[]=[];
+ try{
+  process.env.PAGES_ENABLED='true';process.env.ANALYSIS_CACHE_ENABLED='false';
+  (service as any).pageTransaction=async(work:any)=>{open++;peak=Math.max(peak,open);try{return await work(tx);}finally{open--;}};
+  (service as any).lockPageForAnalytics=async()=>({id:'00000000-0000-4000-8000-000000000001'});
+  (service as any).activePageActor=async()=>({id:'viewer'});
+  (service as any).requirePageCapability=async()=>{if(!allowed)throw new PagePolicyError('PAGE_PERMISSION_DENIED',403);return 'ANALYST';};
+  (service as any).pageIsBlocked=async()=>false;
+  requests=Array.from({length:3},(_,i)=>handler({params:{id:'00000000-0000-4000-8000-000000000001',postId:'00000000-0000-4000-8000-000000000002'},query:{},user:{userId:'viewer'}},{setHeader(){},status(v:number){statuses[i]=v;return this;},json(){}},(error:unknown)=>errors.push(error)));
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  assert.equal(open,2);assert.equal(reads,2);allowed=false;
+  releases.forEach(release=>release());await Promise.all(requests);
+  assert.equal(peak,2);assert.equal(open,0);assert.equal(reads,2);assert.deepEqual(statuses,[200,200,403]);assert.deepEqual(errors,[]);
+ }finally{
+  releases.forEach(release=>release());await Promise.all(requests);
+  for(const [name,value]of saved)(service as any)[name]=value;
+  if(enabled===undefined)delete process.env.PAGES_ENABLED;else process.env.PAGES_ENABLED=enabled;
+  if(cache===undefined)delete process.env.ANALYSIS_CACHE_ENABLED;else process.env.ANALYSIS_CACHE_ENABLED=cache;
+ }
+});

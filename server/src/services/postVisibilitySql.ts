@@ -16,11 +16,11 @@ function baseVisibility(alias: PostAlias, viewerId?: string | null): Prisma.Sql 
   const unblocked = viewerId ? Prisma.sql`NOT EXISTS (SELECT 1 FROM "user_blocks" b WHERE
     (b.blocker_id = ${viewerId} AND b.blocked_id = ${c('authorId')}) OR
     (b.blocked_id = ${viewerId} AND b.blocker_id = ${c('authorId')}))` : Prisma.sql`TRUE`;
-  // The legacy non-group predicate deliberately excludes a NULL transition
-  // flag. ProfileAndGroups allows NULL. Keep that existing distinction.
-  const privacy = (includeUnset: boolean) => Prisma.sql`(${own} OR ${followsAuthor} OR EXISTS (
+  // Match PrivacyService: an unset transition flag is not a privacy restriction.
+  // Active-author, private-account, follow and block checks remain independent.
+  const privacy = () => Prisma.sql`(${own} OR ${followsAuthor} OR EXISTS (
     SELECT 1 FROM "users" u WHERE u.id = ${c('authorId')} AND u.is_private = FALSE
-    AND ${includeUnset ? Prisma.sql`u.media_privacy_target IS NOT TRUE` : Prisma.sql`u.media_privacy_target = FALSE`}))`;
+    AND u.media_privacy_target IS NOT TRUE))`;
   const publicAudience = Prisma.sql`(${c('targetAudience')} IS NULL OR ${c('targetAudience')} ILIKE 'Public')`;
   const memberOfGroup = viewerId ? Prisma.sql`EXISTS (SELECT 1 FROM "GroupMember" gm WHERE gm."groupId" = g.id AND gm."userId" = ${viewerId} AND gm.status = 'JOINED')` : Prisma.sql`FALSE`;
   const groups = Prisma.sql`EXISTS (SELECT 1 FROM "Group" g WHERE g."isDeleted" = FALSE
@@ -29,9 +29,9 @@ function baseVisibility(alias: PostAlias, viewerId?: string | null): Prisma.Sql 
   const personal = Prisma.sql`(${c('pageId')} IS NULL AND EXISTS (SELECT 1 FROM "users" author_user
     WHERE author_user.id = ${c('authorId')} AND author_user.status = 'ACTIVE') AND ${unblocked} AND (
     (${c('groupId')} IS NULL AND ${noTargets} AND
-      (${publicAudience} OR ${own} OR (${c('targetAudience')} ILIKE 'Followers' AND ${followsAuthor})) AND ${privacy(false)})
+      (${publicAudience} OR ${own} OR (${c('targetAudience')} ILIKE 'Followers' AND ${followsAuthor})) AND ${privacy()})
     OR ${groups}
-    OR (${c('targetAudience')} = 'ProfileAndGroups' AND ${privacy(true)})
+    OR (${c('targetAudience')} = 'ProfileAndGroups' AND ${privacy()})
   ))`;
   const activeManager = Prisma.sql`EXISTS (SELECT 1 FROM "PageMembership" pm JOIN "users" mu ON mu.id = pm."userId"
     WHERE pm."pageId" = pg.id AND pm.role IN ('ADMIN', 'EDITOR') AND mu.status = 'ACTIVE')`;

@@ -166,7 +166,8 @@ router.post('/transfers/:id/:action', requireAuth, handle(async (req, res) =>
 
 router.get('/manage/:id', requireAuth, handle(async (req, res) => res.json(await managedRead(id(req),user(req),'readManagement',
   async(tx,role)=>pageManagementDto(await tx.page.findUniqueOrThrow({where:{id:id(req)}}),role)))));
-router.get('/manage/:id/content/:postId/results',requireAuth,handle((req,res)=>getPageManagedPostResults(req,res)));
+// The controller admits work before opening its own authorized transaction.
+router.get('/manage/:id/content/:postId/results',requireAuth,(req,res,next)=>getPageManagedPostResults(req,res).catch(next));
 router.get('/manage/:id/requests',requireAuth,handle(async(req,res)=>{
   const kind=z.enum(['invitation','transfer']).parse(req.query.kind);
   return res.json(await managedRead(id(req),user(req),kind==='transfer'?'readManagement':'manageTeam',async(tx,role)=>{
