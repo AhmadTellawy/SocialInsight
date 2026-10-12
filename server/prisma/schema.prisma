@@ -547,6 +547,7 @@ model MediaPrivacyTransition {
 }
 
 model Response {
+  analysisProfile AnalysisResponseProfile?
   id          String   @id @default(uuid())
   userId      String?
   guestId     String?
@@ -1324,4 +1325,25 @@ model CommentSubmission {
 model AnalysisRevision {
   key String @id
   revision BigInt @default(0)
+}
+
+// Rebuildable backend-only projection; triggers maintain it from Response/Answer.
+model AnalysisAnswerProfile {
+  id BigInt @id @default(autoincrement())
+  postId String
+  userId String?
+  userKey String @default(dbgenerated())
+  answerHash Bytes
+  answers Json
+  weight Int @default(0)
+  responses AnalysisResponseProfile[]
+  @@unique([postId,userKey,answerHash])
+}
+
+model AnalysisResponseProfile {
+  responseId String @id
+  profileId BigInt
+  response Response @relation(fields:[responseId],references:[id],onDelete:Cascade,onUpdate:Cascade)
+  profile AnalysisAnswerProfile @relation(fields:[profileId],references:[id],onDelete:Restrict,onUpdate:Cascade)
+  @@index([profileId])
 }
