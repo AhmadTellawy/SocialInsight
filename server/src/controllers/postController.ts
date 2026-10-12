@@ -1,4 +1,4 @@
-import { analysisCacheKey, sharedAnalysisSnapshot } from '../services/analysisCache';
+import { analysisCacheKey, sharedAnalysisSnapshot, withAnalysisAdmission, AnalysisBusyError } from '../services/analysisCache';
 import { currentPageDatabaseContext } from '../pages/pageDatabaseContext';
 import { replyCursor, replyCursorWhere } from '../services/commentPagination';
 import { loadVisibleInteractionTarget } from '../services/interactionReadService';
@@ -68,7 +68,7 @@ import {
     serializePeopleTags
 } from '../services/peopleTagService';
 import { buildVisiblePublishedPostWhere, evaluatePostResultsAccess } from '../services/postVisibilityService';
-import { loadVisiblePostScalars, visiblePublishedPostSql } from '../services/postVisibilitySql';
+import { loadVisiblePostScalars, visiblePublishedPostSql, arePublishedPostsVisible } from '../services/postVisibilitySql';
 import { attachPageCommentPublishers, attachPagePublishers, authorizePagePublisher, guardPagePostInteractions, guardPagePostPersistence, hasPostPageCapability, isPageFollower, respondPagePostError } from '../pages/pagePostService';
 import { assertPageDestination, PagePolicyError } from '../pages/pagePolicy';
 import { canonicalShareSourceId, copiedPageRootId, withoutCopiedPageText } from '../pages/pageShareCopy';
@@ -1977,9 +1977,10 @@ export const votePost = async (req: Request, res: Response) => {
             // Page interactions are already row-locked by the guard. Personal-only
             // votes need the same canonical lock before eligibility is reread.
             if (!pageInteraction) await tx.$queryRaw(Prisma.sql`SELECT id FROM "Post" WHERE id = ${id} FOR UPDATE`);
-            const effectivePost = pageInteraction
+            const visible = pageInteraction || await arePublishedPostsVisible(tx, [id], actorUserId);
+            const effectivePost = visible
                 ? await tx.post.findUnique({ where: { id }, select: votePostSelect })
-                : await tx.post.findFirst({ where: { id, ...buildVisiblePublishedPostWhere(actorUserId) }, select: votePostSelect });
+                : null;
             if (!effectivePost) throw Object.assign(new Error('Post is no longer available'), { statusCode: 403 });
             if (effectivePost.expiresAt && effectivePost.expiresAt.getTime() <= Date.now()) throw Object.assign(new Error('This post has ended'), { statusCode: 400 });
             post = effectivePost;
@@ -2379,7 +2380,7 @@ export const getPageManagedPostResults = async (req: Request, res: Response) => 
         const pageId = req.params.id as string;
         const postId = req.params.postId as string;
         if (![pageId, postId].every(value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value))) throw new PagePolicyError('PAGE_POST_NOT_FOUND', 404);
-        const rows = await pageTransaction(async (tx) => {
+        const rows = await withAnalysisAdmission(() => pageTransaction(async (tx) => {
             const page = await lockPageForAnalytics(tx, pageId);
             await activePageActor(tx, userId);
             await requirePageCapability(tx, page, userId, 'analytics');
@@ -2395,11 +2396,12 @@ export const getPageManagedPostResults = async (req: Request, res: Response) => 
             return loadAggregatePostResults(tx, resultPostId, parseAnalysisQuery(req.query), 'page-managed:'+pageId);
         // Page coordination serializes participation and membership changes. ReadCommitted
         // is essential here: a role revoked while waiting for the lock must be read fresh.
-        }, 'ReadCommitted');
+        }, 'ReadCommitted'));
         res.setHeader('Cache-Control', 'private, no-store');
         res.setHeader('Vary', 'Authorization');
         res.json(rows);
     } catch (error) {
+        if (respondAnalysisBusy(error, res)) return;
         if (error instanceof InvalidAnalysisQuery) { res.status(400).json({ error: error.message }); return; }
         if (respondPagePostError(error, res)) return;
         logPostRequestFailure(req, 'page_managed_post_results_failed', error);
@@ -2407,28 +2409,38 @@ export const getPageManagedPostResults = async (req: Request, res: Response) => 
     }
 };
 
+const respondAnalysisBusy = (error: unknown, res: Response): boolean => {
+    if (!(error instanceof AnalysisBusyError)) return false;
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Retry-After', '1');
+    res.status(503).json({ code: 'ANALYSIS_BUSY', error: 'Analysis is busy; please retry shortly' });
+    return true;
+};
+
 export const getPostResults = async (req: Request, res: Response) => {
     const rawId = req.params.id as string;
     try {
         const analysisQuery = parseAnalysisQuery(req.query);
         // Permission and every aggregation page use one consistent snapshot.
-        const result = await prisma.$transaction(async tx => {
+        const result = await withAnalysisAdmission(() => prisma.$transaction(async tx => {
             const currentUserId = req.user?.userId;
-            const visible = buildVisiblePublishedPostWhere(currentUserId);
-            const wrapper = await tx.post.findFirst({ where: { id: rawId, ...visible }, select: { id: true, sharedFromId: true, authorId: true, pageId: true, resultsWho: true, resultsTiming: true, expiresAt: true } });
+            const [wrapper] = await loadVisiblePostScalars(tx, { ids: [rawId], viewerId: currentUserId, limit: 1 });
             if (!wrapper) return { status: 404, body: { error: 'Post not found' } };
             const id = wrapper.sharedFromId || wrapper.id;
-            const post = wrapper.sharedFromId ? await tx.post.findFirst({ where: { id, ...visible }, select: { id: true, authorId: true, pageId: true, resultsWho: true, resultsTiming: true, expiresAt: true } }) : wrapper;
+            const post = wrapper.sharedFromId
+                ? (await loadVisiblePostScalars(tx, { ids: [id], viewerId: currentUserId, limit: 1 }))[0]
+                : wrapper;
             if (!post) return { status: 404, body: { error: 'Post not found' } };
             const access = await evaluatePublisherPostResultsAccess(tx, post, currentUserId, readGuestParticipationHash(req));
             if (!access.allowed) return { status: 403, body: { error: 'Results are not available' } };
             return { status: 200, body: await loadAggregatePostResults(tx, id, analysisQuery || undefined) };
-        }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, maxWait: 3000, timeout: 15000 });
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, maxWait: 3000, timeout: 15000 }));
         res.setHeader('Cache-Control', 'private, no-store');
         res.setHeader('Vary', 'Authorization, Cookie');
         res.status(result.status).json(result.body);
         return;
     } catch (error) {
+        if (respondAnalysisBusy(error, res)) return;
         if (error instanceof InvalidAnalysisQuery) { res.status(400).json({ error: error.message }); return; }
         console.error(error);
         res.status(500).json({ error: 'Failed to fetch post results' });

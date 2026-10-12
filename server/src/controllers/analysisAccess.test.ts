@@ -22,14 +22,17 @@ for (const analysis of [false,true]) for (const scenario of [
   let reads = 0, status = 200, body: any, queries = 0;
   const headers: Record<string, string> = {};
   const tx: any = {
-    post: { findFirst: async (args: any) => {
-      queries++; assert.ok(Object.keys(args.where).length > 1, 'visibility conditions must remain server-side');
-      if (queries === 1) return scenario.hidden ? null : { id: 'post', sharedFromId: scenario.hiddenSource ? 'source' : null, authorId: 'owner', pageId: null, resultsWho: scenario.who, resultsTiming: scenario.timing, expiresAt: new Date('2099-01-01') };
-      if (scenario.hiddenSource) return null;
-      return { id: 'post', authorId: 'owner', pageId: null, resultsWho: scenario.who, resultsTiming: scenario.timing, expiresAt: new Date('2099-01-01') };
-    } },
     $executeRaw: async () => 0,
-    $queryRaw: async () => { reads++; return Array.from({ length: 5 }, (_, index) => ({ id: 'private-' + index, timestamp: new Date(), weight: 1, pageSize: 5, answers: [['q', 'a', null]], country: 'Jordan', demographics: { gender: 'Male' } })); },
+    $queryRaw: async (query: any) => {
+      if (query.text.startsWith('SELECT "p"."id"')) {
+        queries++; assert.match(query.text, /isDeleted/); assert.match(query.text, /sharedFromId/);
+        assert.ok(query.values.includes(scenario.owner ? 'owner' : 'viewer'));
+        if (scenario.hidden || (queries > 1 && scenario.hiddenSource)) return [];
+        return [{ id: 'post', sharedFromId: scenario.hiddenSource ? 'source' : null, authorId: 'owner', pageId: null, resultsWho: scenario.who, resultsTiming: scenario.timing, expiresAt: new Date('2099-01-01') }];
+      }
+      assert.match(query.text, /^FETCH FORWARD/); reads++;
+      return Array.from({ length: 5 }, (_, index) => ({ id: 'private-' + index, timestamp: new Date(), weight: 1, pageSize: 5, answers: [['q', 'a', null]], country: 'Jordan', demographics: { gender: 'Male' } }));
+    },
     follow: { findUnique: async () => scenario.follows ? { status: 'ACTIVE' } : null },
     question: { findMany: async () => [{ id: 'q', options: [] }] },
     response: { findFirst: async () => scenario.participated ? { id: 'participation' } : null, findMany: async () => { reads++; return Array.from({ length: 5 }, (_, index) => ({ id: `private-${index}`, answers: [{ questionId: 'q', optionId: 'a' }], user: { country: 'Jordan', demographics: { gender: 'Male' } } })); } }

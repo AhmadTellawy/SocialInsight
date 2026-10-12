@@ -33,3 +33,37 @@ export async function sharedAnalysisSnapshot(key:string|null,build:()=>Promise<A
   const promise=build().then(value=>{writeAnalysisSnapshot(key,value);return value;}).finally(()=>{if(pending.get(key)===promise)pending.delete(key);});
   pending.set(key,promise);return promise;
 }
+
+export class AnalysisBusyError extends Error {
+  constructor() { super('ANALYSIS_BUSY'); }
+}
+
+/** Queue before opening a transaction: waiting reads must not occupy pool slots
+ * or start authorization snapshots. The queue stores work only, never results. */
+export function createAnalysisAdmission(limit = 2, maxQueued = 32, waitMs = 30_000) {
+  let active = 0;
+  type Waiter = { resolve: () => void; timer: ReturnType<typeof setTimeout> };
+  const waiting: Waiter[] = [];
+  return async function admit<T>(work: () => Promise<T>): Promise<T> {
+    if (active < limit) active++;
+    else {
+      if (waiting.length >= maxQueued) throw new AnalysisBusyError();
+      await new Promise<void>((resolve, reject) => {
+        const waiter: Waiter = { resolve, timer: setTimeout(() => {
+          const index = waiting.indexOf(waiter);
+          if (index >= 0) waiting.splice(index, 1);
+          reject(new AnalysisBusyError());
+        }, waitMs) };
+        waiting.push(waiter);
+      });
+    }
+    try { return await work(); }
+    finally {
+      const next = waiting.shift();
+      if (next) { clearTimeout(next.timer); next.resolve(); }
+      else active--;
+    }
+  };
+}
+
+export const withAnalysisAdmission = createAnalysisAdmission();
