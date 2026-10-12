@@ -66,7 +66,8 @@ test('analysis SQL binds untrusted post IDs and cursor closes on early consumer 
     $queryRaw: async () => [{weight:5,birthday:null,country:'Jordan',demographics:null,answers:[['q','a',null]]}]
   };
   for await (const rows of readAnalysisBatches(client,postId)) { assert.equal(rows[0].weight,5); break; }
-  assert.match(commands[0],/^DECLARE analysis_profiles NO SCROLL CURSOR FOR/);
+  assert.equal(commands[0], "SET LOCAL work_mem = '16MB'");
+  assert.match(commands[1],/^DECLARE analysis_profiles NO SCROLL CURSOR FOR/);
   assert.equal(commands.at(-1),'CLOSE analysis_profiles');
   const original = new Error('Original query failure');
   client.$queryRaw = async () => { throw original; };

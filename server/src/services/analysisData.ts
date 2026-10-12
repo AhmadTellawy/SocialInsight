@@ -27,6 +27,10 @@ SELECT u.birthday,u.country,
 export async function* readAnalysisBatches(client: Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw'>, postId: string) {
   // This transaction performs at most one aggregate build. No holdable cursor or
   // elevated database connection is used; actor RLS applies to the source query.
+  // The single admitted builder gets a fixed per-operator budget. At 100k rows
+  // the default 2MB setting spills the batch and joins to disk; 16MB avoids those
+  // spills in the measured plan. SET LOCAL ends with this authorized transaction.
+  await client.$executeRaw(Prisma.sql`SET LOCAL work_mem = '16MB'`);
   await client.$executeRaw(Prisma.sql`DECLARE analysis_profiles NO SCROLL CURSOR FOR ${analysisProfilesQuery(postId)}`);
   let failed = false;
   try {
