@@ -16,14 +16,15 @@ export class AggregateResults {
   private questions = new Map<string, { responseCount: number; optionCounts: Record<string, number>; textResponseCount: number }>();
   private scores: Record<string, number> = { '91–100%': 0, '81–90%': 0, '71–80%': 0, '61–70%': 0, '51–60%': 0, '0–50%': 0 };
   constructor(private correctOptions: Map<string, Set<string>> = new Map()) {}
-  add(response: { answers: Array<{ questionId: string; optionId?: string | null; textValue?: string | null }>; user?: any }): void {
-    this.sampleSize++;
+  add(response: { answers: Array<{ questionId: string; optionId?: string | null; textValue?: string | null }>; user?: any }, weight = 1): void {
+    if (!Number.isSafeInteger(weight) || weight <= 0) throw new RangeError('Invalid aggregate weight');
+    this.sampleSize += weight;
     const user = response.user;
     const dimensions: Record<string, string> = {
       age: calculateAgeGroupFromDate(user?.birthday) || 'Unknown', gender: user?.demographics?.gender || 'Unknown', country: user?.country || 'Unknown',
       education: user?.demographics?.educationLevel || 'Unknown', employment: user?.demographics?.employmentType || 'Unknown', industry: user?.demographics?.industry || 'Unknown', sector: user?.demographics?.employmentSector || 'Unknown'
     };
-    for (const [key, value] of Object.entries(dimensions)) this.demographics[key][value] = (this.demographics[key][value] || 0) + 1;
+    for (const [key, value] of Object.entries(dimensions)) this.demographics[key][value] = (this.demographics[key][value] || 0) + weight;
     const answered = new Map<string, Set<string>>();
     const textQuestions = new Set<string>();
     for (const answer of response.answers) {
@@ -33,9 +34,9 @@ export class AggregateResults {
     }
     for (const [questionId, options] of answered) {
       const summary = this.questions.get(questionId) || { responseCount: 0, optionCounts: {}, textResponseCount: 0 };
-      summary.responseCount++;
-      options.forEach(id => { summary.optionCounts[id] = (summary.optionCounts[id] || 0) + 1; });
-      if (textQuestions.has(questionId)) summary.textResponseCount++;
+      summary.responseCount += weight;
+      options.forEach(id => { summary.optionCounts[id] = (summary.optionCounts[id] || 0) + weight; });
+      if (textQuestions.has(questionId)) summary.textResponseCount += weight;
       this.questions.set(questionId, summary);
     }
     if (this.correctOptions.size) {
@@ -46,7 +47,7 @@ export class AggregateResults {
       });
       const score = Math.round(correct / this.correctOptions.size * 100);
       const bucket = score >= 91 ? '91–100%' : score >= 81 ? '81–90%' : score >= 71 ? '71–80%' : score >= 61 ? '61–70%' : score >= 51 ? '51–60%' : '0–50%';
-      this.scores[bucket]++;
+      this.scores[bucket] += weight;
     }
   }
   toJSON() {

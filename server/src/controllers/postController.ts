@@ -9,7 +9,7 @@ import { notifyPagePostInteraction } from '../pages/pageNotificationService';
 import { recordConfirmedVote } from '../services/confirmedAnalyticsService';
 import { prepareGuestParticipationProof, readGuestParticipationHash, guestProofMatches, writeGuestParticipationCookie } from '../services/guestParticipationService';
 import { AggregateResults } from '../services/aggregateResults';
-import { readAnalysisPage } from '../services/analysisData';
+import { ANALYSIS_BATCH_SIZE, readAnalysisPage } from '../services/analysisData';
 import { AnalysisResults, AnalysisQuery, InvalidAnalysisQuery, parseAnalysisQuery } from '../services/analysisResults';
 import { Request, Response } from 'express';
 import { createHash } from 'node:crypto';
@@ -2353,8 +2353,8 @@ const loadAggregatePostResults = async (client: any, postId: string, query?: Ana
                 user: { select: { birthday: true, country: true, demographics: true } }
             }
         });
-        page.forEach((response: any) => { aggregate.add(response); analysis?.add(response); });
-        cursor = page.length === 500 ? page[page.length - 1].id : undefined;
+        page.forEach((response: any) => { aggregate.add(response, response.weight ?? 1); analysis?.add(response, response.weight ?? 1); });
+        cursor = (analysis ? page[0]?.pageSize === ANALYSIS_BATCH_SIZE : page.length === 500) ? page[page.length - 1].id : undefined;
         analysisCursor = cursor ? page[page.length - 1] : undefined;
     } while (cursor);
     const overall = aggregate.toJSON();

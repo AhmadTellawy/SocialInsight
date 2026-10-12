@@ -28,7 +28,7 @@ for (const analysis of [false,true]) for (const scenario of [
       if (scenario.hiddenSource) return null;
       return { id: 'post', authorId: 'owner', pageId: null, resultsWho: scenario.who, resultsTiming: scenario.timing, expiresAt: new Date('2099-01-01') };
     } },
-    $queryRaw: async () => { reads++; return Array.from({ length: 5 }, (_, index) => ({ id: 'private-' + index, timestamp: new Date(), answers: [{ questionId: 'q', optionId: 'a' }], country: 'Jordan', demographics: { gender: 'Male' } })); },
+    $queryRaw: async () => { reads++; return Array.from({ length: 5 }, (_, index) => ({ id: 'private-' + index, timestamp: new Date(), weight: 1, pageSize: 5, answers: [['q', 'a', null]], country: 'Jordan', demographics: { gender: 'Male' } })); },
     follow: { findUnique: async () => scenario.follows ? { status: 'ACTIVE' } : null },
     question: { findMany: async () => [{ id: 'q', options: [] }] },
     response: { findFirst: async () => scenario.participated ? { id: 'participation' } : null, findMany: async () => { reads++; return Array.from({ length: 5 }, (_, index) => ({ id: `private-${index}`, answers: [{ questionId: 'q', optionId: 'a' }], user: { country: 'Jordan', demographics: { gender: 'Male' } } })); } }

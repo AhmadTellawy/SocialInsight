@@ -61,10 +61,53 @@ test('analysis keyset binds a timezone-independent timestamp and parameterizes a
   const postId = "post'; SELECT private_data; --";
   const cursorId = "cursor'; --";
   const query = analysisPageQuery(postId, { id: cursorId, timestamp });
-  assert.deepEqual(query.values, [postId, timestamp.toISOString(), cursorId]);
+  assert.deepEqual(query.values, [postId, timestamp.toISOString(), cursorId, 10_000]);
   assert.match(query.sql, /\?::timestamp/);
   assert.equal(query.sql.includes(postId), false);
   assert.equal(query.sql.includes(cursorId), false);
-  assert.match(query.sql, /ORDER BY timestamp DESC, id DESC LIMIT 500/);
-  assert.deepEqual(analysisPageQuery('post').values, ['post']);
+  assert.match(query.sql, /ORDER BY timestamp DESC,id DESC LIMIT \?/);
+  assert.deepEqual(analysisPageQuery('post').values, ['post', 10_000]);
+});
+
+test('weighted profiles exactly match individual responses across scores, filters and all comparisons', () => {
+  const correct = new Map([['q2', new Set(['a', 'b'])], ['q3', new Set(['x'])]]);
+  for (const rare of [false, true]) {
+    const full = new AggregateResults(correct), compact = new AggregateResults(correct);
+    const fullAnalysis = new AnalysisResults(), compactAnalysis = new AnalysisResults();
+    const profiles: Array<Parameters<AnalysisResults['add']>[0]> = [
+      { answers: [], user: null },
+      { answers: [{ questionId: 'q2', optionId: 'a' }, { questionId: 'q2', optionId: 'b' }, { questionId: 'q2', optionId: 'a' }], user: { country: 'Jordan', birthday: new Date('1990-01-01'), demographics: { gender: 'Male' } } },
+      { answers: [{ questionId: 'q2', optionId: 'a' }, { questionId: 'q3', optionId: 'x', textValue: 'PRIVATE' }], user: { country: 'Egypt', birthday: new Date('2005-05-01'), demographics: { gender: 'Female', maritalStatus: 'Single', nationality: 'Egypt' } } },
+      { answers: [{ questionId: 'q3', optionId: null, textValue: 'text' }, { questionId: 'q3', textValue: 'duplicate text' }], user: { country: '', demographics: { educationLevel: 'University', employmentType: 'FullTime', industry: 'Health', employmentSector: 'Public' } } }
+    ];
+    for (let i = 0; i < profiles.length; i++) {
+      const row = profiles[i], count = rare && i === 3 ? 1 : (i + 1) * 5;
+      for (let n = 0; n < count; n++) { full.add(row); fullAnalysis.add(row); }
+      // Deliberately split the same raw profile across batch boundaries.
+      compact.add(row, count); compactAnalysis.add(row, 1);
+      if (count > 1) compactAnalysis.add(row, count - 1);
+    }
+    assert.deepEqual(compact.toJSON(), full.toJSON());
+    for (const compareBy of ANALYSIS_DIMENSIONS) for (const questionId of ['q2', 'q3', 'missing']) {
+      for (const filters of [{}, { gender: ['Female'] }, { country: ['Jordan', 'Egypt'], marital: ['Single'] }, { country: ['missing'] }]) {
+        const query = { compareBy, questionId, filters };
+        assert.deepEqual(compactAnalysis.toJSON(query, compact.toJSON()), fullAnalysis.toJSON(query, full.toJSON()));
+      }
+    }
+  }
+});
+
+test('weighted raw birthday groups merge into complete age cells and invalid weights fail closed', () => {
+  const analysis = new AnalysisResults(), aggregate = new AggregateResults();
+  for (const [day, weight] of [[1, 2], [2, 3]]) {
+    const row = { answers: [{ questionId: 'q', optionId: 'a' }], user: { birthday: new Date(Date.UTC(1990, 0, day)) } };
+    analysis.add(row, weight); aggregate.add(row, weight);
+  }
+  const result = analysis.toJSON({ filters: {}, compareBy: 'age' }, aggregate.toJSON());
+  assert.equal(result.comparison!.suppressionReason, null);
+  assert.equal(result.comparison!.groups[0].responseCount, 5);
+  for (const weight of [0, -1, 1.1, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => analysis.add({ answers: [] }, weight), RangeError);
+    assert.throws(() => aggregate.add({ answers: [] }, weight), RangeError);
+  }
 });

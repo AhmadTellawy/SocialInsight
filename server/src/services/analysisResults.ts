@@ -41,7 +41,8 @@ export class AnalysisResults {
   private capacityExceeded = false;
   private bytes = 0;
   estimatedBytes() { return this.bytes; }
-  add(response: ResponseRow): void {
+  add(response: ResponseRow, weight = 1): void {
+    if (!Number.isSafeInteger(weight) || weight <= 0) throw new RangeError('Invalid analysis weight');
     if (this.capacityExceeded) return;
     const user = response.user, demo = user?.demographics;
     const dimensions: Record<Dimension, string> = {
@@ -60,9 +61,9 @@ export class AnalysisResults {
     const answers = Object.fromEntries([...grouped].sort(([a], [b]) => a.localeCompare(b)).map(([id, value]) => [id, { options: [...value.options].sort(), hasText: value.hasText }]));
     const key = JSON.stringify([dimensions, answers]);
     const existing = this.cells.get(key);
-    if (existing) existing.count++;
+    if (existing) existing.count += weight;
     else if (this.cells.size >= 20_000) { this.cells.clear(); this.bytes=0; this.capacityExceeded = true; }
-    else { this.cells.set(key, { dimensions, answers, count: 1 }); this.bytes += key.length * 4 + 256; }
+    else { this.cells.set(key, { dimensions, answers, count: weight }); this.bytes += key.length * 4 + 256; }
   }
   private summarize(cells: Cell[]): Summary[] {
     const questions = new Map<string, Summary>();
