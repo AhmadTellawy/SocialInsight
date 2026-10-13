@@ -1,4 +1,12 @@
 {
+  "postResponse": {
+    "viewOptions": "اختیارات دیکھیں",
+    "viewResults": "نتائج دیکھیں",
+    "options": "پوسٹ کے اختیارات",
+    "optionCount": "اختیارات: {{count}}",
+    "close": "بند کریں",
+    "imagePreview": "تصویر کا پیش منظر"
+  },
   "nav": {
     "home": "ہوم",
     "search": "تلاش",

@@ -1,4 +1,12 @@
 {
+  "postResponse": {
+    "viewOptions": "Seçenekleri görüntüle",
+    "viewResults": "Sonuçları görüntüle",
+    "options": "Gönderi seçenekleri",
+    "optionCount": "Seçenekler: {{count}}",
+    "close": "Kapat",
+    "imagePreview": "Görsel önizlemesi"
+  },
   "nav": {
     "home": "Ana Sayfa",
     "search": "Ara",

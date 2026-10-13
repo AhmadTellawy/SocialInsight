@@ -1,4 +1,12 @@
 {
+  "postResponse": {
+    "viewOptions": "View options",
+    "viewResults": "View results",
+    "options": "Post options",
+    "optionCount": "Options: {{count}}",
+    "close": "Close",
+    "imagePreview": "Image preview"
+  },
   "postSharing": {
     "menuTitle": "Share post",
     "toFeed": "Share to your feed",

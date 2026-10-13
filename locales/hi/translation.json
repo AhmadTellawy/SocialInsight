@@ -1,4 +1,12 @@
 {
+  "postResponse": {
+    "viewOptions": "विकल्प देखें",
+    "viewResults": "परिणाम देखें",
+    "options": "पोस्ट के विकल्प",
+    "optionCount": "विकल्प: {{count}}",
+    "close": "बंद करें",
+    "imagePreview": "छवि पूर्वावलोकन"
+  },
   "nav": {
     "home": "होम",
     "search": "खोजें",

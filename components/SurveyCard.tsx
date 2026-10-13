@@ -5,6 +5,7 @@ import { PostAnswerPayload, Survey, SurveyType, Option, LogicRule, UserProfile, 
 import { Clock, Users, TrendingUp, MoreHorizontal, Share2, CheckCircle2, Flag, Eye, EyeOff, Bookmark, Link as LinkIcon, UserMinus, ThumbsUp, MessageCircle, FileText, PieChart, HelpCircle, Globe, Lock, Plus, AlertCircle, ChevronLeft, ChevronRight, Check, ArrowRight, XCircle, Trophy, Target, X, ListChecks, Zap, Timer, Play, Repeat, UserPlus, PlusCircle, Shield, Shuffle, Heart, Search, Send, Star, Maximize2, BarChart3, Trash2, Edit3 } from 'lucide-react';
 import { Analytics } from '../utils/analytics';
 import { BottomSheet } from './BottomSheet';
+import { PostOptionsSheet } from './Survey/PostOptionsSheet';
 import { RichTextRenderer } from './RichTextRenderer';
 import { UserAvatar } from './UserAvatar';
 import { api } from '../services/api';
@@ -276,6 +277,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const [removedPeopleTagIds, setRemovedPeopleTagIds] = useState<Set<string>>(new Set());
   const [isPeopleTagsOpen, setIsPeopleTagsOpen] = useState(false);
 
+  const [isOptionsSheetOpen, setIsOptionsSheetOpen] = useState(false);
   const [isCommentsOpen, setIsCommentsOpen] = useState(false);
   const [isShareSheetOpen, setIsShareSheetOpen] = useState(false);
   const [isParticipantsOpen, setIsParticipantsOpen] = useState(false);
@@ -485,6 +487,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   }, [survey]);
 
   useEffect(() => {
+    setIsOptionsSheetOpen(false);
     setIsMenuOpen(false);
     setIsReportSheetOpen(false);
     setIsCommentsOpen(false);
@@ -959,7 +962,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
   // Keep the legacy share-card composition, while interactive rating polls use the compact scale.
   const hasPostMedia = Boolean(sourceSurvey.media?.length || sourceSurvey.coverImage);
-  const isCoverImagePollCard = hasPostMedia && isPollType && !hasImages && !useCompactRating;
+  const useOptionsSheet = hasPostMedia && sourceSurface !== 'SHARE_CAPTURE';
+  const isCoverImagePollCard = hasPostMedia && isPollType && !hasImages && !useCompactRating && !useOptionsSheet;
 
   // Integer percentage for a single option
   const getOptionPercentage = (optionId: string): number => {
@@ -1677,7 +1681,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   };
 
   const renderPollStandard = () => {
-    const isHorizontal = sourceSurvey.imageLayout === 'horizontal';
+    const isHorizontal = sourceSurvey.imageLayout === 'horizontal' && (!useOptionsSheet || hasImages);
     const isQuiz = sourceSurvey.type === SurveyType.QUIZ;
     const firstQuestion = flatQuestions?.[0];
     const allowUserOptions = sourceSurvey.allowUserOptions || false;
@@ -1767,6 +1771,19 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
       </div>
     );
   };
+
+  const renderAnonymousControls = () => sourceSurvey.forceAnonymous ? (
+    <button type="button" onClick={() => setIsAnonInfoOpen(true)} className="flex items-center gap-1 text-gray-500 hover:text-blue-600 font-bold uppercase tracking-widest text-[9px]">
+      <Lock size={10} aria-hidden="true" /><span>{t('Anonymous responses')}</span>
+    </button>
+  ) : sourceSurvey.allowAnonymous && !hasVoted && !isExpired ? (
+    <button type="button" role="switch" aria-checked={isAnonToggled} aria-label={t('Respond Anonymously')} onClick={() => setIsAnonToggled(previous => !previous)} className={`flex items-center gap-2 ${useOptionsSheet ? 'min-h-11' : ''}`}>
+      <span className="text-[9px] font-bold uppercase tracking-widest text-gray-500">{t('Anonymous')}</span>
+      <span className={`w-7 h-4 rounded-full relative transition-colors ${isAnonToggled ? 'bg-blue-600' : 'bg-gray-200'}`} aria-hidden="true">
+        <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${isAnonToggled ? 'left-3.5' : 'left-0.5'}`} />
+      </span>
+    </button>
+  ) : null;
 
   const renderQuizCompletion = () => {
     const correct = quizStats?.correct || 0;
@@ -2300,6 +2317,29 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                   : (sourceSurvey.coverImage && <div onClick={onContentClick} className={`w-[calc(100%+2rem)] -mx-4 rounded-none overflow-hidden mb-3 bg-gray-100 ${onContentClick ? 'cursor-pointer hover:opacity-95 transition-opacity' : ''}`}><MediaImage fallbackSrc={sourceSurvey.coverImage} alt="Cover" className="w-full h-auto object-contain block" /></div>)
               }
 
+              {useOptionsSheet && (
+                <PostOptionsSheet
+                  postId={sourceSurvey.id}
+                  isOpen={isOptionsSheetOpen}
+                  onOpen={() => setIsOptionsSheetOpen(true)}
+                  onClose={() => setIsOptionsSheetOpen(false)}
+                  showResults={shouldShowResults}
+                  optionCount={isSurveyMode ? (flatQuestions[currentQIndex]?.options?.length || 0) : localOptions.length}
+                  heading={<RichTextRenderer text={sourceSurvey.title || ''} mentions={sourceSurvey.mentions} mentionSurface="POST_TITLE" inline />}
+                  footer={<>
+                    <span className="flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
+                      <Users size={12} aria-hidden="true" />
+                      <span>{displayedParticipantCount.toLocaleString()} {isPollType ? t('votes') : t('responses')}</span>
+                      {timeLeftStr && <span>{timeLeftStr}</span>}
+                    </span>
+                    {renderAnonymousControls()}
+                  </>}
+                >
+                  {actionFeedback && <p role="alert" className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{actionFeedback}</p>}
+                  {renderBodyContent()}
+                </PostOptionsSheet>
+              )}
+
               {hasDescription && (
                 <div className="relative mb-3">
                   <p
@@ -2316,8 +2356,8 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                   )}
                 </div>
               )}
-              {/* Skip body content for cover-image poll cards — chips handle voting above */}
-              {!isCoverImagePollCard && renderBodyContent()}
+              {/* Media posts render their existing response flow only in the sheet. */}
+              {!useOptionsSheet && !isCoverImagePollCard && renderBodyContent()}
             </div>
 
             <div className={`flex items-center justify-between text-[11px] text-gray-400 font-medium px-1 ${isTextOnlyPoll ? 'mt-0 mb-2' : 'mt-2 mb-3'}`}>
@@ -2345,25 +2385,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
               </div>
 
               <div className="flex items-center gap-2">
-                {sourceSurvey.forceAnonymous ? (
-                  <button
-                    onClick={() => setIsAnonInfoOpen(true)}
-                    className="flex items-center gap-1 text-gray-500 hover:text-blue-600 transition-colors font-bold uppercase tracking-widest text-[9px]"
-                  >
-                    <Lock size={10} />
-                    <span>{t('Anonymous responses')}</span>
-                  </button>
-                ) : (sourceSurvey.allowAnonymous && !hasVoted && !isExpired ? (
-                  <div className="flex items-center gap-2 cursor-pointer" onClick={() => setIsAnonToggled(!isAnonToggled)}>
-                    <span className="text-[9px] font-bold uppercase tracking-widest text-gray-500">{t('Anonymous')}</span>
-                    <button
-                      className={`w-7 h-4 rounded-full relative transition-colors ${isAnonToggled ? 'bg-blue-600' : 'bg-gray-200'}`}
-                      title={t('Respond Anonymously')}
-                    >
-                      <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${isAnonToggled ? 'left-3.5' : 'left-0.5'}`} />
-                    </button>
-                  </div>
-                ) : null)}
+                {!useOptionsSheet && renderAnonymousControls()}
               </div>
             </div>
           </div>
@@ -2397,9 +2419,15 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         {showShareToast && <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-4 py-2 rounded-full text-xs font-medium shadow-lg animate-in fade-in zoom-in duration-200 z-10" role="status" aria-live="polite">{t('postOptions.linkCopied')}</div>}
       </div >
 
+      {useOptionsSheet && (
+        <BottomSheet isOpen={!!expandedImage} onClose={() => setExpandedImage(null)} ariaLabel={t('postResponse.imagePreview')} historyKey={`option-image:${sourceSurvey.id}`} showCloseButton closeLabel={t('postResponse.close')}>
+          {expandedImage && <MediaImage media={expandedImage.imageMedia} mediaId={expandedImage.imageMediaId} fallbackSrc={expandedImage.image} alt={displayOptionNames ? expandedImage.text : t('postResponse.imagePreview')} className="w-full max-h-[75dvh] object-contain" />}
+        </BottomSheet>
+      )}
+
       {/* Lightbox for option images - only for portrait images */}
       {
-        expandedImage && (
+        expandedImage && !useOptionsSheet && (
           <div className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-sm flex flex-col items-center justify-center p-4 animate-in fade-in duration-300">
             <button
               onClick={() => setExpandedImage(null)}
@@ -2642,7 +2670,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           ))}
         </div>
       </BottomSheet>
-      <BottomSheet isOpen={isAnonInfoOpen} onClose={() => setIsAnonInfoOpen(false)} title="Anonymous Responses">
+      <BottomSheet isOpen={isAnonInfoOpen} onClose={() => setIsAnonInfoOpen(false)} title={t('Anonymous responses')} historyKey={useOptionsSheet ? `anonymous-info:${sourceSurvey.id}` : undefined}>
         <div className="p-4 space-y-6 text-center">
           <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto shadow-sm">
             <Shield size={32} />
@@ -2669,6 +2697,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
       {/* Unified Demographic Collection Flow */}
       <BottomSheet
+        historyKey={useOptionsSheet ? `demographics:${sourceSurvey.id}` : undefined}
         isOpen={isDemographicSheetOpen}
         onClose={() => !isDemoSuccess && !isSavingDemographic && setIsDemographicSheetOpen(false)}
         title="Help Us Improve"

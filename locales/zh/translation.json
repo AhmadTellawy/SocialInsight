@@ -1,4 +1,12 @@
 {
+  "postResponse": {
+    "viewOptions": "查看选项",
+    "viewResults": "查看结果",
+    "options": "帖子选项",
+    "optionCount": "选项：{{count}}",
+    "close": "关闭",
+    "imagePreview": "图片预览"
+  },
   "nav": {
     "home": "首页",
     "search": "搜索",

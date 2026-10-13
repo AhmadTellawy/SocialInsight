@@ -1,4 +1,12 @@
 {
+  "postResponse": {
+    "viewOptions": "عرض الخيارات",
+    "viewResults": "عرض النتائج",
+    "options": "خيارات المنشور",
+    "optionCount": "عدد الخيارات: {{count}}",
+    "close": "إغلاق",
+    "imagePreview": "معاينة الصورة"
+  },
   "postSharing": {
     "menuTitle": "مشاركة المنشور",
     "toFeed": "مشاركة في صفحتك",

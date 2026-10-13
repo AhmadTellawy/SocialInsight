@@ -96,7 +96,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
 
         return (
           <div key={option.id} className={`flex-shrink-0 relative w-[86%] sm:w-[82%] rounded-xl border snap-start overflow-hidden flex flex-col transition-all duration-300 bg-white shadow-sm ${shouldShowResults && isCorrect ? 'border-green-500 ring-2 ring-green-500 bg-green-50' : shouldShowResults && isWrongSelection ? 'border-red-500 ring-2 ring-red-500 bg-red-50' : isSelected ? 'ring-2 ring-blue-500 border-blue-500' : 'border-gray-200'}`}>
-            <div className="w-full aspect-square bg-gray-100 relative group/opt-img">
+            <div className="w-full aspect-square shrink-0 overflow-hidden bg-gray-100 relative group/opt-img">
               {hasOptionImage(option) ? (
                 <>
                   <MediaImage
@@ -105,7 +105,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
                     fallbackSrc={option.image}
                     onLoad={(e) => onDetectOrientation(imageKey, e)}
                     alt={showOptionNames ? option.text : ''}
-                    className="w-full h-full object-cover"
+                    className="absolute inset-0 w-full h-full object-cover"
                   />
                   {isPortrait && (
                     <div
