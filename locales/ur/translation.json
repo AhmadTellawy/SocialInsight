@@ -1,4 +1,12 @@
 {
+  "rating": {
+    "summary": "درجہ بندی کا خلاصہ",
+    "averageLabel": "اوسط درجہ بندی",
+    "yourRating": "آپ کی درجہ بندی",
+    "ratingCount_zero": "کوئی درجہ بندی نہیں",
+    "ratingCount_one": "{{count}} درجہ بندی",
+    "ratingCount_other": "{{count}} درجہ بندیاں"
+  },
   "postResponse": {
     "viewOptions": "اختیارات دیکھیں",
     "viewResults": "نتائج دیکھیں",

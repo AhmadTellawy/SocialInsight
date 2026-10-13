@@ -196,6 +196,15 @@
     "saveFailed": "تعذر حفظ معلوماتك. حاول مرة أخرى."
   },
   "rating": {
+    "summary": "ملخص التقييم",
+    "averageLabel": "متوسط التقييم",
+    "yourRating": "تقييمك",
+    "ratingCount_zero": "لا تقييمات",
+    "ratingCount_one": "تقييم واحد",
+    "ratingCount_two": "تقييمان",
+    "ratingCount_few": "{{count}} تقييمات",
+    "ratingCount_many": "{{count}} تقييمًا",
+    "ratingCount_other": "{{count}} تقييم",
     "prompt": "قيّم من 1 إلى 5",
     "worst": "الأسوأ",
     "best": "الأفضل",

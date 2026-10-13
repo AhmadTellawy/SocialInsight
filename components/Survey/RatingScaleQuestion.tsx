@@ -20,6 +20,7 @@ interface RatingScaleQuestionProps {
   isSubmitting?: boolean;
   errorMessage?: string | null;
   totalVotes?: number;
+  compactResults?: boolean;
   onSelect?: (option: Option) => void;
 }
 
@@ -31,6 +32,7 @@ export const RatingScaleQuestion: React.FC<RatingScaleQuestionProps> = ({
   isSubmitting = false,
   errorMessage,
   totalVotes = 0,
+  compactResults = false,
   onSelect,
 }) => {
   const { t, i18n } = useTranslation();
@@ -43,7 +45,7 @@ export const RatingScaleQuestion: React.FC<RatingScaleQuestionProps> = ({
 
   if (showResults) {
     return (
-      <div className="space-y-2" dir="ltr" role="list" data-testid="rating-scale-results">
+      <div className={compactResults ? 'space-y-1' : 'space-y-2'} dir="ltr" role="list" data-testid="rating-scale-results">
         {RATING_VALUES_DESC.map((ratingValue) => {
           const option = getRatingOption(options, ratingValue);
           if (!option) return null;
@@ -60,29 +62,29 @@ export const RatingScaleQuestion: React.FC<RatingScaleQuestionProps> = ({
               data-rating-value={ratingValue}
               data-selected={isSelected ? 'true' : 'false'}
               aria-label={`${t('rating.choice', { value: ratingValue })}: ${percentage}% · ${voteLabel}`}
-              className={`min-h-[58px] rounded-xl border px-3 py-2 transition-colors ${
+              className={`border transition-colors ${compactResults ? 'grid min-h-9 grid-cols-[104px_minmax(12px,1fr)_minmax(0,98px)] items-center gap-x-2 rounded-[10px] px-2 py-1.5' : 'min-h-[58px] rounded-xl px-3 py-2'} ${
                 isSelected ? 'border-blue-400 bg-blue-50/60' : 'border-gray-200 bg-white'
               }`}
             >
-              <div className="flex min-w-0 items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-2">
+              <div className={compactResults ? 'contents' : 'flex min-w-0 items-center justify-between gap-3'}>
+                <div className={`flex min-w-0 items-center ${compactResults ? 'col-start-1 row-start-1 gap-1.5' : 'gap-2'}`}>
                   <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${isSelected ? 'bg-blue-600 text-white' : 'bg-transparent'}`}>
                     {isSelected && <Check size={10} strokeWidth={3} aria-hidden="true" />}
                   </span>
                   <div className="flex shrink-0 gap-0.5 text-yellow-500" aria-hidden="true">
                     {Array.from({ length: ratingValue }).map((_, index) => (
-                      <Star key={index} size={16} fill="currentColor" />
+                      <Star key={index} size={compactResults ? 14 : 16} fill="currentColor" />
                     ))}
                   </div>
                 </div>
-                <div className="flex shrink-0 items-baseline gap-1 whitespace-nowrap text-[11px]" dir="auto" data-testid="rating-result-summary">
-                  <span className={`text-[13px] font-bold tabular-nums ${isSelected ? 'text-blue-700' : 'text-gray-800'}`}>{percentage}%</span>
+                <div className={`flex items-baseline gap-1 text-[11px] ${compactResults ? 'col-start-3 row-start-1 min-w-0 flex-wrap justify-end' : 'shrink-0 whitespace-nowrap'}`} dir="auto" data-testid="rating-result-summary">
+                  <span className={`${compactResults ? 'text-xs' : 'text-[13px]'} font-bold tabular-nums ${isSelected ? 'text-blue-700' : 'text-gray-800'}`}>{percentage}%</span>
                   <span className="text-gray-400">·</span>
-                  <span className="font-medium text-gray-500">{voteLabel}</span>
+                  <span className="min-w-0 break-words font-medium text-gray-500">{voteLabel}</span>
                 </div>
               </div>
               <div
-                className="mt-2 h-1.5 overflow-hidden rounded-full bg-gray-100"
+                className={`h-1.5 overflow-hidden rounded-full bg-gray-100 ${compactResults ? 'col-start-2 row-start-1' : 'mt-2'}`}
                 role="progressbar"
                 aria-valuemin={0}
                 aria-valuemax={100}

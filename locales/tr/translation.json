@@ -1,4 +1,12 @@
 {
+  "rating": {
+    "summary": "Puan özeti",
+    "averageLabel": "Ortalama puan",
+    "yourRating": "Puanınız",
+    "ratingCount_zero": "Henüz puan yok",
+    "ratingCount_one": "{{count}} değerlendirme",
+    "ratingCount_other": "{{count}} değerlendirme"
+  },
   "postResponse": {
     "viewOptions": "Seçenekleri görüntüle",
     "viewResults": "Sonuçları görüntüle",

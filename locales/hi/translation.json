@@ -1,4 +1,12 @@
 {
+  "rating": {
+    "summary": "रेटिंग का सारांश",
+    "averageLabel": "औसत रेटिंग",
+    "yourRating": "आपकी रेटिंग",
+    "ratingCount_zero": "कोई रेटिंग नहीं",
+    "ratingCount_one": "{{count}} रेटिंग",
+    "ratingCount_other": "{{count}} रेटिंग"
+  },
   "postResponse": {
     "viewOptions": "विकल्प देखें",
     "viewResults": "परिणाम देखें",

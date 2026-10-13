@@ -22,6 +22,7 @@ interface SurveyQuestionProps {
   portraitImages: Set<string>;
   followUpAnswers: Record<string, string>;
   useCompactRating?: boolean;
+  compactRatingResults?: boolean;
   isRatingSubmitting?: boolean;
   ratingError?: string | null;
   onRatingSelect?: (option: Option) => void;
@@ -47,6 +48,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
   portraitImages,
   followUpAnswers,
   useCompactRating = true,
+  compactRatingResults = false,
   isRatingSubmitting = false,
   ratingError,
   onRatingSelect,
@@ -78,6 +80,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
           isSubmitting={isRatingSubmitting}
           errorMessage={ratingError}
           totalVotes={totalVotes}
+          compactResults={compactRatingResults}
           onSelect={onRatingSelect}
         />
       </div>

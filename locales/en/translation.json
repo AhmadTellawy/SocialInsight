@@ -196,6 +196,12 @@
     "saveFailed": "Your information could not be saved. Please try again."
   },
   "rating": {
+    "summary": "Rating summary",
+    "averageLabel": "Average rating",
+    "yourRating": "Your rating",
+    "ratingCount_zero": "No ratings",
+    "ratingCount_one": "{{count}} rating",
+    "ratingCount_other": "{{count}} ratings",
     "prompt": "Rate from 1 to 5",
     "worst": "Worst",
     "best": "Best",

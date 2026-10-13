@@ -19,6 +19,7 @@ import { usePostViewTracker } from '../hooks/usePostViewTracker';
 import { MediaCarousel } from './media/MediaCarousel';
 import { MediaImage } from './media/MediaImage';
 import { calculateAverageRating } from '../utils/ratingScale';
+import { RatingResultsSummary } from './Survey/RatingResultsSummary';
 import { shouldShowOptionNames } from '../utils/optionPresentation';
 import { getPostOptionCapabilities } from '../utils/postOptions';
 import { demographicSnapshot } from '../utils/demographicSettings';
@@ -959,10 +960,13 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const isPollType = sourceSurvey.type === SurveyType.POLL || sourceSurvey.type === SurveyType.TRENDING;
   const isTextOnlyPoll = isPollType && !isRating && !hasImages;
   const hasDescription = !!sourceSurvey.description?.trim();
+  const resultsPrivate = sourceSurvey.resultsVisibility === 'Private';
+  const shouldShowResults = (hasVoted || isExpired) && !resultsPrivate;
+  const showRatingResults = useCompactRating && isPollType && shouldShowResults;
 
   // Keep the legacy share-card composition, while interactive rating polls use the compact scale.
   const hasPostMedia = Boolean(sourceSurvey.media?.length || sourceSurvey.coverImage);
-  const useOptionsSheet = hasPostMedia && sourceSurface !== 'SHARE_CAPTURE';
+  const useOptionsSheet = (hasPostMedia || showRatingResults) && sourceSurface !== 'SHARE_CAPTURE';
   const isCoverImagePollCard = hasPostMedia && isPollType && !hasImages && !useCompactRating && !useOptionsSheet;
 
   // Integer percentage for a single option
@@ -983,8 +987,6 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   // Update participate button logic to include clarifications
   const showParticipateButton = !hasVoted && !isExpired && (isMultiple || (sourceSurvey.allowUserOptions || false) || hasActiveFollowUp);
 
-  const resultsPrivate = sourceSurvey.resultsVisibility === 'Private';
-  const shouldShowResults = (hasVoted || isExpired) && !resultsPrivate;
   const totalVotes = (localOptions || []).reduce((acc, curr) => acc + curr.votes, 0);
   const displayedParticipantCount = (sourceSurvey.participants || 0) + (
     isRating && hasVoted && !sourceSurvey.hasParticipated ? 1 : 0
@@ -1688,6 +1690,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
     return (
       <div className="mb-4">
+        {showRatingResults && <RatingResultsSummary options={localOptions} selectedOptionIds={hasVoted ? selectedOptions : []} totalVotes={totalVotes} />}
         <SurveyQuestion
           sourceSurvey={sourceSurvey}
           options={localOptions || []}
@@ -1704,6 +1707,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           portraitImages={portraitImages}
           followUpAnswers={followUpAnswers}
           useCompactRating={sourceSurface !== 'SHARE_CAPTURE'}
+          compactRatingResults={showRatingResults}
           isRatingSubmitting={isRatingSubmitting}
           ratingError={ratingError}
           onRatingSelect={handleRatingOptionClick}
@@ -1772,7 +1776,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     );
   };
 
-  const renderAnonymousControls = () => sourceSurvey.forceAnonymous ? (
+  const renderAnonymousControls = () => useCompactRating && hasVoted ? null : sourceSurvey.forceAnonymous ? (
     <button type="button" onClick={() => setIsAnonInfoOpen(true)} className="flex items-center gap-1 text-gray-500 hover:text-blue-600 font-bold uppercase tracking-widest text-[9px]">
       <Lock size={10} aria-hidden="true" /><span>{t('Anonymous responses')}</span>
     </button>
@@ -2317,6 +2321,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                   : (sourceSurvey.coverImage && <div onClick={onContentClick} className={`w-[calc(100%+2rem)] -mx-4 rounded-none overflow-hidden mb-3 bg-gray-100 ${onContentClick ? 'cursor-pointer hover:opacity-95 transition-opacity' : ''}`}><MediaImage fallbackSrc={sourceSurvey.coverImage} alt="Cover" className="w-full h-auto object-contain block" /></div>)
               }
 
+              {showRatingResults && <RatingResultsSummary options={localOptions} selectedOptionIds={hasVoted ? selectedOptions : []} totalVotes={totalVotes} />}
               {useOptionsSheet && (
                 <PostOptionsSheet
                   postId={sourceSurvey.id}
@@ -2370,7 +2375,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                   <Eye size={12} />
                   <span>{viewCount.toLocaleString()}</span>
                 </div>
-                {isRating && Number(averageRating) > 0 && (
+                {isRating && !resultsPrivate && !(useCompactRating && (hasVoted || isExpired)) && Number(averageRating) > 0 && (
                   <div className="flex items-center gap-1 text-yellow-600 bg-yellow-50 px-2 py-0.5 rounded-md border border-yellow-200/60 shadow-sm pt-[3px]" data-testid="rating-average">
                     <Star size={11} fill="currentColor" />
                     <span className="font-bold text-[10px] uppercase tracking-widest">{averageRating} {t('rating.average')}</span>
