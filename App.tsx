@@ -1898,6 +1898,13 @@ const App: React.FC = () => {
       return false;
     }
 
+    // Opening Analytics does not grant aggregate access. Its two endpoints
+    // independently authorize public results and private follow-up answers.
+    const hasFollowUp = analysisSurvey.sections?.some(section => section.questions.some(question => question.options?.some(option => option.withFollowUp)))
+      || analysisSurvey.options?.some(option => option.withFollowUp);
+    if (hasFollowUp && (analysisSurvey.hasParticipated ?? selectedSurvey.hasParticipated)) return true;
+    if (analysisSurvey.pageId && analysisSurvey.pageCapabilities?.includes('analytics')) return true;
+
     const who = analysisSurvey.resultsWho || 'Public';
     const timing = analysisSurvey.resultsTiming || 'AnyTime';
 

@@ -12,6 +12,7 @@ import { analysisColors, analysisDimensions, analysisQueryString, answerPercenta
 import { BottomSheet } from '../BottomSheet';
 import { PageError } from '../pages/PageUi';
 import { AnalysisFilters as AnalysisFilterSheet } from './AnalysisFilters';
+import { FollowUpAnswers } from './FollowUpAnswers';
 const AnalysisShare=React.lazy(()=>import('./AnalysisShare').then(m=>({default:m.AnalysisShare})));
 import './analytics.css';
 
@@ -163,6 +164,7 @@ const AnalysisContent: React.FC<Props> = ({ survey: source, isAccessDenied, priv
         </>}{!!summary.textResponseCount && <p className="an-hint"><bdi>{num(summary.textResponseCount)}</bdi> {copy('إجابة نصية؛ النصوص محجوبة لحماية الخصوصية.', 'text responses; their text is withheld for privacy.')}</p>}</div>
       </section>)}
       {status === 'ready' && results?.scoreDistribution && <section className="an-results"><h3>{copy('توزيع الدرجات', 'Score distribution')}</h3>{results.scoreDistribution.suppressionReason ? <p className="an-hint">{hidden}</p> : <AnswerRows summary={{ questionId: 'scores', responseCount: (Object.values(results.scoreDistribution.counts) as number[]).reduce((a, b) => a + b, 0), optionCounts: results.scoreDistribution.counts, textResponseCount: 0 }} question={{ id: 'scores', text: '', type: 'score', options: Object.keys(results.scoreDistribution.counts).map(key => ({ id: key, text: key })) }} />}</section>}
+      {(definitions.some(question => question.options?.some(option => option.withFollowUp)) || source.options?.some(option => option.withFollowUp)) && <FollowUpAnswers postId={source.id} privatePageId={source.pageId === privatePageId ? privatePageId : undefined} questionId={active?.id || undefined} ar={ar} filtered={!!filterEntries.length} />}
       {results && <footer className="an-footer"><span>{copy('النسب من مجيبي السؤال', 'Percentages of question respondents')}</span><b dir="ltr">Opini<span>Up</span></b></footer>}
     </div>
     <AnalysisFilterSheet open={sheet === 'filters'} onClose={() => setSheet(null)} onApply={value => { setFilters(value); setSheet(null); }} draft={draft} setDraft={setDraft} dimensions={dimensions} label={label} available={results?.filterOptions || {}} protectedDetails={!!results?.demographicSuppressionReason} ar={ar} />

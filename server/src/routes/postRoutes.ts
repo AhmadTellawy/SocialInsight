@@ -33,6 +33,7 @@ import {
 } from '../controllers/postController';
 
 import { recordPostView } from '../controllers/viewController';
+import { getPostFollowUpAnswers } from '../controllers/followUpAnswersController';
 import { requireAuth, optionalAuth } from '../middleware/authMiddleware';
 import { pagePostBoundary } from '../pages/pagePostBoundary';
 
@@ -49,6 +50,7 @@ router.get('/comments/:id/likes', getCommentLikers);
 router.get('/:id', getPostById);
 router.get('/:id/participants', getParticipants);
 router.get('/:id/results', getPostResults);
+router.get('/:id/follow-up-answers', getPostFollowUpAnswers);
 router.get('/:id/comments', getComments);
 router.get('/:id/likes', getPostLikers);
 

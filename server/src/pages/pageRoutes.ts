@@ -19,6 +19,7 @@ import { pagesEnabled } from './pageFeature';
 import { buildVisiblePublishedPostWhere } from '../services/postVisibilityService';
 import { hasPageCapability, mayManagePageRole, PageRole } from './pagePolicy';
 import { getPageManagedPostResults } from '../controllers/postController';
+import { getPageManagedFollowUpAnswers } from '../controllers/followUpAnswersController';
 import { pageRole } from './pageService';
 import { lockPageForInteraction, requirePageCapability, PageTx } from './pageService';
 import { pageFollowerCounts } from './pageService';
@@ -168,6 +169,7 @@ router.get('/manage/:id', requireAuth, handle(async (req, res) => res.json(await
   async(tx,role)=>pageManagementDto(await tx.page.findUniqueOrThrow({where:{id:id(req)}}),role)))));
 // The controller admits work before opening its own authorized transaction.
 router.get('/manage/:id/content/:postId/results',requireAuth,(req,res,next)=>getPageManagedPostResults(req,res).catch(next));
+router.get('/manage/:id/content/:postId/follow-up-answers',requireAuth,(req,res,next)=>getPageManagedFollowUpAnswers(req,res).catch(next));
 router.get('/manage/:id/requests',requireAuth,handle(async(req,res)=>{
   const kind=z.enum(['invitation','transfer']).parse(req.query.kind);
   return res.json(await managedRead(id(req),user(req),kind==='transfer'?'readManagement':'manageTeam',async(tx,role)=>{

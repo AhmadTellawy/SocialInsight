@@ -528,6 +528,12 @@ export const api = {
         return response.json();
     },
 
+    getPostFollowUpAnswers: async (postId: string, signal?: AbortSignal, query = '') => {
+        const response = await authFetch(`${API_BASE_URL}/posts/${encodeURIComponent(postId)}/follow-up-answers${query ? '?' + query : ''}`, { signal, timeoutMs: 20_000, cache: 'no-store' });
+        if (!response.ok) throw new ApiError('Failed to fetch follow-up answers', response.status);
+        return response.json();
+    },
+
     getUsers: async (signal?: AbortSignal) => {
         const response = await authFetch(`${API_BASE_URL}/users`, { signal, timeoutMs: 10_000 });
         if (!response.ok) throw new Error('Failed to fetch users');

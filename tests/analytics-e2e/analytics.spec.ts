@@ -166,7 +166,8 @@ test('actual App preserves analytics, cached comments, browser back and cold res
   await page.evaluate(() => history.back()); await expect(dialog).toHaveCount(0);
   await expect(page).toHaveURL(/\/post\/analysis-fixture$/);
   await page.getByRole('button', { name: 'Analysis', exact: true }).filter({ hasText: 'Analysis' }).click();
-  await expect(page.locator('.an-answer')).toHaveCount(3);
+  await expect(page.locator('.an-content select')).toHaveValue('gender');
+  await expect(page.locator('.an-group')).toHaveCount(2);
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide')));
   await page.goto('/');
   await expect(page).toHaveURL(/\/post\/analysis-fixture\?tab=analysis$/);
