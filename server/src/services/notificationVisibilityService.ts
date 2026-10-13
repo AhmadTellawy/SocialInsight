@@ -1,5 +1,5 @@
 import prisma from '../prisma';
-import { buildVisiblePublishedPostWhere } from './postVisibilityService';
+import { arePublishedPostsVisible } from './postVisibilitySql';
 
 export type NotificationVisibilityReason =
     | 'allowed'
@@ -72,10 +72,7 @@ export const evaluateNotificationVisibility = async (
     }
 
     if (postId) {
-        const visiblePost = await db.post.findFirst({
-            where: { id: postId, ...buildVisiblePublishedPostWhere(notification.userId) },
-            select: { id: true }
-        });
+        const visiblePost = await arePublishedPostsVisible(db, [postId], notification.userId);
         if (!visiblePost) return deny('source_unavailable');
 
         const commentIds = Array.from(new Set([

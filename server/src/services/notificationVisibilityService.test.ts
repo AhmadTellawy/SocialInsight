@@ -5,7 +5,7 @@ import { evaluateNotificationVisibility } from './notificationVisibilityService'
 const activeDb = (overrides: Record<string, any> = {}) => ({
   user: { findMany: async ({ where }: any) => where.id.in.map((id: string) => ({ id })) },
   userBlock: { findFirst: async () => null },
-  post: { findFirst: async () => ({ id: 'post-1' }) },
+  $queryRaw: async () => [{ visible: true }],
   comment: { count: async ({ where }: any) => where.id.in.length },
   group: { findFirst: async () => ({ id: 'group-1' }) },
   ...overrides
@@ -18,11 +18,21 @@ const postNotification = {
 };
 
 test('notification delivery drops a source that is no longer visible', async () => {
-  const db = activeDb({ post: { findFirst: async () => null } });
+  const db = activeDb({ $queryRaw: async () => [{ visible: false }] });
   assert.deepEqual(await evaluateNotificationVisibility(postNotification, db), {
     allowed: false,
     reason: 'source_unavailable'
   });
+});
+
+test('notification visibility checks the recipient and source with bound SQL parameters', async () => {
+  let query: any;
+  const db = activeDb({ $queryRaw: async (sql: any) => { query = sql; return [{ visible: true }]; } });
+  assert.equal((await evaluateNotificationVisibility(postNotification, db)).allowed, true);
+  assert.ok(query.values.includes('post-1'));
+  assert.ok(query.values.includes('recipient-1'));
+  assert.ok(!query.values.includes('actor-1'));
+  assert.ok(!query.text.includes('recipient-1'));
 });
 
 test('notification delivery drops inactive or blocked actors before source disclosure', async () => {

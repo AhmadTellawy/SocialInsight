@@ -14,8 +14,7 @@
     "activeAnalysisRequests": 1,
     "queuedAnalysisRequests": 32,
     "queueWaitMs": 30000,
-    "analysisWorkMemPerOperatorMB": 16,
-    "analysisWorkMemScope": "SET LOCAL within a cache-miss authorized transaction; one admitted builder; not a total-query memory cap"
+    "analysisWorkMemScope": "Database default; no per-query override. Reads use synchronously maintained answer profile counts."
   },
   "status": "F26_HOSTED_SUSTAINED_ACCEPTANCE_PENDING",
   "coldOrActivePost": "Full aggregation can still take several seconds; do not describe cache hits as first-load performance.",
