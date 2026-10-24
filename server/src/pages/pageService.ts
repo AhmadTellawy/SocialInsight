@@ -4,6 +4,7 @@ import prisma from '../prisma';
 import { hasPageCapability, isPagePublic, PAGE_POLICY, PageCapability, PagePolicyError,
   PageRole, pagePublicWhere } from './pagePolicy';
 import { pageCreateSchema, pagePatchSchema, validatePageCta } from './pageValidation';
+import { randomUUID } from 'node:crypto';
 import { assertPagesEnabled, isPageTestUser, pagesEnabled } from './pageFeature';
 import { currentPageDatabaseContext, markPageCoordinationAcquired, pagePerfEvent, runWithPageDatabaseContext, runWithPageTransaction } from './pageDatabaseContext';
 import { tryLockAccountSecurity } from '../services/mfaService';
@@ -344,11 +345,21 @@ export async function createPage(userId: string, raw: unknown) {
     if (await tx.page.count({ where: { ownerId: userId, purgedAt: null } }) >= PAGE_POLICY.ownedPageLimit) {
       throw new PagePolicyError('PAGE_OWNER_LIMIT', 409);
     }
-    if (await tx.pageHandle.findUnique({ where: { handle: input.handle } })) throw new PagePolicyError('PAGE_HANDLE_TAKEN', 409);
+    let handle = input.handle;
+    if (handle) {
+      if (await tx.pageHandle.findUnique({ where: { handle } })) throw new PagePolicyError('PAGE_HANDLE_TAKEN', 409);
+    } else {
+      // Allocate inside the same owner-locked transaction; replay returns the saved page above.
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const candidate = 'page_' + randomUUID().replace(/-/g, '').slice(0, 24);
+        if (!await tx.pageHandle.findUnique({ where: { handle: candidate } })) { handle = candidate; break; }
+      }
+      if (!handle) throw new PagePolicyError('PAGE_HANDLE_TAKEN', 409);
+    }
     const { requestId, representationConfirmed: _confirmed, ...info } = input;
-    const page = await tx.page.create({ data: { ...info, ownerId: userId, createRequestId: requestId,
+    const page = await tx.page.create({ data: { ...info, handle, ownerId: userId, createRequestId: requestId,
       isTestFixture:(process.env.PAGES_TEST_USERS || '').split(',').map(value=>value.trim()).includes(userId),
-      representationAt: new Date(), handles: { create: { handle: input.handle } } } });
+      representationAt: new Date(), handles: { create: { handle } } } });
     await pageAudit(tx, page.id, userId, 'PAGE_CREATED');
     return pageManagementDto(page, 'OWNER');
   });

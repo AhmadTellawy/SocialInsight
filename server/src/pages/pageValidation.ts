@@ -20,7 +20,9 @@ export const pageHandleSchema = z.string().trim().transform(value => value.toLow
   .pipe(z.string().regex(/^[a-z][a-z0-9_]{2,29}$/, 'Use 3–30 letters, numbers or underscores; start with a letter'))
   .refine(value => !reserved.has(value) && !value.startsWith('deleted_'), 'This handle is reserved');
 
-export const pageWebUrlSchema = z.string().trim().max(2048).url().refine(value => {
+export const pageWebUrlSchema = z.string().trim().transform(value =>
+  value && !/^[a-z][a-z0-9+.-]*:/i.test(value) && !value.startsWith('//') ? 'https://' + value : value
+).pipe(z.string().max(2048).url()).refine(value => {
   try {
     const url = new URL(value);
     return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password &&
@@ -31,7 +33,7 @@ export const pageWebUrlSchema = z.string().trim().max(2048).url().refine(value =
 export const pageInfoSchema = z.object({
   name: visibleText(2, 100),
   category: z.enum(PAGE_CATEGORIES),
-  bio: visibleText(1, 160),
+  bio: visibleText(0, 160, true).default(''),
   description: visibleText(0, 2000, true).default(''),
   country: visibleText(0, 100).default(''),
   city: visibleText(0, 100).default(''),
@@ -39,7 +41,10 @@ export const pageInfoSchema = z.object({
   links: z.array(z.object({ title: visibleText(1, 50), url: pageWebUrlSchema }).strict())
     .max(PAGE_POLICY.maxLinks).default([]),
   publicEmail: z.string().trim().email().max(254).nullable().default(null),
-  publicPhone: z.string().trim().regex(/^\+?[0-9 ()-]{5,30}$/).nullable().default(null),
+  publicPhone: z.string().trim().transform(value => value.replace(/[٠-٩۰-۹]/g, digit =>
+    String(digit.charCodeAt(0) - (digit >= '۰' ? 0x06f0 : 0x0660))))
+    .pipe(z.string().regex(/^\+?[0-9 ()-]{5,30}$/).refine(value => (value.match(/[0-9]/g) || []).length >= 5,
+      'Use at least five digits')).nullable().default(null),
   cta: z.enum(['WEBSITE', 'EMAIL', 'PHONE']).nullable().default(null),
 }).strict();
 
@@ -49,7 +54,7 @@ export const validatePageCta = (value: { cta: string | null; website: string | n
   (value.cta === 'EMAIL' && !!value.publicEmail) || (value.cta === 'PHONE' && !!value.publicPhone);
 
 export const pageCreateSchema = pageInfoSchema.extend({
-  handle: pageHandleSchema,
+  handle: pageHandleSchema.optional(),
   representationConfirmed: z.literal(true),
   requestId: z.string().uuid(),
 }).refine(validatePageCta, 'The action needs matching public contact information');

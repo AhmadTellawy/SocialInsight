@@ -34,7 +34,7 @@ export const pagesApi = {
     return page;
   },
   manage: (id: string, signal?: AbortSignal) => pageRequest<BusinessPage>('/manage/' + encodeURIComponent(id), 'GET', undefined, signal),
-  create: (input: PageInfo & { handle: string; representationConfirmed: boolean; requestId: string }) => pageRequest<BusinessPage>('', 'POST', input),
+  create: (input: Pick<PageInfo, 'name' | 'category'> & Partial<Omit<PageInfo, 'name' | 'category'>> & { handle?: string; representationConfirmed: boolean; requestId: string }) => pageRequest<BusinessPage>('', 'POST', input),
   update: (id: string, input: Partial<PageInfo>) => pageRequest<BusinessPage>('/manage/' + id, 'PATCH', input),
   lifecycle: (id: string, action: string) => pageRequest<BusinessPage>('/manage/' + id + '/lifecycle', 'POST', { action }),
   invitations: (cursor = '', signal?: AbortSignal) => pageRequest<CursorPage<PageInvitation>>('/invitations'+(cursor?'?cursor='+encodeURIComponent(cursor):''), 'GET', undefined, signal),

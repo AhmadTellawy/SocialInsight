@@ -10,9 +10,10 @@
     "dev": "vite",
     "server": "cd server && npm run dev",
     "build": "vite build",
-    "test:unit": "node --experimental-transform-types --test utils/readCache.test.ts services/protectedImages.test.ts utils/interactionMutation.test.ts utils/interactionCache.test.ts utils/appResume.test.ts utils/analysis.test.ts utils/i18nResources.test.ts utils/feedRequest.test.ts utils/mediaFileValidation.test.ts utils/mediaSafeStorage.test.ts utils/mediaUploadScheduler.test.ts utils/mentionAutocomplete.test.ts utils/nativeShare.test.ts utils/optionPresentation.test.ts utils/postOptions.test.ts utils/profileEditState.test.ts utils/profileLinkErrors.test.ts utils/profileValidation.test.ts utils/pwaRegistration.test.ts utils/shareCard.test.ts utils/textEntities.test.ts services/authApi.test.ts services/mediaApi.test.ts utils/authUi.test.ts utils/demographicSettings.test.ts utils/notificationPreferences.test.ts utils/analyticsQueue.test.ts services/viewApi.test.ts utils/navigation.test.ts utils/sheetHistory.test.ts tests/pageMetadata.test.ts tests/pageDocument.test.js tests/pageCardState.test.ts tests/pagePublisherEligibility.test.ts",
+    "test:unit": "node --experimental-transform-types --test utils/readCache.test.ts services/protectedImages.test.ts utils/interactionMutation.test.ts utils/interactionCache.test.ts utils/appResume.test.ts utils/analysis.test.ts utils/i18nResources.test.ts utils/feedRequest.test.ts utils/mediaFileValidation.test.ts utils/mediaSafeStorage.test.ts utils/mediaUploadScheduler.test.ts utils/mentionAutocomplete.test.ts utils/nativeShare.test.ts utils/optionPresentation.test.ts utils/postOptions.test.ts utils/profileEditState.test.ts utils/profileLinkErrors.test.ts utils/profileValidation.test.ts utils/pwaRegistration.test.ts utils/shareCard.test.ts utils/textEntities.test.ts services/authApi.test.ts services/mediaApi.test.ts utils/authUi.test.ts utils/demographicSettings.test.ts utils/notificationPreferences.test.ts utils/analyticsQueue.test.ts services/viewApi.test.ts utils/navigation.test.ts utils/sheetHistory.test.ts tests/pageMetadata.test.ts tests/pageDocument.test.js tests/pageCardState.test.ts tests/pagePublisherEligibility.test.ts utils/pageInfo.test.ts",
     "test:e2e:profile": "playwright test --config=playwright.profile.config.ts",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:e2e:pages-creation": "playwright test --config=playwright.pages-creation.config.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "6.3.1",

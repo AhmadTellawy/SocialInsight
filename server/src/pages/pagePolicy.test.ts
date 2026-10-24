@@ -97,6 +97,6 @@ test('Page text counts visible graphemes, permits description lines and rejects 
   assert.equal(pagePatchSchema.safeParse({name:'ا\u0654'.repeat(101)}).success,false);
   assert.equal(pagePatchSchema.safeParse({name:'👍'}).success,false);
   assert.equal(pagePatchSchema.safeParse({description:'السطر الأول\nالسطر الثاني'}).success,true);
-  assert.equal(pagePatchSchema.safeParse({bio:'سطر\nآخر'}).success,false);
+  assert.equal(pagePatchSchema.safeParse({bio:'سطر\nآخر'}).success,true);
   for(const value of ['اسم\u061cمضلل','اسم\u202eمضلل','اسم\u0000مضلل'])assert.equal(pagePatchSchema.safeParse({name:value}).success,false);
 });
