@@ -2,6 +2,30 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { resolveAttachedMediaScopeFromState, resolvePostMediaScopeFromState, serializeMediaAsset, serializePostMediaRecord, serializeUserMediaRecord } from './mediaService';
 import { processBase64Image } from '../utils/imageProcessor';
+import prisma from '../prisma';
+import { validatePostMediaSet } from './mediaService';
+
+test('mixed post ratios preserve ownership, readiness, count and uniqueness checks', async () => {
+  const originalFind = prisma.mediaAsset.findMany;
+  let query: any;
+  prisma.mediaAsset.findMany = (async (args: any) => {
+    query = args;
+    return [{ id: 'portrait', aspectRatio: .8 }, { id: 'original', aspectRatio: .5 }];
+  }) as any;
+  try {
+    assert.equal(await validatePostMediaSet('owner', ['original', 'portrait'], 1), .5);
+    assert.equal(query.where.ownerId, 'owner');
+    assert.equal(query.where.purpose, 'POST');
+    assert.deepEqual(query.where.status.in, ['READY', 'ATTACHED']);
+    await validatePostMediaSet('owner', ['portrait', 'original'], .8, 'authorized-page');
+    assert.deepEqual(query.where.OR, [{ ownerId: 'owner' }, { pageId: 'authorized-page', status: 'ATTACHED' }]);
+    await assert.rejects(() => validatePostMediaSet('owner', ['original', 'original']), (e: any) => e.code === 'MEDIA_NOT_READY');
+    await assert.rejects(() => validatePostMediaSet('owner', Array(9).fill('a')), (e: any) => e.code === 'TOO_MANY_POST_IMAGES');
+    await assert.rejects(() => validatePostMediaSet('owner', ['original', 'portrait'], NaN), (e: any) => e.code === 'INVALID_ASPECT_RATIO');
+    prisma.mediaAsset.findMany = (async () => [{ id: 'portrait', aspectRatio: .8 }]) as any;
+    await assert.rejects(() => validatePostMediaSet('owner', ['portrait', 'unavailable']), (e: any) => e.code === 'MEDIA_NOT_READY');
+  } finally { prisma.mediaAsset.findMany = originalFind; }
+});
 
 test('resolves draft, group, audience, and account media scopes conservatively', () => {
   assert.equal(resolvePostMediaScopeFromState('DRAFT', [], 'Public', false), 'OWNER_ONLY');

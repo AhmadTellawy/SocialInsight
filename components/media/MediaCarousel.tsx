@@ -16,7 +16,9 @@ export const MediaCarousel: React.FC<MediaCarouselProps> = ({ media, className =
   const containerRef = useRef<HTMLDivElement>(null);
   const [index, setIndex] = useState(0);
   const items = media.slice(0, 8);
-  const aspectRatio = (items[0]?.aspectRatio || (items[0]?.width && items[0]?.height ? items[0].width / items[0].height : 1));
+  const activeItem = items[Math.min(index, items.length - 1)];
+  // Bound the viewport, not the image: object-contain preserves extreme originals.
+  const aspectRatio = Math.min(1.91, Math.max(.8, activeItem?.aspectRatio || 1));
 
   useEffect(() => {
     setIndex((current) => Math.min(current, Math.max(0, items.length - 1)));

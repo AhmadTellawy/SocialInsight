@@ -108,7 +108,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
                     fallbackSrc={option.image}
                     onLoad={(e) => onDetectOrientation(imageKey, e)}
                     alt={showOptionNames ? option.text : ''}
-                    className="absolute inset-0 w-full h-full object-cover"
+                    className="absolute inset-0 w-full h-full object-contain"
                   />
                   {isPortrait && (
                     <div
@@ -363,7 +363,7 @@ export const SurveyQuestion: React.FC<SurveyQuestionProps> = ({
                             fallbackSrc={option.image}
                             onLoad={(e) => onDetectOrientation(imageKey, e)}
                             alt=""
-                            className="w-full h-full object-cover transition-transform group-hover/opt-img:scale-110"
+                            className="w-full h-full object-contain"
                           />
                           {isPortrait && (
                             <div className="absolute inset-0 bg-black/10 opacity-0 group-hover/opt-img:opacity-100 flex items-center justify-center transition-opacity cursor-zoom-in">

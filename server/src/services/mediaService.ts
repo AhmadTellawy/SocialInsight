@@ -1231,16 +1231,15 @@ export const validatePostMediaSet = async (
     },
     select: { id: true, aspectRatio: true }
   });
-  if (assets.length !== assetIds.length || assets.some((asset) => !asset.aspectRatio)) {
+  if (new Set(assetIds).size !== assetIds.length || assets.length !== assetIds.length || assets.some((asset) => !asset.aspectRatio || !Number.isFinite(asset.aspectRatio) || asset.aspectRatio <= 0)) {
     throw new MediaValidationError('MEDIA_NOT_READY', 'One or more post images are unavailable or still processing.', 409);
   }
   const ratioById = new Map(assets.map((asset) => [asset.id, asset.aspectRatio!]));
   const establishedRatio = ratioById.get(assetIds[0])!;
-  if (assetIds.some((id) => Math.abs(ratioById.get(id)! - establishedRatio) / establishedRatio > 0.01)) {
-    throw new MediaValidationError('MEDIA_RATIO_MISMATCH', 'All post images must use the same frame ratio.', 409);
-  }
-  if (requestedAspectRatio !== undefined && Math.abs(requestedAspectRatio - establishedRatio) / establishedRatio > 0.01) {
-    throw new MediaValidationError('MEDIA_RATIO_MISMATCH', 'The post frame ratio does not match its images.', 409);
+  // Each asset owns its crop. The legacy post ratio is a display hint; derive it
+  // from the first authorized, ready asset after selection or reordering.
+  if (requestedAspectRatio !== undefined && (!Number.isFinite(requestedAspectRatio) || requestedAspectRatio <= 0)) {
+    throw new MediaValidationError('INVALID_ASPECT_RATIO', 'Image aspect ratio must be positive and finite.');
   }
   return establishedRatio;
 };

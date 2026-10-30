@@ -18,6 +18,8 @@ import { RichMentionInput } from './RichMentionInput';
 import { api } from '../services/api';
 import { MediaPicker, MediaPickerHandle } from './media/MediaPicker';
 import { MediaImage } from './media/MediaImage';
+import { MediaSourcePreview } from './media/MediaSourcePreview';
+import { cropFromOriginal } from '../utils/mediaCrop';
 import { cancelTemporaryMediaDrafts, createPersistedMediaDraft, createPersistedMediaDraftFromId, mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds } from '../utils/mediaDrafts';
 import { AnswerTypeSelector } from './options/AnswerTypeSelector';
 import { OptionImagePicker } from './options/OptionImagePicker';
@@ -608,11 +610,11 @@ export const CreateChallengeScreen: React.FC<CreateChallengeScreenProps> = ({ on
                                 title={current?.status === 'error' ? 'Retry' : 'Add item image'}
                               >
                                 {current?.previewUrl ? (
-                                  <img src={current.previewUrl} className="w-full h-full object-cover" alt="" />
+                                  <MediaSourcePreview src={current.previewUrl} selection={current.crop || cropFromOriginal(current.sourceAspectRatio || current.aspectRatio, current.aspectRatio)} />
                                 ) : current?.presentation ? (
-                                  <MediaImage media={current.presentation} className="w-full h-full object-cover" />
+                                  <MediaImage media={current.presentation} className="w-full h-full object-contain" />
                                 ) : option.image ? (
-                                  <img src={option.image} className="w-full h-full object-cover" alt="" />
+                                  <img src={option.image} className="w-full h-full object-contain" alt="" />
                                 ) : (
                                   <Camera size={14} />
                                 )}

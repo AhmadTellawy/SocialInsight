@@ -4,6 +4,37 @@ import sharp from 'sharp';
 import { MEDIA_CONFIG } from '../config/media';
 import { MediaValidationError, processMediaBuffer } from './mediaProcessor';
 
+test('post and option crops derive square, portrait and full image from the same original', async () => {
+  const source = await sharp({ create: { width: 800, height: 1200, channels: 3, background: '#20b060' } })
+    .composite([{ input: await sharp({ create: { width: 800, height: 150, channels: 3, background: '#f02020' } }).png().toBuffer(), top: 100, left: 0 }]).png().toBuffer();
+  for (const purpose of ['POST', 'OPTION_IMAGE'] as const) {
+    const square = await processMediaBuffer(source, purpose, 'image/png', { aspectRatio: 1, crop: { x: 0, y: 1 / 6, width: 1, height: 2 / 3 } });
+    const portrait = await processMediaBuffer(source, purpose, 'image/png', { aspectRatio: .8, crop: { x: 0, y: 1 / 12, width: 1, height: 5 / 6 } });
+    const full = await processMediaBuffer(source, purpose, 'image/png', { aspectRatio: 2 / 3 });
+    const squareOutput = square.variants[square.variants.length - 1];
+    const portraitOutput = portrait.variants[portrait.variants.length - 1];
+    assert.equal(squareOutput.width / squareOutput.height, 1);
+    assert.equal(portraitOutput.width / portraitOutput.height, .8);
+    assert.deepEqual([full.master.width, full.master.height], [800, 1200]);
+    assert.deepEqual([square.master.width, square.master.height], [800, 1200], 'master retains the entire source');
+    const pixel = await sharp(portraitOutput.buffer).extract({ left: Math.floor(portraitOutput.width / 2), top: 10, width: 1, height: 1 }).raw().toBuffer();
+    assert.ok(pixel[0] > 180 && pixel[1] < 80, 'portrait recovered the original red band above the square');
+  }
+});
+
+test('original supports wide images while unrelated out-of-range ratios remain rejected', async () => {
+  const source = await makeImage(1600, 400);
+  const original = await processMediaBuffer(source, 'POST', 'image/jpeg', { aspectRatio: 4 });
+  assert.equal(original.master.width / original.master.height, 4);
+  await assert.rejects(() => processMediaBuffer(source, 'POST', 'image/jpeg', { aspectRatio: 3 }), (error: any) => error.code === 'INVALID_ASPECT_RATIO');
+});
+
+test('square and portrait remain exact presets even when source is close to that ratio', async () => {
+  const result = await processMediaBuffer(await makeImage(801, 1000), 'OPTION_IMAGE', 'image/jpeg', { aspectRatio: .8 });
+  assert.equal(result.aspectRatio, .8);
+  assert.ok(result.crop.width < 1);
+});
+
 const makeImage = async (width: number, height: number, format: 'jpeg' | 'png' | 'webp' = 'jpeg') => {
   const image = sharp({
     create: { width, height, channels: 3, background: { r: 25, g: 110, b: 220 } }

@@ -35,7 +35,7 @@ if (params.has('richTitle')) {
 function StepCreator({ Creator, mode }: { Creator: any; mode: string }) {
   const [draft] = useState(() => {
     const imageMode = params.has('stepsImages');
-    const draftOptions = names.map((text, index) => ({ id: `step-option-${index}`, text, votes: 0, image: imageMode ? picture(index ? '#0d9488' : '#2563eb') : undefined }));
+    const draftOptions = names.map((text, index) => ({ id: `step-option-${index}`, text: params.has('blankPhotoOptions') ? '' : text, votes: 0, image: imageMode && !params.has('blankPhotoOptions') ? picture(index ? '#0d9488' : '#2563eb') : undefined }));
     const sectionId = mode === 'quiz' ? 'sec-quiz-init' : 'sec-init';
     const questionId = mode === 'quiz' ? 'q-quiz-init-1' : 'q-init-1';
     return {
@@ -54,7 +54,10 @@ function StepCreator({ Creator, mode }: { Creator: any; mode: string }) {
       sections: [{ id: sectionId, title: 'Fixture section', questions: (params.has('singleQuiz') ? [0] : [0, 1]).map(index => ({
         id: index ? 'step-question-2' : questionId, text: `Fixture question ${index + 1}`, type: 'multiple_choice',
         optionPresentation: imageMode ? 'image' : 'text', showOptionNames: !params.has('legacyHidden'),
-        imageLayout: 'horizontal', isRequired: true, weight: 10, options: draftOptions,
+        imageLayout: 'horizontal', isRequired: true, weight: 10,
+        options: params.has('blankPhotoOptions') && index > 0
+          ? names.map((text, optionIndex) => ({ id: `step-option-${optionIndex}`, text, votes: 0, image: imageMode ? picture(optionIndex ? '#0d9488' : '#2563eb') : undefined }))
+          : draftOptions,
         correctOptionId: 'step-option-0',
       })) }],
     };

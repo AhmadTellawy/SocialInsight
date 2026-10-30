@@ -2,6 +2,7 @@ import type { MediaDraft, Option, OptionPresentation } from '../types';
 
 export type OptionWithMediaDrafts = {
   id: string;
+  text?: string;
   image?: string | null;
   imageMediaId?: string;
   mediaDrafts: MediaDraft[];
@@ -30,7 +31,8 @@ export const reconcileOptionMediaDrafts = <T extends OptionWithMediaDrafts>(
   options: T[],
   nextDrafts: MediaDraft[],
   createOption: () => T,
-  preferredOptionId?: string | null
+  preferredOptionId?: string | null,
+  selectionCommitted = false
 ): T[] => {
   const nextById = new Map(nextDrafts.map((draft) => [draft.clientId, draft]));
   const claimedDraftIds = new Set<string>();
@@ -38,6 +40,12 @@ export const reconcileOptionMediaDrafts = <T extends OptionWithMediaDrafts>(
   let nextOptions = options.map((option) => {
     const current = option.mediaDrafts[0];
     if (!current) return option;
+
+    const restored = current.replacedDraft && nextById.get(current.replacedDraft.clientId);
+    if (restored) {
+      claimedDraftIds.add(restored.clientId);
+      return { ...option, mediaDrafts: [restored] };
+    }
 
     const replacement = nextDrafts.find((draft) => draft.replacesClientId === current.clientId);
     if (replacement) {
@@ -76,5 +84,14 @@ export const reconcileOptionMediaDrafts = <T extends OptionWithMediaDrafts>(
     }
   }
 
-  return nextOptions;
+  if (!selectionCommitted) return nextOptions;
+  // Selection order owns image rows; keep each existing name attached to its
+  // image. Discard only empty rows created for photos that were deselected.
+  const selectedOptions = nextDrafts.flatMap(draft => nextOptions.filter(option => option.mediaDrafts[0]?.clientId === draft.clientId));
+  const remaining = nextOptions.filter(option => !option.mediaDrafts.length && (
+    option.text?.trim() || option.image || option.imageMediaId || !options.find(old => old.id === option.id)?.mediaDrafts.length
+  ));
+  const committed = [...selectedOptions, ...remaining];
+  while (committed.length < 2) committed.push(createOption());
+  return committed;
 };

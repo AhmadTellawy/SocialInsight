@@ -1,0 +1,15 @@
+{
+  "task": "SI-PHOTO-UPLOAD-20261031",
+  "mode": "MAIN_SESSION_ONLY",
+  "status": "IMPLEMENTED_AND_VERIFIED_LOCALLY",
+  "base": "8c56112449ded9cb65566af6b3bbdbf0ea4eb5b6",
+  "worktree": "C:/Users/ABC/.codex/worktrees/post-photo-flow/socialinsight-20261006",
+  "branch": "codex/post-photo-flow",
+  "scope": "Implement the agreed photo selection and dimensions flow in the real application for post and option images. Square by default, original proportions, ordered multi-select, collapsible preview, dimensions-only batch editor, crop every ratio from the immutable original, then return to creator/option naming. Preserve upload security, retries, original sources and other media purposes.",
+  "authority": "Founder explicitly requested implementation in the application on 2026-10-31. No publication or production mutation requested. No agents authorized.",
+  "design": "C:/Users/ABC/.codex/visualizations/2026/10/30/01a18eda-8b1c-7a71-8979-db0547d9546b/social-insight-photo-flow.html",
+  "baseline": "Origin/main fetched and matches local main. Primary checkout contains unrelated historical tracked/untracked changes; untouched. No suitable worktree was attached; created managed isolated worktree.",
+  "release": "NOT_DEPLOYED. Independent release gates remain unavailable; main-session verification is not independent approval.",
+  "verification": "188 frontend tests passed; typecheck and frontend build passed; 754 backend tests passed with one existing skip; backend build passed; all 32 browser journey tests passed. Details in verification.json and source-hashes.json.",
+  "next": "No implementation work remains for this scope. No push, merge or deployment authorized or performed; any release must follow applicable permissions and gates."
+}

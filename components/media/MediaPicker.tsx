@@ -33,6 +33,9 @@ import { mediaUploadScheduler } from '../../utils/mediaUploadScheduler';
 import { mediaUploadRegistry } from '../../utils/mediaUploadRegistry';
 import { MediaCropEditor } from './MediaCropEditor';
 import { MediaImage } from './MediaImage';
+import { MediaPhotoFlow } from './MediaPhotoFlow';
+import { MediaSourcePreview } from './MediaSourcePreview';
+import { cropFromOriginal } from '../../utils/mediaCrop';
 
 export type MediaPickerHandle = {
   open: () => void;
@@ -52,7 +55,9 @@ export type MediaPickerControls = {
 type MediaPickerProps = {
   purpose: MediaPurpose;
   value: MediaDraft[];
-  onChange: (value: MediaDraft[]) => void;
+  onChange: (value: MediaDraft[], selectionCommitted?: boolean) => void;
+  onSelectionStart?: () => void;
+  onSelectionEnd?: (canceled: boolean, drafts: MediaDraft[]) => void;
   maxFiles?: number;
   multiple?: boolean;
   aspectRatio?: number;
@@ -65,7 +70,7 @@ type MediaPickerProps = {
 
 const fixedRatioForPurpose = (purpose: MediaPurpose): number | undefined => {
   if (purpose === 'PROFILE_COVER') return 3;
-  if (['PROFILE_AVATAR', 'GROUP_IMAGE', 'OPTION_IMAGE'].includes(purpose)) return 1;
+  if (['PROFILE_AVATAR', 'GROUP_IMAGE'].includes(purpose)) return 1;
   return undefined;
 };
 
@@ -93,9 +98,9 @@ const SortableTile: React.FC<SortableTileProps> = ({ draft, index, sortable, onE
   return (
     <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={`relative h-28 w-28 shrink-0 overflow-hidden rounded-md border bg-gray-100 ${isDragging ? 'z-10 border-blue-500 opacity-80 shadow-lg' : 'border-gray-200'}`}>
       {draft.previewUrl ? (
-        <img src={draft.previewUrl} alt="" className="h-full w-full object-cover" />
+        <MediaSourcePreview src={draft.previewUrl} selection={draft.crop || cropFromOriginal(draft.sourceAspectRatio || draft.aspectRatio, draft.aspectRatio)} />
       ) : draft.presentation ? (
-        <MediaImage media={draft.presentation} className="h-full w-full object-cover" />
+        <MediaImage media={draft.presentation} className="h-full w-full object-contain" />
       ) : (
         <div className="h-full w-full bg-gray-100" />
       )}
@@ -127,6 +132,8 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
   purpose,
   value,
   onChange,
+  onSelectionStart,
+  onSelectionEnd,
   maxFiles = 1,
   multiple = false,
   aspectRatio,
@@ -143,6 +150,8 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
   const mountedRef = useRef(true);
   const valuesRef = useRef(value);
   const previewUrls = useRef(new Set<string>());
+  // A newly decoded URL may precede the parent value commit by one render.
+  const unpublishedPreviewUrls = useRef(new Set<string>());
   const replacedPersistedDrafts = useRef<MediaDraft[] | null>(null);
   const pendingReplacements = useRef(new Map<string, MediaDraft>());
   const preparingRef = useRef(false);
@@ -150,6 +159,19 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
   const [activeEditorId, setActiveEditorId] = useState<string | null>(null);
   const [replacementTargetId, setReplacementTargetId] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const usesPhotoFlow = purpose === 'POST' || purpose === 'OPTION_IMAGE';
+  const photoBaseline = useRef<MediaDraft[] | null>(null);
+  const [photoSession, setPhotoSession] = useState<{ stage: 'select' | 'adjust'; id?: string } | null>(null);
+  const beginPhotoFlow = (stage: 'select' | 'adjust' = 'select', id?: string) => {
+    if (!usesPhotoFlow || photoBaseline.current) return;
+    photoBaseline.current = [...valuesRef.current];
+    onSelectionStart?.();
+    setPhotoSession({ stage, id });
+  };
+  const editDraft = (id: string) => {
+    if (usesPhotoFlow) beginPhotoFlow('adjust', id);
+    else setActiveEditorId(id);
+  };
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 5 } }),
@@ -165,7 +187,7 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
     }
   }), [disabled]);
 
-  useEffect(() => { valuesRef.current = value; }, [value]);
+  valuesRef.current = value;
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -173,20 +195,22 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
       valuesRef.current.forEach((draft) => mediaUploadRegistry.cancel(draft.clientId));
       previewUrls.current.forEach((url) => URL.revokeObjectURL(url));
       previewUrls.current.clear();
+      unpublishedPreviewUrls.current.clear();
     };
   }, []);
   useEffect(() => {
-    const retainedUrls = new Set(value.map((draft) => draft.previewUrl).filter(Boolean));
+    const retainedUrls = new Set([...value, ...(photoBaseline.current || []), ...Array.from(pendingReplacements.current.values())].map((draft) => draft.previewUrl).filter(Boolean));
+    retainedUrls.forEach(url => unpublishedPreviewUrls.current.delete(url));
     previewUrls.current.forEach((url) => {
-      if (!retainedUrls.has(url)) {
+      if (!retainedUrls.has(url) && !unpublishedPreviewUrls.current.has(url)) {
         URL.revokeObjectURL(url);
         previewUrls.current.delete(url);
       }
     });
   }, [value]);
-  const publish = (next: MediaDraft[]): void => {
+  const publish = (next: MediaDraft[], selectionCommitted = false): void => {
     valuesRef.current = next;
-    onChange(next);
+    onChange(next, selectionCommitted);
   };
 
   const patchDraft = (clientId: string, patch: Partial<MediaDraft>): void => {
@@ -194,6 +218,7 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
   };
 
   const continueEditing = (excludingId: string): void => {
+    if (usesPhotoFlow) return;
     const next = valuesRef.current.find((draft) => draft.clientId !== excludingId && draft.status === 'editing');
     setActiveEditorId(next?.clientId || null);
   };
@@ -205,6 +230,7 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
     if (draft.previewUrl.startsWith('blob:')) {
       URL.revokeObjectURL(draft.previewUrl);
       previewUrls.current.delete(draft.previewUrl);
+      unpublishedPreviewUrls.current.delete(draft.previewUrl);
     }
   };
 
@@ -236,7 +262,10 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
               },
               controller.signal
             );
-        if (!mediaUploadRegistry.isActive(draft.clientId, controller)) return;
+        if (!mediaUploadRegistry.isActive(draft.clientId, controller)) {
+          void mediaApi.cancel(result.id).catch(() => undefined);
+          return;
+        }
         if (draft.assetId && !draft.persisted && draft.assetId !== result.id) {
           void mediaApi.cancel(draft.assetId).catch(() => undefined);
         }
@@ -289,7 +318,8 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
       }
       const selected = files.slice(0, capacity);
       if (selected.length === 0) return;
-      const initialRatio = fixedRatioForPurpose(purpose) || aspectRatio || valuesRef.current[0]?.aspectRatio || 1;
+      beginPhotoFlow();
+      const initialRatio = usesPhotoFlow ? 1 : fixedRatioForPurpose(purpose) || aspectRatio || valuesRef.current[0]?.aspectRatio || 1;
       const provisional = selected.map((sourceFile): MediaDraft => ({
         ...retryDraft,
         clientId: retryDraft?.clientId || crypto.randomUUID(),
@@ -351,7 +381,7 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
         if (!mountedRef.current) return;
       }
       const firstValid = validations.find((result) => !(result instanceof Error));
-      if (purpose === 'POST' && !establishedPostRatio && firstValid && !(firstValid instanceof Error)) {
+      if (!usesPhotoFlow && purpose === 'POST' && !establishedPostRatio && firstValid && !(firstValid instanceof Error)) {
         establishedPostRatio = Math.min(1.91, Math.max(0.8, firstValid.width / firstValid.height));
         onAspectRatioChange?.(establishedPostRatio);
       }
@@ -394,6 +424,7 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
             }
           } else {
             previewUrl = URL.createObjectURL(file);
+            unpublishedPreviewUrls.current.add(previewUrl);
             previewUrls.current.add(previewUrl);
             sourceRatio = await loadImageRatio(previewUrl);
           }
@@ -403,14 +434,15 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
             if (previewUrl?.startsWith('blob:')) {
               URL.revokeObjectURL(previewUrl);
               previewUrls.current.delete(previewUrl);
+              unpublishedPreviewUrls.current.delete(previewUrl);
             }
             continue;
           }
-          if (purpose === 'POST' && !establishedPostRatio) {
+          if (!usesPhotoFlow && purpose === 'POST' && !establishedPostRatio) {
             establishedPostRatio = Math.min(1.91, Math.max(0.8, sourceRatio));
             onAspectRatioChange?.(establishedPostRatio);
           }
-          const established = fixedRatioForPurpose(purpose)
+          const established = usesPhotoFlow ? 1 : fixedRatioForPurpose(purpose)
             || (purpose === 'POST' ? establishedPostRatio! : Math.min(1.91, Math.max(0.8, sourceRatio)));
           patchDraft(draft.clientId, {
             file,
@@ -418,15 +450,17 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
             status: 'editing',
             progress: 0,
             aspectRatio: established,
+            sourceAspectRatio: sourceRatio,
             assetId: preparedAssetId,
             serverPrepared: validated.requiresServerPreparation
           });
-          setActiveEditorId((current) => current || draft.clientId);
+          if (!usesPhotoFlow) setActiveEditorId((current) => current || draft.clientId);
         } catch (error) {
           if (preparedAssetId) void mediaApi.cancel(preparedAssetId).catch(() => undefined);
           if (previewUrl?.startsWith('blob:')) {
             URL.revokeObjectURL(previewUrl);
             previewUrls.current.delete(previewUrl);
+            unpublishedPreviewUrls.current.delete(previewUrl);
           }
           if (!mountedRef.current) return;
           if (error instanceof DOMException && error.name === 'AbortError') continue;
@@ -483,12 +517,12 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
       pendingReplacements.current.delete(draft.clientId);
       publish(valuesRef.current.map((item) => item.clientId === draft.clientId
         ? pendingReplacement
-        : item));
+        : item), Boolean(photoBaseline.current));
       if (activeEditorId === draft.clientId) continueEditing(draft.clientId);
       return;
     }
     const replacement = !multiple && restoreReplacement ? replacedPersistedDrafts.current : null;
-    publish(replacement || valuesRef.current.filter((item) => item.clientId !== draft.clientId));
+    publish(replacement || valuesRef.current.filter((item) => item.clientId !== draft.clientId), Boolean(photoBaseline.current));
     if (!replacement || restoreReplacement) replacedPersistedDrafts.current = null;
     if (activeEditorId === draft.clientId) continueEditing(draft.clientId);
   };
@@ -499,7 +533,7 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
         void addFiles([draft.file], draft);
         return;
       }
-      setActiveEditorId(draft.clientId);
+      editDraft(draft.clientId);
       return;
     }
     if (draft.assetId) {
@@ -546,7 +580,7 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
       setReplacementTargetId(null);
       inputRef.current?.click();
     },
-    edit: (clientId) => setActiveEditorId(clientId),
+    edit: editDraft,
     replace: (clientId) => {
       if (disabled) return;
       setReplacementTargetId(clientId);
@@ -596,7 +630,7 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
                   draft={draft}
                   index={index}
                   sortable={multiple && value.length > 1}
-                  onEdit={() => setActiveEditorId(draft.clientId)}
+                  onEdit={() => editDraft(draft.clientId)}
                   onRetry={() => retry(draft)}
                   onRemove={() => removeDraft(draft)}
                   retryDisabled={isPreparing}
@@ -648,7 +682,52 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
         }}
       />
 
-      {activeDraft?.file && (
+      {photoSession && usesPhotoFlow && (
+        <MediaPhotoFlow
+          drafts={value.filter(draft => Boolean(draft.file))}
+          purpose={purpose}
+          initialStage={photoSession.stage}
+          initialId={photoSession.id}
+          canAdd={canSelect}
+          preparing={isPreparing}
+          error={validationError}
+          onAdd={() => { setReplacementTargetId(null); inputRef.current?.click(); }}
+          onRetry={controls.retry}
+          onRemove={controls.remove}
+          onCancel={() => {
+            const baseline = photoBaseline.current || [];
+            const baselineIds = new Set(baseline.map(d => d.clientId));
+            valuesRef.current.filter(d => !baselineIds.has(d.clientId)).forEach(releaseTransientDraft);
+            const current = new Map(valuesRef.current.map(d => [d.clientId, d]));
+            photoBaseline.current = null;
+            setPhotoSession(null);
+            const restored = baseline.map(d => current.get(d.clientId) || d);
+            publish(restored, true);
+            onSelectionEnd?.(true, restored);
+          }}
+          onApply={(items) => {
+            const selectedIds = new Set(items.map(item => item.id));
+            const current = valuesRef.current;
+            const retained = current.filter(d => !d.file);
+            const removed = current.filter(d => d.file && !selectedIds.has(d.clientId));
+            removed.forEach(d => { if (d.replacedDraft) retained.push(d.replacedDraft); releaseTransientDraft(d); });
+            const selected = items.flatMap(item => {
+              const draft = current.find(d => d.clientId === item.id);
+              return draft ? [{ ...draft, crop: item.crop, aspectRatio: item.crop.aspectRatio }] : [];
+            });
+            photoBaseline.current = null;
+            setPhotoSession(null);
+            publish([...retained, ...selected], true);
+            onSelectionEnd?.(false, [...retained, ...selected]);
+            if (purpose === 'POST') onAspectRatioChange?.((retained[0] || selected[0])?.aspectRatio || 1);
+            selected.forEach(draft => {
+              const previous = current.find(d => d.clientId === draft.clientId)!;
+              if (previous.status !== 'ready' || JSON.stringify(previous.crop) !== JSON.stringify(draft.crop)) startUpload(draft, draft.crop!);
+            });
+          }}
+        />
+      )}
+      {!usesPhotoFlow && activeDraft?.file && (
         <MediaCropEditor
           key={activeDraft.clientId}
           imageSrc={activeDraft.previewUrl}

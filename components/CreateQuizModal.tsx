@@ -12,6 +12,8 @@ import { RichMentionInput } from './RichMentionInput';
 import { api } from '../services/api';
 import { MediaPicker, MediaPickerHandle } from './media/MediaPicker';
 import { MediaImage } from './media/MediaImage';
+import { MediaSourcePreview } from './media/MediaSourcePreview';
+import { cropFromOriginal } from '../utils/mediaCrop';
 import { cancelTemporaryMediaDrafts, createPersistedMediaDraft, mediaDraftsAreReady, mediaDraftsHaveErrors, readyMediaAssetIds } from '../utils/mediaDrafts';
 import { collectInactiveSectionMedia, collectSectionMedia, hydrateSections, serializeSections, SurveyOptionDraft, SurveyQuestionDraft, SurveySectionDraft } from '../utils/sectionMediaDrafts';
 import { AnswerTypeSelector } from './options/AnswerTypeSelector';
@@ -866,11 +868,11 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                                             title={current?.status === 'error' ? 'Retry' : 'Add option image'}
                                           >
                                             {current?.previewUrl ? (
-                                              <img src={current.previewUrl} className="w-full h-full object-cover" alt="" />
+                                  <MediaSourcePreview src={current.previewUrl} selection={current.crop || cropFromOriginal(current.sourceAspectRatio || current.aspectRatio, current.aspectRatio)} />
                                             ) : current?.presentation ? (
-                                              <MediaImage media={current.presentation} className="w-full h-full object-cover" />
+                                  <MediaImage media={current.presentation} className="w-full h-full object-contain" />
                                             ) : opt.image ? (
-                                              <img src={opt.image} className="w-full h-full object-cover" alt="" />
+                                  <img src={opt.image} className="w-full h-full object-contain" alt="" />
                                             ) : (
                                               <Camera size={16} />
                                             )}

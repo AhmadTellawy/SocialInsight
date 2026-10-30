@@ -80,7 +80,6 @@ export const MEDIA_PURPOSE_CONFIG: Record<MediaPurpose, PurposeConfig> = {
     ]
   },
   OPTION_IMAGE: {
-    fixedAspectRatio: 1,
     widths: [
       { width: 160, kind: 'SMALL' },
       { width: 320, kind: 'MEDIUM' },

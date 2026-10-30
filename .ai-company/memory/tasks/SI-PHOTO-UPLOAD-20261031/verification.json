@@ -1,0 +1,62 @@
+{
+  "task": "SI-PHOTO-UPLOAD-20261031",
+  "status": "PASSED_LOCAL_IMPLEMENTATION_CHECKS",
+  "mode": "MAIN_SESSION_ONLY",
+  "review": "Main-session review only; no independent approval claimed.",
+  "environment": {
+    "os": "Windows",
+    "node": "24.13.0",
+    "browser": "Microsoft Edge via Playwright",
+    "base": "8c56112449ded9cb65566af6b3bbdbf0ea4eb5b6",
+    "branch": "codex/post-photo-flow",
+    "worktree": "C:/Users/ABC/.codex/worktrees/post-photo-flow/socialinsight-20261006",
+    "databaseOrProductionMutation": false
+  },
+  "implemented": [
+    "Post and option photos share ordered multi-selection, numbered thumbnails and a collapsible preview.",
+    "Each new image starts at 1:1. Original and 4:5 always derive their geometry from the immutable oriented source.",
+    "Next opens a dimensions-only editor with per-image changes, repositioning and optional apply-to-all.",
+    "Mixed aspect ratios are accepted after existing server ownership, purpose, readiness and maximum-eight validation.",
+    "Option images no longer have a forced square crop. Creator and response views preserve their chosen crop.",
+    "Photo selection returns to all four creators; option text and identities survive cancellation and replacement.",
+    "Retained originals, HEIF preparation, retries, aborted uploads, object URL lifetime and nested dialog scroll locks are preserved.",
+    "English and Arabic labels, RTL, keyboard controls, browser-back handling and dark-theme contrast."
+  ],
+  "baseline": {
+    "frontend": "181 passed before edits",
+    "targetedServerMedia": "22 passed after local Prisma client generation",
+    "initialFreshCheckoutIssue": "First server attempt had no generated Prisma client; npx.cmd prisma generate resolved local setup.",
+    "primaryCheckout": "Not edited; unrelated pre-existing changes preserved."
+  },
+  "checks": [
+    { "command": "npm.cmd run test:unit", "cwd": "worktree", "result": "188 passed; 0 failed", "log": "frontend-tests.log" },
+    { "command": "npx.cmd tsc --noEmit", "cwd": "worktree", "result": "passed", "log": "typecheck.log" },
+    { "command": "npm.cmd run build", "cwd": "worktree", "result": "passed", "log": "frontend-build.log" },
+    { "command": "npm.cmd test", "cwd": "worktree/server", "result": "755 total; 754 passed; 0 failed; 1 existing skip", "log": "backend-tests.log" },
+    { "command": "npm.cmd run build", "cwd": "worktree/server", "result": "passed", "log": "backend-build.log" },
+    { "command": "npx.cmd playwright test --config=playwright.photo-flow.config.ts", "cwd": "worktree", "result": "32 passed; 0 failed; 320px, 390px and 1280px; EN/AR and dark contrast", "log": "browser-final.log" },
+    { "command": "git diff --check", "cwd": "worktree", "result": "passed" }
+  ],
+  "verificationBoundaries": [
+    "Final portrait screenshot was visually inspected; selected crop, source recovery, dimensions controls and phone layout are correct.",
+    "Browser checks exercise real React creators and upload client with deterministic API/storage responses.",
+    "Real Sharp processing checks verify recovered source pixels, exact ratios, immutable masters and bounded outputs.",
+    "Server tests validate media ownership/readiness/uniqueness, ratio rules and existing privacy protections.",
+    "No claim of live end-to-end database, object storage or HEIF converter deployment verification.",
+    "Existing real PostgreSQL-compatible-engine test remains skipped in this local environment."
+  ],
+  "issuesResolvedDuringChecks": [
+    "Transient preview URLs were being revoked before the parent draft value committed; unpublished URLs are now retained until observed.",
+    "A stale passive effect could replace the latest draft reference; draft references now synchronize during render.",
+    "Escape after a disappearing retry button could lose dialog focus; the active dialog now handles Escape at capture phase.",
+    "Canceled replacements and blank option rows preserve original names and IDs, including quiz answer references.",
+    "Nested creator/photo dialogs release page scrolling regardless of cleanup order.",
+    "Browser fixtures were updated for the new batch flow and for survey minimum-question and existing-media requirements."
+  ],
+  "release": {
+    "state": "NOT_DEPLOYED",
+    "schemaChanges": false,
+    "independentReleaseGates": "Unavailable while agents are paused; not self-approved or waived.",
+    "authorization": "Local implementation and verification only. No publish, push, merge or deployment performed."
+  }
+}

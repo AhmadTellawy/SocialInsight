@@ -2,8 +2,7 @@
 import React, { useEffect, useId, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { dismissSheetKeyboard, registerSheetHistory } from '../utils/sheetHistory';
-let bodyLockCount = 0;
-let unlockedOverflow = '';
+import { acquireBodyScrollLock } from '../utils/bodyScrollLock';
 const focusedSheets: HTMLElement[] = [];
 
 interface BottomSheetProps {
@@ -92,11 +91,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, child
 
   useEffect(() => {
     if (!isOpen) return;
-    if (bodyLockCount++ === 0) unlockedOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      if (--bodyLockCount === 0) document.body.style.overflow = unlockedOverflow;
-    };
+    return acquireBodyScrollLock();
   }, [isOpen]);
 
   useEffect(() => {

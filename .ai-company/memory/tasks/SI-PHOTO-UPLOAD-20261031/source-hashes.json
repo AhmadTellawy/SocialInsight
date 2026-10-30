@@ -1,0 +1,126 @@
+[
+  {
+    "path": "components/BottomSheet.tsx",
+    "sha256": "6EC35D0528FC9A1A8F04C9FEBA73EBF4CE39EC569F7694AAA5A087310A34B4A5"
+  },
+  {
+    "path": "components/CreateChallengeScreen.tsx",
+    "sha256": "4EDD9299A58AD0F4A5B58DEE5E7AE83009AFBBB7FE62B528D60D5F4869EF5E2E"
+  },
+  {
+    "path": "components/CreateQuizModal.tsx",
+    "sha256": "7E1E11325CA7E0BFD16457AB1C1120D8989BB1BC43098DC3354F841C8C1ACAD7"
+  },
+  {
+    "path": "components/media/MediaCarousel.tsx",
+    "sha256": "E43A61A9EEDB91ACC3093889710C27747D6A34E7D1DD9EAC3FD3765ACC3E666E"
+  },
+  {
+    "path": "components/media/MediaPhotoFlow.tsx",
+    "sha256": "94C23FDEF1A4ED443B6D51D59386815364BF96461A265F0153AC6357380E84F4"
+  },
+  {
+    "path": "components/media/MediaPicker.tsx",
+    "sha256": "DC5CE85CD0325EAAD642253AD68E167D90EA694F7666150F812983B2F70CAA1F"
+  },
+  {
+    "path": "components/media/MediaSourcePreview.tsx",
+    "sha256": "326871A7913E4D04CB1FDADD1976A19FC1FDBCBB1BFA3E1FB26F7C2FD4589668"
+  },
+  {
+    "path": "components/options/OptionImagePicker.tsx",
+    "sha256": "05809C05EAF4122DB40BDC25965B650F8EB156F639FE2ED6786DE8EB66E234AF"
+  },
+  {
+    "path": "components/Survey/SurveyQuestion.tsx",
+    "sha256": "30773C9317D918FA9250B6DEF9FB94602F399DA1281E372E9AE38E443AC5D216"
+  },
+  {
+    "path": "components/SurveyCard.tsx",
+    "sha256": "CC73A17676D6E5A641AA2B8DFFA85CF27C0EB9CA5B21115D2A3E1D47B1A1A37F"
+  },
+  {
+    "path": "locales/ar/translation.json",
+    "sha256": "9925147FACF102C193A427F033B26166AA8C7CBE00FF025AB5DEB3EA10F251DF"
+  },
+  {
+    "path": "locales/en/translation.json",
+    "sha256": "B6DB828B072AD5243E36479657E97064CA1186E976BD8D9234822DC6319FE0F9"
+  },
+  {
+    "path": "package.json",
+    "sha256": "5C8DAD44FDB2A385A0CF033484CF2F26C1B0969B87E8EC97C9ABF0B91448981C"
+  },
+  {
+    "path": "playwright.photo-flow.config.ts",
+    "sha256": "11EFBBD1917FD09778825474DACF770E44B4BEBB85CB1624711FB6CFBA6C4450"
+  },
+  {
+    "path": "server/src/config/media.ts",
+    "sha256": "9AF5E89486101C83947D3408B1ED6D12CE2F69BFCBAE477BEA001D1AC86EC53F"
+  },
+  {
+    "path": "server/src/services/mediaPolicy.test.ts",
+    "sha256": "97AF78F2964B755092ADD0F6A2A0F2E615669518992589CA7A1CF82485AAD57A"
+  },
+  {
+    "path": "server/src/services/mediaProcessor.test.ts",
+    "sha256": "C963CAAD29BD2965224742E9346416B94FEB8ECBDB08ECF6A45BDCDE766E205E"
+  },
+  {
+    "path": "server/src/services/mediaProcessor.ts",
+    "sha256": "7196936A0D088B2E246519AC8B76398820BC61A7A0A3D34EE26950071C7B3150"
+  },
+  {
+    "path": "server/src/services/mediaService.ts",
+    "sha256": "A499BA34590105E562B891EEC5864C886FB49BF6A083781CD827B373300479D6"
+  },
+  {
+    "path": "tests/post-ui-e2e/crop-contrast.spec.ts",
+    "sha256": "6B50329F13E4BC7ACCCADD7FC1D7ED349389F4BCA8B029BD17796A1F712C5171"
+  },
+  {
+    "path": "tests/post-ui-e2e/harness.tsx",
+    "sha256": "BFEC0241F14B9913273BAFB8C3F195A94AEE84EF58C4A832D2FD62A03E1E0372"
+  },
+  {
+    "path": "tests/post-ui-e2e/heif-fixture/index.html",
+    "sha256": "423B6F9FD020F1495467489E8F718503B46675FCA7A39C8DE068F2619DDF9223"
+  },
+  {
+    "path": "tests/post-ui-e2e/heif-preparation.spec.ts",
+    "sha256": "453C08517EA90BF1C7A702DD955C950752DB712A52D8B5E75C2EE9B76AC73677"
+  },
+  {
+    "path": "tests/post-ui-e2e/photo-fixture/index.html",
+    "sha256": "2605E47FF344BA59A2211622B48538413DB0808EC354700F106FCACE16CE9F01"
+  },
+  {
+    "path": "tests/post-ui-e2e/photo-flow.spec.ts",
+    "sha256": "A7FA228FCEB47EC4668E4EA5AABDE7921095D6113809BBA298A5E8F4E45C8C2E"
+  },
+  {
+    "path": "types.ts",
+    "sha256": "C3ECD1959AB20B989BAA113920C0A9185A0CFA30EEE786CE84BA5A8363FBA647"
+  },
+  {
+    "path": "utils/bodyScrollLock.ts",
+    "sha256": "220035495B7AE7BEBDC7B79908D9F3BD7D6F1799737D46C50B7BF2880F27120E"
+  },
+  {
+    "path": "utils/mediaCrop.test.ts",
+    "sha256": "D2203A787A81E63B91C27DA2794019D53CF9B57D4EAF867E455386962A216342"
+  },
+  {
+    "path": "utils/mediaCrop.ts",
+    "sha256": "04901E0EC03222CCBFD7D121BF1D563E4C09244A19D72C00064ADC39F9D90921"
+  },
+  {
+    "path": "utils/optionPresentation.test.ts",
+    "sha256": "F28023EB3E5A9978CF1D554158C44A12683898512070A84E002E223A39E0975D"
+  },
+  {
+    "path": "utils/optionPresentation.ts",
+    "sha256": "8863C445C13994864CD1420ABAC6CAFD514D32D0A1DD118FB518AEF44C921A8F"
+  }
+]

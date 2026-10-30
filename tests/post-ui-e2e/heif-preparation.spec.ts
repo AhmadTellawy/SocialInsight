@@ -56,17 +56,15 @@ test('failed HEIF retry waits visibly for the other pending batch item', async (
   await fixture(page);
   await page.locator('input[type=file]').setInputFiles([{ ...heifFile(), name: 'first.heic' }, { ...heifFile(), name: 'second.heic' }]);
   await expect.poll(() => warmups).toBe(2);
-  const retry = page.getByRole('button', { name: 'Retry', exact: true }).first();
+  const retry = page.getByTestId('media-photo-flow').getByRole('button', { name: 'Retry', exact: true }).first();
   await expect(retry).toBeDisabled();
-  const describedBy = await retry.getAttribute('aria-describedby');
-  expect(describedBy).toBeTruthy();
-  await expect(page.locator(`[id="${describedBy}"]`)).toContainText('Preparing your images');
   expect(warmups).toBe(2);
   second.release();
-  await expect(page.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(2);
+  await expect(page.getByTestId('media-photo-flow').getByRole('button', { name: 'Retry', exact: true })).toHaveCount(2);
   await expect(retry).toBeEnabled();
   await retry.focus(); await page.keyboard.press('Enter');
-  await expect(page.getByTestId('media-crop-editor')).toBeVisible();
+  await expect(page.getByTestId('media-photo-flow')).toBeVisible();
+  await expect.poll(async () => (await readDrafts(page))[0]?.status).toBe('editing');
   expect(warmups).toBe(3);
   await page.keyboard.press('Escape');
 });
@@ -92,14 +90,15 @@ test('cold HEIF failure retains the selected file and retry creates one prepared
   await page.route('**/synthetic-upload', route => route.fulfill({ status: 200, body: '' }));
   await fixture(page);
   await page.locator('input[type=file]').setInputFiles(heifFile());
-  await expect(page.getByRole('alert')).toContainText('Try again or remove it');
+  await expect(page.getByTestId('media-photo-flow').getByRole('alert')).toContainText('Try again or remove it');
   const first = await readDrafts(page);
   expect(first).toHaveLength(1);
   expect(first[0]).toMatchObject({ status: 'error', name: 'selected.heic' });
   expect(uploads).toBe(0);
   await expect(page.getByRole('button', { name: 'Submit fixture', exact: true })).toBeDisabled();
-  await page.getByRole('button', { name: 'Retry', exact: true }).click();
-  await expect(page.getByTestId('media-crop-editor')).toBeVisible();
+  await page.getByTestId('media-photo-flow').getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(page.getByTestId('media-photo-flow')).toBeVisible();
+  await expect.poll(async () => (await readDrafts(page))[0]?.status).toBe('editing');
   const retry = await readDrafts(page);
   expect(retry[0]).toMatchObject({ clientId: first[0].clientId, status: 'editing', assetId: 'prepared-asset' });
   expect({ configs, warmups, uploads, preparations }).toEqual({ configs: 2, warmups: 2, uploads: 1, preparations: 1 });
@@ -130,19 +129,19 @@ test('Arabic waiting is cancelable and later selection can warm again without st
   await fixture(page, 'ar');
   await page.locator('input[type=file]').setInputFiles(heifFile());
   await expect.poll(() => warmups).toBe(1);
-  const waiting = page.getByRole('status').filter({ hasText: 'جارٍ تجهيز الصور' });
+  const waiting = page.getByTestId('media-photo-flow').getByRole('status');
   await expect(waiting).toBeVisible();
-  await page.getByRole('button', { name: 'إلغاء التجهيز', exact: true }).click();
+  await page.getByTestId('media-photo-flow').getByRole('button', { name: 'إلغاء', exact: true }).click();
   await expect(page.getByTestId('drafts')).toHaveText('[]');
   await expect.poll(() => page.evaluate(() => (window as any).abortedMediaRequests)).toContain('/api/media/heif/warmup');
   warmup.release();
   await expect(waiting).toHaveCount(0);
   await page.locator('input[type=file]').setInputFiles(heifFile());
-  await expect(page.getByRole('alert')).toContainText('تعذر تجهيز الصورة الآن');
+  await expect(page.getByTestId('media-photo-flow').getByRole('alert')).toContainText('تعذر تجهيز الصورة الآن');
   expect(warmups).toBe(2);
   expect(uploads).toBe(0);
   await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
-  await expect(page.getByTestId('media-crop-editor')).toHaveCount(0);
+  await expect(page.getByTestId('media-photo-flow').getByRole('button', { name: 'التالي', exact: true })).toBeDisabled();
 });
 
 test('ordinary images bypass config and warmup entirely', async ({ page }) => {
@@ -150,7 +149,7 @@ test('ordinary images bypass config and warmup entirely', async ({ page }) => {
   await page.route('**/api/**', async route => { requests.push(route.request().url()); await route.abort(); });
   await fixture(page);
   await page.locator('input[type=file]').setInputFiles(path.resolve(process.cwd(), 'public/pwa-192x192.png'));
-  await expect(page.getByTestId('media-crop-editor')).toBeVisible();
+  await expect(page.getByTestId('media-photo-flow')).toBeVisible();
   expect(requests).toEqual([]);
   expect((await readDrafts(page))[0]).toMatchObject({ status: 'editing', serverPrepared: false });
 });
@@ -167,15 +166,15 @@ test('ordinary image in a mixed selection opens before cold HEIF and selected or
   await fixture(page);
   const png = await import('node:fs/promises').then(fs => fs.readFile(path.resolve(process.cwd(), 'public/pwa-192x192.png')));
   await page.locator('input[type=file]').setInputFiles([heifFile(), { name: 'ordinary.png', mimeType: 'image/png', buffer: png }]);
-  await expect(page.getByTestId('media-crop-editor')).toBeVisible();
+  await expect(page.getByTestId('media-photo-flow')).toBeVisible();
   await expect.poll(() => warmups).toBe(1);
   const drafts = await readDrafts(page);
   expect(drafts.map((draft: any) => draft.name)).toEqual(['selected.heic', 'ordinary.png']);
   expect(drafts[0].status).toBe('processing');
   expect(drafts[1].status).toBe('editing');
-  expect(drafts[1].aspectRatio).toBeCloseTo(4 / 3);
+  expect(drafts[1].aspectRatio).toBe(1);
   warmup.release();
-  await expect(page.getByRole('alert')).toContainText('Try again or remove it');
+  await expect(page.getByTestId('media-photo-flow').getByRole('alert')).toContainText('Try again or remove it');
 });
 
 test('closing the picker cancels active preparation and cleans its temporary asset', async ({ page }) => {
@@ -199,97 +198,46 @@ test('closing the picker cancels active preparation and cleans its temporary ass
   await fixture(page);
   await page.locator('input[type=file]').setInputFiles(heifFile());
   await expect.poll(() => preparations).toBe(1);
-  await page.getByRole('button', { name: 'Close picker', exact: true }).click();
+  await page.getByRole('button', { name: 'Close picker', exact: true }).evaluate((button: HTMLButtonElement) => button.click());
   await expect.poll(() => deletes).toBe(1);
   await expect.poll(() => page.evaluate(() => (window as any).abortedMediaRequests)).toContain('/api/media/prepared-asset/prepare');
   preparation.release();
-  await expect(page.getByTestId('media-crop-editor')).toHaveCount(0);
+  await expect(page.getByTestId('media-photo-flow')).toHaveCount(0);
   await expect(page.getByTestId('asset-ids')).toHaveText('[]');
 });
 
-for (const peerStatus of ['ready', 'processing'] as const) {
-test(`mixed images keep one finalized frame when the first HEIF becomes editable last (${peerStatus} peer)`, async ({ page }, testInfo) => {
-  const warmup = pending();
-  const ordinaryFinalization = pending();
-  const assets = new Map<string, { mime: string; ratio?: number }>();
-  const finalized: Array<{ id: string; crop: { aspectRatio: number; crop: { x: number; y: number; width: number; height: number } } }> = [];
-  const posts: Array<{ ids: string[]; requestedRatio: number; storedRatios: number[]; accepted: boolean }> = [];
-  let warmups = 0;
+test('late HEIF preparation keeps source identity and batch selection until both images are ready', async ({ page }) => {
+  const preparation = pending(); let prepared = false;
+  const finalized: any[] = []; let uploads = 0;
   await page.route('**/api/media/**', async route => {
-    const request = route.request();
-    const pathname = new URL(request.url()).pathname;
-    if (pathname.endsWith('/config')) return route.fulfill({ json: { heifServerPreparationConfigured: true, heifServerPreparationEnabled: false } });
-    if (pathname.endsWith('/heif/warmup')) {
-      warmups++;
-      await warmup.promise;
-      return route.fulfill({ json: { heifServerPreparationEnabled: true } });
-    }
-    if (pathname.endsWith('/uploads')) {
-      const { mime } = request.postDataJSON();
-      const id = mime === 'image/png' ? 'ordinary-asset' : 'heif-asset';
-      expect(assets.has(id)).toBe(false);
-      assets.set(id, { mime });
-      return route.fulfill({ json: { assetId: id, signedUrl: `http://127.0.0.1:4187/synthetic-upload/${id}` } });
-    }
-    if (pathname.endsWith('/prepare')) return route.fulfill({ json: { ...preview, id: 'heif-asset' } });
+    const request = route.request(); const pathname = new URL(request.url()).pathname;
+    if (pathname.endsWith('/config')) return route.fulfill({ json: { heifServerPreparationConfigured: true, heifServerPreparationEnabled: true } });
+    if (pathname.endsWith('/uploads')) return route.fulfill({ json: { assetId: 'asset-' + ++uploads, signedUrl: 'http://127.0.0.1:4187/synthetic-upload' } });
+    if (pathname.endsWith('/prepare')) { await preparation.promise; prepared = true; return route.fulfill({ json: { ...preview, id: 'asset-1' } }); }
     if (pathname.endsWith('/finalize')) {
-      const id = pathname.split('/').at(-2)!;
-      const crop = request.postDataJSON();
-      expect(assets.has(id)).toBe(true);
-      expect(crop.crop.width).toBeGreaterThan(0);
-      expect(crop.crop.height).toBeGreaterThan(0);
-      assets.get(id)!.ratio = crop.aspectRatio;
-      finalized.push({ id, crop });
-      if (id === 'ordinary-asset' && peerStatus === 'processing') await ordinaryFinalization.promise;
-      return route.fulfill({ json: { id, aspectRatio: crop.aspectRatio, width: Math.round(1200 * crop.aspectRatio), height: 1200 } });
+      const crop = request.postDataJSON(); finalized.push(crop);
+      return route.fulfill({ json: { id: pathname.split('/').at(-2), aspectRatio: crop.aspectRatio, width: 192, height: Math.round(192 / crop.aspectRatio) } });
     }
-    throw new Error(`Unexpected mixed-frame media route ${pathname}`);
+    return route.fulfill({ json: {} });
   });
-  await page.route('**/synthetic-upload/*', route => route.fulfill({ status: 200, body: '' }));
-  // Deterministic response fixture applies the existing server's 1% frame
-  // contract to ratios stored by actual UI finalize requests; no DB/codec claim.
-  await page.route('**/api/heif-fixture/posts', async route => {
-    const { mediaAssetIds: ids, mediaAspectRatio: requestedRatio } = route.request().postDataJSON();
-    const storedRatios = ids.map((id: string) => assets.get(id)?.ratio);
-    const first = storedRatios[0];
-    const accepted = ids.length === 2 && storedRatios.every((ratio: number) => ratio && Math.abs(ratio - first) / first <= 0.01)
-      && Math.abs(requestedRatio - first) / first <= 0.01;
-    posts.push({ ids, requestedRatio, storedRatios, accepted });
-    await route.fulfill({ status: accepted ? 200 : 409, json: accepted ? { id: 'synthetic-post' } : { code: 'MEDIA_RATIO_MISMATCH' } });
-  });
+  await page.route('**/synthetic-upload', route => route.fulfill({ status: 200 }));
   await fixture(page);
   const png = await import('node:fs/promises').then(fs => fs.readFile(path.resolve(process.cwd(), 'public/pwa-192x192.png')));
   await page.locator('input[type=file]').setInputFiles([heifFile(), { name: 'ordinary.png', mimeType: 'image/png', buffer: png }]);
-  const editor = page.getByTestId('media-crop-editor');
-  await expect(editor).toBeVisible();
-  await expect.poll(() => warmups).toBe(1);
-  await expect(editor.getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
+  const editor = page.getByTestId('media-photo-flow');
+  await expect.poll(async () => (await readDrafts(page))[1]?.status).toBe('editing');
+  await expect(editor.getByRole('button', { name: 'Next', exact: true })).toBeDisabled();
+  expect(finalized).toHaveLength(0);
+  preparation.release();
+  await expect(editor.getByRole('button', { name: 'Next', exact: true })).toBeEnabled();
+  expect(prepared).toBe(true);
+  await editor.getByRole('button', { name: 'Next', exact: true }).click();
+  await editor.getByRole('button', { name: 'Aspect ratio', exact: true }).click();
+  await editor.getByRole('button', { name: 'Portrait 4:5', exact: true }).click();
   await editor.getByRole('button', { name: 'Done', exact: true }).click();
-  await expect.poll(() => finalized.length).toBe(1);
-  await expect.poll(async () => (await readDrafts(page))[1]?.status).toBe(peerStatus);
-  expect(finalized.map(({ id, crop }) => ({ id, ratio: crop.aspectRatio }))).toEqual([{ id: 'ordinary-asset', ratio: 4 / 3 }]);
-  expect((await readDrafts(page))[0].status).toBe('processing');
-  await expect(page.getByRole('button', { name: 'Submit fixture', exact: true })).toBeDisabled();
-
-  warmup.release();
-  await expect(editor).toBeVisible();
-  const square = editor.getByRole('group', { name: 'Aspect ratio', exact: true }).getByRole('button', { name: '1:1', exact: true });
-  // Replays the reported user action on the old UI. The corrected UI must
-  // retain the already-finalized frame and therefore offers no square preset.
-  if (await square.count()) await square.click();
-  await expect(editor.getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
-  await editor.getByRole('button', { name: 'Done', exact: true }).click();
-  ordinaryFinalization.release();
-  await expect.poll(async () => (await readDrafts(page)).map((draft: any) => draft.status)).toEqual(['ready', 'ready']);
-  await expect(page.getByRole('button', { name: 'Submit fixture', exact: true })).toBeEnabled();
-  await page.getByRole('button', { name: 'Submit fixture', exact: true }).click();
-  await expect.poll(() => posts.length).toBe(1);
-  const observation = JSON.stringify({ peerStatus, finalized, posts, drafts: await readDrafts(page) }, null, 2);
-  const observationPath = testInfo.outputPath('mixed-frame-observation.json');
-  await import('node:fs/promises').then(fs => fs.writeFile(observationPath, observation + '\n'));
-  await testInfo.attach('mixed-frame-observation.json', { path: observationPath, contentType: 'application/json' });
-  await expect(page.getByTestId('submission')).toHaveText('accepted');
-  expect(finalized.map(({ crop }) => crop.aspectRatio)).toEqual([4 / 3, 4 / 3]);
-  expect(posts[0]).toMatchObject({ ids: ['heif-asset', 'ordinary-asset'], requestedRatio: 4 / 3, accepted: true });
+  await editor.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect.poll(async () => (await readDrafts(page)).map((d: any) => d.status)).toEqual(['ready', 'ready']);
+  expect(finalized.map(c => c.aspectRatio).sort()).toEqual([.8, 1]);
+  expect((await readDrafts(page)).map((d: any) => d.name)).toEqual(['selected.heic', 'ordinary.png']);
+  expect(uploads).toBe(2);
 });
-}

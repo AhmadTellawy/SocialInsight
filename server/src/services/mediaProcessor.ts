@@ -126,16 +126,21 @@ const toPixelCrop = (crop: NormalizedCrop, width: number, height: number) => {
   return { left, top, width: cropWidth, height: cropHeight };
 };
 
-const resolveAspectRatio = (purpose: MediaPurpose, requested: number | undefined, sourceRatio: number): number => {
+const resolveAspectRatio = (purpose: MediaPurpose, requested: number | undefined, sourceRatio: number, originalRatio: number): number => {
   const fixed = MEDIA_PURPOSE_CONFIG[purpose].fixedAspectRatio;
   if (fixed) return fixed;
   if (requested !== undefined) {
+    // Original is supported only when it matches the decoded, oriented source.
+    // Size and pixel limits above still apply before any crop or output is made.
+    if ((purpose === 'POST' || purpose === 'OPTION_IMAGE') && Number.isFinite(requested) && requested > 0
+      && (requested < MEDIA_CONFIG.minAspectRatio || requested > MEDIA_CONFIG.maxAspectRatio)
+      && (Math.abs(requested - sourceRatio) / sourceRatio < .01 || Math.abs(requested - originalRatio) / originalRatio < .01)) return sourceRatio;
     if (!Number.isFinite(requested) || requested < MEDIA_CONFIG.minAspectRatio || requested > MEDIA_CONFIG.maxAspectRatio) {
       throw new MediaValidationError('INVALID_ASPECT_RATIO', 'Image aspect ratio is outside the supported range.');
     }
     return requested;
   }
-  return clampMediaAspectRatio(sourceRatio);
+  return purpose === 'OPTION_IMAGE' ? 1 : clampMediaAspectRatio(sourceRatio);
 };
 
 export const processMediaBuffer = async (
@@ -198,7 +203,9 @@ export const processMediaBuffer = async (
 
   const sourceWidth = normalized.info.width;
   const sourceHeight = normalized.info.height;
-  const aspectRatio = resolveAspectRatio(purpose, request.aspectRatio, sourceWidth / sourceHeight);
+  const swapped = metadata.orientation && metadata.orientation >= 5 && metadata.orientation <= 8;
+  const originalRatio = swapped ? metadata.height! / metadata.width! : metadata.width! / metadata.height!;
+  const aspectRatio = resolveAspectRatio(purpose, request.aspectRatio, sourceWidth / sourceHeight, originalRatio);
   const crop = fitCropToRatio(
     request.crop || centeredCrop(sourceWidth, sourceHeight, aspectRatio),
     sourceWidth,

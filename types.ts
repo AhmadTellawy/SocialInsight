@@ -78,6 +78,8 @@ export interface PeopleTag {
 }
 
 export interface MediaDraft {
+  /** Aspect of the immutable, oriented source; independent of the selected crop. */
+  sourceAspectRatio?: number;
   serverPrepared?: boolean;
   clientId: string;
   file: File | null;

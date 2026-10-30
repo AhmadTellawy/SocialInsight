@@ -20,6 +20,34 @@ const draft = (clientId: string, replacesClientId?: string): MediaDraft => ({
 
 const option = (id: string) => ({ id, text: '', image: undefined, mediaDrafts: [] as MediaDraft[] });
 
+test('committing photo selection reorders names with images and removes deselected empty rows', () => {
+  const options = [
+    { ...option('one'), text: 'First', mediaDrafts: [draft('a')] },
+    { ...option('two'), text: 'Second', mediaDrafts: [draft('b')] },
+    { ...option('three'), mediaDrafts: [draft('c')] }
+  ];
+  const result = reconcileOptionMediaDrafts(options, [draft('b'), draft('a')], () => option('new'), null, true);
+  assert.deepEqual(result.map(o => [o.id, o.text, o.mediaDrafts[0]?.clientId]), [['two', 'Second', 'b'], ['one', 'First', 'a']]);
+});
+
+test('canceling a photo batch retains named options and restores minimum blank rows', () => {
+  const options = [{ ...option('one'), text: 'Keep me', mediaDrafts: [draft('a')] }, { ...option('two'), mediaDrafts: [draft('b')] }];
+  const result = reconcileOptionMediaDrafts(options, [], () => option('blank'), null, true);
+  assert.equal(result.length, 2);
+  assert.equal(result[0].text, 'Keep me');
+  assert.equal(result[0].mediaDrafts.length, 0);
+});
+
+test('canceling replacement restores the same named option rather than another empty slot', () => {
+  const old = draft('old');
+  const replacement = { ...draft('new', 'old'), replacedDraft: old };
+  const options = [option('empty'), { ...option('named'), text: 'Keep this name', mediaDrafts: [replacement] }];
+  const result = reconcileOptionMediaDrafts(options, [old], () => option('extra'));
+  assert.equal(result[0].mediaDrafts.length, 0);
+  assert.equal(result[1].text, 'Keep this name');
+  assert.equal(result[1].mediaDrafts[0].clientId, 'old');
+});
+
 test('derives legacy image presentation without changing explicit text presentation', () => {
   assert.equal(resolveOptionPresentation(undefined, [{ image: 'legacy.webp' }]), 'image');
   assert.equal(resolveOptionPresentation('text', [{ image: 'legacy.webp' }]), 'text');

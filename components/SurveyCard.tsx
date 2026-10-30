@@ -1375,7 +1375,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           <p className="text-[10px] font-bold text-amber-600 uppercase tracking-widest mb-6">{t('Challenge Completed')}</p>
 
           <div className="bg-white p-4 rounded-xl border border-amber-200 shadow-sm flex items-center gap-4 text-left">
-            {hasOptionImage(winner) && <MediaImage media={winner.imageMedia} mediaId={winner.imageMediaId} fallbackSrc={winner.image} className="w-16 h-16 rounded-lg object-cover" alt="" />}
+            {hasOptionImage(winner) && <MediaImage media={winner.imageMedia} mediaId={winner.imageMediaId} fallbackSrc={winner.image} className="w-16 h-16 rounded-lg object-contain" alt="" />}
             <div className="flex-1">
               {(displayOptionNames || !hasOptionImage(winner)) && (
                 <h4 dir="auto" className="text-[12px] text-start font-normal text-gray-900 leading-relaxed break-words">
@@ -1431,7 +1431,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                       mediaId={opt.imageMediaId}
                       fallbackSrc={opt.image}
                       onLoad={(e) => handleDetectOrientation(imageKey, e)}
-                      className="w-full h-full object-cover transition-transform group-hover:scale-110"
+                      className="w-full h-full object-contain"
                       alt=""
                     />
                     {isPortrait && (
@@ -1613,7 +1613,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                                   mediaId={opt.imageMediaId}
                                   fallbackSrc={opt.image}
                                   onLoad={(e) => handleDetectOrientation(imageKey, e)}
-                                  className="w-full h-full object-cover transition-transform group-hover/img:scale-105"
+                                  className="w-full h-full object-contain"
                                   alt=""
                                 />
                                 {isPortrait && (

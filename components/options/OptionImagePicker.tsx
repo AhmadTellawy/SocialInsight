@@ -5,6 +5,8 @@ import { MediaDraft } from '../../types';
 import { reconcileOptionMediaDrafts, OptionWithMediaDrafts } from '../../utils/optionPresentation';
 import { MediaPicker, MediaPickerControls } from '../media/MediaPicker';
 import { MediaImage } from '../media/MediaImage';
+import { MediaSourcePreview } from '../media/MediaSourcePreview';
+import { cropFromOriginal } from '../../utils/mediaCrop';
 
 export type OptionImagePickerControls = MediaPickerControls & {
   openBulk: () => void;
@@ -26,6 +28,7 @@ export const OptionImagePicker = <T extends OptionWithMediaDrafts>({
 }: OptionImagePickerProps<T>) => {
   const preferredOptionId = useRef<string | null>(null);
   const optionsRef = useRef(options);
+  const selectionBaseline = useRef<T[] | null>(null);
   optionsRef.current = options;
   const mediaDrafts = options.flatMap((option) => option.mediaDrafts.slice(0, 1));
 
@@ -33,8 +36,21 @@ export const OptionImagePicker = <T extends OptionWithMediaDrafts>({
     <MediaPicker
       purpose="OPTION_IMAGE"
       value={mediaDrafts}
-      onChange={(nextDrafts) => {
-        const nextOptions = reconcileOptionMediaDrafts(optionsRef.current, nextDrafts, createOption, preferredOptionId.current);
+      onSelectionStart={() => { selectionBaseline.current = optionsRef.current; }}
+      onSelectionEnd={(canceled, drafts) => {
+        const baseline = selectionBaseline.current;
+        selectionBaseline.current = null;
+        if (!canceled || !baseline) return;
+        // Restore blank row identities too: quiz correctness can reference one.
+        const byId = new Map(drafts.map(draft => [draft.clientId, draft]));
+        const restored = baseline.map(option => ({
+          ...option, mediaDrafts: option.mediaDrafts.map(draft => byId.get(draft.clientId) || draft)
+        }));
+        optionsRef.current = restored;
+        onChange(restored);
+      }}
+      onChange={(nextDrafts, selectionCommitted) => {
+        const nextOptions = reconcileOptionMediaDrafts(optionsRef.current, nextDrafts, createOption, preferredOptionId.current, selectionCommitted);
         optionsRef.current = nextOptions;
         onChange(nextOptions);
         preferredOptionId.current = null;
@@ -104,12 +120,12 @@ export const OptionImageThumbnail: React.FC<OptionImageThumbnailProps> = ({
           hasImage ? accentClasses[accent] : 'border-gray-300 text-gray-500 hover:border-blue-400 hover:text-blue-600'
         }`}
       >
-        {draft?.status === 'ready' && draft.presentation ? (
-          <MediaImage media={draft.presentation} mediaId={draft.assetId} className="h-full w-full object-cover" alt="" />
+        {draft?.status === 'ready' && draft.presentation && (!draft.file || !draft.previewUrl) ? (
+          <MediaImage media={draft.presentation} mediaId={draft.assetId} className="h-full w-full object-contain" alt="" />
         ) : draft?.previewUrl ? (
-          <img src={draft.previewUrl} className="h-full w-full object-cover" alt="" />
+          <MediaSourcePreview src={draft.previewUrl} selection={draft.crop || cropFromOriginal(draft.sourceAspectRatio || draft.aspectRatio, draft.aspectRatio)} />
         ) : legacyImage ? (
-          <img src={legacyImage} className="h-full w-full object-cover" alt="" />
+          <img src={legacyImage} className="h-full w-full object-contain" alt="" />
         ) : (
           <Camera size={16} aria-hidden="true" />
         )}
