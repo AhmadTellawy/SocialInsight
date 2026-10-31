@@ -3,6 +3,7 @@ import { ThumbsUp, MessageCircle, Repeat, Share2, BarChart3 } from 'lucide-react
 import { formatCount } from '../../utils/formatters';
 
 interface SurveyActionsProps {
+  vertical?: boolean;
   isLiked: boolean;
   likeCount: number;
   onLike: (e: React.MouseEvent) => void;
@@ -22,6 +23,7 @@ interface SurveyActionsProps {
 }
 
 export const SurveyActions: React.FC<SurveyActionsProps> = ({
+  vertical = false,
   isLiked,
   likeCount,
   onLike,
@@ -39,6 +41,13 @@ export const SurveyActions: React.FC<SurveyActionsProps> = ({
   
   onAnalysisClick
 }) => {
+  if (vertical) return <div className="flex flex-col items-center gap-2 text-white" dir="ltr">
+    <div className="flex flex-col items-center"><button onClick={onLike} aria-label="Like" aria-pressed={isLiked} className={`rounded-full p-3 ${isLiked ? 'bg-blue-600' : 'bg-black/25'}`}><ThumbsUp size={24} fill={isLiked ? 'currentColor' : 'none'} /></button><button onClick={onLikersClick} aria-label="View likes" className="text-xs p-1">{formatCount(likeCount)}</button></div>
+    {allowComments && <button onClick={onCommentClick} aria-label="Comment" className="flex flex-col items-center gap-1 rounded-full p-2"><MessageCircle size={24} /><span className="text-xs">{formatCount(commentsCount)}</span></button>}
+    <button onClick={onRepostClick} aria-label="Repost" aria-pressed={hasReposted} className={`flex flex-col items-center gap-1 p-2 ${hasReposted ? 'text-green-300' : ''}`}><Repeat size={24} /><span className="text-xs">{formatCount(repostCount)}</span></button>
+    <button onClick={onShareClick} aria-label="Share" className="p-3"><Share2 size={24} /></button>
+    {onAnalysisClick && <button onClick={onAnalysisClick} aria-label="Analysis" className="p-3"><BarChart3 size={24} /></button>}
+  </div>;
   return (
     <div className="border-t border-gray-100 mt-1 px-1 py-2">
       <div className="flex items-center justify-between">

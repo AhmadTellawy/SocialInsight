@@ -312,6 +312,8 @@ export interface PostAnswerPayload {
 }
 
 export interface Survey {
+  presentationFormat?: 'STANDARD' | 'REEL';
+  videoAssetId?: string;
   pageId?: string | null;
   pageCreateKey?: string;
   pageCapabilities?: string[];
@@ -432,7 +434,7 @@ export interface Notification {
 }
 
 export interface TabItem {
-  id: 'home' | 'search' | 'add' | 'trends' | 'profile' | 'notifications';
+  id: 'home' | 'search' | 'add' | 'reels' | 'profile' | 'notifications';
   icon: React.FC<any>;
 }
 

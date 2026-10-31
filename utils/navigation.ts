@@ -21,8 +21,8 @@ export function canonicalPath(path: string): string {
 
 export function isKnownPath(path: string): boolean {
   if (path === '/pages' || path.startsWith('/pages/')) return true;
-  if (['/', '/search', '/trends', '/notifications', '/messages', '/profile', '/privacy', '/login', '/signup', '/settings/profile'].includes(path)) return true;
-  if (/^\/create\/(poll|survey|quiz|challenge|group|business)$/.test(path)) return true;
+  if (['/', '/search', '/trends', '/reels', '/notifications', '/messages', '/profile', '/privacy', '/login', '/signup', '/settings/profile'].includes(path)) return true;
+  if (/^\/create\/(poll|survey|quiz|challenge|reel|group|business)$/.test(path)) return true;
   if (path.startsWith('/settings/profile/')) return profileSettingsPages.has(path.slice('/settings/profile/'.length));
   if (path.startsWith('/@')) return Boolean(decodeRouteSegment(path.slice(2)));
   const match = path.match(/^\/(profile|post|group|hashtag)\/([^/]+)(\/settings)?$/);

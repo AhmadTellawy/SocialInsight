@@ -1,3 +1,4 @@
+import { useReelEditor } from '../reels/ReelEditorContext';
 import React, { useId, useRef } from 'react';
 import { Images, ListChecks, Star } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -27,10 +28,12 @@ const selectedClasses = {
 export const AnswerTypeSelector: React.FC<AnswerTypeSelectorProps> = ({
   value,
   onChange,
-  modes = ['text', 'image', 'rating'],
+  modes: requestedModes = ['text', 'image', 'rating'],
   accent = 'blue',
   className = ''
 }) => {
+  const reelMode = useReelEditor();
+  const modes = reelMode ? requestedModes.filter(mode => mode !== 'image') : requestedModes;
   const { t, i18n } = useTranslation();
   const groupId = useId();
   const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);

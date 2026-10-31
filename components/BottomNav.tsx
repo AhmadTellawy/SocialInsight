@@ -1,15 +1,15 @@
 
 import React from 'react';
-import { Home, Search, Plus, TrendingUp, Bell, FileText, PieChart, HelpCircle, Users, Building2, Zap } from 'lucide-react';
+import { Home, Search, Plus, Clapperboard, Bell, FileText, PieChart, HelpCircle, Users, Building2, Zap } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 interface BottomNavProps {
   activeTab: string;
-  onTabChange: (tab: 'home' | 'search' | 'add' | 'trends' | 'profile' | 'notifications' | 'messages') => void;
+  onTabChange: (tab: 'home' | 'search' | 'add' | 'reels' | 'profile' | 'notifications' | 'messages') => void;
   onAddClick: () => void;
   isVisible: boolean;
   isAddMenuOpen: boolean;
-  onAddMenuOption: (option: 'survey' | 'poll' | 'quiz' | 'challenge' | 'group' | 'business') => void;
+  onAddMenuOption: (option: 'survey' | 'poll' | 'quiz' | 'challenge' | 'reel' | 'group' | 'business') => void;
   unreadNotificationsCount?: number;
   pagesAvailable?: boolean;
 }
@@ -24,7 +24,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   unreadNotificationsCount = 0,
   pagesAvailable = false
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   return (
     <nav data-testid="bottom-navigation" className={`fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-100 pb-safe h-[60px] max-w-md mx-auto shadow-[0_-5px_10px_rgba(0,0,0,0.02)] transition-transform duration-300 ease-in-out ${
@@ -37,6 +37,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
 
         <div className="absolute bottom-[75px] left-1/2 -translate-x-1/2 w-56 bg-white rounded-2xl shadow-xl border border-gray-100 z-50 overflow-hidden animate-in slide-in-from-bottom-2 fade-in duration-200 origin-bottom">
            <div className="p-1">
+             <button onClick={() => onAddMenuOption('reel')} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-xl transition-colors text-start"><span className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center"><Clapperboard size={16} /></span><span className="font-semibold text-gray-700 text-sm">{i18n.language.startsWith('ar') ? 'إنشاء ريل' : 'Create Reel'}</span></button>
              <button
                onClick={() => onAddMenuOption('poll')}
                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-xl transition-colors text-left"
@@ -129,10 +130,11 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         </div>
 
         <button
-          onClick={() => onTabChange('trends')}
-          className={`flex flex-col items-center justify-center w-12 h-full transition-colors ${activeTab === 'trends' ? 'text-blue-600' : 'text-gray-400'}`}
+          aria-label={i18n.language.startsWith('ar') ? 'الريلز' : 'Reels'}
+          onClick={() => onTabChange('reels')}
+          className={`flex flex-col items-center justify-center w-12 h-full transition-colors ${activeTab === 'reels' ? 'text-blue-600' : 'text-gray-400'}`}
         >
-          <TrendingUp size={24} strokeWidth={activeTab === 'trends' ? 2.5 : 2} />
+          <Clapperboard size={24} strokeWidth={activeTab === 'reels' ? 2.5 : 2} />
         </button>
 
         <button

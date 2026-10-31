@@ -1,3 +1,4 @@
+import { useReelEditor } from './reels/ReelEditorContext';
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronRight, Link2, Target, UserRound, Users } from 'lucide-react';
@@ -17,6 +18,7 @@ interface Props {
 }
 
 export const PostVisibilitySection: React.FC<Props> = ({ value, onChange, selectedGroupIds, onGroupsChange, groups, allowCustomAudience, allowCustomDomain, error, pagePublisher = false, accent = 'blue' }) => {
+  const reelMode = useReelEditor();
   const { i18n } = useTranslation();
   const ar = i18n.language.startsWith('ar');
   const [groupPageOpen, setGroupPageOpen] = useState(false);
@@ -47,7 +49,7 @@ export const PostVisibilitySection: React.FC<Props> = ({ value, onChange, select
     <p className="text-xs text-gray-500">{pagePublisher ? (ar ? 'انشر باسم صفحتك. النشر في المجموعات يستخدم حسابك الشخصي.' : 'Publish on your Page. Group publishing uses your personal account.') : 'Keep at least one destination selected. You can select your profile and groups together.'}</p>
     <div className="divide-y divide-gray-100">
       {value === 'Followers' && <label className="flex items-center gap-3 py-3 text-xs text-gray-600"><span className="flex-1">{pagePublisher && ar ? 'متابعو الصفحة (جمهور محفوظ)' : 'Followers (saved audience)'}</span><input type="checkbox" aria-label={pagePublisher && ar ? 'متابعو الصفحة (جمهور محفوظ)' : 'Followers (saved audience)'} checked disabled className="w-5 h-5" /></label>}
-      {destinations.filter(destination => !pagePublisher || destination.id === 'Public').map(({ id, label, icon: Icon, selected, allowed }) => id === 'Groups' ? <div key={id} className="flex items-center gap-3 min-h-[48px]">
+      {destinations.filter(destination => (!pagePublisher || destination.id === 'Public') && (!reelMode || !['Custom Audience', 'Custom Domain'].includes(destination.id))).map(({ id, label, icon: Icon, selected, allowed }) => id === 'Groups' ? <div key={id} className="flex items-center gap-3 min-h-[48px]">
         <button type="button" onClick={() => setGroupPageOpen(true)} className="flex-1 min-w-0 flex items-center gap-3 py-3 text-start" aria-label="Choose selected groups" aria-haspopup="dialog">
           <Icon size={20} className="text-gray-700 shrink-0" />
           <span className="flex-1 text-[12px] font-bold text-gray-800">{label}{selected && <span className="block text-xs font-normal text-gray-500">{selectedGroupIds.length} selected</span>}</span>

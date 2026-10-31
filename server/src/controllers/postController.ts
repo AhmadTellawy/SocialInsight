@@ -1,3 +1,6 @@
+import { ReelError, validateReelInput, validateReelSubmission } from '../reels/reelPolicy';
+import { requireReels } from '../reels/streamProvider';
+import { assertAttachableVideo } from '../reels/videoService';
 import { analysisCacheKey, sharedAnalysisSnapshot, withAnalysisAdmission, AnalysisBusyError } from '../services/analysisCache';
 import { currentPageDatabaseContext } from '../pages/pageDatabaseContext';
 import { replyCursor, replyCursorWhere } from '../services/commentPagination';
@@ -456,6 +459,7 @@ export const getPosts = async (req: Request, res: Response) => {
             const pageRows = await loadVisiblePostScalars(tx, {
                 viewerId: userId, authorId, authorHandle, groupId,
                 pageId: publisherPageId, type: pagePostType,
+                presentationFormat: req.query.presentationFormat === 'REEL' ? 'REEL' : undefined,
                 discovery: !publisherPageId, cursor, anchor, limit: limit + 1
             });
             const hasMore = pageRows.length > limit;
@@ -729,6 +733,8 @@ export const createPost = async (req: Request, res: Response) => {
     }));
     try {
         const authorId = req.user!.userId;
+        if (data.presentationFormat === 'REEL') { requireReels(); validateReelInput(data); }
+        else if (data.videoAssetId || (data.presentationFormat && data.presentationFormat !== 'STANDARD')) throw new ReelError('INVALID_FORMAT', 'Invalid post format.');
         const publisherPageId = data.pageId == null ? null : typeof data.pageId === 'string' && /^[0-9a-f-]{36}$/i.test(data.pageId) ? data.pageId : undefined;
         if (publisherPageId === undefined) throw new PagePolicyError('PAGE_INVALID_PUBLISHER');
         const pageRequestKey = publisherPageId ? pagePostRequestKey(data.pageCreateKey) : null;
@@ -829,6 +835,8 @@ export const createPost = async (req: Request, res: Response) => {
 
         const targetGroupIds = Array.isArray(data.targetGroups) ? data.targetGroups : [];
         const postData: any = {
+            presentationFormat: data.presentationFormat === 'REEL' ? 'REEL' : 'STANDARD',
+            videoAssetId: data.presentationFormat === 'REEL' ? data.videoAssetId : null,
             title: normalizePostType(data.type) === 'Quiz'
                 ? (typeof data.title === 'string' ? data.title.trim() : '')
                 : (data.title || "Untitled"),
@@ -897,6 +905,22 @@ export const createPost = async (req: Request, res: Response) => {
                     await attachPagePublishers([replay], authorId, tx);
                     return {post:replay,createdOptions:replay.questions[0]?.options || [],createdSections:replay.sections,notificationIds:[] as string[],replayed:true as const};
                 }
+            }
+            if (data.presentationFormat === 'REEL') {
+                // The video is the creation receipt. Lock it before resolving a
+                // lost-response retry so concurrent clicks cannot create two posts.
+                await tx.$queryRaw`SELECT id FROM "VideoAsset" WHERE id = ${data.videoAssetId} FOR UPDATE`;
+                const replay = await tx.post.findUnique({ where: { videoAssetId: data.videoAssetId }, include: {
+                    author: { select: SAFE_USER_SELECT }, media: POST_MEDIA_INCLUDE, targetedGroups: true,
+                    questions: { include: { options: { orderBy: { order: 'asc' } } } },
+                    sections: { include: { questions: { include: { options: { orderBy: { order: 'asc' } } } } } }
+                } });
+                if (replay) {
+                    if (replay.isDeleted || replay.authorId !== authorId || replay.pageId !== publisherPageId) throw new ReelError('REEL_VIDEO_ALREADY_USED', 'This video is already attached to a post.', 409);
+                    if (publisherPageId) await attachPagePublishers([replay], authorId, tx);
+                    return { post: replay, createdOptions: replay.questions[0]?.options || [], createdSections: replay.sections, notificationIds: [] as string[], replayed: true as const };
+                }
+                await assertAttachableVideo(tx, data.videoAssetId, authorId);
             }
             const newPost = await tx.post.create({
                 data: postData,
@@ -1044,7 +1068,7 @@ export const createPost = async (req: Request, res: Response) => {
         await dispatchNotificationIds(notificationIds);
 
         try {
-            if (postData.status === POST_STATUS.PENDING_APPROVAL) {
+            if (!transactionResult.replayed && postData.status === POST_STATUS.PENDING_APPROVAL) {
                 const targetGroupId = data.targetGroups[0];
                 const group = await prisma.group.findUnique({ where: { id: targetGroupId }, select: { name: true } });
                 const managers = await prisma.groupMember.findMany({
@@ -1091,6 +1115,7 @@ export const createPost = async (req: Request, res: Response) => {
         res.json(mappedPost);
     } catch (error) {
         if (respondPagePostError(error, res)) return;
+        if (error instanceof ReelError) return void res.status(error.status).json({code:error.code,error:error.message});
         logPostRequestFailure(req, 'post_create_failed', error);
         if (error instanceof AccountSecurityError) return void res.status(error.status).json({ code: error.code, error: 'Sign in again to create a post.' });
         if (error instanceof MediaValidationError) {
@@ -1124,6 +1149,7 @@ export const updatePost = async (req: Request, res: Response) => {
         const existingPost = await prisma.post.findUnique({
             where: { id },
             select: {
+                presentationFormat: true, videoAssetId: true, type: true,
                 authorId: true,
                 pageId: true,
                 title: true,
@@ -1152,6 +1178,17 @@ export const updatePost = async (req: Request, res: Response) => {
             return;
         }
 
+        if (data.presentationFormat && data.presentationFormat !== existingPost.presentationFormat) throw new ReelError('REEL_FORMAT_IMMUTABLE', 'Post format cannot be changed.',409);
+        if (existingPost.presentationFormat === 'REEL') {
+            requireReels();
+            data.presentationFormat = 'REEL'; data.videoAssetId = data.videoAssetId || existingPost.videoAssetId; data.type = existingPost.type;
+            validateReelInput({
+                title: existingPost.title, targetAudience: existingPost.targetAudience,
+                options: existingPost.questions[0]?.options,
+                sections: existingPost.sections.map(section => ({ ...section, questions: section.questions.map(question => ({ ...question, correctOptionId: question.options.find(option => option.isCorrect)?.id })) })),
+                ...data, status: data.status || existingPost.status
+            });
+        } else if (data.videoAssetId) throw new ReelError('INVALID_FORMAT', 'Invalid video attachment.');
         if (data.pageId !== undefined && (data.pageId || null) !== existingPost.pageId) throw new PagePolicyError('PAGE_PUBLISHER_IMMUTABLE',409);
         if (existingPost.pageId) {
             await prisma.$transaction(tx => authorizePagePublisher(tx,existingPost.pageId!,trustedUserId,{
@@ -1300,6 +1337,7 @@ export const updatePost = async (req: Request, res: Response) => {
         }
 
         const updateData: any = {
+            ...(existingPost.presentationFormat === 'REEL' ? {videoAssetId: data.videoAssetId} : {}),
             ...(!immutablePageShareCopy && data.title !== undefined && { title: data.title }),
             ...(!immutablePageShareCopy && data.description !== undefined && { description: data.description }),
             ...(!immutablePageShareCopy && data.category !== undefined && { category: data.category }),
@@ -1445,6 +1483,12 @@ export const updatePost = async (req: Request, res: Response) => {
                 if (!existingPost.pageId || req.user!.authMode === 'session') {
                     await lockAccountSecurity(tx, trustedUserId);
                     await assertActiveAccountSession(tx, req, false);
+                }
+                if (existingPost.presentationFormat === 'REEL') {
+                    await tx.$queryRaw`SELECT id FROM "Post" WHERE id = ${id} FOR UPDATE`;
+                    const current = await tx.post.findUnique({where:{id},select:{responseCount:true}});
+                    if (current?.responseCount && (data.sections !== undefined || data.options !== undefined || data.videoAssetId !== existingPost.videoAssetId)) throw new ReelError('REEL_HAS_RESPONSES', 'Questions and video cannot change after responses.',409);
+                    await assertAttachableVideo(tx, data.videoAssetId, data.videoAssetId === existingPost.videoAssetId ? existingPost.authorId : trustedUserId, id);
                 }
                 const post = await tx.post.update({
                     where: { id },
@@ -1659,6 +1703,7 @@ export const updatePost = async (req: Request, res: Response) => {
         res.json(mappedPost);
     } catch (error) {
         if (respondPagePostError(error,res)) return;
+        if (error instanceof ReelError) return void res.status(error.status).json({code:error.code,error:error.message});
         logPostRequestFailure(req, 'post_update_failed', error);
         if (error instanceof AccountSecurityError) return void res.status(error.status).json({ code: error.code, error: 'Sign in again to update this post.' });
         if (error instanceof MediaValidationError) {
@@ -1866,7 +1911,9 @@ export const votePost = async (req: Request, res: Response) => {
             return;
         }
 
+        let reelResult: {correct:number; total:number} | undefined;
         const votePostSelect = {
+                presentationFormat: true,
                 allowAnonymous: true,
                 forceAnonymous: true,
                 authorId: true, pageId: true,
@@ -2071,9 +2118,23 @@ export const votePost = async (req: Request, res: Response) => {
                 if (finalIsAnonymous && !existingResponse.isAnonymous) await tx.response.update({where:{id:existingResponse.id},data:{isAnonymous:true}});
             }
 
+            if (effectivePost.presentationFormat === 'REEL') {
+                const questions = await tx.question.findMany({where:{postId:id},include:{options:true}});
+                validateReelSubmission(questions, structuredAnswers, resolvedOptionIds, effectivePost.allowMultipleSelection, effectivePost.type.toLowerCase() === 'quiz');
+                if (effectivePost.type.toLowerCase() === 'quiz') {
+                    const selected = new Set(structuredAnswers.length ? structuredAnswers.map(a => a.optionId) : resolvedOptionIds);
+                    reelResult = { total: questions.length, correct: questions.filter(q => q.options.some(o => o.isCorrect && selected.has(o.id))).length };
+                }
+                if (existingResponse?.completedAt) {
+                    const prior = await tx.answer.findMany({where:{responseId:existingResponse.id}});
+                    const submittedIds = new Set(structuredAnswers.length ? structuredAnswers.map(a => `${a.questionId}:${a.optionId || a.textValue}`) : resolvedOptionIds);
+                    if (prior.length !== submittedIds.size || prior.some(a => !submittedIds.has(structuredAnswers.length ? `${a.questionId}:${a.optionId || a.textValue}` : a.optionId || ''))) throw new ReelError('REEL_ALREADY_COMPLETED', 'Your response was already submitted.',409);
+                }
+            }
             const response = existingResponse || await tx.response.create({
                 data: {
                     postId: id,
+                    completedAt: effectivePost.presentationFormat === 'REEL' ? new Date() : null,
                     userId: actorUserId || null,
                     guestId: actorUserId ? null : guestId,
                     ...(proof ? { guestProofHash: proof.hash, guestProofExpiresAt: proof.expiresAt } : {}),
@@ -2230,8 +2291,9 @@ export const votePost = async (req: Request, res: Response) => {
         }
 
         if (proof) writeGuestParticipationCookie(res, proof);
-        res.json({ success: true, newOption: createdCustomOption });
+        res.json({ success: true, newOption: createdCustomOption, ...(reelResult ? {quizResult:reelResult} : {}) });
     } catch (error: any) {
+        if (error instanceof ReelError) return void res.status(error.status).json({code:error.code,error:error.message});
         if (['P2028', 'P2034'].includes(error?.code)) {
             return void res.status(503).set('Retry-After', '1').json({ error: 'Voting is busy. Retry this request.', code: 'VOTE_RETRY_REQUIRED' });
         }

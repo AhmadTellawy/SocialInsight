@@ -70,6 +70,7 @@ export type VisiblePostSqlOptions = {
   authorHandle?: string;
   groupId?: string;
   type?: string;
+  presentationFormat?: 'REEL';
   discovery?: boolean;
   cursor?: FeedCursor | null;
   anchor?: FeedCursor | null;
@@ -85,6 +86,7 @@ export function buildVisiblePostSql(options: VisiblePostSqlOptions): Prisma.Sql 
   if (options.authorHandle) conditions.push(Prisma.sql`p."pageId" IS NULL AND EXISTS (SELECT 1 FROM "users" a WHERE a.id = p."authorId" AND a.handle = ${options.authorHandle})`);
   if (options.groupId) conditions.push(Prisma.sql`(p."groupId" = ${options.groupId} OR EXISTS (SELECT 1 FROM "_PostTargetGroups" tg WHERE tg."B" = p.id AND tg."A" = ${options.groupId}))`);
   if (options.type) conditions.push(Prisma.sql`p.type = ${options.type}`);
+  if (options.presentationFormat === 'REEL') conditions.push(Prisma.sql`p."presentationFormat" = 'REEL' AND EXISTS (SELECT 1 FROM "VideoAsset" video WHERE video.id = p."videoAssetId" AND video.status = 'READY')`);
   if (options.discovery) conditions.push(Prisma.sql`(p."pageId" IS NULL OR EXISTS (SELECT 1 FROM "Page" d WHERE d.id = p."pageId" AND d."isTestFixture" = FALSE))
     AND (p."sharedFromId" IS NULL OR EXISTS (SELECT 1 FROM "Post" ds WHERE ds.id = p."sharedFromId" AND (ds."pageId" IS NULL OR EXISTS (SELECT 1 FROM "Page" dp WHERE dp.id = ds."pageId" AND dp."isTestFixture" = FALSE))))`);
   if(options.anchor)conditions.push(Prisma.sql`(p."createdAt" < ${options.anchor.createdAt.toISOString()}::timestamp OR (p."createdAt" = ${options.anchor.createdAt.toISOString()}::timestamp AND p.id <= ${options.anchor.id}))`);

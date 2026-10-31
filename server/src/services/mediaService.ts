@@ -1551,7 +1551,9 @@ export const serializeGroupMediaRecord = <T extends Record<string, any>>(group?:
 export const serializePostMediaRecord = (post: any, viewerId?: string | null): any => {
   if (!post) return post;
   // Share provenance is internal privacy metadata, never an API field.
-  const { sharedCopiedTitle, sharedCopiedDescription, sharedCopiedCategory, sharedRootPageId, ...publicPost } = post;
+  const { sharedCopiedTitle, sharedCopiedDescription, sharedCopiedCategory, sharedRootPageId, videoAsset, ...publicPost } = post;
+  const redactReelKey = post.presentationFormat === 'REEL' && String(post.type).toLowerCase() === 'quiz'
+    && !(post.status === 'DRAFT' && (post.pageId ? post.pageCapabilities?.includes('manageContent') : viewerId && post.authorId === viewerId));
   const maySeeInternalOptionNames = post.pageId
     ? Boolean(post.pageCapabilities?.includes('analytics'))
     : post.status !== 'PUBLISHED' || (Boolean(viewerId) && post.authorId === viewerId);
@@ -1565,6 +1567,7 @@ export const serializePostMediaRecord = (post: any, viewerId?: string | null): a
     const rawPresentation = serializeMediaAsset(option?.imageMedia);
     const presentation = hideName && rawPresentation ? { ...rawPresentation, altText: null } : rawPresentation;
     const { imageMedia, ...rest } = option || {};
+    if (redactReelKey) delete rest.isCorrect;
     return {
       ...rest,
       text: hideName ? '' : rest.text,
@@ -1575,6 +1578,7 @@ export const serializePostMediaRecord = (post: any, viewerId?: string | null): a
   const serializeQuestion = (question: any): any => {
     const presentation = serializeMediaAsset(question?.imageMedia);
     const { imageMedia, ...rest } = question || {};
+    if (redactReelKey) delete rest.correctOptionId;
     const hideQuestionOptionNames = !maySeeInternalOptionNames
       && question?.optionPresentation === 'image'
       && question?.showOptionNames === false;

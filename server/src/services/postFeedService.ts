@@ -57,6 +57,8 @@ export const buildFeedCursorWhere = ({ id, createdAt }: FeedCursor): Prisma.Post
 
 const FEED_POST_SCALAR_SELECT = {
   id: true,
+  presentationFormat: true,
+  videoAssetId: true,
   title: true,
   description: true,
   type: true,

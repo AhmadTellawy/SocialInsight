@@ -1,3 +1,4 @@
+import { useReelEditor } from '../reels/ReelEditorContext';
 import React, { forwardRef, useEffect, useId, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
@@ -128,7 +129,7 @@ const SortableTile: React.FC<SortableTileProps> = ({ draft, index, sortable, onE
   );
 };
 
-export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
+const ImageMediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
   purpose,
   value,
   onChange,
@@ -763,4 +764,9 @@ export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>(({
   );
 });
 
-MediaPicker.displayName = 'MediaPicker';
+ImageMediaPicker.displayName = 'ImageMediaPicker';
+
+export const MediaPicker = forwardRef<MediaPickerHandle, MediaPickerProps>((props, ref) => {
+  const reelMode = useReelEditor();
+  return reelMode ? null : <ImageMediaPicker {...props} ref={ref} />;
+});

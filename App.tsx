@@ -52,7 +52,8 @@ const ProfileSettingsScreen = React.lazy(() => import('./components/ProfileSetti
 const SearchScreen = React.lazy(() => import('./components/SearchScreen').then(({ SearchScreen }) => ({ default: SearchScreen })));
 const ProfileScreen = React.lazy(() => import('./components/ProfileScreen').then(({ ProfileScreen }) => ({ default: ProfileScreen })));
 const NotificationsScreen = React.lazy(() => import('./components/NotificationsScreen').then(({ NotificationsScreen }) => ({ default: NotificationsScreen })));
-const TrendsScreen = React.lazy(() => import('./components/TrendsScreen').then(({ TrendsScreen }) => ({ default: TrendsScreen })));
+const ReelsScreen = React.lazy(() => import('./components/reels/ReelsScreen').then(m => ({ default: m.ReelsScreen })));
+const CreateReelScreen = React.lazy(() => import('./components/reels/CreateReelScreen').then(m => ({ default: m.CreateReelScreen })));
 const MessagesScreen = React.lazy(() => import('./components/MessagesScreen').then(({ MessagesScreen }) => ({ default: MessagesScreen })));
 const GroupScreen = React.lazy(() => import('./components/GroupScreen').then(({ GroupScreen }) => ({ default: GroupScreen })));
 const PostAnalysis = React.lazy(() => import('./components/PostAnalysis').then(({ PostAnalysis }) => ({ default: PostAnalysis })));
@@ -159,8 +160,8 @@ const App: React.FC = () => {
     }
   }, [i18n.language]);
 
-  const [activeTab, setActiveTab] = useState<'home' | 'search' | 'add' | 'trends' | 'profile' | 'notifications' | 'messages'>('home');
-  const [prevTab, setPrevTab] = useState<'home' | 'search' | 'add' | 'trends' | 'profile' | 'notifications'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'search' | 'add' | 'reels' | 'profile' | 'notifications' | 'messages'>('home');
+  const [prevTab, setPrevTab] = useState<'home' | 'search' | 'add' | 'reels' | 'profile' | 'notifications'>('home');
 
   // User Profile State
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
@@ -209,7 +210,10 @@ const App: React.FC = () => {
   };
 
   const publishedPageDestination = useRef<string | null>(null);
+  const publishedReelDestination = useRef<string | null>(null);
   const handleCloseModal = () => {
+    const reelId = publishedReelDestination.current;
+    publishedReelDestination.current = null;
     const pageId = publishedPageDestination.current;
     const creationGroupId = activeCreationGroupId;
     publishedPageDestination.current = null;
@@ -217,7 +221,9 @@ const App: React.FC = () => {
     setActiveCreationFlow(null);
     setActiveCreationGroupId(null);
     setIsNavVisible(true);
-    if (pageId) {
+    if (reelId) {
+      navigate(`/reels?reel=${encodeURIComponent(reelId)}`, { replace: true });
+    } else if (pageId) {
       navigate(`/pages/manage/${encodeURIComponent(pageId)}`, { replace: true });
     } else if (window.history.state && window.history.state.idx > 0) {
       navigate(-1);
@@ -337,7 +343,7 @@ const App: React.FC = () => {
 
   // Creation Flow State
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
-  const [activeCreationFlow, setActiveCreationFlow] = useState<'survey' | 'poll' | 'quiz' | 'challenge' | null>(null);
+  const [activeCreationFlow, setActiveCreationFlow] = useState<'survey' | 'poll' | 'quiz' | 'challenge' | 'reel' | null>(null);
   const [activeCreationGroupId, setActiveCreationGroupId] = useState<string | null>(null);
   const [editingDraft, setEditingDraft] = useState<Survey | null>(null);
   const [accountModalType, setAccountModalType] = useState<'group' | 'company' | null>(null);
@@ -1007,10 +1013,11 @@ const App: React.FC = () => {
     if (!isGroupRoute || !path.endsWith('/settings')) setIsGroupSettingsOpen(false);
     if (path !== '/privacy') setIsPrivacyScreenOpen(false);
 
+    if (path === '/trends') { navigate('/reels', { replace: true }); return; }
     if (path === '/' || path === '') setActiveTab('home');
     else if (path === '/privacy') setIsPrivacyScreenOpen(true);
     else if (path === '/search' || path.startsWith('/hashtag/')) setActiveTab('search');
-    else if (path === '/trends') setActiveTab('trends');
+    else if (path === '/reels') setActiveTab('reels');
     else if (path === '/notifications') setActiveTab('notifications');
     else if (path === '/messages') setActiveTab('messages');
     else if (path === '/profile') {
@@ -1141,7 +1148,7 @@ const App: React.FC = () => {
     // Create Routes
     if (path.startsWith('/create/')) {
       const type = path.split('/create/')[1];
-      if (['poll', 'survey', 'quiz', 'challenge'].includes(type)) {
+      if (['poll', 'survey', 'quiz', 'challenge', 'reel'].includes(type)) {
         if (!userProfile?.id) {
           setActiveCreationFlow(null);
           if (!isAuthenticated) navigate(location.search.includes('pageId=') ? '/login?returnTo=%2Fpages' : '/login', { replace: true });
@@ -1329,6 +1336,7 @@ const App: React.FC = () => {
         ? await api.updatePost(targetId, payload)
         : await api.createSurvey(payload);
       const saved = normalizeSurvey(result, userProfile);
+      publishedReelDestination.current = saved.status === 'PUBLISHED' && saved.presentationFormat === 'REEL' ? saved.id : null;
       publishedPageDestination.current = saved.status === 'PUBLISHED' && saved.pageId ? saved.pageId : null;
       const reconcile = (posts: Survey[]) => {
         if (saved.status !== 'PUBLISHED') return posts.filter(post => post.id !== saved.id);
@@ -1379,7 +1387,7 @@ const App: React.FC = () => {
 
   const handleEditPost = (draft: Survey) => {
     setEditingDraft(draft);
-    navigate(`/create/${draft.type.toLowerCase()}${draft.pageId ? `?pageId=${encodeURIComponent(draft.pageId)}` : ''}`);
+    navigate(`/create/${draft.presentationFormat === 'REEL' ? 'reel' : draft.type.toLowerCase()}${draft.pageId ? `?pageId=${encodeURIComponent(draft.pageId)}` : ''}`);
   };
 
   const handlePostDeleted = (surveyId: string, deletedPostIds?: string[]) => {
@@ -1413,7 +1421,7 @@ const App: React.FC = () => {
     }
   };
 
-  const handleAddMenuOption = (option: 'survey' | 'poll' | 'quiz' | 'challenge' | 'group' | 'business') => {
+  const handleAddMenuOption = (option: 'survey' | 'poll' | 'quiz' | 'challenge' | 'reel' | 'group' | 'business') => {
     if (option === 'business') {
       if (!pagesAvailable) return;
       setIsAddMenuOpen(false);
@@ -1430,8 +1438,8 @@ const App: React.FC = () => {
     navigate(`/create/${option}`);
   };
 
-  const handleTabChange = async (tab: 'home' | 'search' | 'add' | 'trends' | 'profile' | 'notifications' | 'messages') => {
-    if ((tab === 'profile' || tab === 'notifications' || tab === 'add' || tab === 'messages' || tab === 'trends') && (!isAuthenticated || !userProfile)) {
+  const handleTabChange = async (tab: 'home' | 'search' | 'add' | 'reels' | 'profile' | 'notifications' | 'messages') => {
+    if ((tab === 'profile' || tab === 'notifications' || tab === 'add' || tab === 'messages') && (!isAuthenticated || !userProfile)) {
       navigate('/signup');
       return;
     }
@@ -1691,7 +1699,7 @@ const App: React.FC = () => {
     } finally { likePending.current.delete(surveyId); }
   };
 
-  const getActiveCreationFlow = (type: string): 'survey' | 'poll' | 'quiz' | 'challenge' | null => {
+  const getActiveCreationFlow = (type: string): 'survey' | 'poll' | 'quiz' | 'challenge' | 'reel' | null => {
     const t = type.toLowerCase();
     if (t === 'survey' || t === 'poll' || t === 'quiz' || t === 'challenge') return t;
     return null;
@@ -1746,8 +1754,8 @@ const App: React.FC = () => {
         );
       case 'search':
         return <SearchScreen surveys={publishedSurveys} onSurveyClick={handleSurveyClick} onAuthorClick={navigateToProfile} onGroupClick={navigateToGroup} />;
-      case 'trends':
-        return <TrendsScreen surveys={publishedSurveys} onSurveyClick={handleSurveyClick} />;
+      case 'reels':
+        return <ReelsScreen userProfile={userProfile || undefined} onAuthorClick={navigateToProfile} onShareToFeed={handleShareToFeed} onLike={handleLikePost} onAnalysisClick={id => handleSurveyClick(id, 'FEED', 'analysis')} onDelete={handlePostDeleted} onEditDraft={handleEditPost} />;
       case 'profile':
         if (isProfileSettingsOpen) {
           if (!userProfile) return <div className="flex-1 flex items-center justify-center p-8 text-center"><h2 className="text-xl font-bold">Please log in to view settings.</h2></div>;
@@ -2244,6 +2252,7 @@ const App: React.FC = () => {
           )}
 
           {/* Creation Flows */}
+          {activeCreationFlow === 'reel' && userProfile && <CreateReelScreen userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} onClose={handleCloseModal} />}
           {activeCreationFlow === 'survey' && userProfile && (
             <CreateSurveyModal isOpen={true} onClose={handleCloseModal} onSubmit={handleCreateSubmit} onSaveDraft={handleSaveDraft} userProfile={userProfile} draft={editingDraft || undefined} userGroups={userGroups} initialGroupId={activeCreationGroupId} />
           )}

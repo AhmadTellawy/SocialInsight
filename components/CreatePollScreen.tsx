@@ -1,3 +1,4 @@
+import { useReelEditor } from './reels/ReelEditorContext';
 import { PagePublisher, PagePublisherRecovery, usePagePublisher } from './pages/PagePublisher';
 import { PostSaveStatus } from './PostSaveStatus';
 import { usePostSaveFeedback } from '../hooks/usePostSaveFeedback';
@@ -97,6 +98,7 @@ const createRatingOptions = (): PollDraftOption[] => [5, 4, 3, 2, 1].map((rating
 }));
 
 export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onSubmit: persistPost, onSaveDraft: persistDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
+  const reelMode = useReelEditor();
   const { t, i18n } = useTranslation();
   const ar = i18n.language.startsWith('ar');
   const publisher = usePagePublisher(userProfile, draft, persistPost, persistDraft);
@@ -596,7 +598,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               : 'bg-gray-300 text-white shadow-none cursor-not-allowed'
           }`}
         >
-          {composerStep === 1 ? (ar?'متابعة':'Next') : publisher.draftOnly ? publisher.draftActionLabel : (ar?'نشر':'Post')}
+          {composerStep === 1 ? (ar?'متابعة':'Next') : publisher.draftOnly ? publisher.draftActionLabel : (reelMode ? (ar?'معاينة':'Preview') : (ar?'نشر':'Post'))}
         </button>
       </div>
 
@@ -638,6 +640,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
               </div>
               <button
                 type="button"
+                hidden={reelMode} style={reelMode ? { display: 'none' } : undefined}
                 onClick={() => postMediaPickerRef.current?.open()}
                 disabled={postMedia.length >= 8}
                 className={`p-1.5 rounded-full transition-colors shrink-0 mt-1 disabled:opacity-40 ${postMedia.length > 0 || legacyCoverImage ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-50'}`}
@@ -929,7 +932,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
           </button>
 
           {/* 5. Optional Demographics Insights (Unlock Deeper Analytics Selector) */}
-          <section className="space-y-3 pt-3 border-t border-gray-100">
+          <section hidden={reelMode} style={reelMode ? { display: 'none' } : undefined} className="space-y-3 pt-3 border-t border-gray-100">
             <div className="flex items-center justify-between px-1">
               <div className="flex items-center gap-2">
                 <div className="p-1.5 bg-gray-55/30 rounded-lg text-gray-500 border border-gray-100 shrink-0">
@@ -1146,7 +1149,7 @@ export const CreatePollScreen: React.FC<CreatePollScreenProps> = ({ onClose, onS
                       </button>
                     </div>
 
-                    <div className="flex items-center justify-between">
+                    <div hidden={reelMode} style={reelMode ? { display: 'none' } : undefined} className="flex items-center justify-between">
                       <div className="flex flex-col text-left">
                         <span className="text-xs font-bold text-gray-800">{ar?'خيارات من المشاركين':'Allow user options'}</span>
                         <span className="text-[10px] text-gray-500">{ar?'اسمح للمشاركين بإضافة خيارات جديدة':'Allow participants to add new options'}</span>

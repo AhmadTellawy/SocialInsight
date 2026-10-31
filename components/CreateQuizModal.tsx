@@ -1,3 +1,4 @@
+import { useReelEditor } from './reels/ReelEditorContext';
 import { PagePublisher, PagePublisherRecovery, usePagePublisher } from './pages/PagePublisher';
 import { PostSaveStatus } from './PostSaveStatus';
 import { usePostSaveFeedback } from '../hooks/usePostSaveFeedback';
@@ -86,6 +87,7 @@ const createQuizOption = (): SurveyOptionDraft => ({
 });
 
 export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClose, onSubmit: persistPost, onSaveDraft: persistDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
+  const reelMode = useReelEditor();
   const { t, i18n } = useTranslation();
   const ar = i18n.language.startsWith('ar');
   const publisher = usePagePublisher(userProfile, draft, persistPost, persistDraft);
@@ -595,7 +597,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
                 : 'bg-gray-300 shadow-none cursor-not-allowed'
             }`}
           >
-            {composerStep === 1 ? 'Next' : 'Post'}
+            {composerStep === 1 ? (ar ? 'التالي' : 'Next') : reelMode ? (ar ? 'معاينة' : 'Preview') : (ar ? 'نشر' : 'Post')}
           </button>
         </div>
       </div>
@@ -645,6 +647,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
               </div>
               <button
                 type="button"
+                hidden={reelMode} style={reelMode ? { display: 'none' } : undefined}
                 onClick={() => postMediaPickerRef.current?.open()}
                 disabled={postMedia.length >= 8}
                 className={`p-1.5 rounded-full transition-colors shrink-0 mt-1 disabled:opacity-40 ${postMedia.length > 0 || legacyCoverImage ? 'text-purple-600 bg-purple-50' : 'text-gray-400 hover:text-purple-500 hover:bg-gray-50'}`}
@@ -982,7 +985,7 @@ export const CreateQuizModal: React.FC<CreateQuizModalProps> = ({ isOpen, onClos
           </section>
 
           {/* Demographics Settings Section (Unlock Deeper Analytics) */}
-          <section className="space-y-3 pt-3 border-t border-gray-100">
+          <section hidden={reelMode} style={reelMode ? { display: 'none' } : undefined} className="space-y-3 pt-3 border-t border-gray-100">
             <div className="flex items-center justify-between px-1">
               <div className="flex items-center gap-2">
                 <div className="p-1.5 bg-gray-55/30 rounded-lg text-gray-500 border border-gray-100 shrink-0">

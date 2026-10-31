@@ -10,6 +10,9 @@ module.exports = {
     './shared/**/*.{js,jsx,ts,tsx}',
     './src/**/*.{js,jsx,ts,tsx}',
     './tests/**/*.{html,js,jsx,ts,tsx}',
+    '!./tests/**/node_modules/**',
+    '!./tests/**/artifacts/**',
+    '!./tests/**/results/**',
     './utils/**/*.{js,jsx,ts,tsx}',
   ],
   // Audit found no utility names assembled from runtime fragments. Complete

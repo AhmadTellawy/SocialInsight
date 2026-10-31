@@ -1,3 +1,4 @@
+import { useReelEditor } from './reels/ReelEditorContext';
 import { PagePublisher, PagePublisherRecovery, usePagePublisher } from './pages/PagePublisher';
 import { PostSaveStatus } from './PostSaveStatus';
 import { usePostSaveFeedback } from '../hooks/usePostSaveFeedback';
@@ -97,6 +98,7 @@ const createSurveyRatingOptions = (): SurveyOptionDraft[] => [5, 4, 3, 2, 1].map
 }));
 
 export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, onClose, onSubmit: persistPost, onSaveDraft: persistDraft, userProfile, draft, userGroups = [], initialGroupId }) => {
+  const reelMode = useReelEditor();
   const { t, i18n } = useTranslation();
   const ar = i18n.language.startsWith('ar');
   const publisher = usePagePublisher(userProfile, draft, persistPost, persistDraft);
@@ -717,7 +719,8 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide">The Survey Header <span className="text-red-500">*</span></label>
                <button
                  type="button"
-                 onClick={() => postMediaPickerRef.current?.open()}
+                 hidden={reelMode} style={reelMode ? { display: 'none' } : undefined}
+                onClick={() => postMediaPickerRef.current?.open()}
                  disabled={postMedia.length >= 8}
                  className={`p-1.5 rounded-full transition-colors disabled:opacity-40 ${postMedia.length > 0 || legacyCoverImage ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-50'}`}
                  aria-label="Add survey images"
@@ -1125,7 +1128,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
           />
           <section aria-label="Advanced settings" className="space-y-3"><h2 className="text-xs font-bold text-gray-800">Advanced Settings</h2><div className="grid grid-cols-2 gap-2">{renderSettingField('Results', resultsLabel, () => setIsResultVisibilitySheetOpen(true))}{renderSettingField('Timer', durationLabel, () => setIsDurationSheetOpen(true))}</div></section>
           {/* Demographics Card Inline */}
-          <section className="border-t border-gray-100 pt-4 mt-6 space-y-3">
+          <section hidden={reelMode} style={reelMode ? { display: 'none' } : undefined} className="border-t border-gray-100 pt-4 mt-6 space-y-3">
             <div className="flex items-center gap-1.5 px-1">
               <BarChart3 size={14} className="text-blue-600" />
               <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
@@ -1278,7 +1281,7 @@ export const CreateSurveyModal: React.FC<CreateSurveyModalProps> = ({ isOpen, on
               : 'bg-gray-300 shadow-none cursor-not-allowed'
           }`}
         >
-          {composerStep === 1 ? 'Next' : 'Post'}
+          {composerStep === 1 ? (ar ? 'التالي' : 'Next') : reelMode ? (ar ? 'معاينة' : 'Preview') : (ar ? 'نشر' : 'Post')}
         </button>
       </div>
 

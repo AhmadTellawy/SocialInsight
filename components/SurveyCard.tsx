@@ -1,4 +1,6 @@
 import { useCommentCount } from '../hooks/useCommentThread';
+import { ReelQuestionsSheet } from './reels/ReelQuestionsSheet';
+import { ReelThumbnail } from './reels/ReelThumbnail';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PostAnswerPayload, Survey, SurveyType, Option, LogicRule, UserProfile, MediaPresentation } from '../types';
@@ -38,6 +40,8 @@ const SheetContentFallback = () => (
 );
 
 interface SurveyCardProps {
+  reelOverlay?: boolean;
+  onReelSheetChange?: (open: boolean) => void;
   privatePageContext?: boolean;
   survey: Survey;
   userProfile?: UserProfile;
@@ -58,6 +62,7 @@ interface SurveyCardProps {
   onLike?: (surveyId: string, isLiked: boolean) => PageLikeResult | Promise<PageLikeResult>;
   onSaveChange?: (surveyId: string, isSaved: boolean) => void;
   onDelete?: (surveyId: string, deletedPostIds?: string[]) => void;
+  onReelHidden?: (surveyId: string) => void;
   onEditDraft?: (survey: Survey) => void;
 }
 
@@ -161,6 +166,8 @@ const DEM_CONFIG: Record<string, { title: string, question: string, options: str
 };
 
 export const SurveyCard: React.FC<SurveyCardProps> = ({
+  reelOverlay = false,
+  onReelSheetChange,
   survey,
   userProfile,
   isDetailView = false,
@@ -181,6 +188,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   onLike,
   onSaveChange,
   onDelete,
+  onReelHidden,
   onEditDraft
 }) => {
   const { t, i18n } = useTranslation();
@@ -279,6 +287,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const [isPeopleTagsOpen, setIsPeopleTagsOpen] = useState(false);
 
   const [isOptionsSheetOpen, setIsOptionsSheetOpen] = useState(false);
+  const [reelQuestionsOpen, setReelQuestionsOpen] = useState(false);
   const [isCommentsOpen, setIsCommentsOpen] = useState(false);
   const [isShareSheetOpen, setIsShareSheetOpen] = useState(false);
   const [isParticipantsOpen, setIsParticipantsOpen] = useState(false);
@@ -293,6 +302,9 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
   const repostBusyRef = useRef(false);
   const [isShareBusy, setIsShareBusy] = useState(false);
   const [shareSheetInitialStep, setShareSheetInitialStep] = useState<'menu' | 'repost-editor'>('menu');
+  useEffect(() => {
+    onReelSheetChange?.(reelQuestionsOpen || isCommentsOpen || isShareSheetOpen || isRepostMenuOpen || isMenuOpen || isLikersSheetOpen || isReportSheetOpen || isParticipantsOpen || isDeleteConfirmOpen);
+  }, [reelQuestionsOpen, isCommentsOpen, isShareSheetOpen, isRepostMenuOpen, isMenuOpen, isLikersSheetOpen, isReportSheetOpen, isParticipantsOpen, isDeleteConfirmOpen, onReelSheetChange]);
 
   useEffect(() => {
     if (isDetailView && (initialCommentId || initialReplyId)) setIsCommentsOpen(true);
@@ -989,7 +1001,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
 
   const totalVotes = (localOptions || []).reduce((acc, curr) => acc + curr.votes, 0);
   const displayedParticipantCount = (sourceSurvey.participants || 0) + (
-    isRating && hasVoted && !sourceSurvey.hasParticipated ? 1 : 0
+    (isRating || reelOverlay) && hasVoted && !sourceSurvey.hasParticipated ? 1 : 0
   );
 
   const averageRating = useMemo(() => {
@@ -1235,6 +1247,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
     });
     try {
       await api.hidePost(survey.id);
+      if (reelOverlay && onReelHidden) { onReelHidden(survey.id); return; }
       if (hideUndoTimerRef.current) clearTimeout(hideUndoTimerRef.current);
       hideUndoTimerRef.current = setTimeout(() => setHideUndoVisible(false), 5000);
     } catch (error) {
@@ -2175,14 +2188,14 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
         data-testid="survey-card"
         data-post-id={survey.id}
         data-post-type={sourceSurvey.type}
-        className="bg-white pt-5 pb-2 border-b-8 border-gray-100 animate-in fade-in slide-in-from-bottom-4 duration-500 relative"
+        className={reelOverlay ? 'relative text-white' : 'bg-white pt-5 pb-2 border-b-8 border-gray-100 animate-in fade-in slide-in-from-bottom-4 duration-500 relative'}
       >
         {actionFeedback && (
           <div className="mx-4 mb-3 rounded-xl bg-gray-900 px-4 py-3 text-sm text-white" role="status" aria-live="polite">
             {actionFeedback}
           </div>
         )}
-        <div className="px-4">
+        <div className="px-4" hidden={reelOverlay}>
 
           {/* SHARER HEADER (If this is a repost) */}
           {survey.sharedFrom && (
@@ -2362,7 +2375,7 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
                 </div>
               )}
               {/* Media posts render their existing response flow only in the sheet. */}
-              {!useOptionsSheet && !isCoverImagePollCard && renderBodyContent()}
+              {sourceSurvey.presentationFormat === 'REEL' ? <ReelThumbnail id={sourceSurvey.id} onOpen={() => navigate(`/reels?reel=${encodeURIComponent(sourceSurvey.id)}`)} /> : !useOptionsSheet && !isCoverImagePollCard && renderBodyContent()}
             </div>
 
             <div className={`flex items-center justify-between text-[11px] text-gray-400 font-medium px-1 ${isTextOnlyPoll ? 'mt-0 mb-2' : 'mt-2 mb-3'}`}>
@@ -2395,7 +2408,9 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
             </div>
           </div>
         </div>
+        {reelOverlay && <button onClick={() => setReelQuestionsOpen(true)} aria-label={i18n.language.startsWith('ar') ? 'إظهار الأسئلة والإجابات' : 'Show questions & answers'} className="mx-auto mb-3 flex flex-col items-center gap-1 rounded-2xl bg-blue-600 px-2 py-3 shadow-lg"><ListChecks size={24} /><span className="text-[10px] font-bold">{i18n.language.startsWith('ar') ? 'الأسئلة' : 'Questions'}</span></button>}
         <SurveyActions
+          vertical={reelOverlay}
           isLiked={isLiked}
           likeCount={likeCount}
           onLike={handleLike}
@@ -2422,7 +2437,9 @@ export const SurveyCard: React.FC<SurveyCardProps> = ({
           onAnalysisClick={onAnalysisClick}
         />
         {showShareToast && <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-4 py-2 rounded-full text-xs font-medium shadow-lg animate-in fade-in zoom-in duration-200 z-10" role="status" aria-live="polite">{t('postOptions.linkCopied')}</div>}
+        {reelOverlay && <button className="mx-auto block p-3" aria-label={t('postOptions.menuTitle')} onClick={() => setIsMenuOpen(true)}><MoreHorizontal size={24} /></button>}
       </div >
+      {reelOverlay && <ReelQuestionsSheet survey={{ ...sourceSurvey, hasParticipated: hasVoted }} user={userProfile} open={reelQuestionsOpen} onClose={() => setReelQuestionsOpen(false)} onComplete={() => setHasVoted(true)} />}
 
       {useOptionsSheet && (
         <BottomSheet isOpen={!!expandedImage} onClose={() => setExpandedImage(null)} ariaLabel={t('postResponse.imagePreview')} historyKey={`option-image:${sourceSurvey.id}`} showCloseButton closeLabel={t('postResponse.close')}>

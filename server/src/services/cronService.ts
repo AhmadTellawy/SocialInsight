@@ -1,4 +1,6 @@
 import cron from 'node-cron';
+import { maintainReelVideos } from '../reels/videoService';
+import { videoMaintenanceConfigured } from '../reels/streamProvider';
 import { Prisma } from '@prisma/client';
 import prisma from '../prisma';
 import { cleanupExpiredMedia } from './mediaService';
@@ -93,6 +95,7 @@ export const initCronJobs = () => {
         // artifacts from being removed. Each job keeps its own retry state.
         const jobs = [
             ['media', cleanupExpiredMedia],
+            ['reel_videos', () => videoMaintenanceConfigured() ? maintainReelVideos() : Promise.resolve()],
             ['media_privacy', resumeMediaPrivacyTransitions],
             ['account_cleanup', resumeAccountCleanupJobs],
             ['auth_retention', cleanupExpiredAuthArtifacts]

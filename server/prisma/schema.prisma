@@ -9,6 +9,7 @@ datasource db {
 }
 
 model User {
+  reelVideos VideoAsset[]
   commentSubmissions CommentSubmission[]
   id                  String              @id @default(uuid())
   name                String
@@ -250,7 +251,32 @@ model GroupMember {
   @@index([userId, status, groupId], map: "GroupMember_user_status_group_idx")
 }
 
+model VideoAsset {
+  id String @id @default(uuid())
+  ownerId String
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  requestKey String
+  providerId String? @unique
+  uploadUrl String?
+  status String @default("CREATING")
+  bytes Int
+  mime String
+  duration Float?
+  width Int?
+  height Int?
+  errorCode String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  post Post?
+  @@unique([ownerId, requestKey])
+  @@index([status, updatedAt])
+}
+
 model Post {
+  presentationFormat String @default("STANDARD")
+  videoAssetId String? @unique
+  videoAsset VideoAsset? @relation(fields: [videoAssetId], references: [id], onDelete: Restrict)
   commentSubmissions CommentSubmission[]
   id                 String      @id @default(uuid())
   title              String
@@ -547,6 +573,7 @@ model MediaPrivacyTransition {
 }
 
 model Response {
+  completedAt DateTime?
   analysisProfile AnalysisResponseProfile?
   id          String   @id @default(uuid())
   userId      String?

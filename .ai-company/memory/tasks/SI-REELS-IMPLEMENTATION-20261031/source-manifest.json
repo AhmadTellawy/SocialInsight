@@ -1,0 +1,194 @@
+[
+  {
+    "path": "App.tsx",
+    "sha256": "560f7995cb00ff5713d7f4f6713553d4f570387666f43202da02b748942bb4b1"
+  },
+  {
+    "path": "components/BottomNav.tsx",
+    "sha256": "13427fa706f36f2aea8a1e4b638e23d2268fda91d58161d04079c282db2b3f55"
+  },
+  {
+    "path": "components/CreatePollScreen.tsx",
+    "sha256": "87e23e54618c1504b2f60660035c719f548a1a740377167d3e4596e59de1056f"
+  },
+  {
+    "path": "components/CreateQuizModal.tsx",
+    "sha256": "a5b80dc83d4cb7e886b70e0c97de972f1a7d7111db45abf42ede2602e9af3ac8"
+  },
+  {
+    "path": "components/CreateSurveyModal.tsx",
+    "sha256": "b1d0bae1dae09ee347787177b1e7798dfef31a64d165afe2f2dc0bd24f53dbca"
+  },
+  {
+    "path": "components/media/MediaPicker.tsx",
+    "sha256": "d1c52128017152a8591665faef5b5b9b5aaab64d818db642f3469e2a7d9a4b3b"
+  },
+  {
+    "path": "components/options/AnswerTypeSelector.tsx",
+    "sha256": "770e7e1f6c6db7b3f85f8efba6e1bd91000e48f9607b7d4a1b5a14806a683006"
+  },
+  {
+    "path": "components/PostVisibilitySection.tsx",
+    "sha256": "589f3a5722249b865de2104bf15af4d77651d1e5f7c9b3bbb3d25ebec8d59f3c"
+  },
+  {
+    "path": "components/reels/CreateReelScreen.tsx",
+    "sha256": "b5468c67ab48f908b9e044297743afaabd17cf9e5f52dfb0c10a22eb232deb83"
+  },
+  {
+    "path": "components/reels/ReelEditorContext.ts",
+    "sha256": "f7fd4ab8bf143ed341bf7cc8c4872c0080620ad7904156fb65f0b270754e6996"
+  },
+  {
+    "path": "components/reels/ReelPlayer.tsx",
+    "sha256": "6e4b9907e7bda2d2d3f8aa0509e93e663e2165b94c5652923705ecbd23efefb3"
+  },
+  {
+    "path": "components/reels/ReelQuestionsSheet.tsx",
+    "sha256": "f7518f73f79f3d0d9fdb31908d9471395df1e1616910ee2f0a4725f94963781b"
+  },
+  {
+    "path": "components/reels/ReelsScreen.tsx",
+    "sha256": "6f323702e92b6fb54857428d4cedaae0e988ea6869fe16d78aeaaf22691ed2e8"
+  },
+  {
+    "path": "components/reels/ReelThumbnail.tsx",
+    "sha256": "c7e1e1a5fae2a72313fe91b83c9543bc48cbc1abc057bff699aa38f49ac344b6"
+  },
+  {
+    "path": "components/Survey/SurveyActions.tsx",
+    "sha256": "1fd2c2fd768ef2befe7230137e9527890c78ffbcae8b4448eee72eedf7bb1fb6"
+  },
+  {
+    "path": "components/SurveyCard.tsx",
+    "sha256": "7286e0430f4ba23cc1fdd34f90dec9d9f69296c53b9ca9026f98f82c708c961e"
+  },
+  {
+    "path": "docs/reels-implementation.md",
+    "sha256": "50121ee4f4fa5afea98308b439782742add9d4bd63c2efab53da70acd1036c75"
+  },
+  {
+    "path": "package-lock.json",
+    "sha256": "9ed7b1421a790ef2136b4bf43e1481f34385261092dee9e09adae72ba834fca4"
+  },
+  {
+    "path": "package.json",
+    "sha256": "b74c5e73ec1d6d11d48044475dec3c6abb751cce007d14266664a71bbed25164"
+  },
+  {
+    "path": "playwright.reels.config.ts",
+    "sha256": "672ad4eb162d2cbc1bb195ad12ffebf326d102c15284d3fbc83c0b0553f77283"
+  },
+  {
+    "path": "server/.env.example",
+    "sha256": "00df02083ffa6c807822890d2cffd31b2d58dfa15e75367e8a0cc028c667b8e6"
+  },
+  {
+    "path": "server/package.json",
+    "sha256": "006740779ce12660e22661ae2eff6d23d0adc9d2b6462de0434a106b9b4f8d80"
+  },
+  {
+    "path": "server/prisma/migrations/20261031090000_reels_video/migration.sql",
+    "sha256": "3a62a02eff1318913954e8d2dc668e4f3c7e69f7d9399572bf6317c97abfed80"
+  },
+  {
+    "path": "server/prisma/schema.prisma",
+    "sha256": "a09531c0cd200a38b5d9e5274e23bc45f9f6249cafb57ee896b7f5d493d59827"
+  },
+  {
+    "path": "server/src/app.ts",
+    "sha256": "b96b8009e6fdf5dd9f8aa8ce37c8a1fc35bc33cc796a95c4ea222e664563efe3"
+  },
+  {
+    "path": "server/src/controllers/postController.ts",
+    "sha256": "d8e2d0ffdfbf2075f0a5f55a55d85df33cfa35894b6ef6c699806b21c81807e8"
+  },
+  {
+    "path": "server/src/reels/reelPolicy.test.ts",
+    "sha256": "bb4be98f61da54820068c036fe270531afa5834ea6712586908e834f4bb6353e"
+  },
+  {
+    "path": "server/src/reels/reelPolicy.ts",
+    "sha256": "ad39e932e4dc05a3fccff24e38a1ea819a7c56484b4e613ef5126e50fd4f6378"
+  },
+  {
+    "path": "server/src/reels/reelRoutes.ts",
+    "sha256": "42f72db2452f7597e04ce78d584f7fa90da98a62baf1426c20d0823e24fe9ce0"
+  },
+  {
+    "path": "server/src/reels/streamProvider.ts",
+    "sha256": "7ae750ed9796c8e81c827ca81cd8d2a5bcd1648c59ff3a62fa679bc67166963e"
+  },
+  {
+    "path": "server/src/reels/videoService.ts",
+    "sha256": "0eb2f70c5f55806cb36052961e91458dc3e753d3e3088d35657c7488c49498d8"
+  },
+  {
+    "path": "server/src/services/cronService.ts",
+    "sha256": "abde85df03da745243d652a5b609743d058e7f0adafa7d7aebd4e67dd34f0ef5"
+  },
+  {
+    "path": "server/src/services/mediaService.ts",
+    "sha256": "55a57d6b39fa07f1d80edf987ce9a2a55f7caafccf95006f4b35b2cc1a6ba501"
+  },
+  {
+    "path": "server/src/services/postFeedService.ts",
+    "sha256": "f116930cf0f822a966beb6354c51099d24efafe1e449ade0da390b2a050f93e0"
+  },
+  {
+    "path": "server/src/services/postVisibilitySql.ts",
+    "sha256": "efb3788c4be304cc67954ba80fad707c1aa0faadc54ab48da470cc11316b47ad"
+  },
+  {
+    "path": "services/reelsApi.ts",
+    "sha256": "8eac1675646db9618f26047059c99094008ec2ba6f1416b6c9020ec6e6bdcbb5"
+  },
+  {
+    "path": "tailwind.config.cjs",
+    "sha256": "29cdb7d9bbcfea691e202d3b65d1da3e6f0ca2aca0f0ec64ea5ab86a143d60a3"
+  },
+  {
+    "path": "tests/reels-e2e/.gitignore",
+    "sha256": "2b1752ed69eabd1decde1a64d1a29ec1d88a4d670ac680d7cec93f6f0a3c2bbe"
+  },
+  {
+    "path": "tests/reels-e2e/fixtures/reel-1.webm",
+    "sha256": "0734babb15ecfe7c1f572261c5d1d055d1b7f167ed54d259543ff9c0e09c03d9"
+  },
+  {
+    "path": "tests/reels-e2e/fixtures/reel-2.webm",
+    "sha256": "a27787acff1460b8f24d2fc0e3eabb88bb92e5388f01141a530b22849c846efb"
+  },
+  {
+    "path": "tests/reels-e2e/fixtures/reel-3.webm",
+    "sha256": "035bdcec12156973af8cd2ef95c5c6718131063ed029b1ae8e3ccf0e2340415d"
+  },
+  {
+    "path": "tests/reels-e2e/harness.tsx",
+    "sha256": "5318bd6e7b2991427b34c6b428b976c99ad69031d581de2702e36bac2c3c8da0"
+  },
+  {
+    "path": "tests/reels-e2e/index.html",
+    "sha256": "87dd652e18d8feda00b90b25f354222522f2aea306ec79760bdd7dd0dde7bbbd"
+  },
+  {
+    "path": "tests/reels-e2e/reels.spec.ts",
+    "sha256": "675b775a1eb081fbd6029fd570fec8b955cd910cc8f1edd6b0709f3b1ac50795"
+  },
+  {
+    "path": "tests/reels-e2e/server.cjs",
+    "sha256": "3183b824ecd83fd3025d91a5e3ee0f500c88b772f7c17932aca574e1a6646a51"
+  },
+  {
+    "path": "tests/reels-e2e/teardown.cjs",
+    "sha256": "b622cf588b31a024150d2a087cb86583be70b055bc5fa666ab5d32fb87e5b9e8"
+  },
+  {
+    "path": "types.ts",
+    "sha256": "4355d287cf751cc996703a6ac08e4cba0a022d16dce9c8d530b2f6adcf54e8cb"
+  },
+  {
+    "path": "utils/navigation.ts",
+    "sha256": "adee1f2be4c3e9b801093dfad2a031dc6f17e3406f262a2064b469fae4501d6a"
+  }
+]
