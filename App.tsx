@@ -182,6 +182,9 @@ const App: React.FC = () => {
   const userProfileIdRef = useRef<string | undefined>(undefined);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authBootstrapped, setAuthBootstrapped] = useState(false);
+  const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
+  const [bootstrapError, setBootstrapError] = useState(false);
+  const bootstrapSearch = useRef(window.location.search);
   useJourneyNavigation(userProfile?.id || 'guest', authBootstrapped);
   const isHomeRoute = location.pathname === '/';
   const { available: pagesAvailable } = usePagesAvailability(userProfile?.id, authBootstrapped);
@@ -662,14 +665,25 @@ const App: React.FC = () => {
   React.useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
+    setBootstrapError(false);
+    // Bound the entire restoration, including retries, rather than only each
+    // network request. Never treat an unavailable server as proof of logout.
+    const deadline = window.setTimeout(() => {
+      cancelled = true;
+      controller.abort();
+      setBootstrapError(true);
+    }, 20_000);
 
     // Remove credentials issued by versions that predate HttpOnly sessions.
     localStorage.removeItem('si_token');
 
-    const query = new URLSearchParams(window.location.search);
+    // Keep callback feedback across a transport failure and Retry, even after
+    // removing the callback parameters from the visible URL.
+    const query = new URLSearchParams(bootstrapSearch.current);
     const oauthStatus = query.get('oauth') || query.get('oauth_status');
     const oauthError = query.get('oauth_error') || query.get('oauthError');
     if (window.opener && (['reauthenticated', 'reauth_challenge'].includes(oauthStatus || '') || oauthError)) {
+      window.clearTimeout(deadline);
       window.opener.postMessage({ type: 'opiniup:reauth', status: oauthError ? 'failed' : oauthStatus }, window.location.origin);
       window.close();
       return;
@@ -690,6 +704,7 @@ const App: React.FC = () => {
 
     const bootstrapSession = async () => {
       let restoredSession = false;
+      let sessionVerified = false;
       try {
         const session = await api.getSession({ signal: controller.signal, timeoutMs: 15_000, retryOnce: true });
         if (cancelled) return;
@@ -730,15 +745,13 @@ const App: React.FC = () => {
             navigate('/login', { replace: true });
           }
         }
+        sessionVerified = true;
       } catch (error) {
-        if (cancelled || (error && typeof error === 'object' && (error as { name?: string }).name === 'AbortError')) return;
-        resetViewerState(true);
-        clearSessionMetadata();
-        setUserProfile(null);
-        setIsAuthenticated(false);
-        setAuthRecoveryMessage(t('auth.oauth.restoreFailed'));
+        if (cancelled) return;
+        setBootstrapError(true);
       } finally {
-        if (!cancelled) {
+        window.clearTimeout(deadline);
+        if (!cancelled && sessionVerified) {
           setAuthBootstrapped(true);
           if (oauthError && !restoredSession) {
             setAuthRecoveryMessage(t('auth.oauth.tryEmail'));
@@ -765,10 +778,11 @@ const App: React.FC = () => {
     window.addEventListener('auth_expired', handleAuthExpired);
     return () => {
       cancelled = true;
+      window.clearTimeout(deadline);
       controller.abort();
       window.removeEventListener('auth_expired', handleAuthExpired);
     };
-  }, []);
+  }, [bootstrapAttempt]);
 
   React.useEffect(() => {
     if (!authBootstrapped) return;
@@ -1962,10 +1976,15 @@ const App: React.FC = () => {
         <div className={`w-full ${isPagesRoute ? 'max-w-[1120px]' : 'max-w-md'} bg-white h-[100dvh] max-h-screen relative shadow-2xl overflow-hidden flex flex-col`}>
 
           {(resumeChecking || resumeError) && <div className="fixed inset-0 z-[200] bg-white flex flex-col items-center justify-center" role="status"><p>{resumeError ? t('appState.resumeFailed') : t('appState.resuming')}</p>{resumeError && <button onClick={() => void resumeRef.current?.()} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-xl">{t('Retry')}</button>}</div>}
-          {!authBootstrapped || (location.pathname === '/' && isFeedLoading && surveys.length === 0) ? (
+          {!authBootstrapped ? (
             <div className="flex-1 flex flex-col items-center justify-center bg-white px-8">
               <img src="/pwa-192x192.png" width={64} height={64} decoding="async" alt="OpiniUp" className="w-16 h-16 object-contain mb-5" />
-              <p role="status" className="text-sm text-gray-500">{t('appState.starting')}</p>
+              {bootstrapError ? (
+                <div role="alert" className="text-center">
+                  <p className="text-sm text-gray-600">{t('appState.startFailed')}</p>
+                  <button type="button" className="mt-4 min-h-11 rounded-xl bg-blue-600 px-5 py-2 text-white" onClick={() => setBootstrapAttempt(attempt => attempt + 1)}>{t('Retry')}</button>
+                </div>
+              ) : <p role="status" className="text-sm text-gray-500">{t('appState.starting')}</p>}
             </div>
           ) : showUsersTable ? (
             <UsersTableScreen onBack={() => setShowUsersTable(false)} onUserClick={(u) => { setShowUsersTable(false); setSelectedProfile({ id: u.id, name: u.name, avatar: u.avatar }); }} />

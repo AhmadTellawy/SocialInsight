@@ -1023,6 +1023,7 @@
   },
   "appState": {
     "starting": "Preparing your page…",
+    "startFailed": "We couldn't connect to open your page. Check your connection and try again.",
     "feedFailed": "Could not load posts. Please retry.",
     "resuming": "Restoring your page…",
     "resumeFailed": "Could not verify your session. Retry to restore your page."
