@@ -210,6 +210,7 @@ export const authFetch = async (input: RequestInfo | URL, init?: AuthFetchInit):
     }
 
     const headers = new Headers(init?.headers);
+    const requestIdentity = getAuthSessionIdentity();
     const csrfToken = getCsrfToken();
     if (csrfToken && isUnsafeMethod(init?.method) && !headers.has('X-CSRF-Token')) {
         headers.set('X-CSRF-Token', csrfToken);
@@ -292,7 +293,12 @@ export const authFetch = async (input: RequestInfo | URL, init?: AuthFetchInit):
         // A fresh proof is required for this action, but the session itself is
         // still valid. Preserve it so the protected-action dialog can resume.
         const payload = await response.clone().json().catch(() => ({}));
-        if (!['REAUTHENTICATION_REQUIRED', 'INVALID_CREDENTIALS', 'MFA_CODE_INVALID', 'AUTH_CHALLENGE_EXPIRED', 'AUTH_PROOF_EXPIRED'].includes(payload?.code)) {
+        // A guest's rejected request is not a logout. Resetting the whole app
+        // here cancels its public feed without changing the viewer, so React
+        // never starts a replacement request. Also ignore a late rejection
+        // from a different account after the viewer has changed.
+        if (requestIdentity && getAuthSessionIdentity() === requestIdentity
+            && !['REAUTHENTICATION_REQUIRED', 'INVALID_CREDENTIALS', 'MFA_CODE_INVALID', 'AUTH_CHALLENGE_EXPIRED', 'AUTH_PROOF_EXPIRED'].includes(payload?.code)) {
             clearSessionMetadata();
             window.dispatchEvent(new Event('auth_expired'));
         }
@@ -920,6 +926,7 @@ export const api = {
                 suppressAuthExpired: true
             });
             if (response.status === 401) {
+                requestOptions.signal?.throwIfAborted();
                 clearSessionMetadata();
                 return null;
             }
@@ -928,6 +935,10 @@ export const api = {
             const normalized = payload && typeof payload === 'object' && 'user' in payload
                 ? payload as AuthSessionPayload
                 : { user: payload as CurrentUserProfile };
+            requestOptions.signal?.throwIfAborted();
+            if (!normalized.user || typeof normalized.user.id !== 'string' || !normalized.user.id.trim()) {
+                throw new ApiError('Invalid session response', 502, 'INVALID_SESSION_RESPONSE');
+            }
             rememberSessionPayload(normalized);
             return normalized;
         };

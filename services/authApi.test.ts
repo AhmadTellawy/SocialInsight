@@ -127,3 +127,38 @@ test('logout clears in-memory/session metadata after the server revokes the cook
   assert.equal(sessionValues.has('si_auth_identity'), false);
   assert.equal(sessionValues.has('si_csrf_token'), false);
 });
+
+test('guest 401 leaves other public reads running and does not dispatch logout', async () => {
+  const events: string[] = [];
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { dispatchEvent: (event: Event) => { events.push(event.type); return true; } } });
+  Object.defineProperty(globalThis, 'fetch', { configurable: true, value: async () => Response.json({ code: 'AUTH_REQUIRED' }, { status: 401 }) });
+  assert.equal(await api.getSession(), null);
+  const response = await authFetch('/api/posts?guestId=fixture', { memoryTTL: 1 });
+  assert.equal(response.status, 401);
+  assert.equal((await response.json()).code, 'AUTH_REQUIRED');
+  assert.deepEqual(events, []);
+});
+
+test('a late 401 from an earlier viewer cannot clear a newer session', async () => {
+  const events: string[] = [];
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { dispatchEvent: (event: Event) => { events.push(event.type); return true; } } });
+  let rejectOldRequest!: (response: Response) => void;
+  Object.defineProperty(globalThis, 'fetch', { configurable: true, value: async (input: RequestInfo | URL) => {
+    if (String(input).endsWith('/old-request')) return new Promise<Response>(resolve => { rejectOldRequest = resolve; });
+    return Response.json({ user: { id: 'earlier-user' } });
+  } });
+  await api.getSession();
+  const oldRequest = authFetch('/api/old-request');
+  Object.defineProperty(globalThis, 'fetch', { configurable: true, value: async () => Response.json({ user: { id: 'newer-user' } }) });
+  await api.getSession();
+  rejectOldRequest(Response.json({ code: 'AUTH_REQUIRED' }, { status: 401 }));
+  await (await oldRequest).json();
+  assert.equal(sessionValues.get('si_auth_identity'), 'newer-user');
+  assert.deepEqual(events, []);
+});
+
+test('malformed session success cannot establish an authenticated viewer', async () => {
+  Object.defineProperty(globalThis, 'fetch', { configurable: true, value: async () => Response.json({ user: { name: 'No identity' } }) });
+  await assert.rejects(api.getSession(), (error: any) => error instanceof ApiError && error.code === 'INVALID_SESSION_RESPONSE');
+  assert.equal(sessionValues.get('si_auth_identity'), 'newer-user');
+});
