@@ -10,7 +10,14 @@ import { ReelPlayer } from './ReelPlayer';
 import { UserAvatar } from '../UserAvatar';
 
 type CardProps = React.ComponentProps<typeof SurveyCard>;
-export function ReelsScreen({ userProfile, onAuthorClick, onShareToFeed, onLike, onAnalysisClick, onDelete, onEditDraft }: { userProfile?: UserProfile; onAuthorClick: NonNullable<CardProps['onAuthorClick']>; onShareToFeed: CardProps['onShareToFeed']; onLike: CardProps['onLike']; onAnalysisClick: (id: string) => void; onDelete: CardProps['onDelete']; onEditDraft?: CardProps['onEditDraft'] }) {
+type ReelsScreenProps = { userProfile?: UserProfile; onAuthorClick: NonNullable<CardProps['onAuthorClick']>; onShareToFeed: CardProps['onShareToFeed']; onLike: CardProps['onLike']; onAnalysisClick: (id: string) => void; onDelete: CardProps['onDelete']; onEditDraft?: CardProps['onEditDraft'] };
+export function ReelsScreen(props: ReelsScreenProps) {
+  const location = useLocation();
+  // App retains the active tab behind creation and detail overlays.
+  // Unmount requests/player/navigation effects as soon as this route is inactive.
+  return location.pathname === '/reels' ? <ActiveReelsScreen {...props} /> : null;
+}
+function ActiveReelsScreen({ userProfile, onAuthorClick, onShareToFeed, onLike, onAnalysisClick, onDelete, onEditDraft }: ReelsScreenProps) {
   const { i18n } = useTranslation(); const ar = i18n.language.startsWith('ar');
   const navigate = useNavigate(); const location = useLocation();
   const initialId = useRef(new URLSearchParams(location.search).get('reel'));

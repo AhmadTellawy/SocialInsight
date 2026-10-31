@@ -4,7 +4,7 @@ CREATE TABLE "VideoAsset" (
   "requestKey" TEXT NOT NULL, "providerId" TEXT, "uploadUrl" TEXT,
   "status" TEXT NOT NULL DEFAULT 'CREATING',
   "bytes" INTEGER NOT NULL CHECK ("bytes" > 0 AND "bytes" <= 157286400), "mime" TEXT NOT NULL,
-  "duration" DOUBLE PRECISION, "width" INTEGER, "height" INTEGER, "errorCode" TEXT,
+  "duration" DOUBLE PRECISION, "width" INTEGER, "height" INTEGER, "errorCode" TEXT, "attachedAt" TIMESTAMP(3),
   "expiresAt" TIMESTAMP(3) NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL,
   CONSTRAINT "VideoAsset_status_check" CHECK ("status" IN ('CREATING','UPLOADING','PROCESSING','READY','FAILED','PENDING_DELETE','DELETED')),
   CONSTRAINT "VideoAsset_ready_check" CHECK ("status" <> 'READY' OR ("providerId" IS NOT NULL AND "duration" IS NOT NULL AND "width" IS NOT NULL AND "height" IS NOT NULL AND "duration" > 0 AND "duration" <= 60 AND "width" > 0 AND "height" > 0))

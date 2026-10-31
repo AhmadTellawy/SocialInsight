@@ -11,11 +11,11 @@ const pgRequire=createRequire(path.join(process.env.REELS_TEST_PG_PACKAGE||'D:/s
 const run=path.join(evidence,'database-'+crypto.randomUUID()),data=path.join(run,'data');
 fs.mkdirSync(run,{recursive:true});
 const port=57689,origin='http://127.0.0.1:4196';
-let started=false,db,http,vite,stopping=false;
-const receipt={environment:'ISOLATED_LOOPBACK_REAL_ROUTER_COOKIE_SESSION_CSRF_PRISMA_POSTGRES',data,port,startedAt:new Date().toISOString(),databaseRole:'postgres superuser; restricted-role RLS is not claimed'};
+let started=false,db,adminDb,http,vite,stopping=false;
+const receipt={environment:'ISOLATED_LOOPBACK_REAL_ROUTER_COOKIE_SESSION_CSRF_PRISMA_POSTGRES',data,port,startedAt:new Date().toISOString(),databaseRole:'reels_test_runtime: restricted member of socialinsight_runtime; separate postgres client only for fixture setup/inspection'};
 function command(name,args,cwd=run){const result=cp.spawnSync(process.execPath,args,{cwd,env:process.env,encoding:'utf8',windowsHide:true,timeout:120000});fs.writeFileSync(path.join(run,name+'.log'),(result.stdout||'')+(result.stderr||''));if(result.status!==0)throw new Error(name+' failed; see isolated fixture log');}
 function nativeCommand(name,args){const result=cp.spawnSync(path.join(native,name+'.exe'),args,{cwd:run,env:process.env,encoding:'utf8',stdio:name==='pg_ctl'?'ignore':'pipe',windowsHide:true,timeout:60000});fs.writeFileSync(path.join(run,name+'.log'),(result.stdout||'')+(result.stderr||''));if(result.status!==0)throw new Error(name+' failed; see isolated fixture log');}
-async function stop(){if(stopping)return;stopping=true;try{if(http)await new Promise(r=>http.close(r));if(vite)await vite.close();if(db)await db.$disconnect();if(started){nativeCommand('pg_ctl',['-D',data,'-w','-t','30','-m','fast','stop']);receipt.cleanup='OWN_CLUSTER_STOPPED_DATA_RETAINED';}}finally{receipt.endedAt=new Date().toISOString();fs.writeFileSync(path.join(run,'receipt.json'),JSON.stringify(receipt,null,2));}}
+async function stop(){if(stopping)return;stopping=true;try{if(http)await new Promise(r=>http.close(r));if(vite)await vite.close();if(db)await db.$disconnect();if(adminDb)await adminDb.$disconnect();if(started){nativeCommand('pg_ctl',['-D',data,'-w','-t','30','-m','fast','stop']);receipt.cleanup='OWN_CLUSTER_STOPPED_DATA_RETAINED';}}finally{receipt.endedAt=new Date().toISOString();fs.writeFileSync(path.join(run,'receipt.json'),JSON.stringify(receipt,null,2));}}
 async function main(){
   // Always allocate a fresh directory and override every DB target before importing Prisma.
   nativeCommand('initdb',['-D',data,'-U','postgres','--encoding=UTF8','--locale=C','--auth=trust','--no-sync']);
@@ -31,14 +31,21 @@ async function main(){
   const privileges=(await checks.query(`SELECT has_table_privilege('anon','"VideoAsset"','SELECT') AS anon,has_table_privilege('authenticated','"VideoAsset"','SELECT') AS authenticated,has_table_privilege('socialinsight_runtime','"VideoAsset"','SELECT,INSERT,UPDATE,DELETE') AS runtime`)).rows[0];
   if(privileges.anon||privileges.authenticated||!privileges.runtime)throw new Error('VideoAsset role grant regression');
   await checks.query('SET ROLE socialinsight_runtime');await checks.query('SELECT count(*) FROM "VideoAsset"');await checks.query('RESET ROLE');
-  receipt.videoRoleChecks={...privileges,runtimeRead:true};await checks.end();
+  receipt.videoRoleChecks={...privileges,runtimeRead:true};
+  await checks.query('CREATE ROLE reels_test_runtime LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE IN ROLE socialinsight_runtime');
+  await checks.end();
   command('context-key',[path.join(server,'dist/scripts/provisionPagesRlsContext.js')],server);
   receipt.contextKeyProvisioned=true;
+  const {PrismaClient}=requireServer('@prisma/client');
+  adminDb=new PrismaClient({datasourceUrl:process.env.DATABASE_URL});
+  process.env.DATABASE_URL=`postgresql://reels_test_runtime@127.0.0.1:${port}/postgres`;
   db=requireServer('./dist/prisma.js').default;
+  receipt.runtimeIdentity=await db.$queryRawUnsafe('SELECT current_user AS role, rolsuper, rolbypassrls FROM pg_roles WHERE rolname=current_user');
+  if(receipt.runtimeIdentity[0].rolsuper||receipt.runtimeIdentity[0].rolbypassrls)throw new Error('Fixture API must use restricted runtime role');
   const express=requireServer('express'),app=express();
   const videoProvider=requireServer('./dist/reels/streamProvider.js');
-  const videos=new Map();
-  videoProvider.streamProvider.createUpload=async(bytes,creator)=>{const id=crypto.randomBytes(16).toString('hex');videos.set(id,{bytes,creator,offset:0,chunks:[]});return {providerId:id,uploadUrl:origin+'/__test/tus/'+id};};
+  const videos=new Map(),uploadsOnHold=new Map();
+  videoProvider.streamProvider.createUpload=async(bytes,creator)=>{const id=crypto.randomBytes(16).toString('hex');videos.set(id,{bytes,creator,offset:0,chunks:[]});if(uploadsOnHold.size){const asset=await db.videoAsset.findUnique({where:{id:creator},select:{ownerId:true}});const hold=uploadsOnHold.get(asset.ownerId);if(hold&&!hold.entered){hold.entered=true;await hold.promise;}}return {providerId:id,uploadUrl:origin+'/__test/tus/'+id};};
   videoProvider.streamProvider.inspect=async id=>{const video=videos.get(id);return {uid:id,creator:video.creator,requireSignedURLs:true,readyToStream:video.offset===video.bytes,status:{state:video.offset===video.bytes?'ready':'inprogress'},duration:2,input:{width:360,height:640}};};
   videoProvider.streamProvider.remove=async id=>{videos.delete(id);};
   videoProvider.streamProvider.findUpload=async creator=>[...videos].filter(([,v])=>v.creator===creator).map(([uid])=>({uid,creator}));
@@ -49,6 +56,7 @@ async function main(){
   app.post('/api/reels/webhook',express.raw({type:'application/json'}),requireServer('./dist/reels/reelRoutes.js').streamWebhook);
   app.use(express.json());
   const sessions=requireServer('./dist/services/sessionService.js');
+  require('./review-fixtures.cjs')({app,db,adminDb,requireServer,sessions,origin,uploadsOnHold});
   app.get('/__test/ready',(_req,res)=>res.json({ready:true}));
   app.post('/__test/shutdown',(_req,res)=>{res.json({stopping:true,receiptPath:path.join(run,'receipt.json')});setImmediate(()=>stop().finally(()=>process.exit()));});
   app.get('/__test/session',async(req,res,next)=>{try{

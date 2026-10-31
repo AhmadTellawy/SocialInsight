@@ -3,7 +3,38 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { validateReelInput, validateReelSubmission } from './reelPolicy';
 import { verifyStreamWebhook, streamProvider, reelsConfigured, videoMaintenanceConfigured } from './streamProvider';
+import { assertAttachableVideo, cancelUnattachedVideo } from './videoService';
 const valid = () => ({ presentationFormat: 'REEL', videoAssetId: '00000000-0000-4000-8000-000000000001', type: 'Poll', title: 'Choose', options: [{ id:'a', text:'A' }, { id:'b', text:'B' }], targetAudience:'Public', demographics:[] });
+
+test('a quiz requires distinct option IDs and exactly one explicit correct answer', () => {
+  for (const question of [
+    { options: [{ text: 'A' }, { text: 'B' }] },
+    { correctOptionId: '', options: [{ id: '', text: 'A' }, { id: 'b', text: 'B' }] },
+    { correctOptionId: 'a', options: [{ id: 'a', text: 'A' }, { id: 'a', text: 'B' }] },
+    { correctOptionId: 'missing', options: [{ id: 'a', text: 'A' }, { id: 'b', text: 'B' }] }
+  ]) assert.throws(() => validateReelInput({ ...valid(), type: 'Quiz', sections: [{ questions: [{ text: 'Choose', type: 'multiple_choice', ...question }] }] }), { code: 'REEL_CORRECT_ANSWER' });
+});
+
+test('deleted or replaced attachments never revert to an uploader-owned fresh upload', async () => {
+  let asset: any = { id: 'video', ownerId: 'former-editor', status: 'READY', attachedAt: new Date(), post: null };
+  const tx: any = { $queryRaw: async () => [], videoAsset: { findUnique: async () => asset, update: async ({ data }: any) => { Object.assign(asset, data); return asset; } } };
+  await assert.rejects(assertAttachableVideo(tx, 'video', 'former-editor'), { code: 'REEL_VIDEO_NOT_READY' });
+  asset.post = { id: 'page-post' };
+  await assert.doesNotReject(assertAttachableVideo(tx, 'video', 'current-editor', 'page-post'));
+  asset = { ...asset, attachedAt: null, post: null };
+  await assert.doesNotReject(assertAttachableVideo(tx, 'video', 'former-editor'));
+  assert.ok(asset.attachedAt instanceof Date);
+});
+
+test('cancellation rechecks attachment after a competing creator releases the video lock', async () => {
+  let attached = false, updates = 0;
+  const tx: any = {
+    $queryRaw: async () => { attached = true; return []; },
+    videoAsset: { findUnique: async () => ({ ownerId: 'owner', status: 'READY', post: attached ? { id: 'post' } : null }), update: async () => { updates++; } }
+  };
+  await assert.rejects(cancelUnattachedVideo(tx, 'video', 'owner'), { code: 'VIDEO_UNAVAILABLE' });
+  assert.equal(updates, 0);
+});
 test('disabling Reel creation does not disable retention of existing videos', () => {
   const keys = ['REELS_ENABLED','STREAM_ACCOUNT_ID','STREAM_API_TOKEN'] as const;
   const previous = keys.map(key => process.env[key]);

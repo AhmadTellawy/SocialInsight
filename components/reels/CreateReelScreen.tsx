@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Camera, UploadCloud, ArrowLeft, Video, ListChecks, HelpCircle, Pause, Play, Square } from 'lucide-react';
 import { Upload } from 'tus-js-client';
 import { Survey, SurveyType, UserProfile, Group } from '../../types';
-import { reelsApi, ReelsConfig, VideoUpload } from '../../services/reelsApi';
+import { reelsApi, ReelsApiError, ReelsConfig, VideoUpload } from '../../services/reelsApi';
 import { ReelEditorContext } from './ReelEditorContext';
 import { ReelPlayer } from './ReelPlayer';
 const PollEditor = React.lazy(() => import('../CreatePollScreen').then(m => ({ default: m.CreatePollScreen })));
@@ -23,10 +23,11 @@ export function CreateReelScreen({ userProfile, draft, userGroups, initialGroupI
   const [editorVisited, setEditorVisited] = useState(false);
   const [payload, setPayload] = useState<Partial<Survey>>(); const [publishing, setPublishing] = useState(false);
   const [recording, setRecording] = useState(false); const [recordSeconds, setRecordSeconds] = useState(0);
+  const [recordPending, setRecordPending] = useState(false); const recordingSlot = useRef(false); const recordingGeneration = useRef(0);
   const input = useRef<HTMLInputElement>(null); const recorder = useRef<MediaRecorder>(); const stream = useRef<MediaStream>(); const camera = useRef<HTMLVideoElement>(null);
   const tus = useRef<Upload>(); const alive = useRef(true); const pollTimer = useRef<ReturnType<typeof setTimeout>>(); const recordingTimer = useRef<ReturnType<typeof setInterval>>();
   const generation = useRef(0); const requestKey = useRef(crypto.randomUUID());
-  useEffect(() => { alive.current = true; const abort = new AbortController(); void reelsApi.config(abort.signal).then(setConfig).catch(() => { if (!abort.signal.aborted) setError(ar ? 'تعذر تحميل إعدادات الفيديو.' : 'Unable to load video settings.'); }); return () => { alive.current = false; abort.abort(); generation.current++; clearTimeout(pollTimer.current); clearInterval(recordingTimer.current); void tus.current?.abort(); if (recorder.current?.state === 'recording') recorder.current.stop(); stream.current?.getTracks().forEach(track => track.stop()); }; }, []);
+  useEffect(() => { alive.current = true; const abort = new AbortController(); void reelsApi.config(abort.signal).then(setConfig).catch(() => { if (!abort.signal.aborted) setError(ar ? 'تعذر تحميل إعدادات الفيديو.' : 'Unable to load video settings.'); }); return () => { alive.current = false; abort.abort(); generation.current++; recordingGeneration.current++; recordingSlot.current = false; clearTimeout(pollTimer.current); clearInterval(recordingTimer.current); void tus.current?.abort(); if (recorder.current?.state === 'recording') recorder.current.stop(); stream.current?.getTracks().forEach(track => track.stop()); }; }, []);
   useEffect(() => { if (!file) return; const url = URL.createObjectURL(file); setSrc(url); return () => URL.revokeObjectURL(url); }, [file]);
   useEffect(() => { if (recording && camera.current && stream.current) camera.current.srcObject = stream.current; }, [recording]);
   const selectFile = async (selected: File) => {
@@ -50,7 +51,17 @@ export function CreateReelScreen({ userProfile, draft, userGroups, initialGroupI
     if (!file || !config?.enabled) return;
     const version = generation.current; setError(''); setStatus('UPLOADING');
     try {
-      const session = asset || await reelsApi.upload(file, requestKey.current);
+      let session = asset;
+      if (!session) {
+        try { session = await reelsApi.upload(file, requestKey.current); }
+        catch (e) {
+          // Retain the receipt after ambiguous failures. Rotate only after the
+          // server confirms that this upload can no longer be resumed.
+          if (!(e instanceof ReelsApiError) || e.code !== 'UPLOAD_EXPIRED' || !alive.current || generation.current !== version) throw e;
+          requestKey.current = crypto.randomUUID();
+          session = await reelsApi.upload(file, requestKey.current);
+        }
+      }
       if (!alive.current || generation.current !== version) return;
       setAsset(session);
       const transfer = new Upload(file, { uploadUrl: session.uploadUrl, chunkSize: 5 * 1024 * 1024, retryDelays: [0, 1000, 3000, 5000, 10000], storeFingerprintForResuming: false,
@@ -61,19 +72,25 @@ export function CreateReelScreen({ userProfile, draft, userGroups, initialGroupI
     } catch (e) { if (alive.current && generation.current === version) { setStatus('SELECTED'); setError(e instanceof Error ? e.message : 'Upload failed'); } }
   };
   const record = async () => {
+    if (recordingSlot.current || !config?.enabled) return;
+    recordingSlot.current = true; setRecordPending(true);
+    const request = ++recordingGeneration.current;
     try {
-      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') { input.current?.setAttribute('capture', 'environment'); input.current?.click(); return; }
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') { input.current?.setAttribute('capture', 'environment'); input.current?.click(); recordingSlot.current = false; return; }
       const media = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 720 }, height: { ideal: 1280 } }, audio: true });
-      if (!alive.current) { media.getTracks().forEach(track => track.stop()); return; }
+      if (!alive.current || request !== recordingGeneration.current) { media.getTracks().forEach(track => track.stop()); return; }
       stream.current = media;
       const mime = ['video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'].find(value => MediaRecorder.isTypeSupported(value));
       const capture = new MediaRecorder(media, mime ? { mimeType: mime, videoBitsPerSecond: 4_000_000 } : undefined); const chunks: Blob[] = [];
+      let captureTimer: ReturnType<typeof setInterval> | undefined;
       capture.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-      capture.onstop = () => { clearInterval(recordingTimer.current); media.getTracks().forEach(track => track.stop()); if (!alive.current) return; setRecording(false); const type = capture.mimeType.split(';')[0] || 'video/webm'; void selectFile(new File(chunks, `reel.${type === 'video/mp4' ? 'mp4' : 'webm'}`, { type })); };
-      capture.onerror = () => { clearInterval(recordingTimer.current); media.getTracks().forEach(track => track.stop()); if (alive.current) { setRecording(false); setError(ar ? 'تعذر تسجيل الفيديو.' : 'Unable to record video.'); } };
+      capture.onstop = () => { clearInterval(captureTimer); media.getTracks().forEach(track => track.stop()); if (!alive.current || request !== recordingGeneration.current) return; recordingSlot.current = false; setRecording(false); const type = capture.mimeType.split(';')[0] || 'video/webm'; void selectFile(new File(chunks, `reel.${type === 'video/mp4' ? 'mp4' : 'webm'}`, { type })); };
+      capture.onerror = () => { clearInterval(captureTimer); media.getTracks().forEach(track => track.stop()); if (alive.current && request === recordingGeneration.current) { recordingGeneration.current++; recordingSlot.current = false; setRecordPending(false); setRecording(false); setError(ar ? 'تعذر تسجيل الفيديو.' : 'Unable to record video.'); } };
       recorder.current = capture; capture.start(1000); setRecording(true); setRecordSeconds(0); const started = Date.now();
-      recordingTimer.current = setInterval(() => { const seconds = Math.floor((Date.now() - started) / 1000); setRecordSeconds(seconds); if (seconds >= (config?.maxSeconds || 60) && capture.state === 'recording') capture.stop(); }, 250);
-    } catch { stream.current?.getTracks().forEach(track => track.stop()); if (alive.current) setError(ar ? 'اسمح باستخدام الكاميرا والميكروفون، أو حمّل فيديو من جهازك.' : 'Allow camera and microphone access, or upload a video from your device.'); }
+      captureTimer = setInterval(() => { const seconds = Math.floor((Date.now() - started) / 1000); setRecordSeconds(seconds); if (seconds >= (config?.maxSeconds || 60) && capture.state === 'recording') capture.stop(); }, 250);
+      recordingTimer.current = captureTimer;
+    } catch { if (request === recordingGeneration.current) { recordingSlot.current = false; stream.current?.getTracks().forEach(track => track.stop()); if (alive.current) setError(ar ? 'اسمح باستخدام الكاميرا والميكروفون، أو حمّل فيديو من جهازك.' : 'Allow camera and microphone access, or upload a video from your device.'); } }
+    finally { if (alive.current && request === recordingGeneration.current) setRecordPending(false); }
   };
   const decorate = (data: Partial<Survey>) => ({ ...data, presentationFormat: 'REEL' as const, videoAssetId: asset!.id, allowUserOptions: false, demographics: [], ...(kind === SurveyType.QUIZ ? { allowMultipleSelection: false } : {}) });
   const editorProps = { userProfile, userGroups, initialGroupId, draft, onClose: () => { if (stageRef.current !== 'preview') setStage('video'); }, onSubmit: async (data: Partial<Survey>) => {
@@ -94,7 +111,7 @@ export function CreateReelScreen({ userProfile, draft, userGroups, initialGroupI
         {recording && <div className="space-y-3"><video ref={camera} autoPlay playsInline muted className="w-full aspect-[9/16] max-h-[50dvh] rounded-2xl bg-black" /><div className="flex justify-between items-center"><span role="timer" className="font-mono text-red-600">00:{String(recordSeconds).padStart(2, '0')}</span><button className="flex items-center gap-2 bg-red-600 text-white rounded-xl px-5 py-3" onClick={() => recorder.current?.stop()}><Square size={16} />{ar ? 'إيقاف التسجيل' : 'Stop recording'}</button></div></div>}
         {stage === 'video' && <>
           <input type="file" ref={input} className="hidden" accept="video/mp4,video/webm,video/quicktime" onChange={e => { const selected = e.target.files?.[0]; if (selected) void selectFile(selected); e.target.value = ''; }} />
-          <div className="grid grid-cols-2 gap-3"><button disabled={!config?.enabled || busy || recording || !!draft} className="border border-gray-200 rounded-2xl p-5 flex flex-col items-center gap-2 disabled:opacity-40" onClick={() => { input.current?.removeAttribute('capture'); input.current?.click(); }}><UploadCloud className="text-blue-600" />{ar ? 'تحميل فيديو' : 'Upload video'}</button><button disabled={!config?.enabled || busy || recording || !!draft} className="border border-gray-200 rounded-2xl p-5 flex flex-col items-center gap-2 disabled:opacity-40" onClick={() => void record()}><Camera className="text-blue-600" />{ar ? 'تسجيل فيديو' : 'Record video'}</button></div>
+          <div className="grid grid-cols-2 gap-3"><button disabled={!config?.enabled || busy || recording || recordPending || !!draft} className="border border-gray-200 rounded-2xl p-5 flex flex-col items-center gap-2 disabled:opacity-40" onClick={() => { input.current?.removeAttribute('capture'); input.current?.click(); }}><UploadCloud className="text-blue-600" />{ar ? 'تحميل فيديو' : 'Upload video'}</button><button disabled={!config?.enabled || busy || recording || recordPending || !!draft} className="border border-gray-200 rounded-2xl p-5 flex flex-col items-center gap-2 disabled:opacity-40" onClick={() => void record()}><Camera className="text-blue-600" />{ar ? 'تسجيل فيديو' : 'Record video'}</button></div>
           <p className="text-xs text-gray-500">{ar ? 'حتى 60 ثانية • 150 ميجابايت • يُفضّل الفيديو العمودي' : 'Up to 60 seconds · 150 MB · Vertical video recommended'}</p>
           {status === 'UPLOADING' && <div className="space-y-2"><progress aria-label={ar ? 'تقدم الرفع' : 'Upload progress'} className="w-full accent-blue-600" max={100} value={progress} /><div className="flex justify-between text-sm"><span>{progress}%</span><button onClick={() => { void tus.current?.abort(); setStatus('PAUSED'); }} className="flex gap-1"><Pause size={16} />{ar ? 'إيقاف مؤقت' : 'Pause'}</button></div></div>}
           {['PROCESSING', 'CREATING'].includes(status) && <p role="status" className="text-sm text-blue-600">{ar ? 'جارٍ تجهيز الفيديو للنشر…' : 'Preparing your video for publishing…'}</p>}

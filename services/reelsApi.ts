@@ -3,9 +3,12 @@ import { normalizeSurvey, Survey } from '../types';
 export type VideoUpload = { id: string; uploadUrl: string; status: string };
 export type PlaybackGrant = { hls: string; poster: string; expiresAt: number; format?: 'hls' | 'progressive' };
 export type ReelsConfig = { enabled: boolean; maxBytes: number; maxSeconds: number; maxQuestions: number };
+export class ReelsApiError extends Error {
+  constructor(message: string, public code: string | undefined, public status: number) { super(message); }
+}
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await authFetch(`${API_BASE_URL}/reels${path}`, { ...init, timeoutMs: 20_000 });
-  if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error || 'Unable to load Reels. Try again.'); }
+  if (!response.ok) { const body = await response.json().catch(() => ({})); throw new ReelsApiError(body.error || 'Unable to load Reels. Try again.', body.code, response.status); }
   return response.status === 204 ? undefined as T : response.json();
 }
 export const reelsApi = {

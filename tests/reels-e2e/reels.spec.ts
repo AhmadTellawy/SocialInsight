@@ -26,6 +26,121 @@ async function publish(page: Page, videoAssetId: string, type = 'Poll', title = 
   const result = await call(page, '/api/posts', 'POST', { ...data, ...overrides }); expect(result.status, JSON.stringify(result.body)).toBe(200); return result.body;
 }
 
+test('retained viewer stops playback and late navigation when the composer opens', async ({ page }) => {
+  await page.goto('/reels'); await expect(page.getByRole('button', { name: 'Create Reel' }).first()).toBeVisible();
+  const post = await publish(page, await upload(page, await sampleVideo(page, '1')));
+  await page.goto(`/reels?reel=${post.id}`);
+  await expect.poll(() => page.locator('video').evaluateAll(nodes => nodes.some(node => !(node as HTMLVideoElement).paused))).toBe(true);
+  await page.getByRole('button', { name: 'Create Reel', exact: true }).first().click();
+  await expect(page).toHaveURL(/\/create\/reel/); await expect(page.locator('video')).toHaveCount(0);
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  await page.route('**/api/posts?presentationFormat=REEL**', async route => { entered(); await gate; await route.continue().catch(() => {}); });
+  await page.goto('/reels'); await started;
+  await page.getByRole('button', { name: 'Create Reel', exact: true }).first().click(); release();
+  await expect(page.getByRole('button', { name: 'Upload video', exact: true })).toBeEnabled();
+  await expect(page).toHaveURL(/\/create\/reel/); await expect(page.locator('video')).toHaveCount(0);
+});
+
+test('upload retry replaces only a confirmed terminal session without reselecting the video', async ({ page }) => {
+  const keys: string[] = [];
+  await page.route('**/api/reels/uploads', async route => {
+    keys.push(route.request().postDataJSON().requestKey);
+    if (keys.length === 1) return route.fulfill({ status: 503, json: { code: 'VIDEO_PROVIDER_UNAVAILABLE', error: 'Temporary provider failure' } });
+    if (keys.length === 2) return route.fulfill({ status: 409, json: { code: 'UPLOAD_EXPIRED', error: 'Start a new video upload.' } });
+    await route.continue();
+  });
+  await page.goto('/create/reel'); await expect(page.getByRole('button', { name: 'Upload video', exact: true })).toBeEnabled();
+  await page.locator('input[type=file]').first().setInputFiles({ name: 'retry.webm', mimeType: 'video/webm', buffer: Buffer.from(await sampleVideo(page, '1'), 'base64') });
+  await page.getByRole('button', { name: 'Upload & prepare video' }).click();
+  await expect(page.getByRole('alert')).toContainText('Temporary provider failure');
+  await page.getByRole('button', { name: 'Upload & prepare video' }).click();
+  await expect(page.getByRole('button', { name: 'Next: questions & settings' })).toBeVisible({ timeout: 30000 });
+  expect(keys).toHaveLength(3); expect(keys[1]).toBe(keys[0]); expect(keys[2]).not.toBe(keys[0]);
+});
+
+test('camera permission has one owner and late camera streams stop after leaving creation', async ({ page }) => {
+  await page.addInitScript(() => {
+    const state: any = { calls: 0 }; (window as any).__cameraCheck = state;
+    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { value: () => { state.calls++; return new Promise(resolve => {
+      state.release = () => { const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 64; canvas.getContext('2d')!.fillRect(0, 0, 64, 64); state.stream = canvas.captureStream(5); resolve(state.stream); };
+    }); } });
+  });
+  await page.goto('/create/reel'); const button = page.getByRole('button', { name: 'Record video', exact: true }); await expect(button).toBeEnabled();
+  await button.evaluate(node => { (node as HTMLButtonElement).click(); (node as HTMLButtonElement).click(); });
+  await expect(button).toBeDisabled(); expect(await page.evaluate(() => (window as any).__cameraCheck.calls)).toBe(1);
+  await page.getByRole('button', { name: 'Back', exact: true }).click();
+  await page.evaluate(() => (window as any).__cameraCheck.release());
+  await expect.poll(() => page.evaluate(() => (window as any).__cameraCheck.stream.getTracks().every((track: MediaStreamTrack) => track.readyState === 'ended'))).toBe(true);
+});
+
+test('a lost response during provider preparation resumes the original upload reservation', async ({ page }) => {
+  await page.goto('/create/reel'); await expect(page.getByRole('button', { name: 'Upload video', exact: true })).toBeEnabled();
+  expect((await call(page, '/__test/hold-upload', 'POST', {})).status).toBe(200);
+  const keys: string[] = []; let abortOriginal!: () => void; let providerRequest: Promise<unknown> | undefined;
+  const canAbort = new Promise<void>(resolve => { abortOriginal = resolve; });
+  await page.route('**/api/reels/uploads', async route => {
+    keys.push(route.request().postDataJSON().requestKey);
+    if (keys.length === 1) { providerRequest = route.fetch().catch(() => {}); await canAbort; await route.abort('failed'); }
+    else await route.continue();
+  });
+  try {
+    await page.locator('input[type=file]').first().setInputFiles({ name: 'interrupted.webm', mimeType: 'video/webm', buffer: Buffer.from(await sampleVideo(page, '1'), 'base64') });
+    await page.getByRole('button', { name: 'Upload & prepare video' }).click();
+    await expect.poll(async () => (await call(page, '/__test/hold-upload')).body.entered).toBe(true);
+    abortOriginal(); await expect(page.getByRole('alert')).toBeVisible();
+    const pendingResponse = page.waitForResponse(response => response.url().endsWith('/api/reels/uploads') && response.status() === 409);
+    await page.getByRole('button', { name: 'Upload & prepare video' }).click();
+    expect((await (await pendingResponse).json()).code).toBe('UPLOAD_PENDING');
+    expect(keys).toHaveLength(2); expect(keys[1]).toBe(keys[0]);
+    await call(page, '/__test/hold-upload', 'DELETE'); await providerRequest;
+    await page.getByRole('button', { name: 'Upload & prepare video' }).click();
+    await expect(page.getByRole('button', { name: 'Next: questions & settings' })).toBeVisible({ timeout: 30000 });
+    expect(keys).toHaveLength(3); expect(keys.every(key => key === keys[0])).toBe(true);
+    expect((await call(page, '/__test/hold-upload')).body.assets).toBe(1);
+  } finally { abortOriginal(); await call(page, '/__test/hold-upload', 'DELETE'); await providerRequest; }
+});
+
+test('restricted runtime role previews for Page editors and never returns deleted Page video ownership', async ({ page, browser }) => {
+  await page.goto('/reels'); await expect(page.getByRole('button', { name: 'Create Reel' }).first()).toBeVisible();
+  const created = await call(page, '/api/pages', 'POST', { name: 'Video ownership', category: 'creator', representationConfirmed: true, requestId: crypto.randomUUID() }); expect(created.status).toBe(201);
+  const pageId = created.body.id;
+  expect((await call(page, `/api/pages/manage/${pageId}/lifecycle`, 'POST', { action: 'publish' })).status).toBe(200);
+  const editorContext = await browser.newContext(); const editor = await editorContext.newPage();
+  await editor.goto('http://127.0.0.1:4196/reels'); await expect(editor.getByRole('button', { name: 'Create Reel' }).first()).toBeVisible();
+  const editorId = (await call(editor, '/__test/session')).body.user.id;
+  expect((await call(page, `/__test/team/${pageId}`, 'POST', { userId: editorId })).status).toBe(200);
+  const asset = await upload(editor, await sampleVideo(editor, '1'));
+  const post = await publish(editor, asset, 'Poll', 'Page editor Reel', { pageId, pageCreateKey: crypto.randomUUID() });
+  expect((await call(editor, `/api/reels/preview/${asset}`)).status).toBe(200);
+  await expect.poll(async () => (await call(page, `/api/pages/manage/${pageId}/lifecycle`, 'POST', { action: 'unpublish' })).status).toBe(200);
+  expect((await call(editor, `/api/reels/preview/${asset}`)).status).toBe(200);
+  expect((await call(page, `/api/reels/preview/${asset}`)).status).toBe(200);
+  expect((await call(page, `/__test/team/${pageId}`, 'POST', { userId: editorId, remove: true })).status).toBe(200);
+  expect((await call(editor, `/api/reels/preview/${asset}`)).status).toBe(404);
+  expect((await call(page, `/api/posts/${post.id}`, 'DELETE')).status).toBe(200);
+  expect((await call(editor, `/api/reels/preview/${asset}`)).status).toBe(404);
+  const reuse = await call(editor, '/api/posts', 'POST', { title: 'Unauthorized reuse', type: 'Poll', presentationFormat: 'REEL', videoAssetId: asset, options: options() });
+  expect(reuse.status).toBe(409);
+  expect((await call(editor, `/__test/database/${post.id}`)).body.post).toBeNull();
+  await editorContext.close();
+});
+
+test('real database lock interleavings preserve attached videos and current replacements', async ({ page }) => {
+  await page.goto('/reels'); await expect(page.getByRole('button', { name: 'Create Reel' }).first()).toBeVisible();
+  const asset = await upload(page, await sampleVideo(page, '1'));
+  const race = await call(page, `/__test/cancel-race/${asset}`, 'POST', {});
+  expect(race.status, JSON.stringify(race.body)).toBe(200); expect(race.body.cancellation).toBe('VIDEO_UNAVAILABLE'); expect(race.body.asset.status).toBe('READY');
+  const original = await upload(page, await sampleVideo(page, '1'));
+  const post = await publish(page, original);
+  const replacement = await upload(page, await sampleVideo(page, '2'));
+  const update = await call(page, `/__test/update-race/${post.id}`, 'POST', { replacement });
+  expect(update.status, JSON.stringify(update.body)).toBe(200); expect(update.body.status, JSON.stringify(update.body.body)).toBe(200);
+  expect(update.body.post.videoAssetId).toBe(replacement); expect(update.body.post.responseCount).toBe(1);
+  expect((await call(page, `/api/posts/${post.id}`, 'PUT', { videoAssetId: original })).status).toBe(409);
+});
+
 test('recorded video upload → original poll editor and settings → preview → publish → answer', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto('/create/reel'); await expect(page.getByRole('button', { name: 'Upload video', exact: true })).toBeEnabled();

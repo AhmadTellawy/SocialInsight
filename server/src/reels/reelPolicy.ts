@@ -38,7 +38,7 @@ export function validateReelInput(data: any): void {
   for (const q of all) {
     if (!q || typeof q.text !== 'string' || !q.text.trim() || q.text.length > 10000) throw new ReelError('REEL_QUESTION_REQUIRED', 'Write each question.');
     if (q.type !== 'text' && (!Array.isArray(q.options) || q.options.length < 2 || q.options.length > 6 || q.options.some((o: any) => !o || typeof o.text !== 'string' || !o.text.trim() || o.text.length > 10000))) throw new ReelError('REEL_ANSWERS', 'Add between 2 and 6 text answers.');
-    if (String(data.type).toLowerCase() === 'quiz' && !q.options?.some((o: any) => o.id === q.correctOptionId)) throw new ReelError('REEL_CORRECT_ANSWER', 'Select one correct answer for every question.');
+    if (String(data.type).toLowerCase() === 'quiz' && (typeof q.correctOptionId !== 'string' || !q.correctOptionId.trim() || !q.options?.every((o: any) => typeof o.id === 'string' && o.id.trim()) || new Set(q.options.map((o: any) => o.id)).size !== q.options.length || q.options.filter((o: any) => o.id === q.correctOptionId).length !== 1)) throw new ReelError('REEL_CORRECT_ANSWER', 'Select one correct answer for every question.');
   }
 }
 

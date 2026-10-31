@@ -1178,10 +1178,11 @@ export const updatePost = async (req: Request, res: Response) => {
             return;
         }
 
+        const changesVideo = data.videoAssetId !== undefined;
         if (data.presentationFormat && data.presentationFormat !== existingPost.presentationFormat) throw new ReelError('REEL_FORMAT_IMMUTABLE', 'Post format cannot be changed.',409);
         if (existingPost.presentationFormat === 'REEL') {
             requireReels();
-            data.presentationFormat = 'REEL'; data.videoAssetId = data.videoAssetId || existingPost.videoAssetId; data.type = existingPost.type;
+            data.presentationFormat = 'REEL'; data.videoAssetId = changesVideo ? data.videoAssetId : existingPost.videoAssetId; data.type = existingPost.type;
             validateReelInput({
                 title: existingPost.title, targetAudience: existingPost.targetAudience,
                 options: existingPost.questions[0]?.options,
@@ -1337,7 +1338,7 @@ export const updatePost = async (req: Request, res: Response) => {
         }
 
         const updateData: any = {
-            ...(existingPost.presentationFormat === 'REEL' ? {videoAssetId: data.videoAssetId} : {}),
+            ...(existingPost.presentationFormat === 'REEL' && changesVideo ? {videoAssetId: data.videoAssetId} : {}),
             ...(!immutablePageShareCopy && data.title !== undefined && { title: data.title }),
             ...(!immutablePageShareCopy && data.description !== undefined && { description: data.description }),
             ...(!immutablePageShareCopy && data.category !== undefined && { category: data.category }),
@@ -1486,9 +1487,11 @@ export const updatePost = async (req: Request, res: Response) => {
                 }
                 if (existingPost.presentationFormat === 'REEL') {
                     await tx.$queryRaw`SELECT id FROM "Post" WHERE id = ${id} FOR UPDATE`;
-                    const current = await tx.post.findUnique({where:{id},select:{responseCount:true}});
-                    if (current?.responseCount && (data.sections !== undefined || data.options !== undefined || data.videoAssetId !== existingPost.videoAssetId)) throw new ReelError('REEL_HAS_RESPONSES', 'Questions and video cannot change after responses.',409);
-                    await assertAttachableVideo(tx, data.videoAssetId, data.videoAssetId === existingPost.videoAssetId ? existingPost.authorId : trustedUserId, id);
+                    const current = await tx.post.findUnique({where:{id},select:{responseCount:true,videoAssetId:true,isDeleted:true}});
+                    if (!current?.videoAssetId || current.isDeleted) throw new ReelError('REEL_UNAVAILABLE', 'Reel unavailable.',404);
+                    const videoId = changesVideo ? data.videoAssetId : current.videoAssetId;
+                    if (current.responseCount && (data.sections !== undefined || data.options !== undefined || videoId !== current.videoAssetId)) throw new ReelError('REEL_HAS_RESPONSES', 'Questions and video cannot change after responses.',409);
+                    await assertAttachableVideo(tx, videoId, trustedUserId, id);
                 }
                 const post = await tx.post.update({
                     where: { id },
@@ -3845,6 +3848,10 @@ export const deletePost = async (req: Request, res: Response) => {
             // share insertion then waits until deletion/tombstoning completes.
             await tx.$queryRaw`SELECT id FROM "Post" WHERE id = ${id} FOR UPDATE`;
             const hasDependentShares = await tx.post.count({ where: { sharedFromId: id } }) > 0;
+            if (post.videoAssetId) {
+                await tx.$queryRaw`SELECT id FROM "VideoAsset" WHERE id = ${post.videoAssetId} FOR UPDATE`;
+                await tx.videoAsset.updateMany({ where: { id: post.videoAssetId, status: { not: 'DELETED' } }, data: { status: 'PENDING_DELETE', uploadUrl: null } });
+            }
             await tx.notification.deleteMany({
                 where: { targetId: { in: postIds }, targetType: { in: ['survey', 'post'] } }
             });

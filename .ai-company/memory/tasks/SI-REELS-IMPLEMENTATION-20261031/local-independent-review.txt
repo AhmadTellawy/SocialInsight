@@ -1,0 +1,24 @@
+Independent read-only model review of cce80a1b9fc22a412d46ce4d5608a429287a32d2 against b5067e944493db7e67d12daa8689300a8c913709 found authorization, lifecycle, concurrency and frontend integration defects. The actual diff and surrounding code were inspected; six local Reels unit tests passed, but no database integration, browser/device, live-provider or deployment validation was performed. This is not a human review or production-readiness approval.
+
+Full review comments:
+
+- [P1] Preserve Page ownership after the post is removed — C:/Users/ABC/.codex/worktrees/reels-end-to-end/socialinsight-20261006/server/src/reels/videoService.ts:8-11
+  After an editor uploads a Page Reel, revoke their membership and delete the post without dependent reposts. `deletePost` hard-deletes the post but leaves its video READY. With `asset.post` now null, the former editor can obtain preview grants and attach that video to a personal post using its original UUID. Preserve durable Page ownership and transactionally retire deleted-post videos rather than reverting authorization to the original uploader.
+
+- [P1] Lock and recheck attachment before cancelling a video — C:/Users/ABC/.codex/worktrees/reels-end-to-end/socialinsight-20261006/server/src/reels/reelRoutes.ts:48-50
+  If cancellation starts while creation holds the video lock, this statement can observe `post: null`, wait for creation to commit, then mark the now-attached video PENDING_DELETE: PostgreSQL's statement snapshot does not refresh the related Post lookup after that wait. Maintenance subsequently deletes the published video's provider object. Acquire the video lock first, then reread attachment state in a separate statement before claiming deletion.
+
+- [P2] Compare video changes against the locked post — C:/Users/ABC/.codex/worktrees/reels-end-to-end/socialinsight-20261006/server/src/controllers/postController.ts:1488-1491
+  A metadata-only update defaults `data.videoAssetId` to the preflight video. If another update replaces that video and a participant responds before this transaction acquires the lock, the comparison still sees the old ID equal to `existingPost.videoAssetId`. It therefore permits restoring the detached old video despite recorded responses. Read the current video ID under the lock and avoid writing videoAssetId when the caller did not request a replacement.
+
+- [P2] Authorize Page previews inside a signed transaction — C:/Users/ABC/.codex/worktrees/reels-end-to-end/socialinsight-20261006/server/src/reels/reelRoutes.ts:79-84
+  Under the restricted runtime database role, Page administrators/editors cannot preview saved Reel videos, and even owners cannot preview an unpublished Page's videos. This capability lookup runs outside a transaction, so Prisma never installs the signed Page context required by Page/PageMembership RLS. Wrap the asset and capability reads in the existing Page transaction mechanism. The superuser-based browser fixture does not exercise this failure.
+
+- [P2] Deactivate the viewer when opening the Reel composer — C:/Users/ABC/.codex/worktrees/reels-end-to-end/socialinsight-20261006/App.tsx:1757-1758
+  Opening `/create/reel` leaves activeTab as `reels`, so this viewer remains mounted beneath the composer. Its player continues playing while recording or previewing another video. If the feed request finishes after opening creation, ReelsScreen's URL-sync effect also navigates back to `/reels`, closing the composer and losing unsaved work. Unmount the viewer or explicitly disable playback and navigation whenever its route is inactive; the test harness unmounts it and misses this integration failure.
+
+- [P2] Restart terminally failed upload sessions on retry — C:/Users/ABC/.codex/worktrees/reels-end-to-end/socialinsight-20261006/components/reels/CreateReelScreen.tsx:61-61
+  When provider upload creation fails once, the backend retains a FAILED VideoAsset. This catch restores the upload button without changing requestKey, so every subsequent attempt receives UPLOAD_EXPIRED for the same failed record, even after the provider recovers. The user must reselect the file to escape the loop. Preserve error codes and start a fresh session for confirmed terminal failures while retaining the key for ambiguous network retries.
+
+- [P2] Reserve the recording slot before requesting camera access — C:/Users/ABC/.codex/worktrees/reels-end-to-end/socialinsight-20261006/components/reels/CreateReelScreen.tsx:63-68
+  Clicking Record twice while camera permission is pending starts two getUserMedia requests because recording becomes true only after permission resolves. If both succeed, they overwrite the shared stream, recorder and timer refs; Stop/unmount cannot reliably stop both recordings, and one callback can clear the other's duration timer. Add a synchronous pending-recording guard before awaiting permission and reject/stop superseded streams.

@@ -8,10 +8,20 @@ export async function assertAttachableVideo(tx: Prisma.TransactionClient, id: st
   const asset = await tx.videoAsset.findUnique({ where: { id }, include: { post: { select: { id: true } } } });
   // The caller authorizes the post editor first. Existing Page videos belong to
   // that post, even if a different editor originally uploaded them.
-  if (!asset || asset.status !== 'READY' || (asset.post ? asset.post.id !== postId : asset.ownerId !== ownerId)) throw new ReelError('REEL_VIDEO_NOT_READY', 'Your video must finish processing before it can be used.', 409);
+  if (!asset || asset.status !== 'READY' || (asset.post ? asset.post.id !== postId : asset.ownerId !== ownerId || asset.attachedAt !== null)) throw new ReelError('REEL_VIDEO_NOT_READY', 'Your video must finish processing before it can be used.', 409);
   // Invalidate any cleanup claim that observed the unattached asset earlier.
-  await tx.videoAsset.update({ where: { id }, data: { updatedAt: new Date() } });
+  const now = new Date();
+  await tx.videoAsset.update({ where: { id }, data: { updatedAt: now, attachedAt: asset.attachedAt || now } });
   return asset;
+}
+
+export async function cancelUnattachedVideo(tx: Prisma.TransactionClient, id: string, ownerId: string) {
+  // A waiting UPDATE keeps its statement snapshot for relation predicates.
+  // Take the lock first, then read the committed attachment in a new statement.
+  await tx.$queryRaw`SELECT id FROM "VideoAsset" WHERE id = ${id} FOR UPDATE`;
+  const asset = await tx.videoAsset.findUnique({ where: { id }, include: { post: { select: { id: true } } } });
+  if (!asset || asset.ownerId !== ownerId || asset.post || ['DELETED', 'PENDING_DELETE'].includes(asset.status)) throw new ReelError('VIDEO_UNAVAILABLE', 'Video is unavailable or already attached.', 409);
+  await tx.videoAsset.update({ where: { id }, data: { status: 'PENDING_DELETE', uploadUrl: null } });
 }
 
 export async function reconcileVideo(id: string) {
@@ -37,6 +47,7 @@ export async function maintainReelVideos() {
     { status: { in: ['UPLOADING', 'PROCESSING'] } },
     { status: 'PENDING_DELETE' },
     { post: null, expiresAt: { lt: now }, status: { not: 'DELETED' } },
+    { post: null, attachedAt: { not: null }, status: { not: 'DELETED' } },
     { owner: { status: 'DELETED' }, status: { not: 'DELETED' }, OR: [{ post: null }, { post: { pageId: null } }] },
     { post: { isDeleted: true, deletedAt: { lt: new Date(Date.now() - 30 * 86400_000) } }, status: { not: 'DELETED' } }
   ] }, orderBy: { updatedAt: 'asc' }, take: 20, include: { post: { select: { isDeleted: true, deletedAt: true, pageId: true } }, owner: { select: { status: true } } } });
@@ -48,7 +59,7 @@ export async function maintainReelVideos() {
         await prisma.videoAsset.updateMany({ where: { id: asset.id, updatedAt: asset.updatedAt }, data: { status: 'DELETED', uploadUrl: null } });
         continue;
       }
-      const expired = !asset.post && asset.expiresAt < now;
+      const expired = !asset.post && (asset.expiresAt < now || asset.attachedAt !== null);
       const erased = asset.owner.status === 'DELETED' && !asset.post?.pageId;
       const deleted = asset.post?.isDeleted && asset.post.deletedAt && asset.post.deletedAt.getTime() < Date.now() - 30 * 86400_000;
       if (expired || erased || deleted || asset.status === 'PENDING_DELETE') {

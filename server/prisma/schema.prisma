@@ -265,6 +265,7 @@ model VideoAsset {
   width Int?
   height Int?
   errorCode String?
+  attachedAt DateTime?
   expiresAt DateTime
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

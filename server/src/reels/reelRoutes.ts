@@ -4,16 +4,18 @@ import { optionalAuth, requireAuth } from '../middleware/authMiddleware';
 import { durableRateLimit } from '../middleware/authRateLimit';
 import { arePublishedPostsVisible } from '../services/postVisibilitySql';
 import { hasPostPageCapability } from '../pages/pagePostService';
+import { lockPageForInteraction, pageIsBlocked } from '../pages/pageService';
+import { PagePolicyError } from '../pages/pagePolicy';
 import { readGuestParticipationHash } from '../services/guestParticipationService';
 import { REEL_MAX_BYTES, REEL_MAX_SECONDS, REEL_MAX_QUESTIONS, ReelError } from './reelPolicy';
 import { requireReels, reelsConfigured, streamProvider, verifyStreamWebhook } from './streamProvider';
-import { reconcileVideo } from './videoService';
+import { cancelUnattachedVideo, reconcileVideo } from './videoService';
 
 const router = Router();
 const handle = (action: (req: Request, res: Response) => Promise<void>): RequestHandler => (req, res) => {
   res.set('Cache-Control', 'private, no-store').vary('Cookie').vary('Authorization');
   void action(req, res).catch(error => {
-    const known = error instanceof ReelError;
+    const known = error instanceof ReelError || error instanceof PagePolicyError;
     res.status(known ? error.status : 503).json({ code: known ? error.code : 'REELS_UNAVAILABLE', error: known ? error.message : 'Reels are temporarily unavailable. Try again.' });
   });
 };
@@ -26,7 +28,9 @@ router.post('/uploads', requireAuth, uploadLimit, handle(async (req, res) => {
   const ownerId = req.user!.userId;
   const existing = await prisma.videoAsset.findUnique({ where: { ownerId_requestKey: { ownerId, requestKey } } });
   if (existing) {
-    if (existing.bytes !== size || existing.mime !== mime || existing.createdAt.getTime() + 60 * 60_000 < Date.now() || !existing.uploadUrl || ['FAILED', 'DELETED', 'PENDING_DELETE'].includes(existing.status)) throw new ReelError('UPLOAD_EXPIRED', 'Start a new video upload.', 409);
+    if (existing.bytes !== size || existing.mime !== mime || existing.createdAt.getTime() + 60 * 60_000 < Date.now() || ['FAILED', 'DELETED', 'PENDING_DELETE'].includes(existing.status)) throw new ReelError('UPLOAD_EXPIRED', 'Start a new video upload.', 409);
+    if (existing.status === 'CREATING') throw new ReelError('UPLOAD_PENDING', 'Your video upload is still being prepared. Try again shortly.', 409);
+    if (!existing.uploadUrl) throw new ReelError('UPLOAD_EXPIRED', 'Start a new video upload.', 409);
     res.json({ id: existing.id, uploadUrl: existing.uploadUrl, status: existing.status }); return;
   }
   const owner = await prisma.user.findUnique({ where: { id: ownerId }, select: { status: true } });
@@ -46,8 +50,7 @@ router.get('/videos/:id', requireAuth, handle(async (req, res) => {
   res.json({ id: current!.id, status: current!.status, duration: current!.duration, width: current!.width, height: current!.height, errorCode: current!.errorCode });
 }));
 router.delete('/videos/:id', requireAuth, handle(async (req, res) => {
-  const changed = await prisma.videoAsset.updateMany({ where: { id: req.params.id as string, ownerId: req.user!.userId, post: null, status: { notIn: ['DELETED', 'PENDING_DELETE'] } }, data: { status: 'PENDING_DELETE', uploadUrl: null } });
-  if (!changed.count) throw new ReelError('VIDEO_UNAVAILABLE', 'Video is unavailable or already attached.', 409);
+  await prisma.$transaction(tx => cancelUnattachedVideo(tx, req.params.id as string, req.user!.userId));
   res.status(204).end();
 }));
 router.get('/playback/:postId', optionalAuth, handle(async (req, res) => {
@@ -76,13 +79,18 @@ router.get('/result/:postId', optionalAuth, handle(async (req, res) => {
 }));
 router.get('/preview/:id', requireAuth, handle(async (req, res) => {
   requireReels();
-  const asset = await prisma.videoAsset.findUnique({ where: { id: req.params.id as string }, include: { post: { select: { id: true, pageId: true, isDeleted: true, status: true } } } });
-  if (!asset || asset.status !== 'READY' || !asset.providerId || asset.post?.isDeleted) throw new ReelError('VIDEO_UNAVAILABLE', 'Video unavailable.', 404);
-  const allowed = asset.post?.pageId
-    ? await hasPostPageCapability(asset.post.pageId, req.user!.userId, 'manageContent')
-    : asset.ownerId === req.user!.userId;
-  if (!allowed) throw new ReelError('VIDEO_UNAVAILABLE', 'Video unavailable.', 404);
-  res.json(streamProvider.playback(asset.providerId));
+  const grant = await prisma.$transaction(async tx => {
+    const read = () => tx.videoAsset.findUnique({ where: { id: req.params.id as string }, include: { post: { select: { id: true, pageId: true, isDeleted: true, status: true } } } });
+    let asset = await read();
+    if (asset?.post?.pageId) { await lockPageForInteraction(tx, asset.post.pageId); asset = await read(); }
+    if (!asset || asset.status !== 'READY' || !asset.providerId || asset.post?.isDeleted || (!asset.post && asset.attachedAt !== null)) throw new ReelError('VIDEO_UNAVAILABLE', 'Video unavailable.', 404);
+    const allowed = asset.post?.pageId
+      ? await hasPostPageCapability(asset.post.pageId, req.user!.userId, 'manageContent', tx) && !await pageIsBlocked(tx, asset.post.pageId, req.user!.userId)
+      : asset.ownerId === req.user!.userId;
+    if (!allowed) throw new ReelError('VIDEO_UNAVAILABLE', 'Video unavailable.', 404);
+    return streamProvider.playback(asset.providerId);
+  });
+  res.json(grant);
 }));
 
 // Mounted with express.raw BEFORE the application's JSON parser. Verify exact bytes.

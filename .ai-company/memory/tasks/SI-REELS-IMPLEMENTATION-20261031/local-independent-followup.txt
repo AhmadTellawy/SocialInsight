@@ -1,0 +1,6 @@
+The original durable authorization, attach/cancel, stale-metadata, signed-preview, inactive-viewer, and camera-ownership findings appear resolved; terminal-failure retry is fixed but introduces the in-progress retry regression above. No additional actionable issue was found in strengthened quiz validation or the reviewed tests, including the untracked fixture. Verification was read-only source inspection plus an in-memory reproduction—not database, browser/device, build, live-provider verification, or production approval.
+
+Review comment:
+
+- [P2] Preserve receipts while upload creation is still in progress — C:/Users/ABC/.codex/worktrees/reels-end-to-end/socialinsight-20261006/components/reels/CreateReelScreen.tsx:60-62
+  If the initial upload request loses its connection while provider creation is still running, retrying finds a `CREATING` asset without an `uploadUrl`. `reelRoutes.ts:31` returns `UPLOAD_EXPIRED` for that nonterminal state too, so this branch rotates the key and creates a second provider session, abandoning the recoverable original. A bounded in-memory reproduction confirmed two live sessions. Return a retryable in-progress error for `CREATING` and reserve receipt rotation for confirmed terminal states; cover this interleaving in the retry regression test.

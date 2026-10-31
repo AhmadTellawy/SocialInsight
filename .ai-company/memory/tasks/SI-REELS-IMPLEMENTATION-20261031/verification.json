@@ -1,16 +1,16 @@
 {
   "task_id": "SI-REELS-IMPLEMENTATION-20261031",
   "date": "2026-10-31",
-  "mode": "MAIN_SESSION_ONLY",
-  "environment": "Windows; isolated managed worktree; loopback PostgreSQL + real API routers; local provider double",
-  "authority": "Founder explicitly authorized implementation and subsequent online deployment. No external deployment or database/provider mutation has occurred.",
-  "independent_review": false,
+  "mode": "IMPLEMENTATION_SESSION_WITH_INDEPENDENT_LOCAL_REVIEWS",
+  "environment": "Windows managed worktree; real API/session/CSRF/Prisma; isolated loopback PostgreSQL; API uses restricted reels_test_runtime role; local provider double",
+  "authority": "User authorized implementation and later online deployment, then explicitly requested independent local review. No production mutations or global agent-setting changes.",
+  "independent_review": true,
   "checks": [
     {
       "command": "npx.cmd tsc --noEmit --pretty false",
       "cwd": ".",
       "result": "PASS",
-      "log": "reels-frontend-typecheck.log"
+      "log": "reels-review-typecheck.log"
     },
     {
       "command": "npm.cmd run test:unit",
@@ -19,40 +19,65 @@
       "passed": 188,
       "failed": 0,
       "skipped": 0,
-      "log": "reels-frontend-unit.log"
+      "log": "reels-review-frontend-unit.log"
     },
     {
       "command": "npm.cmd run build",
       "cwd": ".",
       "result": "PASS",
-      "log": "reels-frontend-build.log",
-      "notes": "Existing chunk-size warnings remain; HLS is a separate lazy-loaded chunk."
+      "log": "reels-review-frontend-build.log",
+      "notes": "Production frontend unchanged since this successful build. Existing chunk-size warnings remain."
     },
     {
       "command": "npm.cmd run build",
       "cwd": "server",
       "result": "PASS",
-      "log": "server/reel-server-build.log",
-      "notes": "Prisma generate + tsc checks src/**/* including test types."
+      "log": "server/reels-review-backend-build.log",
+      "notes": "Final API build after UPLOAD_PENDING correction; Prisma generation and full tsc."
     },
     {
       "command": "$env:TS_NODE_TRANSPILE_ONLY='true'; npm.cmd test",
       "cwd": "server",
       "result": "PASS",
-      "passed": 760,
+      "passed": 763,
       "failed": 0,
       "skipped": 1,
-      "log": "server/reels-backend-final.log",
-      "notes": "Runtime suite uses transpile-only after successful full tsc build. Existing skipped real-engine profile-analytics matrix test retained."
+      "log": "server/reels-review-backend-tests.log",
+      "notes": "Full suite after primary fixes; final three-line upload-state correction is covered by final build and targeted real-API browser tests. One pre-existing skipped test."
     },
     {
       "command": "npm.cmd run test:e2e:reels",
       "cwd": ".",
+      "result": "RESOLVED_BY_TARGETED_RERUN",
+      "passed": 12,
+      "failed": 1,
+      "log": "reels-review-e2e.log",
+      "notes": "The controlled metadata-race fixture omitted Origin on its internal HTTP request; CSRF correctly rejected it before the intended lock. Added the actual loopback Origin, preserving auth/CSRF checks."
+    },
+    {
+      "command": "npm.cmd run test:e2e:reels -- --grep 'real database lock interleavings'",
+      "cwd": ".",
       "result": "PASS",
-      "passed": 8,
+      "passed": 1,
       "failed": 0,
-      "log": "reels-e2e-results.log",
-      "notes": "Real components, sessions, CSRF, Prisma, migrations, local Postgres; video provider replaced only in test harness. Later maintenance-flag-only delta is covered by final backend build/full suite; browser/API journey inputs unchanged."
+      "log": "reels-review-races.log",
+      "notes": "Actual PostgreSQL lock waiters observed; attach/cancel and stale metadata/video replacement interleavings passed."
+    },
+    {
+      "command": "npm.cmd run test:e2e:reels -- --grep 'lost response during provider'",
+      "cwd": ".",
+      "result": "EXPECTED_FAILURE_BEFORE_CORRECTION",
+      "log": "reels-review-pending-before.log",
+      "notes": "New browser regression reproduced the second review finding: expected UPLOAD_PENDING, received UPLOAD_EXPIRED."
+    },
+    {
+      "command": "npm.cmd run test:e2e:reels -- --grep 'upload retry|lost response|creation retry'",
+      "cwd": ".",
+      "result": "PASS",
+      "passed": 3,
+      "failed": 0,
+      "log": "reels-review-upload-final.log",
+      "notes": "Final compiled API; terminal receipt rotation, pending lost-response recovery with exactly one VideoAsset, and creation replay/draft publication."
     },
     {
       "command": "git diff --check",
@@ -68,48 +93,112 @@
     "Page publisher identity; another viewer denied preview; Page unpublish denies new grants; known PAGE_ACCOUNT_BUSY is retried with bounded intervals",
     "Camera permission rejection remains recoverable through upload; non-video rejected before network transfer",
     "Three playable WebM fixtures; questions above Like; vertical keyboard navigation, physical right touch swipe, creator/Back restoration, paused video and white comments sheet, Arabic RTL",
-    "Quiz keys redacted; partial answers rejected; complete score and idempotent retry; counts unchanged; hidden images denied; response expiry preserves video; like/hide/undo state"
+    "Quiz keys redacted; partial answers rejected; complete score and idempotent retry; counts unchanged; hidden images denied; response expiry preserves video; like/hide/undo state",
+    "Restricted-runtime Page editor preview, unpublished Page preview, revocation, permanent deletion and denied former-uploader reuse",
+    "Real PostgreSQL lock interleavings for attachment/cancellation and concurrent metadata/video replacement",
+    "Retained inactive viewer stops player and late URL synchronization while composer is open",
+    "Single camera permission request; late streams stop after unmount",
+    "Terminal upload retry and lost-response pending retry preserve or rotate receipts only as appropriate"
   ],
   "database": {
     "migration": "20261031090000_reels_video",
-    "result": "All migrations applied to fresh owned loopback PostgreSQL cluster",
-    "receipt": "tests/reels-e2e/artifacts/database-7e80434e-6ac9-493a-a85d-f77ecd28f2d0/receipt.json",
-    "cleanup": "OWN_CLUSTER_STOPPED_DATA_RETAINED",
+    "result": "Fresh isolated migrations with attachedAt; restricted runtime API exercised in browser runs",
+    "receipts": [
+      "tests/reels-e2e/artifacts/database-7e0909ef-aa73-48f8-b201-b5f55abcfdab/receipt.json",
+      "tests/reels-e2e/artifacts/database-f51f7df4-cae2-4d0d-a2de-59bdfb0ab974/receipt.json",
+      "tests/reels-e2e/artifacts/database-7e532a9e-c356-4a7b-9293-2a4582aac7d9/receipt.json"
+    ],
+    "cleanup": "All owned test clusters stopped; data retained",
     "video_direct_roles": {
       "anon_select": false,
       "authenticated_select": false,
       "runtime_crud": true,
       "runtime_read_executed": true
     },
-    "limits": "Harness application uses postgres superuser; full application RLS behavior under production runtime role is not claimed."
+    "runtime": {
+      "role": "reels_test_runtime",
+      "rolsuper": false,
+      "rolbypassrls": false
+    },
+    "limits": "Privileged client only for fixture setup/inspection and deliberate interleavings. No production database, live provider or actual-device verification."
   },
   "baselines": [
     "Initial full backend run: 731 pass, 23 failures, 1 existing skip. The added scalar projection fields shifted id from first position and broke existing analysis query mocks. Restored id-first order; targeted 29/29 and final full 760/760 applicable tests pass.",
     "Initial browser fixture used dev compilation/HMR in API process, causing artificial transaction deadline/reload failures. Replaced it with built static client.",
     "Fixed observed smooth-scroll/comment-sheet transition selecting a different Reel. Settle navigation and freeze current offset while sheets open; all browser journeys pass.",
     "Survey E2E initially supplied one question; the existing editor correctly required two. Test now exercises actual multiple questions, not a weakened validator.",
-    "Known transient PAGE_ACCOUNT_BUSY during Page lifecycle test is asserted by code before bounded retry; no application authorization bypass."
+    "Known transient PAGE_ACCOUNT_BUSY during Page lifecycle test is asserted by code before bounded retry; no application authorization bypass.",
+    "Initial restricted shell test attempt could not connect to loopback (EACCES); reran authorized local tests with required process permissions. Environment failures are not counted as passing tests.",
+    "Independent review found seven actionable issues; corrections were checked in a second independent invocation, which reproduced an additional in-progress upload retry issue.",
+    "A new browser test failed on the original compiled API for the expected UPLOAD_EXPIRED/PENDING distinction, then passed on the corrected API. Final independent source-extracted checks confirmed one provider session and reproduced two when the correction was removed."
   ],
   "main_session_review": [
     "Server/database ownership, canonical visibility, current Page capability, completed-response immutability, private video grants, exact-byte webhook, cleanup races and disabled-feature retention examined.",
     "React media/request/recording cleanup, signed URL lifetime, lazy HLS, player count, paused-sheet frame, mutations vs late refresh, draft/preview state and existing editor identity checked.",
-    "Automatic approval review rejected expanding published quiz-key visibility to authors. Rejected change was not applied; published keys remain redacted."
+    "Automatic approval review rejected expanding published quiz-key visibility to authors. Rejected change was not applied; published keys remain redacted.",
+    "Confirmed independent findings and corrected them; added permanent attachment receipts, lock-then-reread cancellation, current-row update semantics, signed Page previews, route-scoped viewer lifecycle, terminal/pending upload receipts and single camera ownership.",
+    "Supplemental validation: absent or duplicate option IDs cannot produce an invalid all-correct quiz."
   ],
   "release": {
-    "state": "BLOCKED_ENVIRONMENT_AND_INDEPENDENT_REVIEW",
+    "state": "BLOCKED_LIVE_ENVIRONMENT_AND_STAGING",
     "blockers": [
       "Vercel project-scope API access returned 403. Existing browser deployment tab reload redirects to login; tab retained for founder handoff. No credentials were entered.",
       "Render connector requires founder confirmation of My Workspace before request-scoped access. Async question pending; no answer assumed.",
-      "Production Stream account, subscription, credentials, signing keys and webhook are unverified; no purchase or new persistent credentials made.",
-      "Applicable independent G2/G3/G4 and staging/release acceptance are not satisfied. Agents remain paused and the main session cannot self-approve."
+      "Production Stream account, subscription, credentials, signing keys and webhook are unverified; no purchase or new persistent credentials made."
     ],
     "not_run": [
       "Real Cloudflare Stream upload/callback/HLS/cleanup",
       "Physical iOS/Safari and Android recording",
-      "Representative staging load/restricted-role migration and live smoke",
+      "Representative staging load and live smoke on the actual deployment environment",
       "Production migration, deployment and monitoring"
     ],
     "known_limitation": "Editing a published quiz from its redacted feed requires reselecting correct answers. A separate authorized editor contract is not introduced.",
     "instructions": "docs/reels-implementation.md"
+  },
+  "independent_reviews": [
+    {
+      "phase": "initial",
+      "report": "local-independent-review.txt",
+      "sha256": "e565bfdc17f390522b4bd17b7e1d5489af5cc62d61c522cf221314f80b9e3a08",
+      "log": "reels-independent-review.log",
+      "findings": 7,
+      "scope": "cce80a1b9fc22a412d46ce4d5608a429287a32d2 against b5067e944493db7e67d12daa8689300a8c913709",
+      "threadId": "01a190f8-e8eb-71a3-9738-3ab06f1ac100",
+      "process": "Codex CLI 0.157.1; separate ephemeral read-only invocation; approval_policy=never; existing user model configuration; no global configuration changes"
+    },
+    {
+      "phase": "followup",
+      "report": "local-independent-followup.txt",
+      "sha256": "c6fab252f37067a1c68afd353c0ef681798aeaffbffb3a0e16b97e7cb4718a17",
+      "log": "reels-independent-followup.log",
+      "findings": 1,
+      "scope": "Working-tree correction diff against cce80a1b9fc22a412d46ce4d5608a429287a32d2",
+      "threadId": "01a19111-4a82-75a3-9d67-47eb6d39d153",
+      "process": "Codex CLI 0.157.1; separate ephemeral read-only invocation; approval_policy=never; existing user model configuration; no global configuration changes"
+    },
+    {
+      "phase": "final",
+      "report": "local-independent-final.txt",
+      "sha256": "61b314fa2dc0bd2564b6a23d954cd9f199ea7e4204e779d4ea5e8d28f1714d6b",
+      "log": "reels-independent-final.log",
+      "findings": 0,
+      "scope": "Pending-upload receipt correction only",
+      "threadId": "01a19118-a8ab-7d13-aaff-2182b300c56f",
+      "process": "Codex CLI 0.157.1; separate ephemeral read-only invocation; approval_policy=never; existing user model configuration; no global configuration changes"
+    }
+  ],
+  "review_outcome": "All seven initial findings and the additional pending-upload retry finding have been corrected. Final narrow review found no remaining actionable finding in that correction. Reviews are model reviews, not human or production approvals.",
+  "review_limits": [
+    "Initial reviewer inspected the diff/surrounding code and ran six local unit tests; follow-up reviewers inspected code and used in-memory reproductions.",
+    "Final narrow reviewer read and executed source-extracted checks; git diff was blocked by read-only ownership restrictions.",
+    "Builds, database interleavings and browser tests below were performed separately by the implementation session, not attributed to the independent reviewers."
+  ],
+  "unique_passing_checks": {
+    "frontend_unit": 188,
+    "backend_unit": 763,
+    "browser_scenarios": 14,
+    "total": 965,
+    "preexisting_skipped": 1,
+    "notes": "Unique browser scenarios verified across the initial corrected run and targeted reruns; repeated tests counted once. This is not a claim that every suite was rerun after the final isolated API-branch correction."
   }
 }

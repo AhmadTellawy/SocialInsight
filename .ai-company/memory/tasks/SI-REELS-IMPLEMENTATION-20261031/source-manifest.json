@@ -33,7 +33,7 @@
   },
   {
     "path": "components/reels/CreateReelScreen.tsx",
-    "sha256": "b5468c67ab48f908b9e044297743afaabd17cf9e5f52dfb0c10a22eb232deb83"
+    "sha256": "4980180982ae6c785ea2566d2a99de07615d353b9b74736aecccf66f4b9343f3"
   },
   {
     "path": "components/reels/ReelEditorContext.ts",
@@ -49,7 +49,7 @@
   },
   {
     "path": "components/reels/ReelsScreen.tsx",
-    "sha256": "6f323702e92b6fb54857428d4cedaae0e988ea6869fe16d78aeaaf22691ed2e8"
+    "sha256": "dd242354905e43c7b0b25f62298e15c13c2b3bc635e8e8734bba91c8f6f9ea1d"
   },
   {
     "path": "components/reels/ReelThumbnail.tsx",
@@ -65,7 +65,7 @@
   },
   {
     "path": "docs/reels-implementation.md",
-    "sha256": "50121ee4f4fa5afea98308b439782742add9d4bd63c2efab53da70acd1036c75"
+    "sha256": "c9951f488e64a9ca69d0ebffbb7b317c6b5fd6d6dfc5677a562ace8883b641dc"
   },
   {
     "path": "package-lock.json",
@@ -89,11 +89,11 @@
   },
   {
     "path": "server/prisma/migrations/20261031090000_reels_video/migration.sql",
-    "sha256": "3a62a02eff1318913954e8d2dc668e4f3c7e69f7d9399572bf6317c97abfed80"
+    "sha256": "92edc38706ce1a9be63d2f98bad5d7f891eb709eea903aff2252289c344287ea"
   },
   {
     "path": "server/prisma/schema.prisma",
-    "sha256": "a09531c0cd200a38b5d9e5274e23bc45f9f6249cafb57ee896b7f5d493d59827"
+    "sha256": "3efcb06570da3013f7e6eb265ed3534edd8c6e607752d303eb78db7ffd7d86e3"
   },
   {
     "path": "server/src/app.ts",
@@ -101,19 +101,19 @@
   },
   {
     "path": "server/src/controllers/postController.ts",
-    "sha256": "d8e2d0ffdfbf2075f0a5f55a55d85df33cfa35894b6ef6c699806b21c81807e8"
+    "sha256": "2047de109ae98490156424016e46237c50744f4ad1ef40f74dd429645582087d"
   },
   {
     "path": "server/src/reels/reelPolicy.test.ts",
-    "sha256": "bb4be98f61da54820068c036fe270531afa5834ea6712586908e834f4bb6353e"
+    "sha256": "e3f3610a4f1fffa24daace7c2a7828a18e6d6e597a0935c686eff55a11a80ff8"
   },
   {
     "path": "server/src/reels/reelPolicy.ts",
-    "sha256": "ad39e932e4dc05a3fccff24e38a1ea819a7c56484b4e613ef5126e50fd4f6378"
+    "sha256": "7a186767486f73ea755be66699e6df88c4a8fde1e4bf69ef6f9c6441b8decbfc"
   },
   {
     "path": "server/src/reels/reelRoutes.ts",
-    "sha256": "42f72db2452f7597e04ce78d584f7fa90da98a62baf1426c20d0823e24fe9ce0"
+    "sha256": "37533243ce94c3b939ec8b0b16262903a675a8a80b5517ca733cd4fef130909e"
   },
   {
     "path": "server/src/reels/streamProvider.ts",
@@ -121,7 +121,7 @@
   },
   {
     "path": "server/src/reels/videoService.ts",
-    "sha256": "0eb2f70c5f55806cb36052961e91458dc3e753d3e3088d35657c7488c49498d8"
+    "sha256": "cd10481a993658c06d4e948013855f42ba4618faae87c8ec59f1de1140f43de2"
   },
   {
     "path": "server/src/services/cronService.ts",
@@ -141,7 +141,7 @@
   },
   {
     "path": "services/reelsApi.ts",
-    "sha256": "8eac1675646db9618f26047059c99094008ec2ba6f1416b6c9020ec6e6bdcbb5"
+    "sha256": "7523f3c2e424308190d8a687512de6e9a61521a2fd3b178989bc7ddd585f286c"
   },
   {
     "path": "tailwind.config.cjs",
@@ -165,7 +165,7 @@
   },
   {
     "path": "tests/reels-e2e/harness.tsx",
-    "sha256": "5318bd6e7b2991427b34c6b428b976c99ad69031d581de2702e36bac2c3c8da0"
+    "sha256": "8b885ef2484cdd3a3d295565d7cab50e8d60697aaef7f1c6ba06b07daaa63814"
   },
   {
     "path": "tests/reels-e2e/index.html",
@@ -173,11 +173,11 @@
   },
   {
     "path": "tests/reels-e2e/reels.spec.ts",
-    "sha256": "675b775a1eb081fbd6029fd570fec8b955cd910cc8f1edd6b0709f3b1ac50795"
+    "sha256": "41528b36c502a7a4b66f44b1fb216db326ec81857ab90f6f8e8be5609adfa4ca"
   },
   {
     "path": "tests/reels-e2e/server.cjs",
-    "sha256": "3183b824ecd83fd3025d91a5e3ee0f500c88b772f7c17932aca574e1a6646a51"
+    "sha256": "d8a535a94c87201ddfb0d87ff17c29b10c6860be1ad4828d4f96ea9428635054"
   },
   {
     "path": "tests/reels-e2e/teardown.cjs",
@@ -190,5 +190,9 @@
   {
     "path": "utils/navigation.ts",
     "sha256": "adee1f2be4c3e9b801093dfad2a031dc6f17e3406f262a2064b469fae4501d6a"
+  },
+  {
+    "path": "tests/reels-e2e/review-fixtures.cjs",
+    "sha256": "c5b1a686e09cab0188d9743a47af806c63712fb8ae7155d5bd517c2cf5141c77"
   }
 ]

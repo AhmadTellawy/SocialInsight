@@ -1,7 +1,7 @@
 # Reels implementation and release handoff
 
 Branch: `codex/reels-end-to-end`, based on `b5067e944493db7e67d12daa8689300a8c913709`.
-The founder authorized implementation and subsequent online deployment. This document is not evidence of a deployment. Work and verification are performed in the main session only; no independent release approval is claimed.
+The founder authorized implementation, subsequent online deployment, and independent local review. The original implementation is commit `cce80a1b9fc22a412d46ce4d5608a429287a32d2`. Independent review reports and correction evidence are saved with the task checkpoint. These local model reviews are separate from the implementation session; they are not human approval or evidence of a deployment.
 
 ## Product behavior
 
@@ -16,9 +16,9 @@ The founder authorized implementation and subsequent online deployment. This doc
 
 ## Data and authorization
 
-`Post.presentationFormat` distinguishes standard posts and Reels. A unique `videoAssetId` attaches an owned ready video; retries use that attachment as a creation receipt. `Response.completedAt` seals a completed Reel submission. Existing post audience, Page lifecycle, account, group, block, results and interaction checks remain in force.
+`Post.presentationFormat` distinguishes standard posts and Reels. A unique `videoAssetId` attaches an owned ready video; retries use that attachment as a creation receipt. `VideoAsset.attachedAt` permanently records first attachment: deleting or replacing the post never returns preview/reuse rights to the original uploader. Permanent post deletion retires its video in the same transaction, and cleanup also retires orphaned prior attachments. Cancellation locks the video before rereading its attachment. Metadata-only updates preserve the video on the locked current post. `Response.completedAt` seals a completed Reel submission. Existing post audience, Page lifecycle, account, group, block, results and interaction checks remain in force.
 
-`VideoAsset` is backend-only. The additive migration enables RLS, revokes direct `anon`/`authenticated` access, and grants only the trusted API runtime role access. Owner/current Page-editor checks run on the API; browser checks are not authorization. Ready-state checks require a provider ID, duration and dimensions. No original-video fallback or public storage object is exposed.
+`VideoAsset` is backend-only. The additive migration enables RLS, revokes direct `anon`/`authenticated` access, and grants only the trusted API runtime role access. Owner/current Page-editor checks run on the API; browser checks are not authorization. Page preview checks run inside the signed request transaction with Page coordination, including unpublished Page and current editor membership reads. Ready-state checks require a provider ID, duration and dimensions. No original-video fallback or public storage object is exposed.
 
 The provider creates a private resumable upload. The browser transfers chunks directly to Cloudflare; Render does not buffer/transcode video. Upload creation has durable account/network limits. An asset UUID in `Upload-Creator` supports orphan reconciliation after a lost provider response. Exact-byte signed callbacks are verified and the authoritative provider state is re-read. Cron reconciliation recovers missed callbacks.
 
@@ -45,7 +45,7 @@ Register the existing backend URL `/api/reels/webhook` with Stream. Verify exact
 ## Rollout procedure and acceptance
 
 1. Resolve the current Vercel connection's project-scope 403 and confirm the Render workspace requested by its connector. Re-read actual production deployment IDs, source revisions and service settings; historical IDs are only discovery hints.
-2. Obtain the independent review/release evidence required by the repository. MAIN_SESSION_ONLY does not authorize the implementer to approve their own gates or reactivate agents. User deployment authorization is already present.
+2. Read the independent local review reports and correction verification in the task evidence. Resolve any remaining actionable findings and complete the staging acceptance below. The previously supplied AGENTS instructions were withdrawn; global agent settings were not changed. User deployment authorization is already present.
 3. Verify backups and target database identity with read-only queries. Record migration status, table sizes and lock budget. Run `prisma migrate deploy` with the deployment role against the verified staging target first. Never use destructive schema synchronization.
 4. Apply migration `20261031090000_reels_video` before running the new API. The existing application can continue using additive columns, but the new API's scalar queries require those columns even when Reels are disabled. Reconfirm Render's actual build/predeploy/start commands; do not assume migrations run there automatically.
 5. Configure Stream on staging and run a real upload through TUS, callback completion, signed HLS playback and thumbnail, invalid/expired token denial, owner/other-user/Page/group visibility, callback retry, over-duration failure, interrupted upload, cancellation, draft/publish, and cleanup checks. Browser fixture videos are not a substitute for this provider test.
@@ -60,6 +60,6 @@ Stop rollout on authorization/quiz-key leakage, failed migration, existing-post 
 
 ## Verification evidence
 
-The task checkpoint and `verification.json` under `.ai-company/memory/tasks/SI-REELS-IMPLEMENTATION-20261031/` record exact commands and results. Browser tests use actual components, cookie/CSRF middleware, API routers, Prisma and a fresh loopback PostgreSQL database, with a **local video-provider double** and three tiny WebM fixtures. They do not prove live Cloudflare, real-device recording, production migration or online deployment.
+The task checkpoint and `verification.json` under `.ai-company/memory/tasks/SI-REELS-IMPLEMENTATION-20261031/` record exact commands and results. Browser tests use actual components, cookie/CSRF middleware, API routers, Prisma and a fresh loopback PostgreSQL database, with a **local video-provider double** and three tiny WebM fixtures. The revised harness runs the API as a restricted member of `socialinsight_runtime`; its separate privileged client is only for fixture setup, inspection and controlled race interleavings. Tests exercise Page editor revocation/unpublished previews, permanent deletion, real PostgreSQL attachment/update lock waits, retained viewer navigation, terminal upload recovery and pending camera permission cleanup. They do not prove live Cloudflare, real-device recording, production migration or online deployment.
 
 `npm run test:e2e:reels` accepts `REELS_TEST_PG_BIN` and `REELS_TEST_PG_PACKAGE` for PostgreSQL binaries and a package directory containing the `pg` driver. Defaults reference the already installed local test runtime on the founder's workstation. Test database folders, logs and receipts stay in ignored `tests/reels-e2e/artifacts/`; teardown stops only the cluster allocated by that run.
