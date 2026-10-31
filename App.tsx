@@ -1982,7 +1982,7 @@ const App: React.FC = () => {
               {bootstrapError ? (
                 <div role="alert" className="text-center">
                   <p className="text-sm text-gray-600">{t('appState.startFailed')}</p>
-                  <button type="button" className="mt-4 min-h-11 rounded-xl bg-blue-600 px-5 py-2 text-white" onClick={() => setBootstrapAttempt(attempt => attempt + 1)}>{t('Retry')}</button>
+                  <button type="button" className="mt-4 min-h-11 rounded-xl bg-blue-600 px-5 py-2 text-white" onClick={() => setBootstrapAttempt(attempt => attempt + 1)}>{t('appState.retry')}</button>
                 </div>
               ) : <p role="status" className="text-sm text-gray-500">{t('appState.starting')}</p>}
             </div>
@@ -2234,7 +2234,7 @@ const App: React.FC = () => {
               {activeTab === 'home' ? (
                 <PullToRefresh ref={pullToRefreshRef} onScroll={handleScroll} onRefresh={async () => { await fetchData(userProfile?.id || undefined, userProfile, { force: true }); }} onScrollChange={dir => setIsNavVisible(dir === 'up')} className="flex-1 mt-16 pb-[75px] bg-white no-scrollbar">
                   {feedStartAnchor && <button type="button" className="min-h-11 w-full px-4 text-sm text-blue-600" onClick={()=>void fetchData(userProfile?.id,userProfile,{force:true,restoreCount:10})}>{i18n.language.startsWith('ar')?'عرض المنشورات الأحدث':'Show latest posts'}</button>}
-                  {feedError && <div role="alert" className="p-4 text-center"><p>{t('appState.feedFailed')}</p><button className="mt-3 px-4 py-2 bg-blue-600 text-white rounded-xl" onClick={() => void fetchData(userProfile?.id, userProfile, { force: true })}>{t('Retry')}</button></div>}
+                  {feedError && <div role="alert" className="p-4 text-center"><p>{t('appState.feedFailed')}</p><button className="mt-3 px-4 py-2 bg-blue-600 text-white rounded-xl" onClick={() => void fetchData(userProfile?.id, userProfile, { force: true })}>{t('appState.retry')}</button></div>}
                   {isFeedLoading && surveys.length > 0 && (
                     <div className="sticky top-0 z-20 h-1 bg-gray-100 overflow-hidden">
                       <div className="h-full w-1/2 bg-blue-500 rounded-r-full animate-pulse" />

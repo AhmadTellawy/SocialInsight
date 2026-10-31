@@ -41,6 +41,7 @@ test('guest feed rejection reaches recovery and Retry loads content', async ({ p
     : json(route, { data: [post], nextCursor: null }) });
   await page.goto('/');
   await expect(page.getByRole('alert')).toBeVisible();
+  await expect(page.getByRole('alert').getByRole('button', { name: language === 'ar' ? 'إعادة المحاولة' : 'Retry', exact: true })).toBeVisible();
   await page.screenshot({ path: info.outputPath('recoverable-feed-error.png') });
   failed = false;
   await page.getByRole('alert').getByRole('button').click();
